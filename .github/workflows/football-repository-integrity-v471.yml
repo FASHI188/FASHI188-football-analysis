@@ -1,0 +1,72 @@
+name: Football V4.7.1 Repository Integrity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "football-data/engine/**"
+      - "football-data/validation/**"
+      - "football-data/config/**"
+      - "football-data/manifests/runtime_bootstrap.json"
+      - "football-data/manifests/formal_core_v460_status.json"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "football-data/engine/**"
+      - "football-data/validation/**"
+      - "football-data/config/**"
+      - "football-data/manifests/runtime_bootstrap.json"
+      - "football-data/manifests/formal_core_v460_status.json"
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-repository-integrity-v471-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile integrity auditor
+        run: python -m py_compile football-data/validation/repository_integrity_v471.py
+
+      - name: Run repository-wide preflight and write receipt
+        run: python football-data/validation/repository_integrity_v471.py --write-receipt --print-summary
+
+      - name: Persist integrity receipt
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/repository_integrity_v471_status.json
+          if git diff --cached --quiet; then
+            echo "No repository-integrity receipt changes."
+          else
+            git commit -m "audit(football): persist V4.7.1 repository integrity receipt [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce fail-closed integrity gate
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
