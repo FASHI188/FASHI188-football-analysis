@@ -1,0 +1,347 @@
+name: Football Total Goals Joint Integration V466
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-total-goals-joint-integration-v466.yml"
+      - "football-data/validation/total_goals_joint_integration_v466.py"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-total-goals-joint-integration-v466-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.winners.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Discover validated direct-total winners
+        id: winners
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("football-data/manifests")
+          round1 = json.loads((root / "total_goals_dynamic_v464_status.json").read_text(encoding="utf-8"))
+          round2 = json.loads((root / "total_goals_round2_v465_status.json").read_text(encoding="utf-8"))
+          winners = {}
+          for cid, item in (round1.get("reports") or {}).items():
+              if item.get("status") == "TOTAL_GOALS_CHALLENGER_PASS":
+                  winners[cid] = "round1"
+          for cid, item in (round2.get("reports") or {}).items():
+              if item.get("status") == "TOTAL_GOALS_ROUND2_PASS":
+                  winners[cid] = "round2"
+          include = [
+              {"competition_id": cid, "source": source}
+              for cid, source in sorted(winners.items())
+          ]
+          if not include:
+              raise SystemExit("no direct-total winners discovered")
+          payload = json.dumps({"include": include}, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"matrix={payload}\n")
+          print(json.dumps({"winner_count": len(include), "winners": include}, ensure_ascii=False, indent=2))
+          PY
+
+  validate:
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply deterministic score-set audit fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("football-data/validation/total_goals_joint_integration_v466.py")
+          text = path.read_text(encoding="utf-8")
+          old_import = "from football_v460_engine import minimum_score_set, predict_from_history  # noqa: E402"
+          new_import = "from football_v460_engine import predict_from_history  # noqa: E402"
+          old = '''def _score_set_hit(matrix: list[dict[str, Any]], target: float, home: int, away: int) -> bool:\n    selected = minimum_score_set(matrix, target)["scores"]\n    return any(int(item["home_goals"]) == home and int(item["away_goals"]) == away for item in selected)\n'''
+          new = '''def _score_set_hit(matrix: list[dict[str, Any]], target: float, home: int, away: int) -> bool:\n    ranking = sorted(\n        matrix,\n        key=lambda cell: (\n            -float(cell["probability"]),\n            int(cell["home_goals"]),\n            int(cell["away_goals"]),\n        ),\n    )\n    cumulative = 0.0\n    hit = False\n    for cell in ranking:\n        cumulative += float(cell["probability"])\n        if int(cell["home_goals"]) == home and int(cell["away_goals"]) == away:\n            hit = True\n        if cumulative + 1e-12 >= target:\n            return hit\n    return hit\n'''
+          if old_import in text:
+              text = text.replace(old_import, new_import)
+          if old in text:
+              text = text.replace(old, new)
+          elif new not in text:
+              raise SystemExit("score-set implementation is neither expected old nor expected fixed version")
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Compile joint integration gate
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python -m py_compile football-data/validation/total_goals_joint_integration_v466.py
+
+      - name: Validate one competition and capture diagnostics
+        id: gate
+        shell: bash
+        env:
+          CID: ${{ matrix.competition_id }}
+          SOURCE: ${{ matrix.source }}
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          mkdir -p v466-artifact
+          python - <<'PY' \
+            > >(tee "v466-artifact/${CID}.stdout.log") \
+            2> >(tee "v466-artifact/${CID}.stderr.log" >&2)
+          import json
+          import os
+          from pathlib import Path
+          import total_goals_joint_integration_v466 as gate
+
+          cid = os.environ["CID"]
+          source = os.environ["SOURCE"]
+          report = gate.validate_competition(cid, source, write=True)
+          print(json.dumps({
+              "competition_id": cid,
+              "source": source,
+              "status": report["status"],
+              "paired_predictions": report["paired_predictions"],
+              "outer_folds": report["outer_folds"],
+              "checks": report["checks"],
+          }, ensure_ascii=False, indent=2))
+          report_path = Path("football-data/validation/reports/total_goals_joint_integration_v466") / f"{cid}.json"
+          if report_path.exists():
+              Path("v466-artifact", f"{cid}.report.json").write_text(report_path.read_text(encoding="utf-8"), encoding="utf-8")
+          PY
+          STATUS=$?
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          python - <<PY
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          cid = os.environ["CID"]
+          payload = {
+              "schema_version": "V4.6.6-domain-run-diagnostic",
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "competition_id": cid,
+              "challenger_source": os.environ["SOURCE"],
+              "exit_status": int("$STATUS"),
+              "report_exists": Path("v466-artifact", f"{cid}.report.json").exists(),
+          }
+          Path("v466-artifact", f"{cid}.run.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          exit 0
+
+      - name: Upload per-domain evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v466-${{ matrix.competition_id }}
+          path: v466-artifact
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail domain only after artifact upload
+        if: ${{ steps.gate.outputs.status != '0' }}
+        run: |
+          echo "${{ matrix.competition_id }} V4.6.6 validation failed with status ${{ steps.gate.outputs.status }}."
+          exit 2
+
+  aggregate:
+    if: always()
+    needs: [discover, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MATRIX_JSON: ${{ needs.discover.outputs.matrix }}
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download all per-domain evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: v466-*
+          path: v466-artifacts
+          merge-multiple: true
+
+      - name: Persist deterministic score-set fix in implementation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("football-data/validation/total_goals_joint_integration_v466.py")
+          text = path.read_text(encoding="utf-8")
+          old_import = "from football_v460_engine import minimum_score_set, predict_from_history  # noqa: E402"
+          new_import = "from football_v460_engine import predict_from_history  # noqa: E402"
+          old = '''def _score_set_hit(matrix: list[dict[str, Any]], target: float, home: int, away: int) -> bool:\n    selected = minimum_score_set(matrix, target)["scores"]\n    return any(int(item["home_goals"]) == home and int(item["away_goals"]) == away for item in selected)\n'''
+          new = '''def _score_set_hit(matrix: list[dict[str, Any]], target: float, home: int, away: int) -> bool:\n    ranking = sorted(\n        matrix,\n        key=lambda cell: (\n            -float(cell["probability"]),\n            int(cell["home_goals"]),\n            int(cell["away_goals"]),\n        ),\n    )\n    cumulative = 0.0\n    hit = False\n    for cell in ranking:\n        cumulative += float(cell["probability"])\n        if int(cell["home_goals"]) == home and int(cell["away_goals"]) == away:\n            hit = True\n        if cumulative + 1e-12 >= target:\n            return hit\n    return hit\n'''
+          if old_import in text:
+              text = text.replace(old_import, new_import)
+          if old in text:
+              text = text.replace(old, new)
+          elif new not in text:
+              raise SystemExit("score-set implementation is neither expected old nor expected fixed version")
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Aggregate manifest and diagnostics
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          matrix = json.loads(os.environ["MATRIX_JSON"])
+          expected = matrix.get("include") or []
+          artifact_root = Path("v466-artifacts")
+          report_root = Path("football-data/validation/reports/total_goals_joint_integration_v466")
+          diagnostic_root = Path("football-data/validation/diagnostics/total_goals_joint_integration_v466")
+          manifest_path = Path("football-data/manifests/total_goals_joint_integration_v466_status.json")
+          script_path = Path("football-data/validation/total_goals_joint_integration_v466.py")
+          report_root.mkdir(parents=True, exist_ok=True)
+          diagnostic_root.mkdir(parents=True, exist_ok=True)
+
+          reports = {}
+          failures = []
+          for item in expected:
+              cid = item["competition_id"]
+              source = item["source"]
+              report_file = artifact_root / f"{cid}.report.json"
+              run_file = artifact_root / f"{cid}.run.json"
+              stdout_file = artifact_root / f"{cid}.stdout.log"
+              stderr_file = artifact_root / f"{cid}.stderr.log"
+
+              for src in (run_file, stdout_file, stderr_file):
+                  if src.exists():
+                      shutil.copy2(src, diagnostic_root / src.name)
+
+              if not report_file.exists():
+                  detail = {}
+                  if run_file.exists():
+                      try:
+                          detail = json.loads(run_file.read_text(encoding="utf-8"))
+                      except Exception:
+                          detail = {}
+                  failures.append({
+                      "competition_id": cid,
+                      "challenger_source": source,
+                      "error": "per-domain report missing",
+                      "exit_status": detail.get("exit_status"),
+                  })
+                  continue
+
+              report = json.loads(report_file.read_text(encoding="utf-8"))
+              shutil.copy2(report_file, report_root / f"{cid}.json")
+              ci = report["paired_bootstrap_differences_vs_current_formal_core"]
+              reports[cid] = {
+                  "status": report["status"],
+                  "challenger_source": source,
+                  "paired_predictions": report["paired_predictions"],
+                  "outer_folds": report["outer_folds"],
+                  "checks": report["checks"],
+                  "joint_log_score_ci95_upper": ci["joint_log_score"]["ci95_upper"],
+                  "one_x_two_brier_ci95_upper": ci["one_x_two_brier"]["ci95_upper"],
+                  "one_x_two_rps_ci95_upper": ci["one_x_two_rps"]["ci95_upper"],
+                  "total_goals_rps_ci95_upper": ci["total_goals_rps"]["ci95_upper"],
+              }
+
+          implementation_sha256 = hashlib.sha256(script_path.read_bytes()).hexdigest()
+          manifest = {
+              "schema_version": "V4.6.6-joint-integration",
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "competition_count_requested": len(expected),
+              "competition_count_built": len(reports),
+              "competition_count_failed": len(failures),
+              "ready_for_promotion_review_count": sum(
+                  r["status"] == "READY_FOR_CURRENT_COMPLIANT_PROMOTION_REVIEW"
+                  for r in reports.values()
+              ),
+              "reports": reports,
+              "failures": failures,
+              "formal_weight": 0,
+              "implementation_sha256": implementation_sha256,
+              "execution_mode": "parallel_per_competition_then_deterministic_aggregate",
+          }
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          run_summary = {
+              "schema_version": "V4.6.6-run-diagnostic",
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "competition_count_requested": len(expected),
+              "competition_count_built": len(reports),
+              "competition_count_failed": len(failures),
+              "manifest_exists": manifest_path.exists(),
+              "failures": failures,
+          }
+          Path("football-data/validation/diagnostics/total_goals_joint_integration_v466_run.json").write_text(
+              json.dumps(run_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Commit joint integration evidence and diagnostics
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/validation/total_goals_joint_integration_v466.py \
+                  football-data/manifests/total_goals_joint_integration_v466_status.json \
+                  football-data/validation/reports/total_goals_joint_integration_v466 \
+                  football-data/validation/diagnostics/total_goals_joint_integration_v466 \
+                  football-data/validation/diagnostics/total_goals_joint_integration_v466_run.json
+          if git diff --cached --quiet; then
+            echo "No V4.6.6 evidence changes to commit."
+          else
+            git commit -m "audit(football): persist parallel V4.6.6 joint-integration evidence [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Fail only after aggregate diagnostics are persisted
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("football-data/manifests/total_goals_joint_integration_v466_status.json").read_text(encoding="utf-8"))
+          failures = manifest.get("failures") or []
+          if failures:
+              raise SystemExit(f"V4.6.6 failed domains: {failures}")
+          print("V4.6.6 aggregate completed with zero execution failures.")
+          PY
