@@ -1,0 +1,133 @@
+name: Football Data Batch 002
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/league_sources_batch_002.json"
+      - "football-data/engine/ingest_batch_002.py"
+      - "football-data/engine/ingest_batch_002_accuracy_adapter.py"
+      - "football-data/engine/ingest_batch_002_kleague_adapter.py"
+      - "football-data/tests/test_ingest_batch_002*.py"
+      - "football-data/manifests/league_batch_002.json"
+      - ".github/workflows/football-data-batch-002.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/config/league_sources_batch_002.json"
+      - "football-data/engine/ingest_batch_002.py"
+      - "football-data/engine/ingest_batch_002_accuracy_adapter.py"
+      - "football-data/engine/ingest_batch_002_kleague_adapter.py"
+      - "football-data/tests/test_ingest_batch_002*.py"
+      - "football-data/manifests/league_batch_002.json"
+      - ".github/workflows/football-data-batch-002.yml"
+  schedule:
+    - cron: "47 3 * * 1,4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-data-batch-002-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run integrity tests
+        run: python -m unittest discover -s football-data/tests -p "test_ingest_batch_002*.py" -v
+
+      - name: Ingest and build competition profiles
+        id: ingest
+        shell: bash
+        run: |
+          mkdir -p football-data/manifests
+          set +e
+          python football-data/engine/ingest_batch_002_kleague_adapter.py --print-summary 2>&1 | tee football-data/manifests/batch_002_run.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify generated profiles
+        if: steps.ingest.outputs.status == '0'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("football-data")
+          manifest = json.loads((root / "manifests/latest_ingestion_batch_002.json").read_text(encoding="utf-8"))
+          summary = manifest["summary"]
+          if summary["requested_competitions"] != 6:
+              raise SystemExit("batch 002 request count changed unexpectedly")
+          if summary["processed_competitions"] != 6:
+              raise SystemExit("all six competition profiles were not generated")
+          if summary["pending_competitions"] != 0:
+              raise SystemExit("batch 002 still has pending competitions")
+          for competition_id in manifest["profiles"]:
+              profile_path = root / "league_profiles" / competition_id / "profile.json"
+              profile = json.loads(profile_path.read_text(encoding="utf-8"))
+              if abs(sum(profile["result_distribution"].values()) - 1.0) > 1e-6:
+                  raise SystemExit(f"result probabilities do not sum to one: {competition_id}")
+              if abs(sum(profile["total_goals_0_7plus"].values()) - 1.0) > 1e-6:
+                  raise SystemExit(f"total-goal probabilities do not sum to one: {competition_id}")
+          jpn = json.loads((root / "league_profiles/JPN_J1/profile.json").read_text(encoding="utf-8"))
+          if jpn["per_season"].get("2022", {}).get("matches") != 306:
+              raise SystemExit("J1 2022 playoff contamination remains")
+          if "2026" in jpn["seasons"]:
+              raise SystemExit("J1 2026 transition rows were incorrectly pooled")
+          kor = json.loads((root / "league_profiles/KOR_KLeague1/profile.json").read_text(encoding="utf-8"))
+          for season in ("2021", "2022", "2023", "2024", "2025"):
+              if kor["per_season"].get(season, {}).get("matches") != 228:
+                  raise SystemExit(f"K League complete season count failed: {season}")
+          if kor["per_season"].get("2026", {}).get("matches", 0) <= 0:
+              raise SystemExit("K League 2026 current results are missing")
+          PY
+
+      - name: Commit snapshots or diagnostics
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -f football-data/manifests/batch_002_run.txt ]]; then
+            git add -f football-data/manifests/batch_002_run.txt
+          fi
+          for competition in JPN_J1 KOR_KLeague1 BRA_SerieA ARG_Primera USA_MLS UEFA_ChampionsLeague; do
+            for base in raw processed league_profiles; do
+              path="football-data/${base}/${competition}"
+              if [[ -e "$path" ]]; then
+                git add "$path"
+              fi
+            done
+          done
+          if [[ -f football-data/manifests/latest_ingestion_batch_002.json ]]; then
+            git add football-data/manifests/latest_ingestion_batch_002.json
+          fi
+          if git diff --cached --quiet; then
+            echo "No batch 002 data or diagnostics changes."
+            exit 0
+          fi
+          git commit -m "data(football): record batch 002 ingestion"
+          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Enforce ingestion result
+        if: steps.ingest.outputs.status != '0'
+        shell: bash
+        run: exit 1
