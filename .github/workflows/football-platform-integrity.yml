@@ -15,6 +15,7 @@ on:
       - "football-data/engine/match_pipeline.py"
       - "football-data/engine/validate_platform.py"
       - "football-data/engine/evaluate_audits.py"
+      - "football-data/validation/repository_integrity_v471.py"
       - "football-data/tests/test_platform_core.py"
       - "football-data/tests/test_team_strengths.py"
       - "football-data/tests/test_prediction_pipeline.py"
@@ -33,6 +34,7 @@ on:
       - "football-data/engine/match_pipeline.py"
       - "football-data/engine/validate_platform.py"
       - "football-data/engine/evaluate_audits.py"
+      - "football-data/validation/repository_integrity_v471.py"
       - "football-data/tests/test_platform_core.py"
       - "football-data/tests/test_team_strengths.py"
       - "football-data/tests/test_prediction_pipeline.py"
@@ -64,6 +66,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
 
       - name: Run platform tests
         env:
@@ -128,7 +133,9 @@ jobs:
             exit 0
           fi
           git commit -m "data(football): refresh team features and validation datasets"
-          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
+          git pull --rebase origin "$branch"
+          git push origin HEAD:"$branch"
 
       - name: Enforce team-feature build result
         if: steps.team_features.outputs.status != '0'
