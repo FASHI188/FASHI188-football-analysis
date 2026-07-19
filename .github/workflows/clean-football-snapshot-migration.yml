@@ -1,0 +1,164 @@
+name: One-time Clean Football Snapshot Migration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "migration/START"
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Require source repository token
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          if [ -z "$SOURCE_REPO_TOKEN" ]; then
+            echo "SOURCE_REPO_TOKEN is missing. Add a fine-grained PAT with read-only Contents access to FASHI188/HHH1 as a repository Actions secret in this target repository."
+            exit 2
+          fi
+
+      - name: Checkout clean source snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: FASHI188/HHH1
+          ref: main
+          path: _source
+          fetch-depth: 1
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+      - name: Copy only active football assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf football-data
+          mkdir -p football-data .github/workflows
+          cp -a _source/football-data/. football-data/
+          rm -rf football-data/migration
+
+          if [ -f _source/.gitignore ]; then
+            cp _source/.gitignore .gitignore
+          fi
+
+          find .github/workflows -maxdepth 1 -type f ! -name 'clean-football-snapshot-migration.yml' -delete
+          for f in _source/.github/workflows/football-*.yml _source/.github/workflows/football-*.yaml; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            case "$base" in
+              *migration*|*purge*|*zero-tail-repair*|*actions-write-probe*|*dispatcher*)
+                continue
+                ;;
+            esac
+            cp "$f" ".github/workflows/$base"
+          done
+
+          cat > README.md <<'EOF'
+          # FASHI188 Football Analysis Runtime
+
+          This private repository is dedicated exclusively to the football-analysis project.
+
+          It stores football runtime data, executable code, validation assets, frozen evidence,
+          manifests, model diagnostics and audit outputs under `football-data/`, plus football-only
+          GitHub Actions workflows under `.github/workflows/`.
+
+          Formal football rules are not stored in this repository. The sole formal rule source
+          remains the unique file whose name contains `CURRENT_唯一正式规则` in the ChatGPT football project.
+
+          This repository was created from a clean football-only snapshot of the former HHH1 runtime.
+          No HHH1 Git history, stock-analysis code, investment-analysis code, quote-bus assets or
+          legacy stock workflows are intentionally carried into this repository.
+          EOF
+
+      - name: Rebind runtime authority to new repository
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('football-data/manifests/runtime_bootstrap.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          old = 'FASHI188/HHH1'
+          new = 'FASHI188/FASHI188-football-analysis'
+
+          def replace_exact(value):
+              if isinstance(value, dict):
+                  return {k: replace_exact(v) for k, v in value.items()}
+              if isinstance(value, list):
+                  return [replace_exact(v) for v in value]
+              if value == old:
+                  return new
+              return value
+
+          data = replace_exact(data)
+          data['migration'] = {
+              'source_repository': old,
+              'target_repository': new,
+              'history_migrated': False,
+              'mode': 'clean_snapshot',
+          }
+          path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Validate clean migration before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f football-data/manifests/runtime_bootstrap.json
+          test -f football-data/manifests/formal_core_v460_status.json
+          test -f football-data/config/platform_registry.json
+          test -f football-data/engine/football_v460_engine.py
+          test -f football-data/manifests/total_goals_joint_integration_v466_status.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          bootstrap = json.loads(Path('football-data/manifests/runtime_bootstrap.json').read_text(encoding='utf-8'))
+          text = json.dumps(bootstrap, ensure_ascii=False)
+          assert 'FASHI188/FASHI188-football-analysis' in text, 'new runtime repository not bound in bootstrap'
+
+          status = json.loads(Path('football-data/manifests/formal_core_v460_status.json').read_text(encoding='utf-8'))
+          assert status.get('competition_count_built') == 17, status
+          assert status.get('competition_count_failed') == 0, status
+
+          v466 = json.loads(Path('football-data/manifests/total_goals_joint_integration_v466_status.json').read_text(encoding='utf-8'))
+          assert v466.get('competition_count_built') == 10, v466
+          assert v466.get('competition_count_failed') == 0, v466
+          assert v466.get('ready_for_promotion_review_count') == 1, v466
+
+          forbidden_paths = []
+          for path in Path('.').rglob('*'):
+              if not path.is_file() or '.git' in path.parts or '_source' in path.parts:
+                  continue
+              rel = path.as_posix().lower()
+              if any(token in rel for token in ('stock', 'investment', 'quote-bus', 'quote_bus')):
+                  forbidden_paths.append(path.as_posix())
+          assert not forbidden_paths, f'forbidden legacy paths migrated: {forbidden_paths[:20]}'
+          PY
+
+          rm -rf _source migration
+          rm -f .github/workflows/clean-football-snapshot-migration.yml
+
+      - name: Commit clean snapshot as target repository baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(football): establish clean football-only runtime baseline"
+          git push origin HEAD:main
