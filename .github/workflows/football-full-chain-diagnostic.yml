@@ -1,0 +1,131 @@
+name: Football Full Chain Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-full-chain-diagnostic.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose-full-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run long-chain diagnostics without stopping early
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          OUTSIDE="$RUNNER_TEMP/football_full_chain_diagnostic.json"
+          TMP="$RUNNER_TEMP/football-full-chain-logs"
+          mkdir -p "$TMP"
+
+          run_check() {
+            NAME="$1"
+            shift
+            echo "=== $NAME ==="
+            START=$(date -u +%s)
+            "$@" >"$TMP/$NAME.log" 2>&1
+            CODE=$?
+            END=$(date -u +%s)
+            printf '%s' "$CODE" >"$TMP/$NAME.code"
+            printf '%s' "$((END-START))" >"$TMP/$NAME.seconds"
+            echo "$NAME exit=$CODE duration=$((END-START))s"
+          }
+
+          run_check nested_backtest python football-data/validation/nested_backtest_v460.py --print-summary
+          run_check oof_matrix_calibration python football-data/validation/oof_matrix_calibration_v461.py --print-summary
+          run_check rolling_outer_validation python football-data/validation/rolling_outer_validation_v463.py --print-summary
+          run_check competition_replay python football-data/validation/competition_replay_receipts_v462.py --print-summary
+          run_check final_chain_replay python football-data/validation/final_chain_replay_v463.py --print-summary
+          run_check probable_lineup_route python football-data/validation/probable_lineup_route_v462.py --print-summary
+          run_check a_grade_diagnostics python football-data/validation/a_grade_diagnostics_v463.py --print-summary
+          run_check market_baseline python football-data/validation/market_baseline_v463.py --print-summary
+          run_check lomo_value_validation python football-data/validation/lomo_value_validation_v463.py --print-summary
+
+          run_check a_grade_audit python - <<'PY'
+          import json
+          import sys
+          sys.path.insert(0, "football-data/engine")
+          sys.path.insert(0, "football-data/validation")
+          from a_grade_auditor_v463 import audit_competition
+          from platform_core import load_registry
+          results = {}
+          for item in load_registry()["competitions"]:
+              cid = item["competition_id"]
+              result = audit_competition(cid, write=True)
+              results[cid] = {
+                  "promotion_status": result["promotion_status"],
+                  "failed_checks": result["failed_checks"],
+              }
+          print(json.dumps(results, ensure_ascii=False, indent=2))
+          PY
+
+          run_check total_goals_round2 python football-data/validation/total_goals_round2_v465.py --print-summary
+          run_check promotion_readiness python football-data/validation/total_goals_promotion_readiness_v465.py --print-summary
+          run_check platform_status python football-data/engine/validate_platform.py --print-summary
+
+          python - "$TMP" "$OUTSIDE" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          tmp = Path(sys.argv[1])
+          out = Path(sys.argv[2])
+          checks = {}
+          for code_path in sorted(tmp.glob("*.code")):
+              name = code_path.stem
+              code = int(code_path.read_text().strip())
+              sec_path = tmp / f"{name}.seconds"
+              log_path = tmp / f"{name}.log"
+              log = log_path.read_text(errors="replace") if log_path.exists() else ""
+              checks[name] = {
+                  "exit_code": code,
+                  "passed": code == 0,
+                  "duration_seconds": int(sec_path.read_text().strip()) if sec_path.exists() else None,
+                  "log_tail": log[-12000:],
+              }
+          failed = [name for name, item in checks.items() if not item["passed"]]
+          first_failed = failed[0] if failed else None
+          report = {
+              "schema_version": "V4.6.5-full-chain-diagnostic",
+              "all_passed": not failed,
+              "first_failed_check": first_failed,
+              "failed_checks": failed,
+              "checks": checks,
+          }
+          out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps({"all_passed": report["all_passed"], "first_failed_check": first_failed, "failed_checks": failed}, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist diagnostic only
+        run: |
+          git reset --hard HEAD
+          git clean -fd
+          mkdir -p football-data/manifests
+          cp "$RUNNER_TEMP/football_full_chain_diagnostic.json" football-data/manifests/full_chain_diagnostic_v465.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/full_chain_diagnostic_v465.json
+          if git diff --cached --quiet; then
+            echo "No diagnostic changes to commit."
+            exit 0
+          fi
+          git commit -m "audit(football): persist full-chain failure diagnostic"
+          git pull --rebase origin main
+          git push origin HEAD:main
