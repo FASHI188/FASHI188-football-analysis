@@ -8,6 +8,7 @@ on:
       - ".github/workflows/football-runtime-maintenance-v473.yml"
       - "football-data/validation/runtime_maintenance_v473.py"
       - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/repository_integrity_runtime_v473.py"
       - "football-data/validation/repository_asset_topology_v472.py"
       - "football-data/config/platform_registry.json"
       - "football-data/engine/ingest_batch_001_safe_adapter.py"
@@ -45,6 +46,7 @@ jobs:
           python -m py_compile \
             football-data/validation/runtime_maintenance_v473.py \
             football-data/validation/repository_integrity_v471.py \
+            football-data/validation/repository_integrity_runtime_v473.py \
             football-data/validation/repository_asset_topology_v472.py
 
       - name: Run V4.7.3 maintenance and persist receipt locally
@@ -54,9 +56,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # The composed sub-audit receipts are regenerated locally but are owned by
-          # their dedicated workflows. Persist only the V4.7.3 aggregate receipt to
-          # avoid concurrent-writer conflicts on shared manifest files.
+          # Sub-audit receipts are regenerated locally so the aggregate receipt uses fresh
+          # results, but their dedicated workflows remain the only persistent writers.
+          git checkout -- \
+            football-data/manifests/repository_integrity_v471_status.json \
+            football-data/manifests/repository_asset_topology_v472_status.json
           git add football-data/manifests/runtime_maintenance_v473_status.json
           if git diff --cached --quiet; then
             echo "No maintenance receipt changes."
@@ -69,4 +73,4 @@ jobs:
       - name: Enforce fail-closed maintenance gate
         run: python football-data/validation/runtime_maintenance_v473.py --strict-exit --print-summary
 
-# V4.7.3 aggregate receipt has a single-writer path; sub-audit receipts remain owned by their dedicated workflows.
+# V4.7.3 aggregate receipt is single-writer; fresh sub-audit results are consumed without persisting duplicate receipt writes.
