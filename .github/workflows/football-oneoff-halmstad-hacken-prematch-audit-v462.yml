@@ -1,0 +1,172 @@
+name: Football One-off Halmstad Hacken Prematch Audit V4.6.2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-oneoff-halmstad-hacken-prematch-audit-v462.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-oneoff-halmstad-hacken-prematch-audit-v462
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare reconstructed pre-match input
+        run: |
+          cat > /tmp/halmstad_hacken_input.json <<'JSON'
+          {
+            "competition_id": "SWE_Allsvenskan",
+            "season": "2026",
+            "home_team": "Halmstad",
+            "away_team": "Hacken",
+            "kickoff_utc": "2026-07-19T14:30:00Z",
+            "freeze_time_utc": "2026-07-17T17:54:00Z",
+            "settlement": "90_minutes_including_stoppage",
+            "competition_round": "13",
+            "venue": "Orjans Vall, Halmstad",
+            "neutral_venue": false,
+            "two_legged": false,
+            "first_leg_state": null,
+            "market_snapshot": null,
+            "lineup_evidence": {
+              "status": "probable",
+              "observed_at_utc": "2026-07-17T17:54:00Z",
+              "sources": [
+                {
+                  "name": "Sports Mole pre-match preview and predicted lineups",
+                  "url": "https://www.sportsmole.co.uk/football/hacken/preview/halmstad-vs-hacken-prediction-team-news-lineups_601378.html"
+                }
+              ]
+            },
+            "task_state": {
+              "status": "pre_match_reconstruction",
+              "note": "Historical pre-match reconstruction. Freeze anchored to timestamped pre-match preview before kickoff. Target result and later official lineup are excluded. Market odds are audited externally because the user asked after the market had closed, so no question-time tradable snapshot exists."
+            },
+            "data_freshness_evidence": {
+              "source_name": "Allsvenskan installed processed result ledger and pre-match preview",
+              "source_url": "https://www.sportsmole.co.uk/football/hacken/preview/halmstad-vs-hacken-prediction-team-news-lineups_601378.html",
+              "observed_at_utc": "2026-07-17T17:54:00Z",
+              "expected_history_matches": 97,
+              "latest_history_match_date": "2026-07-13"
+            }
+          }
+          JSON
+
+      - name: Run formal actionable single-match chain
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          python football-data/engine/run_formal_prediction_actionable.py \
+            --input /tmp/halmstad_hacken_input.json \
+            --context-output /tmp/halmstad_hacken_context.json \
+            --calculation-output /tmp/halmstad_hacken_calculation.json \
+            --validation-output /tmp/halmstad_hacken_validation.json \
+            --print-summary
+
+      - name: Build audit receipt
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from platform_core import settle_home_handicap, settle_over_total
+
+          ctx = json.loads(Path('/tmp/halmstad_hacken_context.json').read_text())
+          calc = json.loads(Path('/tmp/halmstad_hacken_calculation.json').read_text())
+          val = json.loads(Path('/tmp/halmstad_hacken_validation.json').read_text())
+          matrix = calc['probabilities']['score_matrix']
+
+          def settle(line, fn):
+              out = {'win':0.0,'push':0.0,'loss':0.0}
+              for cell in matrix:
+                  s = fn(int(cell['home_goals']), int(cell['away_goals']), line)
+                  p = float(cell['probability'])
+                  for k in out:
+                      out[k] += p * s[k]
+              return out
+
+          totals = calc['probabilities']['total_goals']
+          total_0_7plus = {str(i): float(totals.get(str(i), 0.0)) for i in range(7)}
+          total_0_7plus['7+'] = sum(float(v) for k,v in totals.items() if str(k).isdigit() and int(k) >= 7)
+          top = calc.get('model_audit', {}).get('top_scores', []) or []
+          if not top:
+              top = calc.get('top_scores', []) or []
+          if not top:
+              ranked = sorted(matrix, key=lambda c: float(c['probability']), reverse=True)
+              top = [{'score': f"{c['home_goals']}-{c['away_goals']}", 'probability': float(c['probability'])} for c in ranked[:10]]
+
+          receipt = {
+              'schema_version': 'oneoff-prematch-audit-v462',
+              'competition_id': 'SWE_Allsvenskan',
+              'home_team': 'Halmstad',
+              'away_team': 'Hacken',
+              'kickoff_utc': '2026-07-19T14:30:00Z',
+              'freeze_time_utc': '2026-07-17T17:54:00Z',
+              'freeze_basis': 'timestamped pre-match preview publication; target result excluded',
+              'postmatch_target_result_used_in_model': False,
+              'validation_status': val.get('status'),
+              'module_states': calc.get('module_states'),
+              'context_module_states': ctx.get('module_states'),
+              'summary': {
+                  'history_matches': calc['model_audit']['history_matches'],
+                  'latest_history_match_date': calc['model_audit']['latest_history_match_date'],
+                  'one_x_two': calc['probabilities']['one_x_two'],
+                  'total_goals_0_7plus': total_0_7plus,
+                  'btts_yes': calc['probabilities']['btts_yes'],
+                  'top_scores': top[:10],
+                  'top3_cumulative': sum(float(x['probability']) for x in top[:3]),
+                  'top1_top2_gap': float(top[0]['probability']) - float(top[1]['probability']) if len(top)>1 else None,
+                  'home_handicap_plus_1_0': settle(1.0, settle_home_handicap),
+                  'away_handicap_minus_1_0': settle(-1.0, lambda hg, ag, line: settle_home_handicap(ag, hg, line)),
+                  'over_2_5': settle(2.5, settle_over_total),
+                  'over_3_5': settle(3.5, settle_over_total),
+                  'probability_sum': calc['model_audit']['audit']['probability_sum'],
+                  'tail_aggregation_probability': calc['model_audit']['audit']['tail_aggregation_probability'],
+                  'engine_sha256': calc['model_audit']['audit']['engine_sha256'],
+                  'parameter_source': calc['model_audit']['parameter_source'],
+                  'nb_dispersion_k': calc['model_audit']['nb_dispersion_k'],
+                  'team_sample': calc['model_audit']['team_sample'],
+                  'confidence_grade': calc['conclusions']['confidence_grade'],
+                  'price_status': calc['conclusions']['price_status'],
+                  'oof_matrix_calibration': calc.get('module_states', {}).get('oof_matrix_calibration'),
+                  'lineup_status': ctx.get('lineup_assessment', {}).get('status'),
+                  'market_status': ctx.get('market_assessment', {}).get('status')
+              }
+          }
+          out = Path('football-data/manifests/oneoff_halmstad_hacken_prematch_audit_20260719.json')
+          out.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(receipt['summary'], ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist audit receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/oneoff_halmstad_hacken_prematch_audit_20260719.json
+          if git diff --cached --quiet; then
+            echo "No audit receipt changes."
+            exit 0
+          fi
+          git commit -m "audit(football): persist Halmstad Hacken frozen prematch receipt [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
