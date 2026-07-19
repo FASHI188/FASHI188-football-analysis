@@ -1,0 +1,149 @@
+name: Football Repository Migration Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-repository-migration-acceptance.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run migration acceptance checks
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path('.')
+          required_workflows = [
+              'football-platform-integrity.yml',
+              'football-formal-core-v460.yml',
+              'football-data-batch-001.yml',
+              'football-data-batch-002.yml',
+              'football-data-norway.yml',
+              'football-total-goals-v464.yml',
+              'football-total-goals-round2-v465.yml',
+              'football-structure-crossleague-v465.yml',
+              'football-total-goals-promotion-readiness-v465.yml',
+              'football-grade345.yml',
+              'football-full-chain-diagnostic.yml',
+              'football-total-goals-joint-integration-v466.yml',
+              'football-public-lineup-backfill.yml',
+              'football-resume-preflight-diagnostic.yml',
+              'football-resume-evidence-after-permission.yml',
+          ]
+          workflow_root = root / '.github/workflows'
+          missing_workflows = [name for name in required_workflows if not (workflow_root / name).is_file()]
+          assert not missing_workflows, f'missing workflows: {missing_workflows}'
+
+          forbidden_controls = [
+              root / '.github/workflows/football-clean-migration-inventory.yml',
+              root / '.github/workflows/football-actions-write-probe.yml',
+              root / '.github/workflows/clean-football-snapshot-migration.yml',
+              root / 'migration/START',
+          ]
+          present_forbidden_controls = [p.as_posix() for p in forbidden_controls if p.exists()]
+          assert not present_forbidden_controls, f'one-time migration controls still present: {present_forbidden_controls}'
+
+          forbidden_paths = []
+          for path in root.rglob('*'):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              rel = path.as_posix().lower()
+              if any(token in rel for token in ('stock', 'investment', 'quote-bus', 'quote_bus')):
+                  forbidden_paths.append(path.as_posix())
+          assert not forbidden_paths, f'forbidden legacy paths present: {forbidden_paths[:20]}'
+
+          formal_rule_files = [p.as_posix() for p in root.rglob('*CURRENT_唯一正式规则*') if p.is_file()]
+          assert not formal_rule_files, f'formal rule files must not be stored in runtime repository: {formal_rule_files}'
+
+          bootstrap_path = root / 'football-data/manifests/runtime_bootstrap.json'
+          core_path = root / 'football-data/manifests/formal_core_v460_status.json'
+          v466_path = root / 'football-data/manifests/total_goals_joint_integration_v466_status.json'
+          engine_path = root / 'football-data/engine/football_v460_engine.py'
+          for path in (bootstrap_path, core_path, v466_path, engine_path):
+              assert path.is_file(), f'missing required runtime asset: {path}'
+
+          bootstrap = json.loads(bootstrap_path.read_text(encoding='utf-8'))
+          core = json.loads(core_path.read_text(encoding='utf-8'))
+          v466 = json.loads(v466_path.read_text(encoding='utf-8'))
+
+          assert bootstrap['runtime_authority']['repository'] == 'FASHI188/FASHI188-football-analysis'
+          assert bootstrap['runtime_authority']['ref'] == 'main'
+          assert core['competition_count_requested'] == 17
+          assert core['competition_count_built'] == 17
+          assert core['competition_count_failed'] == 0
+          assert core['formal_core_available_count'] == 17
+          assert v466['competition_count_requested'] == 10
+          assert v466['competition_count_built'] == 10
+          assert v466['competition_count_failed'] == 0
+          assert v466['ready_for_promotion_review_count'] == 1
+          assert v466['formal_weight'] == 0
+
+          engine_sha = hashlib.sha256(engine_path.read_bytes()).hexdigest()
+          assert engine_sha == bootstrap['formal_core']['expected_engine_sha256']
+          assert engine_sha == core['engine_sha256']
+
+          workflow_hhh1_refs = []
+          for name in required_workflows:
+              text = (workflow_root / name).read_text(encoding='utf-8')
+              if 'FASHI188/HHH1' in text or 'fashi188/hhh1' in text.lower():
+                  workflow_hhh1_refs.append(name)
+          assert not workflow_hhh1_refs, f'workflows still reference HHH1: {workflow_hhh1_refs}'
+
+          report = {
+              'schema_version': 'football-repository-migration-acceptance-v1',
+              'generated_at_utc': datetime.now(timezone.utc).isoformat(),
+              'source_repository': 'FASHI188/HHH1',
+              'target_repository': 'FASHI188/FASHI188-football-analysis',
+              'migration_mode': 'clean_snapshot_without_source_git_history',
+              'runtime_authority_rebound': True,
+              'required_runtime_workflow_count': len(required_workflows),
+              'required_runtime_workflows': required_workflows,
+              'formal_core_competitions_built': core['competition_count_built'],
+              'formal_core_competitions_failed': core['competition_count_failed'],
+              'v466_competitions_built': v466['competition_count_built'],
+              'v466_competitions_failed': v466['competition_count_failed'],
+              'v466_ready_for_promotion_review_count': v466['ready_for_promotion_review_count'],
+              'v466_formal_weight': v466['formal_weight'],
+              'engine_sha256': engine_sha,
+              'forbidden_legacy_paths_found': [],
+              'one_time_migration_controls_present': [],
+              'formal_rule_files_in_runtime_repo': [],
+              'workflow_hhh1_references': [],
+              'status': 'PASS',
+          }
+          out = root / 'football-data/manifests/repository_migration_acceptance.json'
+          out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist migration acceptance receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/repository_migration_acceptance.json
+          if git diff --cached --quiet; then
+            echo "Migration acceptance receipt unchanged."
+            exit 0
+          fi
+          git commit -m "audit(football): persist repository migration acceptance [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
