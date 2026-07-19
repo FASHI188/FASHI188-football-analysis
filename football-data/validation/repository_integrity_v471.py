@@ -11,7 +11,7 @@ Hard failures include:
 - runtime bootstrap pointing away from the dedicated football repository;
 - formal engine SHA drift;
 - competition-registry/formal-core count mismatch;
-- active HHH1 references outside migration provenance;
+- active legacy-repository references outside explicit migration provenance;
 - CURRENT rule files stored in GitHub;
 - finance/stock legacy paths inside the football runtime repository.
 
@@ -35,6 +35,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 OUT = FOOTBALL / "manifests" / "repository_integrity_v471_status.json"
 
 EXPECTED_REPO = "FASHI188/FASHI188-football-analysis"
+LEGACY_REPO = "FASHI188/" + "HHH1"
 EXPECTED_REF = "main"
 EXPECTED_COMPETITIONS = 17
 BANNED_PATH_TOKENS = ("stock", "investment", "quote_bus", "quote-bus")
@@ -84,10 +85,12 @@ def audit() -> dict[str, Any]:
         text = wf.read_text(encoding="utf-8")
         wf_rel = rel(wf)
 
+        if wf.name.startswith("migration-"):
+            error("one_time_migration_workflow_present", "one-time migration workflow remains in the active runtime repository", workflow=wf_rel)
         if "/home/runner/work/" in text:
             error("workflow_absolute_runner_path", "workflow contains a brittle absolute GitHub runner path", workflow=wf_rel)
-        if "FASHI188/HHH1" in text:
-            error("workflow_legacy_repo_reference", "workflow still references legacy HHH1", workflow=wf_rel)
+        if LEGACY_REPO in text:
+            error("workflow_legacy_repo_reference", "workflow still references legacy repository authority", workflow=wf_rel)
 
         name_match = WORKFLOW_NAME_RE.search(text)
         if not name_match:
@@ -226,15 +229,27 @@ def audit() -> dict[str, Any]:
         core = {}
         error("formal_core_audit_failure", "formal core manifest could not be fully audited", detail=str(exc))
 
+    active_batch_repo_checks = {}
+    for manifest_name in ("league_batch_001.json", "league_batch_002.json"):
+        path = FOOTBALL / "manifests" / manifest_name
+        try:
+            data = load_json(path)
+            active_batch_repo_checks[manifest_name] = data.get("repository")
+            if data.get("repository") != EXPECTED_REPO:
+                error("active_batch_manifest_repo_mismatch", "active batch manifest points to a legacy or unexpected repository", path=rel(path), actual=data.get("repository"), expected=EXPECTED_REPO)
+        except Exception as exc:
+            error("active_batch_manifest_audit_failure", "active batch manifest could not be audited", path=rel(path), detail=str(exc))
+
     details["runtime_invariants"] = {
         "expected_repository": EXPECTED_REPO,
         "actual_repository": (bootstrap.get("runtime_authority") or {}).get("repository") if bootstrap else None,
         "actual_engine_sha256": actual_engine_sha,
         "registry_competition_count": len(ids),
         "formal_core_report_count": len((core.get("reports") or {})) if core else 0,
+        "active_batch_repositories": active_batch_repo_checks,
     }
 
-    # 5) Governance separation: no CURRENT in GitHub, no active HHH1 refs, no finance assets.
+    # 5) Governance separation: no CURRENT in GitHub, no active legacy refs, no finance assets.
     current_named_files = [rel(path) for path in ROOT.rglob("*") if path.is_file() and "CURRENT_唯一正式规则" in path.name]
     if current_named_files:
         error("current_rule_file_in_github", "formal CURRENT rule files must remain in the project File Library, not GitHub", paths=current_named_files)
@@ -250,12 +265,16 @@ def audit() -> dict[str, Any]:
         error("legacy_finance_paths_present", "stock/investment/quote-bus paths remain in the football repository", paths=sorted(banned_paths))
 
     legacy_refs = []
+    allowed_legacy_provenance = {
+        bootstrap_path,
+        FOOTBALL / "manifests" / "repository_migration_acceptance.json",
+    }
     scan_roots = [ROOT / ".github", FOOTBALL / "engine", FOOTBALL / "validation", FOOTBALL / "config", FOOTBALL / "manifests"]
     for base in scan_roots:
         if not base.exists():
             continue
         for path in base.rglob("*"):
-            if not path.is_file() or path == bootstrap_path:
+            if not path.is_file() or path in allowed_legacy_provenance:
                 continue
             if path.suffix.lower() not in {".py", ".json", ".yml", ".yaml", ".md", ".txt"}:
                 continue
@@ -263,10 +282,10 @@ def audit() -> dict[str, Any]:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            if "FASHI188/HHH1" in text:
+            if LEGACY_REPO in text:
                 legacy_refs.append(rel(path))
     if legacy_refs:
-        error("active_legacy_repo_reference", "active runtime/config/workflow files still reference HHH1", paths=sorted(legacy_refs))
+        error("active_legacy_repo_reference", "active runtime/config/workflow files still reference legacy repository authority", paths=sorted(legacy_refs))
 
     # 6) Research/governance artifacts must remain non-promoting inside GitHub.
     research_patterns = (
