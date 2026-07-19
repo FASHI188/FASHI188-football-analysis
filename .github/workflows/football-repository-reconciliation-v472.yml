@@ -50,8 +50,7 @@ jobs:
           python football-data/validation/repository_reconciliation_v472.py \
             --source source_repository_snapshot_v472.json \
             --target football-data/manifests/repository_snapshot_v472.json \
-            --output football-data/manifests/repository_reconciliation_v472_status.json \
-            --strict
+            --output football-data/manifests/repository_reconciliation_v472_status.json
 
       - name: Persist reconciliation receipt
         run: |
@@ -66,3 +65,16 @@ jobs:
           git commit -m "audit(football): persist V4.7.2 cross-repository reconciliation [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main
+
+      - name: Enforce critical reconciliation failures after receipt is persisted
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/repository_reconciliation_v472_status.json')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          status = data.get('status', '')
+          if str(status).startswith('FAIL_'):
+              raise SystemExit(f'critical reconciliation failure: {status}')
+          print(f'reconciliation status: {status}')
+          PY
