@@ -55,7 +55,7 @@ def starter_probabilities(
         "starter_probabilities": probabilities,
         "verified_same_season_lineups_used": used,
         "effective_lineup_matches": matches,
-        "predicted_xi_written_as_observed": false,
+        "predicted_xi_written_as_observed": False,
         "formal_probability_effect_weight": 0,
         "status": "PROBABLE_LINEUP_ONLY_EFFECT_VALIDATION_REQUIRED"
     }
