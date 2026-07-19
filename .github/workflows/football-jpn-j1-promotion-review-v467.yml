@@ -1,0 +1,119 @@
+name: Football JPN J1 Promotion Review V467
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/ingestion/jpn_j1_transition_official_v467.py"
+      - "football-data/validation/jpn_j1_promotion_review_v467.py"
+      - "football-data/config/league_sources_batch_002.json"
+      - ".github/workflows/football-jpn-j1-promotion-review-v467.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-jpn-j1-promotion-review-v467-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-route-and-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile V4.6.7 JPN modules
+        run: |
+          python -m py_compile football-data/ingestion/jpn_j1_transition_official_v467.py
+          python -m py_compile football-data/validation/jpn_j1_promotion_review_v467.py
+
+      - name: Ingest official 2026 special J1 results
+        run: python football-data/ingestion/jpn_j1_transition_official_v467.py --print-summary
+
+      - name: Verify special-season separation in processed history
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from platform_core import read_processed_matches
+          rows = read_processed_matches('JPN_J1')
+          counts = Counter(row.season for row in rows)
+          assert counts['2026_special'] == 200, counts
+          assert counts['2021'] == 380, counts
+          assert counts['2022'] == 306, counts
+          assert counts['2023'] == 306, counts
+          assert counts['2024'] == 380, counts
+          assert counts['2025'] == 380, counts
+          assert counts.get('2026/27', 0) == 0, counts
+          print(dict(sorted(counts.items())))
+          PY
+
+      - name: Build CURRENT-compliant JPN promotion review precheck
+        run: python football-data/validation/jpn_j1_promotion_review_v467.py --print-summary
+
+      - name: Reclassify registry only after official-route validation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          registry_path = Path('football-data/config/platform_registry.json')
+          review_path = Path('football-data/manifests/jpn_j1_promotion_review_v467_status.json')
+          route_path = Path('football-data/manifests/jpn_j1_2026_special_official_v467_status.json')
+          registry = json.loads(registry_path.read_text(encoding='utf-8'))
+          review = json.loads(review_path.read_text(encoding='utf-8'))
+          route = json.loads(route_path.read_text(encoding='utf-8'))
+          assert route['status'] == 'OFFICIAL_TRANSITION_ROUTE_VALIDATED'
+          for item in registry['competitions']:
+              if item['competition_id'] == 'JPN_J1':
+                  item['profile_status'] = 'available_2021_2025_plus_official_2026_special_separate'
+                  item['stage_status'] = '2026_special_transition_validated_separate_do_not_pool'
+                  item['current_season_status'] = (
+                      '2026_27_preseason_no_completed_matches'
+                      if review['status'] == 'PROMOTION_EVIDENCE_READY_DEPLOYMENT_BLOCKED_TARGET_SEASON_NOT_STARTED'
+                      else '2026_27_started_target_season_sample_gate_required'
+                  )
+                  item['official_transition_route_status'] = route['status']
+                  item['promotion_review_status'] = review['status']
+                  break
+          registry['known_unfilled_evidence'] = [
+              x for x in registry.get('known_unfilled_evidence', [])
+              if x != 'J1 2026 transition data is unavailable.'
+          ]
+          note = (
+              'J1 2026 special transition results are available from the official J.League data site and are stored as a separate domain; '
+              'they must not be pooled into 2026/27 target-season team strength. 2026/27 formal deployment requires verified completed target-season matches and the normal sample gate.'
+          )
+          if note not in registry['known_unfilled_evidence']:
+              registry['known_unfilled_evidence'].append(note)
+          registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Persist V4.6.7 JPN route and governance evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            football-data/processed/JPN_J1/official_2026_special.csv \
+            football-data/raw/JPN_J1/official_2026_special_source.json \
+            football-data/manifests/jpn_j1_2026_special_official_v467_status.json \
+            football-data/manifests/jpn_j1_promotion_review_v467_status.json \
+            football-data/config/platform_registry.json
+          if git diff --cached --quiet; then
+            echo "No JPN V4.6.7 route or governance changes to commit."
+            exit 0
+          fi
+          git commit -m "audit(football): validate JPN_J1 official transition route and promotion precheck [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
