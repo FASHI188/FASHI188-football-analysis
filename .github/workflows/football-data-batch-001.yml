@@ -14,7 +14,9 @@ on:
       - "football-data/config/league_sources_batch_001.json"
       - "football-data/engine/ingest_batch_001.py"
       - "football-data/engine/ingest_batch_001_alias_adapter.py"
+      - "football-data/engine/ingest_batch_001_safe_adapter.py"
       - "football-data/tests/test_ingest_batch_001.py"
+      - "football-data/tests/test_ingest_batch_001_safe_merge.py"
       - "football-data/manifests/bootstrap_request.json"
       - ".github/workflows/football-data-batch-001.yml"
   pull_request:
@@ -23,7 +25,9 @@ on:
       - "football-data/config/league_sources_batch_001.json"
       - "football-data/engine/ingest_batch_001.py"
       - "football-data/engine/ingest_batch_001_alias_adapter.py"
+      - "football-data/engine/ingest_batch_001_safe_adapter.py"
       - "football-data/tests/test_ingest_batch_001.py"
+      - "football-data/tests/test_ingest_batch_001_safe_merge.py"
       - "football-data/manifests/bootstrap_request.json"
       - ".github/workflows/football-data-batch-001.yml"
   schedule:
@@ -53,10 +57,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+
+      - name: Compile non-destructive batch adapter
+        run: python -m py_compile football-data/engine/ingest_batch_001_safe_adapter.py
+
       - name: Run integrity tests
         run: python -m unittest discover -s football-data/tests -p "test_*.py" -v
 
-      - name: Ingest and build league profiles
+      - name: Ingest and build league profiles without replacing other competition roots
         id: ingest
         shell: bash
         run: |
@@ -66,12 +76,12 @@ jobs:
             args+=(--strict-extra)
           fi
           set +e
-          python football-data/engine/ingest_batch_001_alias_adapter.py "${args[@]}" 2>&1 | tee football-data/manifests/bootstrap_run.txt
+          python football-data/engine/ingest_batch_001_safe_adapter.py "${args[@]}" 2>&1 | tee football-data/manifests/bootstrap_run.txt
           status=${PIPESTATUS[0]}
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Verify generated profiles
+      - name: Verify generated profiles and preserve all registered competition domains
         if: steps.ingest.outputs.status == '0'
         shell: bash
         run: |
@@ -81,8 +91,17 @@ jobs:
 
           root = Path("football-data")
           manifest = json.loads((root / "manifests/latest_ingestion.json").read_text(encoding="utf-8"))
+          registry = json.loads((root / "config/platform_registry.json").read_text(encoding="utf-8"))
           if manifest["summary"]["processed_leagues"] < 8:
-              raise SystemExit("fewer than eight required league profiles were generated")
+              raise SystemExit("fewer than eight required batch-001 league profiles were generated")
+          missing = []
+          for item in registry["competitions"]:
+              cid = item["competition_id"]
+              profile_path = root / "league_profiles" / cid / "profile.json"
+              if not profile_path.is_file():
+                  missing.append(cid)
+          if missing:
+              raise SystemExit(f"batch-001 publication would leave registered competition profiles missing: {missing}")
           for profile_path in sorted((root / "league_profiles").glob("*/profile.json")):
               profile = json.loads(profile_path.read_text(encoding="utf-8"))
               if abs(sum(profile["result_distribution"].values()) - 1.0) > 1e-6:
@@ -91,8 +110,8 @@ jobs:
                   raise SystemExit(f"total-goal probabilities do not sum to one: {profile_path}")
           PY
 
-      - name: Commit snapshots or diagnostics
-        if: always()
+      - name: Commit validated snapshots only
+        if: steps.ingest.outputs.status == '0'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -110,7 +129,7 @@ jobs:
             fi
           done
           if git diff --cached --quiet; then
-            echo "No football data or diagnostics changes."
+            echo "No football data changes."
             exit 0
           fi
           git commit -m "data(football): record batch 001 bootstrap run"
