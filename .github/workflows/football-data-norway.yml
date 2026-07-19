@@ -1,0 +1,78 @@
+name: Football Data Norway
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/league_source_norway.json"
+      - "football-data/engine/ingest_norway.py"
+      - "football-data/tests/test_ingest_norway.py"
+      - ".github/workflows/football-data-norway.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/config/league_source_norway.json"
+      - "football-data/engine/ingest_norway.py"
+      - "football-data/tests/test_ingest_norway.py"
+      - ".github/workflows/football-data-norway.yml"
+  schedule:
+    - cron: "27 3 * * 1,4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-data-norway-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test Norway ingestion
+        run: python -m unittest football-data/tests/test_ingest_norway.py -v
+
+      - name: Ingest Norway archive
+        run: python football-data/engine/ingest_norway.py --print-summary
+
+      - name: Verify Norway profile
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          profile = json.loads(Path("football-data/league_profiles/NOR_Eliteserien/profile.json").read_text(encoding="utf-8"))
+          assert profile["matches"] >= 1200
+          assert abs(sum(profile["result_distribution"].values()) - 1.0) <= 1e-6
+          assert abs(sum(profile["total_goals_0_7plus"].values()) - 1.0) <= 1e-6
+          assert set(profile["seasons"]) == {"2021", "2022", "2023", "2024", "2025", "2026"}
+          PY
+
+      - name: Commit refreshed Norway data
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/raw/NOR_Eliteserien
+          git add football-data/processed/NOR_Eliteserien
+          git add football-data/league_profiles/NOR_Eliteserien
+          git add football-data/manifests/latest_norway_ingestion.json
+          if git diff --cached --quiet; then
+            echo "No Norway data changes."
+            exit 0
+          fi
+          git commit -m "data(football): refresh Norway Eliteserien"
+          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
