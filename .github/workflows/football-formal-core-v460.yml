@@ -1,0 +1,195 @@
+name: Football Formal Core V4.6.x
+
+on:
+  workflow_dispatch:
+    inputs:
+      competition:
+        description: "Optional competition_id; blank validates all registered domains"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/formal_core_v460.json"
+      - "football-data/config/platform_registry.json"
+      - "football-data/engine/football_v460_engine.py"
+      - "football-data/engine/oof_matrix_calibration.py"
+      - "football-data/engine/run_formal_prediction_v460.py"
+      - "football-data/engine/match_pipeline.py"
+      - "football-data/validation/nested_backtest_v460.py"
+      - "football-data/validation/oof_matrix_calibration_v461.py"
+      - "football-data/validation/promotion_policy.json"
+      - "football-data/tests/test_football_v460_engine.py"
+      - "football-data/tests/test_nested_backtest_v460.py"
+      - "football-data/tests/test_oof_matrix_calibration_v461.py"
+      - "football-data/tests/test_v462_bottom_invariants.py"
+      - "football-data/tools/apply_v462_bottom_fixes.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r2.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r3.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r4.py"
+      - "football-data/processed/**"
+      - ".github/workflows/football-formal-core-v460.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/config/formal_core_v460.json"
+      - "football-data/config/platform_registry.json"
+      - "football-data/engine/football_v460_engine.py"
+      - "football-data/engine/oof_matrix_calibration.py"
+      - "football-data/engine/run_formal_prediction_v460.py"
+      - "football-data/engine/match_pipeline.py"
+      - "football-data/validation/nested_backtest_v460.py"
+      - "football-data/validation/oof_matrix_calibration_v461.py"
+      - "football-data/validation/promotion_policy.json"
+      - "football-data/tests/test_football_v460_engine.py"
+      - "football-data/tests/test_nested_backtest_v460.py"
+      - "football-data/tests/test_oof_matrix_calibration_v461.py"
+      - "football-data/tests/test_v462_bottom_invariants.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r2.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r3.py"
+      - "football-data/tools/apply_v462_bottom_fixes_r4.py"
+      - "football-data/processed/**"
+      - ".github/workflows/football-formal-core-v460.yml"
+  schedule:
+    - cron: "47 4 * * 1,4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-formal-core-v460-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply pending V4.6.2 bottom migration
+        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes.py') != '' }}
+        run: python football-data/tools/apply_v462_bottom_fixes.py
+
+      - name: Apply V4.6.2 r2 sample and audit-chain migration
+        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r2.py') != '' }}
+        run: python football-data/tools/apply_v462_bottom_fixes_r2.py
+
+      - name: Apply V4.6.2 r3 question-time data freshness gate
+        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r3.py') != '' }}
+        run: python football-data/tools/apply_v462_bottom_fixes_r3.py
+
+      - name: Apply V4.6.2 r4 model-artifact freshness binding
+        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r4.py') != '' }}
+        run: python football-data/tools/apply_v462_bottom_fixes_r4.py
+
+      - name: Run formal-core tests
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m unittest football-data/tests/test_football_v460_engine.py -v
+          python -m unittest football-data/tests/test_nested_backtest_v460.py -v
+          python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
+          python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
+
+      - name: Run nested time-ordered validation
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          args=(--print-summary)
+          if [[ -n "${{ github.event.inputs.competition || '' }}" ]]; then
+            args+=(--competition "${{ github.event.inputs.competition }}")
+          fi
+          python football-data/validation/nested_backtest_v460.py "${args[@]}"
+
+      - name: Build rolling OOF full-matrix calibrators
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          args=(--print-summary)
+          if [[ -n "${{ github.event.inputs.competition || '' }}" ]]; then
+            args+=(--competition "${{ github.event.inputs.competition }}")
+          fi
+          python football-data/validation/oof_matrix_calibration_v461.py "${args[@]}"
+
+      - name: Verify non-A governance and OOF calibration manifests
+        if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          core = json.loads(Path("football-data/manifests/formal_core_v460_status.json").read_text(encoding="utf-8"))
+          calibration = json.loads(Path("football-data/manifests/oof_matrix_calibration_v461_status.json").read_text(encoding="utf-8"))
+          registry = json.loads(Path("football-data/config/platform_registry.json").read_text(encoding="utf-8"))
+          expected = registry["competition_count"]
+          assert core["competition_count_requested"] == expected
+          assert core["competition_count_failed"] == 0
+          assert core["competition_count_built"] == expected
+          assert core["a_grade_receipt_count"] == 0
+          assert core["historical_market_used"] is False
+          assert core["formal_core_available_count"] > 0
+          assert calibration["competition_count_requested"] == expected
+          assert calibration["competition_count_failed"] == 0
+          assert calibration["competition_count_built"] == expected
+          assert 0 <= calibration["calibrator_available_count"] <= expected
+          PY
+
+      - name: Synchronize runtime bootstrap hashes
+        if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          bootstrap_path = Path("football-data/manifests/runtime_bootstrap.json")
+          core_path = Path("football-data/manifests/formal_core_v460_status.json")
+          calibration_path = Path("football-data/manifests/oof_matrix_calibration_v461_status.json")
+          bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+          core = json.loads(core_path.read_text(encoding="utf-8"))
+          calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+          bootstrap["formal_core"]["expected_engine_sha256"] = core["engine_sha256"]
+          bootstrap.setdefault("oof_matrix_calibration", {})["expected_calibration_code_sha256"] = calibration["calibration_code_sha256"]
+          bootstrap_path.write_text(json.dumps(bootstrap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Refresh platform status with formal core
+        if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/engine/validate_platform.py --print-summary
+
+      - name: Remove completed one-off migration assets
+        run: |
+          rm -f football-data/tools/apply_v462_bottom_fixes.py
+          rm -f football-data/tools/apply_v462_bottom_fixes_r2.py
+          rm -f football-data/tools/apply_v462_bottom_fixes_r3.py
+          rm -f football-data/tools/apply_v462_bottom_fixes_r4.py
+          rm -f football-data/manifests/v462_migration_status.txt
+
+      - name: Commit validated runtime, model and calibration artifacts
+        if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -- .github/workflows/football-formal-core-v460.yml
+          git checkout -- .github/workflows/football-v462-bottom-fixes.yml 2>/dev/null || true
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No formal-core, runtime or OOF calibration changes."
+            exit 0
+          fi
+          git commit -m "model(football): harden V4.6.2 point-in-time core and OOF calibration"
+          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
