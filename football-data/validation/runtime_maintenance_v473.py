@@ -4,8 +4,9 @@
 This is engineering maintenance only. It does not modify CURRENT, probabilities,
 model weights, promotion states, or competition conclusions.
 
-The maintenance pass composes the existing repository-integrity and asset-topology
-gates, then adds runtime asset coverage checks for all registered competitions.
+The maintenance pass composes the repository-integrity runtime wrapper and
+asset-topology gates, then adds runtime asset coverage checks for all registered
+competitions.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FOOTBALL = ROOT / "football-data"
 OUT = FOOTBALL / "manifests" / "runtime_maintenance_v473_status.json"
 
-INTEGRITY_SCRIPT = FOOTBALL / "validation" / "repository_integrity_v471.py"
+INTEGRITY_SCRIPT = FOOTBALL / "validation" / "repository_integrity_runtime_v473.py"
 TOPOLOGY_SCRIPT = FOOTBALL / "validation" / "repository_asset_topology_v472.py"
 INTEGRITY_RECEIPT = FOOTBALL / "manifests" / "repository_integrity_v471_status.json"
 TOPOLOGY_RECEIPT = FOOTBALL / "manifests" / "repository_asset_topology_v472_status.json"
