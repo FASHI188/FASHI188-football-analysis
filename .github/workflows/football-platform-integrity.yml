@@ -1,0 +1,135 @@
+name: Football Platform Integrity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/platform_registry.json"
+      - "football-data/config/team_strength_config.json"
+      - "football-data/config/team_aliases.json"
+      - "football-data/schemas/**"
+      - "football-data/engine/platform_core.py"
+      - "football-data/engine/build_team_strengths.py"
+      - "football-data/engine/build_training_dataset.py"
+      - "football-data/engine/match_pipeline.py"
+      - "football-data/engine/validate_platform.py"
+      - "football-data/engine/evaluate_audits.py"
+      - "football-data/tests/test_platform_core.py"
+      - "football-data/tests/test_team_strengths.py"
+      - "football-data/tests/test_prediction_pipeline.py"
+      - "football-data/processed/**"
+      - ".github/workflows/football-platform-integrity.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/config/platform_registry.json"
+      - "football-data/config/team_strength_config.json"
+      - "football-data/config/team_aliases.json"
+      - "football-data/schemas/**"
+      - "football-data/engine/platform_core.py"
+      - "football-data/engine/build_team_strengths.py"
+      - "football-data/engine/build_training_dataset.py"
+      - "football-data/engine/match_pipeline.py"
+      - "football-data/engine/validate_platform.py"
+      - "football-data/engine/evaluate_audits.py"
+      - "football-data/tests/test_platform_core.py"
+      - "football-data/tests/test_team_strengths.py"
+      - "football-data/tests/test_prediction_pipeline.py"
+      - "football-data/processed/**"
+      - ".github/workflows/football-platform-integrity.yml"
+  schedule:
+    - cron: "17 4 * * 1,4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-platform-integrity-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run platform tests
+        env:
+          PYTHONPATH: football-data/engine
+        run: python -m unittest discover -s football-data/tests -p "test_platform*.py" -v && python -m unittest discover -s football-data/tests -p "test_team_strengths.py" -v && python -m unittest discover -s football-data/tests -p "test_prediction_pipeline.py" -v
+
+      - name: Build descriptive team features
+        id: team_features
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          mkdir -p football-data/manifests
+          set +e
+          python football-data/engine/build_team_strengths.py --print-summary 2>&1 | tee football-data/manifests/team_strength_build.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload team-feature diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-team-strength-diagnostics
+          path: |
+            football-data/manifests/team_strength_build.log
+            football-data/manifests/latest_team_strengths.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Build time-ordered training datasets
+        if: steps.team_features.outputs.status == '0'
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/engine/build_training_dataset.py --print-summary
+
+      - name: Aggregate postmatch audits
+        if: steps.team_features.outputs.status == '0'
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/engine/evaluate_audits.py --print-summary
+
+      - name: Validate complete platform
+        if: steps.team_features.outputs.status == '0'
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/engine/validate_platform.py --print-summary
+
+      - name: Commit deterministic generated artifacts
+        if: steps.team_features.outputs.status == '0'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/team_strengths football-data/training_datasets
+          git add football-data/manifests/latest_team_strengths.json
+          git add football-data/manifests/latest_training_datasets.json
+          git add football-data/manifests/platform_status.json
+          git add football-data/manifests/postmatch_evaluation_summary.json
+          if git diff --cached --quiet; then
+            echo "No generated football platform changes."
+            exit 0
+          fi
+          git commit -m "data(football): refresh team features and validation datasets"
+          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Enforce team-feature build result
+        if: steps.team_features.outputs.status != '0'
+        run: exit 1
