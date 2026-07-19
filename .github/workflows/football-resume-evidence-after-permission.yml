@@ -1,0 +1,196 @@
+name: Football Resume Evidence After Permission Fix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-resume-evidence-after-permission.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-resume-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resume-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify runtime lineup policy invariants before long validation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/runtime_bootstrap.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          policy = data.get("single_match_execution_policy") or {}
+          scope = str(policy.get("lineup_history_scope") or "")
+          if not scope.startswith("all_registered_competitions_same_target_season_only"):
+              raise SystemExit(f"runtime lineup policy invariant failed: lineup_history_scope={scope!r}")
+          for key in ("lineup_observation_gate", "lineup_season_reset", "lineup_refresh_policy"):
+              if not policy.get(key):
+                  raise SystemExit(f"runtime lineup policy invariant missing: {key}")
+          print("runtime lineup policy invariants preserved")
+          PY
+
+      - name: Apply current staged engineering migrations
+        run: |
+          python football-data/tools/apply_v462_grade_345_fixes.py
+          python football-data/tools/apply_v462_grade_345_fixes_r2.py
+          python football-data/tools/apply_v462_grade_345_fixes_r3.py
+          python football-data/tools/apply_v463_correct_fold_semantics.py
+
+      - name: Compile evidence modules
+        run: |
+          python -m py_compile \
+            football-data/engine/football_v460_engine.py \
+            football-data/engine/market_kl_projection_v463.py \
+            football-data/validation/nested_backtest_v460.py \
+            football-data/validation/oof_matrix_calibration_v461.py \
+            football-data/validation/competition_replay_receipts_v462.py \
+            football-data/validation/probable_lineup_route_v462.py \
+            football-data/validation/rolling_outer_validation_v463.py \
+            football-data/validation/final_chain_replay_v463.py \
+            football-data/validation/a_grade_diagnostics_v463.py \
+            football-data/validation/market_baseline_v463.py \
+            football-data/validation/lomo_value_validation_v463.py \
+            football-data/validation/a_grade_auditor_v463.py \
+            football-data/validation/total_goals_round2_v465.py \
+            football-data/validation/total_goals_promotion_readiness_v465.py
+
+      - name: Run formal-core tests
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m unittest football-data/tests/test_football_v460_engine.py -v
+          python -m unittest football-data/tests/test_nested_backtest_v460.py -v
+          python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
+          python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
+          python -m unittest football-data/tests/test_market_kl_projection_v463.py -v
+
+      - name: Rebuild corrected evidence chain
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/nested_backtest_v460.py --print-summary
+          python football-data/validation/oof_matrix_calibration_v461.py --print-summary
+          python football-data/validation/rolling_outer_validation_v463.py --print-summary
+          python football-data/validation/competition_replay_receipts_v462.py --print-summary
+          python football-data/validation/final_chain_replay_v463.py --print-summary
+          python football-data/validation/probable_lineup_route_v462.py --print-summary
+          python football-data/validation/a_grade_diagnostics_v463.py --print-summary
+          python football-data/validation/market_baseline_v463.py --print-summary
+          python football-data/validation/lomo_value_validation_v463.py --print-summary
+
+      - name: Run fail-closed A-grade audits
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+          sys.path.insert(0, "football-data/engine")
+          sys.path.insert(0, "football-data/validation")
+          from a_grade_auditor_v463 import audit_competition
+          from platform_core import load_registry
+          results = {}
+          for item in load_registry()["competitions"]:
+              cid = item["competition_id"]
+              result = audit_competition(cid, write=True)
+              results[cid] = {
+                  "promotion_status": result["promotion_status"],
+                  "failed_checks": result["failed_checks"],
+              }
+          print(json.dumps(results, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Run seven-domain total-goals round2
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/total_goals_round2_v465.py --print-summary
+
+      - name: Refresh first-round promotion readiness
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/total_goals_promotion_readiness_v465.py --print-summary
+
+      - name: Synchronize runtime bootstrap hashes and corrected evidence paths
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          bootstrap_path = Path("football-data/manifests/runtime_bootstrap.json")
+          core_path = Path("football-data/manifests/formal_core_v460_status.json")
+          calibration_path = Path("football-data/manifests/oof_matrix_calibration_v461_status.json")
+          bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+          core = json.loads(core_path.read_text(encoding="utf-8"))
+          calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+          bootstrap["formal_core"]["expected_engine_sha256"] = core["engine_sha256"]
+          bootstrap.setdefault("oof_matrix_calibration", {})["expected_calibration_code_sha256"] = calibration["calibration_code_sha256"]
+          bootstrap["a_grade_evidence_v463"] = {
+              "rolling_outer_manifest": "football-data/manifests/rolling_outer_v463_status.json",
+              "final_chain_replay_manifest": "football-data/manifests/final_chain_replay_v463_status.json",
+              "probable_lineup_manifest": "football-data/manifests/probable_lineup_v462_status.json",
+              "diagnostics_manifest": "football-data/manifests/a_grade_diagnostics_v463_status.json",
+              "market_baseline_manifest": "football-data/manifests/market_baseline_v463_status.json",
+              "lomo_value_manifest": "football-data/manifests/lomo_value_v463_status.json",
+              "eligibility_report_root": "football-data/validation/reports/a_grade_eligibility_v463",
+              "policy": "fail_closed_no_automatic_A_receipt"
+          }
+          bootstrap["market_coordination_challenger_v463"] = {
+              "runtime_path": "football-data/engine/market_kl_projection_v463.py",
+              "formal_weight": 0,
+              "activation": "requires timestamped synchronized historical validation and CURRENT-compliant promotion",
+              "lomo_policy": "target market must be excluded from the projection used to qualify that market's value"
+          }
+          bootstrap_path.write_text(json.dumps(bootstrap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Recheck runtime lineup policy invariants after validation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/runtime_bootstrap.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          policy = data.get("single_match_execution_policy") or {}
+          scope = str(policy.get("lineup_history_scope") or "")
+          if not scope.startswith("all_registered_competitions_same_target_season_only"):
+              raise SystemExit(f"runtime lineup policy invariant failed after validation: lineup_history_scope={scope!r}")
+          for key in ("lineup_observation_gate", "lineup_season_reset", "lineup_refresh_policy"):
+              if not policy.get(key):
+                  raise SystemExit(f"runtime lineup policy invariant missing after validation: {key}")
+          print("runtime lineup policy invariants preserved after validation")
+          PY
+
+      - name: Refresh platform status
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/engine/validate_platform.py --print-summary
+
+      - name: Commit validated evidence to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No validated evidence changes to commit."
+            exit 0
+          fi
+          git commit -m "model(football): resume and persist validated evidence after permission fix"
+          git pull --rebase origin main
+          git push origin HEAD:main
