@@ -1,0 +1,164 @@
+{
+  "schema_version": "V4.6.3",
+  "purpose": "Source hierarchy and independence rules for filling historical lineup/injury and synchronized market evidence without fabricating point-in-time data.",
+  "lineup_sources": [
+    {
+      "source_id": "official_match_report",
+      "source_group": "official_competition_or_club",
+      "priority": 1,
+      "authority": "primary",
+      "access": "public_web",
+      "accepted_fields": ["kickoff_utc", "team", "starters", "formation", "coach", "source_url"],
+      "notes": "Competition or club match sheets are preferred when available. A completed-match official XI may be used as the validation label for later point-in-time forecasts because it was known after that match and before future targets."
+    },
+    {
+      "source_id": "sportmonks_lineups",
+      "source_group": "sportmonks",
+      "priority": 2,
+      "authority": "licensed_provider",
+      "access": "api_token",
+      "secret_env": "SPORTMONKS_API_TOKEN",
+      "documentation": "https://docs.sportmonks.com/v3/tutorials-and-guides/tutorials/lineups-and-formations",
+      "accepted_fields": ["fixture_id", "kickoff_utc", "team", "starters", "formation", "sidelined", "lineup_confirmed", "source_observed_at"]
+    },
+    {
+      "source_id": "transfermarkt_datasets_lineups",
+      "source_group": "transfermarkt_datasets",
+      "priority": 3,
+      "authority": "open_curated_dataset",
+      "access": "public_dataset",
+      "documentation": "https://github.com/dcaribou/transfermarkt-datasets",
+      "license": "CC0-1.0",
+      "coverage": "40_plus_competitions_with_game_lineups",
+      "accepted_fields": ["game_id", "competition_id", "club_id", "player_id", "lineup_type", "formation"],
+      "notes": "Use as an independent historical lineup source; provenance remains Transfermarkt-derived and must not be mistaken for an official match sheet."
+    },
+    {
+      "source_id": "api_football_lineups",
+      "source_group": "api_football",
+      "priority": 4,
+      "authority": "licensed_provider",
+      "access": "api_key",
+      "secret_env": "API_FOOTBALL_KEY",
+      "documentation": "https://www.api-football.com/documentation-beta",
+      "accepted_fields": ["fixture_id", "team", "formation", "start_xi", "substitutes", "coach"]
+    },
+    {
+      "source_id": "statsbomb_open_lineups",
+      "source_group": "statsbomb_open",
+      "priority": 5,
+      "authority": "open_research_data",
+      "access": "public_github",
+      "documentation": "https://github.com/statsbomb/open-data",
+      "coverage": "limited_competitions_only",
+      "accepted_fields": ["match_id", "lineups"]
+    },
+    {
+      "source_id": "espn_match_lineups",
+      "source_group": "espn",
+      "priority": 6,
+      "authority": "public_match_page",
+      "access": "public_web",
+      "documentation": "https://www.espn.com/soccer/",
+      "coverage": "broad_but_match_page_dependent",
+      "accepted_fields": ["game_id", "competition", "formation", "starters", "substitutes"],
+      "notes": "Use primarily as an independent cross-check. Preserve the exact match URL and retrieval timestamp."
+    },
+    {
+      "source_id": "fbref_worldfootballr_lineups",
+      "source_group": "fbref",
+      "priority": 7,
+      "authority": "public_statistics_site",
+      "access": "public_web",
+      "documentation": "https://jaseziv.github.io/worldfootballR/reference/get_match_lineups.html",
+      "accepted_fields": ["match_url", "home_lineup", "away_lineup"],
+      "notes": "Secondary cross-check only; collector must respect source access rules and preserve the match URL."
+    }
+  ],
+  "market_sources": [
+    {
+      "source_id": "the_odds_api_historical",
+      "source_group": "the_odds_api",
+      "priority": 1,
+      "authority": "licensed_provider",
+      "access": "paid_api_key",
+      "secret_env": "THE_ODDS_API_KEY",
+      "documentation": "https://the-odds-api.com/historical-odds-data/",
+      "historical_snapshots": true,
+      "snapshot_policy": "closest snapshot at or before requested timestamp",
+      "known_history": "available from 2020 for supported sports; interval historically 10 minutes, 5 minutes from September 2022",
+      "markets": ["h2h", "spreads", "totals"],
+      "caveat": "Soccer spread/total availability varies by bookmaker and period; never infer missing AH/OU."
+    },
+    {
+      "source_id": "betfair_historical_exchange",
+      "source_group": "betfair_exchange",
+      "priority": 2,
+      "authority": "official_exchange_history",
+      "access": "registered_customer_download_or_api",
+      "documentation": "https://historicdata.betfair.com/",
+      "historical_snapshots": true,
+      "known_history": "detailed time-stamped exchange market data from 2015",
+      "markets": ["match_odds", "asian_handicap_if_listed", "over_under_if_listed"],
+      "caveat": "Exchange prices are not bookmaker quotes. Keep source_group distinct and do not treat as a duplicate independent bookmaker."
+    },
+    {
+      "source_id": "oddspapi_historical",
+      "source_group": "oddspapi",
+      "priority": 3,
+      "authority": "licensed_provider",
+      "access": "api_key",
+      "secret_env": "ODDSPAPI_KEY",
+      "documentation": "https://oddspapi.io/en/docs/get-historical-odds",
+      "historical_snapshots": true,
+      "markets": ["provider_supported_markets"],
+      "caveat": "Use only after field-level verification of returned timestamps, bookmaker identity and market labels."
+    },
+    {
+      "source_id": "sportmonks_prematch_odds",
+      "source_group": "sportmonks",
+      "priority": 4,
+      "authority": "licensed_provider",
+      "access": "api_token",
+      "secret_env": "SPORTMONKS_API_TOKEN",
+      "documentation": "https://docs.sportmonks.com/v3/tutorials-and-guides/tutorials/odds-and-predictions/pre-match-odds",
+      "markets": ["3Way Result", "Over/Under", "Asian Handicap"],
+      "timestamp_fields": ["created_at", "updated_at", "latest_bookmaker_update"],
+      "caveat": "A returned pre-match odd with update timestamps is supporting evidence, not automatically a historical time series."
+    },
+    {
+      "source_id": "football_data_closing",
+      "source_group": "football_data_co_uk",
+      "priority": 9,
+      "authority": "historical_results_and_closing_odds",
+      "access": "public_csv",
+      "documentation": "https://www.football-data.co.uk/data.php",
+      "historical_snapshots": false,
+      "usage": "retrospective_market_reference_only",
+      "a_grade_eligible": false,
+      "caveat": "Closing/opening columns without original quote timestamps may not be used as a point-in-time synchronized A-grade market snapshot."
+    }
+  ],
+  "verification_policy": {
+    "lineup_label": {
+      "minimum_independent_source_groups_for_verified": 2,
+      "official_plus_one_provider_is_verified": true,
+      "single_provider_status": "usable_label_with_warning",
+      "required": ["competition_id", "season", "kickoff_utc", "team", "exactly_11_unique_starters", "source_group", "source_url_or_provider_id"]
+    },
+    "market_snapshot": {
+      "required_markets": ["1x2", "asian_handicap", "over_under"],
+      "same_bookmaker_preferred": true,
+      "max_market_skew_seconds": 900,
+      "snapshot_must_be_at_or_before_freeze": true,
+      "minimum_independent_provider_groups_for_crosscheck": 2,
+      "provider_crosscheck_is_quality_control_not_probability_averaging": true,
+      "duplicate_rule": "Quotes from the same bookmaker carried by multiple aggregators are one economic source, not multiple independent markets.",
+      "closing_only_without_original_timestamp": "retrospective_reference_only"
+    },
+    "conflict_policy": {
+      "lineup": "If independent sources disagree on any starter, preserve both records, mark conflict, and do not promote that match to verified lineup evidence until resolved by an official match sheet or third independent source.",
+      "market": "If line, side labels, bookmaker identity or timestamps conflict materially, exclude the snapshot from A-grade/LOMO evidence; do not repair values manually."
+    }
+  }
+}

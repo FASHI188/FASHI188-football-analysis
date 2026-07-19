@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.7",
+  "purpose": "Cross-conversation runtime asset bootstrap for the football project. This file is not a formal rule source.",
+  "rule_authority": "ChatGPT project File Library: the unique filename containing CURRENT_唯一正式规则",
+  "runtime_authority": {
+    "provider": "GitHub",
+    "repository": "FASHI188/FASHI188-football-analysis",
+    "ref": "main"
+  },
+  "formal_core": {
+    "engine_path": "football-data/engine/football_v460_engine.py",
+    "single_match_runner_path": "football-data/engine/run_formal_prediction_actionable.py",
+    "live_single_match_runner_path": "football-data/engine/run_formal_prediction_live.py",
+    "base_single_match_runner_path": "football-data/engine/run_formal_prediction_v460.py",
+    "status_manifest_path": "football-data/manifests/formal_core_v460_status.json",
+    "competition_registry_path": "football-data/config/platform_registry.json",
+    "config_path": "football-data/config/formal_core_v460.json",
+    "model_root": "football-data/models/formal_core_v460",
+    "expected_engine_sha256": "c0e7da0b7e9f0fca550cf7ce15e27a70fb556279aaec54e3df2b17eb59daa29f",
+    "expected_operational_status": "NON_A_FORMAL_CORE_AVAILABLE",
+    "expected_competition_count": 17,
+    "implementation_revision": "V4.6.2-core-2-grade345"
+  },
+  "oof_matrix_calibration": {
+    "runtime_path": "football-data/engine/oof_matrix_calibration.py",
+    "builder_path": "football-data/validation/oof_matrix_calibration_v461.py",
+    "status_manifest_path": "football-data/manifests/oof_matrix_calibration_v461_status.json",
+    "artifact_filename": "oof_matrix_calibrator.json",
+    "expected_operational_status": "OOF_MATRIX_CALIBRATOR_AVAILABLE",
+    "application_policy": "Apply automatically only when a replay-safe target-season artifact is enabled, its code/engine/source-report/calibration-report hashes match, and its training horizon is strictly before the prediction cutoff; otherwise preserve the base formal core and mark calibration unavailable.",
+    "guardrail": "Use a learned full-matrix temperature only when prior rolling OOF evidence passes joint Log Score, 1X2 Brier/RPS, total-goals RPS, and probability-conservation guardrails; otherwise freeze an audited identity calibration T=1.",
+    "expected_calibration_code_sha256": "6c343aaad36cab743217d5b1ef23f4d5af07205d4d368d874d6cf1ce20976749"
+  },
+  "single_match_execution_policy": {
+    "decision_freeze": "Routine pre-match decisions are intended to be actionable at least about one hour before kickoff. Freeze the analysis at the user's question time, not at official-lineup publication time, so the user retains time to place an eligible wager under local purchase constraints.",
+    "market_freeze": "For routine pre-match single-match analysis, the only formal market freeze is the current question-time market. Use the 1X2/AH/OU prices available at the user's question time. Do not wait for later or closing prices unless the user explicitly asks for a re-freeze. Historical synchronized odds are not required to use current question-time prices as the match market input; missing historical market only blocks historical market calibration, A-grade promotion and related research claims.",
+    "handicap_market": "The current question-time handicap market is a mandatory analysis surface whenever a line is available. Capture the handicap line and both-side prices at the user's question time. Use the final calibrated unified score matrix to settle that exact handicap line score by score and report win/push/loss or half-win/half-loss probabilities as applicable. If both tradable prices are available, compare them with matrix-implied fair prices; if price evidence or independent LOMO value validation is insufficient, keep the directional handicap analysis but output No Bet rather than suppressing the handicap market.",
+    "handicap_output": "In every routine single-match A-H report, include a dedicated current-handicap subsection in C or G: frozen line, question-time prices, matrix-implied settlement probabilities, fair price where legally computable, main handicap direction or abstention, and the invalidation condition for a material line move. Handicap analysis must come from the same final unified score matrix as 1X2, total goals and score probabilities.",
+    "lineup_route": "For every registered competition, probable-lineup inference uses ONLY the target competition's current target season. Older-season lineup history has active weight 0. Before the new target season has started, do not fall back to the prior season's starting-XI history. Use current-season roster, current injuries/suspensions and current team news only, and mark lineup confidence accordingly. Once the new season starts, rebuild personnel statistics from zero using only actual observed starting XIs from current-season matches that have already kicked off before the freeze. Future or not-yet-started fixtures and predicted XIs never enter observed lineup history.",
+    "lineup_history_scope": "all_registered_competitions_same_target_season_only; older seasons are archive/research only with active weight 0.",
+    "lineup_observation_gate": "A fixture contributes personnel history only after its kickoff has occurred and its actual starting XI is independently verified. Scheduled or not-yet-started fixtures contribute zero lineup-history observations. A predicted XI is never written back as a true observed XI. The current target match's own XI cannot be used to reconstruct its pre-match forecast.",
+    "lineup_season_reset": "At the first kickoff of each new target season, start a fresh personnel-history ledger for that competition/team season. Accumulate verified actual starting XIs match by match from that season only. Do not carry prior-season starter counts, frequencies or recency weights into the new season.",
+    "lineup_refresh_policy": "At each question-time freeze, recompute probable-lineup statistics from the current target season's verified actual starting XIs with kickoff strictly earlier than the freeze. Newly started matches become eligible only after actual XI verification and only for later fixtures. Deduplicate by competition, season, fixture and team.",
+    "actionability_priority": "Do not invalidate an otherwise runnable pre-match analysis merely because official lineups, final closing odds or late-breaking confirmations are not yet available. Use the best verifiable information available at the question-time freeze and clearly label estimated lineup uncertainty without turning it into a blanket unavailable result.",
+    "live_result_overlay": "If the persisted processed dataset lags completed matches that finished before the freeze time, fetch and verify all missing completed results from official or high-quality current sources, create an audited question-time live-result overlay, merge those verified matches into the same-season history for this calculation, and continue. Do not fail solely because the GitHub persisted dataset is stale. Fail only when the missing completed matches cannot be identified and verified, when sources conflict materially, or when the overlay cannot be made point-in-time safe.",
+    "same_day_live_overlay": "For a near-current question-time freeze, a missing match completed earlier on the same calendar day may enter the live overlay only when completed_at_utc is explicitly verified and strictly earlier than the freeze. Historical replay remains fail-closed for same-day date-only rows.",
+    "overlay_audit": "Every live-result overlay must record competition, season, home team, away team, result, completion date/time when available, source, observed_at, freeze_time, and whether the match was absent from the persisted dataset. The overlay is calculation input only unless separately committed through the normal ingestion pipeline.",
+    "no_double_count": "Before merging a live-result overlay, deduplicate against persisted same-season history by season, date, canonical home team and canonical away team."
+  },
+  "startup_contract": [
+    "Read the unique CURRENT rule file from the project File Library first.",
+    "Do not search the File Library for engine code, model artifacts, competition profiles, or validation reports.",
+    "Fetch this runtime bootstrap from GitHub, then fetch the formal-core status manifest, OOF matrix calibration status manifest, and competition registry.",
+    "Verify the engine path exists and the engine SHA256 matches the formal-core status manifest before declaring the formal core operational.",
+    "Use football-data/engine/run_formal_prediction_actionable.py as the routine question-time single-match runner. It layers actionable freeze handling over the live-result overlay runner while preserving the replay-safe base implementation.",
+    "Map NON_A_FORMAL_CORE_AVAILABLE to runnable non-A formal core; never map it to unavailable solely because there is no A-grade receipt.",
+    "A missing A-grade receipt only caps grade; it does not disable the NB direct-total, Beta-Binomial conditional-goal-difference, unified score-matrix core, or an independently validated OOF calibration artifact.",
+    "For formal single-match execution, require an explicit target season so a new-season fixture cannot silently fall back to the previous completed season.",
+    "Treat the user's question time as the pre-match decision freeze. Do not delay the primary answer waiting for official lineups or closing odds when doing so would leave insufficient time for the user to act before local purchase cutoffs.",
+    "At question time, reconcile persisted current-season results against official/current completed results before the freeze. If persisted data are stale but every missing completed match can be identified and verified, use an audited live-result overlay and continue rather than declaring the whole match unavailable.",
+    "For near-current live freezes, same-day completed matches may be overlaid only with a verified completion timestamp before the freeze; historical replay remains conservative.",
+    "For routine pre-match analysis, use the current question-time 1X2/AH/OU prices as the market freeze. Do not require historical synchronized market archives to activate the current market input, and do not wait for closing prices unless explicitly requested.",
+    "Always include the current question-time handicap line in the formal analysis when a line is available. Settle that exact line from the final unified score matrix and show its win/push/loss or split-settlement probabilities. Missing validated EV evidence may force No Bet, but must not suppress the handicap direction itself.",
+    "For every registered competition, probable-lineup history is reset at the start of each target season. Use only verified actual starting XIs from current-season matches whose kickoff is strictly earlier than the freeze. Do not use prior-season starter history, future fixtures, not-yet-started matches, or predicted XIs as observed personnel history.",
+    "If the target season has not started, do not fall back to old-season lineup history. Use only current roster/injury/suspension/team-news evidence and downgrade lineup confidence rather than contaminating the new season with stale personnel statistics.",
+    "The question-time decision freeze is valid with a supported probable lineup. Do not automatically require a new freeze merely because official lineups are later published; re-run only on user request or a major confirmed change before the user's action deadline.",
+    "Do not convert lineup uncertainty or non-closing market prices into a blanket unavailable result when the base core and question-time inputs are otherwise runnable.",
+    "When a competition has OOF_MATRIX_CALIBRATOR_AVAILABLE and the artifact freshness and point-in-time gates pass, the formal single-match runner applies that calibrator automatically and rebuilds every marginal from the calibrated unified matrix.",
+    "An OOF calibration artifact may use identity_guardrail mode; this still means the calibration gate ran and prior rolling validation found no safe benefit from changing the raw matrix.",
+    "Market coordination, OOF calibration, LOMO EV, lineup, and challenge modules remain independent gates and must not disable the base formal core when they are unavailable.",
+    "Only mark the base formal core unavailable when GitHub runtime assets cannot be accessed after retry, required files are absent, engine/report/artifact hashes mismatch, the competition is not registered, verified point-in-time current-season history cannot be constructed even after live-result overlay, or current-season sample gates fail.",
+    "A GitHub access failure is runtime_asset_inaccessible, not evidence that the model itself is unregistered or nonexistent."
+  ],
+  "status_mapping": {
+    "NON_A_FORMAL_CORE_AVAILABLE": {
+      "registration_status": "正式中心",
+      "default_runtime_status": "通过或降级",
+      "a_grade": false,
+      "total_goals_core": "runnable",
+      "conditional_goal_difference_core": "runnable",
+      "unified_score_matrix_core": "runnable"
+    },
+    "OOF_MATRIX_CALIBRATOR_AVAILABLE": {
+      "registration_status": "有数据时正式启用",
+      "default_runtime_status": "通过",
+      "full_matrix_calibration": "runnable",
+      "independent_rolling_oof_validation": true
+    }
+  },
+  "a_grade_support": {
+    "probable_lineup_route": "football-data/validation/probable_lineup_route_v462.py",
+    "probable_lineup_status_manifest": "football-data/manifests/probable_lineup_v462_status.json",
+    "independent_replay_builder": "football-data/validation/competition_replay_receipts_v462.py",
+    "independent_replay_status_manifest": "football-data/manifests/replay_v462_status.json",
+    "total_goals_rps_policy": "Nested time-ordered candidate selection may shrink the venue-pair direct-total signal toward the competition total. Promotion remains fail-closed unless the paired block-bootstrap total-goals RPS CI upper bound is <= 0.",
+    "outer_time_fold_policy": "Each completely unseen outer season is split into two disjoint chronological evaluation folds after hyperparameters are selected only from prior seasons; OOF calibration remains season-routed and deduplicated by outer season."
+  },
+  "a_grade_evidence_v463": {
+    "rolling_outer_manifest": "football-data/manifests/rolling_outer_v463_status.json",
+    "final_chain_replay_manifest": "football-data/manifests/final_chain_replay_v463_status.json",
+    "probable_lineup_manifest": "football-data/manifests/probable_lineup_v462_status.json",
+    "diagnostics_manifest": "football-data/manifests/a_grade_diagnostics_v463_status.json",
+    "market_baseline_manifest": "football-data/manifests/market_baseline_v463_status.json",
+    "lomo_value_manifest": "football-data/manifests/lomo_value_v463_status.json",
+    "eligibility_report_root": "football-data/validation/reports/a_grade_eligibility_v463",
+    "policy": "fail_closed_no_automatic_A_receipt"
+  },
+  "market_coordination_challenger_v463": {
+    "runtime_path": "football-data/engine/market_kl_projection_v463.py",
+    "formal_weight": 0,
+    "activation": "requires timestamped synchronized historical validation and CURRENT-compliant promotion",
+    "lomo_policy": "target market must be excluded from the projection used to qualify that market's value"
+  },
+  "migration": {
+    "source_repository": "FASHI188/HHH1",
+    "target_repository": "FASHI188/FASHI188-football-analysis",
+    "history_migrated": false,
+    "mode": "clean_snapshot",
+    "workflows_migrated_separately": true
+  }
+}
