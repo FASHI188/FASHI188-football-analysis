@@ -1,0 +1,58 @@
+name: Football V4.6.4 Total Goals Challenger
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/total_goals_dynamic_challenger_v464.py"
+      - "football-data/research/V4.6.4_total_goals_dynamic_research.md"
+      - ".github/workflows/football-total-goals-v464.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-total-goals-v464-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-total-goals-challenger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile challenger
+        run: python -m py_compile football-data/validation/total_goals_dynamic_challenger_v464.py
+
+      - name: English Premier League smoke validation
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/total_goals_dynamic_challenger_v464.py --competition ENG_PremierLeague --print-summary
+
+      - name: Full 17-domain total-goals validation
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/total_goals_dynamic_challenger_v464.py --print-summary
+
+      - name: Commit challenger reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/validation/reports/total_goals_dynamic_v464 football-data/manifests/total_goals_dynamic_v464_status.json
+          if git diff --cached --quiet; then
+            echo "No challenger report changes to commit."
+            exit 0
+          fi
+          git commit -m "model(football): validate V4.6.4 dynamic total-goals challenger"
+          git push origin HEAD:main
