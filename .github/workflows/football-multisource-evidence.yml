@@ -1,0 +1,57 @@
+name: Football Multi-source Evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/multisource_evidence_v463.json"
+      - "football-data/validation/multisource_evidence_validator_v463.py"
+      - "football-data/evidence/lineups/**"
+      - "football-data/evidence/markets/**"
+      - ".github/workflows/football-multisource-evidence.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-multisource-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+
+      - name: Compile validator
+        run: python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+
+      - name: Validate normalized multi-source evidence
+        run: python football-data/validation/multisource_evidence_validator_v463.py --print-summary
+
+      - name: Commit evidence manifest and reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/multisource_evidence_v463_status.json football-data/validation/reports/multisource_evidence_v463/summary.json
+          if git diff --cached --quiet; then
+            echo "No evidence status changes to commit."
+            exit 0
+          fi
+          git commit -m "data(football): refresh multi-source evidence status"
+          git pull --rebase origin main
+          git push origin HEAD:main
