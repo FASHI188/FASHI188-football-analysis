@@ -49,6 +49,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+
       - name: Run integrity tests
         run: python -m unittest discover -s football-data/tests -p "test_ingest_batch_002*.py" -v
 
@@ -100,8 +103,8 @@ jobs:
               raise SystemExit("K League 2026 current results are missing")
           PY
 
-      - name: Commit snapshots or diagnostics
-        if: always()
+      - name: Commit validated batch-002 snapshots only
+        if: steps.ingest.outputs.status == '0'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -121,7 +124,7 @@ jobs:
             git add football-data/manifests/latest_ingestion_batch_002.json
           fi
           if git diff --cached --quiet; then
-            echo "No batch 002 data or diagnostics changes."
+            echo "No batch 002 data changes."
             exit 0
           fi
           git commit -m "data(football): record batch 002 ingestion"
@@ -133,3 +136,5 @@ jobs:
         if: steps.ingest.outputs.status != '0'
         shell: bash
         run: exit 1
+
+# V4.7.2 maintenance trigger: restore batch-002 domains after batch-001 root-replacement defect.
