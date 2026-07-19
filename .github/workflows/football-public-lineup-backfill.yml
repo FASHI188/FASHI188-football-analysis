@@ -1,0 +1,56 @@
+name: Football Public Lineup Backfill
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-public-lineup-backfill.yml"
+      - "football-data/ingestion/public_lineup_backfill_v463.py"
+      - "football-data/config/multisource_evidence_v463.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-public-lineup-backfill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backfill-lineups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile collectors and validator
+        run: |
+          python -m py_compile football-data/ingestion/public_lineup_backfill_v463.py
+          python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+
+      - name: Backfill Transfermarkt-datasets and StatsBomb Open lineups
+        run: python football-data/ingestion/public_lineup_backfill_v463.py --source all
+
+      - name: Validate independent-source consistency
+        run: python football-data/validation/multisource_evidence_validator_v463.py --print-summary
+
+      - name: Commit normalized public evidence and validation status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/evidence/lineups football-data/manifests/multisource_evidence_v463_status.json football-data/validation/reports/multisource_evidence_v463/summary.json
+          if git diff --cached --quiet; then
+            echo "No public lineup evidence changes to commit."
+            exit 0
+          fi
+          git commit -m "data(football): backfill public multi-source lineup evidence"
+          git push origin HEAD:main
