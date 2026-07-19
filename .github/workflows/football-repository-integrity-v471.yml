@@ -10,8 +10,12 @@ on:
       - "football-data/engine/**"
       - "football-data/validation/**"
       - "football-data/config/**"
+      - "football-data/raw/**"
+      - "football-data/processed/**"
+      - "football-data/league_profiles/**"
       - "football-data/manifests/runtime_bootstrap.json"
       - "football-data/manifests/formal_core_v460_status.json"
+      - "football-data/manifests/repository_reconciliation_v472_status.json"
   pull_request:
     branches: [main]
     paths:
@@ -20,8 +24,12 @@ on:
       - "football-data/engine/**"
       - "football-data/validation/**"
       - "football-data/config/**"
+      - "football-data/raw/**"
+      - "football-data/processed/**"
+      - "football-data/league_profiles/**"
       - "football-data/manifests/runtime_bootstrap.json"
       - "football-data/manifests/formal_core_v460_status.json"
+      - "football-data/manifests/repository_reconciliation_v472_status.json"
   schedule:
     - cron: "23 4 * * 1"
 
@@ -48,25 +56,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compile integrity auditor
-        run: python -m py_compile football-data/validation/repository_integrity_v471.py
+      - name: Compile integrity auditors
+        run: |
+          python -m py_compile football-data/validation/repository_integrity_v471.py
+          python -m py_compile football-data/validation/repository_asset_topology_v472.py
 
-      - name: Run repository-wide preflight and write receipt
-        run: python football-data/validation/repository_integrity_v471.py --write-receipt --print-summary
+      - name: Run repository-wide preflight and write receipts
+        run: |
+          python football-data/validation/repository_integrity_v471.py --write-receipt --print-summary
+          python football-data/validation/repository_asset_topology_v472.py --write-receipt --print-summary
 
-      - name: Persist integrity receipt
+      - name: Persist integrity receipts
         if: github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add football-data/manifests/repository_integrity_v471_status.json
+          git add football-data/manifests/repository_asset_topology_v472_status.json
           if git diff --cached --quiet; then
             echo "No repository-integrity receipt changes."
           else
-            git commit -m "audit(football): persist V4.7.1 repository integrity receipt [skip ci]"
+            git commit -m "audit(football): persist repository integrity and asset topology receipts [skip ci]"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
 
-      - name: Enforce fail-closed integrity gate
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+      - name: Enforce fail-closed integrity gates
+        run: |
+          python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+          python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
