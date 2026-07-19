@@ -1,0 +1,53 @@
+name: Football V4.6.5 Structure and Cross-League Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/structure_and_crossleague_audit_v465.py"
+      - "football-data/config/platform_registry.json"
+      - ".github/workflows/football-structure-crossleague-v465.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-structure-crossleague-v465-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit
+        run: python -m py_compile football-data/validation/structure_and_crossleague_audit_v465.py
+
+      - name: Run structure and cross-league audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/structure_and_crossleague_audit_v465.py --print-summary
+
+      - name: Commit audit reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/validation/reports/structure_crossleague_v465 football-data/manifests/structure_crossleague_v465_status.json
+          if git diff --cached --quiet; then
+            echo "No structure audit report changes to commit."
+            exit 0
+          fi
+          git commit -m "audit(football): refresh V4.6.5 structure evidence"
+          git push origin HEAD:main
