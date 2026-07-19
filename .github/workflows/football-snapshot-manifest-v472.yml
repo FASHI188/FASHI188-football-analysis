@@ -1,0 +1,51 @@
+name: Football V4.7.2 Repository Snapshot Manifest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-snapshot-manifest-v472.yml"
+      - "football-data/validation/repository_snapshot_manifest_v472.py"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-snapshot-manifest-v472-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-snapshot-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile manifest builder
+        run: python -m py_compile football-data/validation/repository_snapshot_manifest_v472.py
+
+      - name: Build deterministic repository snapshot manifest
+        run: python football-data/validation/repository_snapshot_manifest_v472.py
+
+      - name: Persist manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/repository_snapshot_v472.json
+          if git diff --cached --quiet; then
+            echo "No snapshot manifest change."
+            exit 0
+          fi
+          git commit -m "audit(football): persist V4.7.2 repository snapshot [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
