@@ -20,14 +20,11 @@ on:
       - "football-data/validation/nested_backtest_v460.py"
       - "football-data/validation/oof_matrix_calibration_v461.py"
       - "football-data/validation/promotion_policy.json"
+      - "football-data/validation/repository_integrity_v471.py"
       - "football-data/tests/test_football_v460_engine.py"
       - "football-data/tests/test_nested_backtest_v460.py"
       - "football-data/tests/test_oof_matrix_calibration_v461.py"
       - "football-data/tests/test_v462_bottom_invariants.py"
-      - "football-data/tools/apply_v462_bottom_fixes.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r2.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r3.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r4.py"
       - "football-data/processed/**"
       - ".github/workflows/football-formal-core-v460.yml"
   pull_request:
@@ -42,13 +39,11 @@ on:
       - "football-data/validation/nested_backtest_v460.py"
       - "football-data/validation/oof_matrix_calibration_v461.py"
       - "football-data/validation/promotion_policy.json"
+      - "football-data/validation/repository_integrity_v471.py"
       - "football-data/tests/test_football_v460_engine.py"
       - "football-data/tests/test_nested_backtest_v460.py"
       - "football-data/tests/test_oof_matrix_calibration_v461.py"
       - "football-data/tests/test_v462_bottom_invariants.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r2.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r3.py"
-      - "football-data/tools/apply_v462_bottom_fixes_r4.py"
       - "football-data/processed/**"
       - ".github/workflows/football-formal-core-v460.yml"
   schedule:
@@ -78,21 +73,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Apply pending V4.6.2 bottom migration
-        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes.py') != '' }}
-        run: python football-data/tools/apply_v462_bottom_fixes.py
-
-      - name: Apply V4.6.2 r2 sample and audit-chain migration
-        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r2.py') != '' }}
-        run: python football-data/tools/apply_v462_bottom_fixes_r2.py
-
-      - name: Apply V4.6.2 r3 question-time data freshness gate
-        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r3.py') != '' }}
-        run: python football-data/tools/apply_v462_bottom_fixes_r3.py
-
-      - name: Apply V4.6.2 r4 model-artifact freshness binding
-        if: ${{ hashFiles('football-data/tools/apply_v462_bottom_fixes_r4.py') != '' }}
-        run: python football-data/tools/apply_v462_bottom_fixes_r4.py
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
 
       - name: Run formal-core tests
         env:
@@ -170,14 +152,6 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/engine/validate_platform.py --print-summary
 
-      - name: Remove completed one-off migration assets
-        run: |
-          rm -f football-data/tools/apply_v462_bottom_fixes.py
-          rm -f football-data/tools/apply_v462_bottom_fixes_r2.py
-          rm -f football-data/tools/apply_v462_bottom_fixes_r3.py
-          rm -f football-data/tools/apply_v462_bottom_fixes_r4.py
-          rm -f football-data/manifests/v462_migration_status.txt
-
       - name: Commit validated runtime, model and calibration artifacts
         if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
         shell: bash
@@ -185,11 +159,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -- .github/workflows/football-formal-core-v460.yml
-          git checkout -- .github/workflows/football-v462-bottom-fixes.yml 2>/dev/null || true
           git add -A
           if git diff --cached --quiet; then
             echo "No formal-core, runtime or OOF calibration changes."
             exit 0
           fi
           git commit -m "model(football): harden V4.6.2 point-in-time core and OOF calibration"
-          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
+          git pull --rebase origin "$branch"
+          git push origin HEAD:"$branch"
