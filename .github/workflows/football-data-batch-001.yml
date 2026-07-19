@@ -1,0 +1,122 @@
+name: Football Data Batch 001
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict_extra:
+        description: "Fail when Sweden/Switzerland current snapshots are unavailable"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/league_sources_batch_001.json"
+      - "football-data/engine/ingest_batch_001.py"
+      - "football-data/engine/ingest_batch_001_alias_adapter.py"
+      - "football-data/tests/test_ingest_batch_001.py"
+      - "football-data/manifests/bootstrap_request.json"
+      - ".github/workflows/football-data-batch-001.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/config/league_sources_batch_001.json"
+      - "football-data/engine/ingest_batch_001.py"
+      - "football-data/engine/ingest_batch_001_alias_adapter.py"
+      - "football-data/tests/test_ingest_batch_001.py"
+      - "football-data/manifests/bootstrap_request.json"
+      - ".github/workflows/football-data-batch-001.yml"
+  schedule:
+    - cron: "17 3 * * 1,4"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-data-batch-001-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run integrity tests
+        run: python -m unittest discover -s football-data/tests -p "test_*.py" -v
+
+      - name: Ingest and build league profiles
+        id: ingest
+        shell: bash
+        run: |
+          mkdir -p football-data/manifests
+          args=(--print-summary)
+          if [[ "${{ github.event.inputs.strict_extra || 'false' }}" == "true" ]]; then
+            args+=(--strict-extra)
+          fi
+          set +e
+          python football-data/engine/ingest_batch_001_alias_adapter.py "${args[@]}" 2>&1 | tee football-data/manifests/bootstrap_run.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify generated profiles
+        if: steps.ingest.outputs.status == '0'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("football-data")
+          manifest = json.loads((root / "manifests/latest_ingestion.json").read_text(encoding="utf-8"))
+          if manifest["summary"]["processed_leagues"] < 8:
+              raise SystemExit("fewer than eight required league profiles were generated")
+          for profile_path in sorted((root / "league_profiles").glob("*/profile.json")):
+              profile = json.loads(profile_path.read_text(encoding="utf-8"))
+              if abs(sum(profile["result_distribution"].values()) - 1.0) > 1e-6:
+                  raise SystemExit(f"result probabilities do not sum to one: {profile_path}")
+              if abs(sum(profile["total_goals_0_7plus"].values()) - 1.0) > 1e-6:
+                  raise SystemExit(f"total-goal probabilities do not sum to one: {profile_path}")
+          PY
+
+      - name: Commit snapshots or diagnostics
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -f football-data/manifests/bootstrap_run.txt ]]; then
+            git add -f football-data/manifests/bootstrap_run.txt
+          fi
+          for path in \
+            football-data/raw \
+            football-data/processed \
+            football-data/league_profiles \
+            football-data/manifests/latest_ingestion.json; do
+            if [[ -e "$path" ]]; then
+              git add "$path"
+            fi
+          done
+          if git diff --cached --quiet; then
+            echo "No football data or diagnostics changes."
+            exit 0
+          fi
+          git commit -m "data(football): record batch 001 bootstrap run"
+          git push origin HEAD:${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Enforce ingestion result
+        if: steps.ingest.outputs.status != '0'
+        shell: bash
+        run: exit 1
