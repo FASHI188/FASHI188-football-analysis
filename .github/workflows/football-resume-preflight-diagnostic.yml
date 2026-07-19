@@ -1,0 +1,118 @@
+name: Football Resume Preflight Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-resume-preflight-diagnostic.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run preflight diagnostics without stopping early
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          mkdir -p football-data/manifests
+          REPORT=football-data/manifests/resume_preflight_diagnostic.json
+          TMP=$(mktemp -d)
+
+          run_check() {
+            NAME="$1"
+            shift
+            echo "=== $NAME ==="
+            "$@" >"$TMP/$NAME.log" 2>&1
+            CODE=$?
+            printf '%s' "$CODE" >"$TMP/$NAME.code"
+            echo "$NAME exit=$CODE"
+          }
+
+          run_check migration_v462 python football-data/tools/apply_v462_grade_345_fixes.py
+          run_check migration_v462_r2 python football-data/tools/apply_v462_grade_345_fixes_r2.py
+          run_check migration_v462_r3 python football-data/tools/apply_v462_grade_345_fixes_r3.py
+          run_check migration_v463 python football-data/tools/apply_v463_correct_fold_semantics.py
+
+          run_check compile_core python -m py_compile football-data/engine/football_v460_engine.py
+          run_check compile_market_kl python -m py_compile football-data/engine/market_kl_projection_v463.py
+          run_check compile_nested python -m py_compile football-data/validation/nested_backtest_v460.py
+          run_check compile_oof python -m py_compile football-data/validation/oof_matrix_calibration_v461.py
+          run_check compile_replay python -m py_compile football-data/validation/competition_replay_receipts_v462.py
+          run_check compile_lineup python -m py_compile football-data/validation/probable_lineup_route_v462.py
+          run_check compile_rolling python -m py_compile football-data/validation/rolling_outer_validation_v463.py
+          run_check compile_final_replay python -m py_compile football-data/validation/final_chain_replay_v463.py
+          run_check compile_diagnostics python -m py_compile football-data/validation/a_grade_diagnostics_v463.py
+          run_check compile_market_baseline python -m py_compile football-data/validation/market_baseline_v463.py
+          run_check compile_lomo python -m py_compile football-data/validation/lomo_value_validation_v463.py
+          run_check compile_a_auditor python -m py_compile football-data/validation/a_grade_auditor_v463.py
+          run_check compile_round2 python -m py_compile football-data/validation/total_goals_round2_v465.py
+          run_check compile_readiness python -m py_compile football-data/validation/total_goals_promotion_readiness_v465.py
+
+          run_check test_engine python -m unittest football-data/tests/test_football_v460_engine.py -v
+          run_check test_nested python -m unittest football-data/tests/test_nested_backtest_v460.py -v
+          run_check test_oof python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
+          run_check test_invariants python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
+          run_check test_market_kl python -m unittest football-data/tests/test_market_kl_projection_v463.py -v
+
+          python - "$TMP" "$REPORT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          tmp = Path(sys.argv[1])
+          report_path = Path(sys.argv[2])
+          checks = {}
+          for code_path in sorted(tmp.glob("*.code")):
+              name = code_path.stem
+              code = int(code_path.read_text().strip())
+              log_path = tmp / f"{name}.log"
+              log = log_path.read_text(errors="replace") if log_path.exists() else ""
+              checks[name] = {
+                  "exit_code": code,
+                  "passed": code == 0,
+                  "log_tail": log[-6000:],
+              }
+          report = {
+              "schema_version": "V4.6.5-resume-preflight-diagnostic",
+              "all_passed": all(item["passed"] for item in checks.values()),
+              "failed_checks": [name for name, item in checks.items() if not item["passed"]],
+              "checks": checks,
+          }
+          report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps({"all_passed": report["all_passed"], "failed_checks": report["failed_checks"]}, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Commit diagnostic report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/resume_preflight_diagnostic.json
+          if git diff --cached --quiet; then
+            echo "No diagnostic changes to commit."
+            exit 0
+          fi
+          git commit -m "audit(football): persist resume preflight diagnostic"
+          # Migration probes may leave tracked files modified. The diagnostic report
+          # is already committed above, so discard only the remaining worktree noise
+          # before rebasing/pushing the report commit.
+          git reset --hard HEAD
+          git pull --rebase origin main
+          git push origin HEAD:main
