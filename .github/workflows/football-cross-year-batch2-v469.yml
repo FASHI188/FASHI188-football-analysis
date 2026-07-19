@@ -1,0 +1,62 @@
+name: Football V4.6.9 Cross-Year Batch2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-cross-year-batch2-v469.yml"
+      - "football-data/validation/cross_year_batch2_v469.py"
+      - "football-data/config/platform_registry.json"
+      - "football-data/league_profiles/ENG_PremierLeague/profile.json"
+      - "football-data/league_profiles/GER_Bundesliga/profile.json"
+      - "football-data/league_profiles/ITA_SerieA/profile.json"
+      - "football-data/league_profiles/FRA_Ligue1/profile.json"
+      - "football-data/league_profiles/ESP_LaLiga/profile.json"
+      - "football-data/league_profiles/POR_PrimeiraLiga/profile.json"
+      - "football-data/league_profiles/NED_Eredivisie/profile.json"
+      - "football-data/league_profiles/SUI_SuperLeague/profile.json"
+      - "football-data/league_profiles/SCO_Premiership/profile.json"
+      - "football-data/league_profiles/UEFA_ChampionsLeague/profile.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-cross-year-batch2-v469-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-batch2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile batch2 audit
+        run: python -m py_compile football-data/validation/cross_year_batch2_v469.py
+
+      - name: Run cross-year batch2 audit
+        run: python football-data/validation/cross_year_batch2_v469.py --print-summary
+
+      - name: Persist batch2 audit receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/cross_year_batch2_v469_status.json
+          if git diff --cached --quiet; then
+            echo "No V4.6.9 batch2 audit changes to commit."
+            exit 0
+          fi
+          git commit -m "audit(football): persist V4.6.9 cross-year batch2 receipt [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
