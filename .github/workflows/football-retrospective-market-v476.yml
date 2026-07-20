@@ -1,0 +1,59 @@
+name: Football V4.7.6 Retrospective Market Reference
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/two_season_evidence_scope_v476.json"
+      - "football-data/validation/retrospective_market_reference_v476.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
+      - "football-data/processed/**"
+      - ".github/workflows/football-retrospective-market-v476.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-retrospective-market-v476-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extract-retrospective-market:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile extraction and persistence tooling
+        run: |
+          python -m py_compile football-data/validation/retrospective_market_reference_v476.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
+
+      - name: Extract two-season retrospective market references
+        run: python football-data/validation/retrospective_market_reference_v476.py --print-summary
+
+      - name: Persist retrospective references safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/evidence/markets_retrospective/ \
+            --allow-prefix football-data/manifests/retrospective_market_reference_v476_status.json \
+            --message-prefix "data(football): persist two-season retrospective market reference"
+
+# These prices are retrospective references only. Missing original quote timestamps
+# make them ineligible for formal frozen market snapshots, KL/LOMO promotion or EV.
