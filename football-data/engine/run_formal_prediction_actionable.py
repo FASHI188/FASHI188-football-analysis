@@ -8,12 +8,14 @@ invalidation condition and may trigger a new run when requested.
 
 V4.7 competition-specific promoted challengers are applied only through the
 hash-bound runtime activation gate after the existing OOF matrix calibration.
+The final total-goals peak diagnostic is read-only and runs last.
 """
 from __future__ import annotations
 
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
+from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 
 def main() -> int:
@@ -34,7 +36,8 @@ def main() -> int:
 
     def calibrated_then_promoted(context, calculation):
         calibrated = original_calibration(context, calculation)
-        return apply_hash_bound_promoted_v470_challengers(context, calibrated)
+        promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)
+        return apply_total_goals_peak_diagnostics(promoted)
 
     base_runner.prepare_match_context = actionable_prepare
     base_runner.apply_oof_matrix_calibration = calibrated_then_promoted
