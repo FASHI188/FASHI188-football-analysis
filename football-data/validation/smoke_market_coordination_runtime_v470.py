@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,46 +68,61 @@ def _calculation():
     }
 
 
-def main() -> int:
-    base = _calculation()
-    prior_sha = sha256_json(base["probabilities"]["score_matrix"])
-
-    candidate = apply_market_coordination_runtime(_context(False), copy.deepcopy(base))
-    formal = apply_market_coordination_runtime(_context(True), copy.deepcopy(base))
-    blocked_context = _context(False)
-    blocked_context["gates"]["market_coordination_candidate_may_run"] = False
-    blocked = apply_market_coordination_runtime(blocked_context, copy.deepcopy(base))
-
-    audit = candidate.get("optimization_audit") or {}
-    checks = {
-        "candidate_optimization_converged": audit.get("converged") is True,
-        "candidate_residual_lte_1e_6": float(audit.get("max_constraint_residual", 1.0)) <= 1e-6,
-        "candidate_probability_sum_conserved": abs(float(audit.get("probability_sum", 0.0)) - 1.0) <= 1e-8,
-        "candidate_without_lomo_is_partial": candidate.get("module_states", {}).get("market_coordination") == "部分通过",
-        "candidate_without_lomo_does_not_mutate_formal_matrix": sha256_json(candidate["probabilities"]["score_matrix"]) == prior_sha,
-        "candidate_summary_exists": isinstance(candidate.get("market_coordination_candidate"), dict),
-        "formal_gate_allows_matrix_mutation": sha256_json(formal["probabilities"]["score_matrix"]) != prior_sha,
-        "formal_gate_marks_coordination_passed": formal.get("module_states", {}).get("market_coordination") == "通过",
-        "blocked_snapshot_does_not_create_optimization_audit": blocked.get("optimization_audit") is None,
-        "blocked_snapshot_does_not_mutate_matrix": sha256_json(blocked["probabilities"]["score_matrix"]) == prior_sha,
-    }
-    status = "PASS" if all(checks.values()) else "FAIL"
-    payload = {
-        "schema_version": "V4.7.0-market-coordination-runtime-smoke-r1",
-        "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "status": status,
-        "checks": checks,
-        "candidate_audit": audit,
-        "candidate_summary": candidate.get("market_coordination_candidate"),
-        "formal_applied": (formal.get("optimization_audit") or {}).get("formal_applied"),
-        "formal_weight_change": False,
-        "production_lomo_receipt_created": False,
-        "policy": "Smoke validates execution semantics only; it creates no production LOMO receipt and does not activate formal EV.",
-    }
+def _write(payload: dict) -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if status == "PASS" else 2
+    return 0 if payload.get("status") == "PASS" else 2
+
+
+def main() -> int:
+    try:
+        base = _calculation()
+        prior_sha = sha256_json(base["probabilities"]["score_matrix"])
+
+        candidate = apply_market_coordination_runtime(_context(False), copy.deepcopy(base))
+        formal = apply_market_coordination_runtime(_context(True), copy.deepcopy(base))
+        blocked_context = _context(False)
+        blocked_context["gates"]["market_coordination_candidate_may_run"] = False
+        blocked = apply_market_coordination_runtime(blocked_context, copy.deepcopy(base))
+
+        audit = candidate.get("optimization_audit") or {}
+        checks = {
+            "candidate_optimization_converged": audit.get("converged") is True,
+            "candidate_residual_lte_1e_6": float(audit.get("max_constraint_residual", 1.0)) <= 1e-6,
+            "candidate_probability_sum_conserved": abs(float(audit.get("probability_sum", 0.0)) - 1.0) <= 1e-8,
+            "candidate_without_lomo_is_partial": candidate.get("module_states", {}).get("market_coordination") == "部分通过",
+            "candidate_without_lomo_does_not_mutate_formal_matrix": sha256_json(candidate["probabilities"]["score_matrix"]) == prior_sha,
+            "candidate_summary_exists": isinstance(candidate.get("market_coordination_candidate"), dict),
+            "formal_gate_allows_matrix_mutation": sha256_json(formal["probabilities"]["score_matrix"]) != prior_sha,
+            "formal_gate_marks_coordination_passed": formal.get("module_states", {}).get("market_coordination") == "通过",
+            "blocked_snapshot_does_not_create_optimization_audit": blocked.get("optimization_audit") is None,
+            "blocked_snapshot_does_not_mutate_matrix": sha256_json(blocked["probabilities"]["score_matrix"]) == prior_sha,
+        }
+        status = "PASS" if all(checks.values()) else "FAIL"
+        return _write({
+            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r2",
+            "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "status": status,
+            "checks": checks,
+            "candidate_audit": audit,
+            "candidate_summary": candidate.get("market_coordination_candidate"),
+            "formal_applied": (formal.get("optimization_audit") or {}).get("formal_applied"),
+            "formal_weight_change": False,
+            "production_lomo_receipt_created": False,
+            "policy": "Smoke validates execution semantics only; it creates no production LOMO receipt and does not activate formal EV.",
+        })
+    except Exception as exc:
+        return _write({
+            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r2",
+            "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "status": "FAIL",
+            "checks": {},
+            "error": str(exc),
+            "traceback_tail": traceback.format_exc().splitlines()[-20:],
+            "formal_weight_change": False,
+            "production_lomo_receipt_created": False,
+        })
 
 
 if __name__ == "__main__":
