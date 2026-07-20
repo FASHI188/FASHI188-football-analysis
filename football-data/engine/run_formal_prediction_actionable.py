@@ -12,13 +12,15 @@ The final total-goals peak diagnostic is read-only and runs last.
 Formal EV and market coordination are separately fail-closed behind a
 competition-specific LOMO/OOS receipt. A lineup status label is not enough to
 receive lineup confidence credit: an official XI or executable probable-XI
-projection must actually be present.
+projection must actually be present. Final rule authority is normalized from the
+active governance manifest while preserving the underlying implementation version.
 """
 from __future__ import annotations
 
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
 from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
+from formal_governance_runtime_v470 import apply_formal_governance_runtime
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
@@ -59,7 +61,8 @@ def main() -> int:
     def calibrated_then_promoted(context, calculation):
         calibrated = original_calibration(context, calculation)
         promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)
-        return apply_total_goals_peak_diagnostics(promoted)
+        diagnosed = apply_total_goals_peak_diagnostics(promoted)
+        return apply_formal_governance_runtime(diagnosed)
 
     base_runner.prepare_match_context = actionable_prepare
     base_runner.apply_oof_matrix_calibration = calibrated_then_promoted
