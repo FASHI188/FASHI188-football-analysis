@@ -140,17 +140,58 @@ jobs:
           }, ensure_ascii=False, indent=2))
           PY
 
-      - name: Commit training receipts and artifacts
+      - name: Persist training receipts and artifacts via GitHub Contents API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/priority_challenger_training_v470_status.json
-          git add football-data/models/challengers_v470
-          if git diff --cached --quiet; then
-            echo "No challenger training artifact changes."
-            exit 0
-          fi
-          git commit -m "training(football): persist V4.7 priority challenger artifacts"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          files = [Path("football-data/manifests/priority_challenger_training_v470_status.json")]
+          files.extend(sorted(Path("football-data/models/challengers_v470").glob("*/priority_v470.json")))
+
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "football-v470-priority-training",
+          }
+
+          def request(method, url, payload=None):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      return response.status, json.loads(response.read().decode("utf-8"))
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  if exc.code == 404:
+                      return 404, None
+                  raise RuntimeError(f"GitHub API {method} {url} failed: {exc.code} {body}") from exc
+
+          for path in files:
+              rel = path.as_posix()
+              encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in rel.split("/"))
+              url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}?ref=main"
+              status, current = request("GET", url)
+              payload = {
+                  "message": f"training(football): persist {rel}",
+                  "content": base64.b64encode(path.read_bytes()).decode("ascii"),
+                  "branch": "main",
+              }
+              if status == 200 and current:
+                  payload["sha"] = current["sha"]
+              put_url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}"
+              request("PUT", put_url, payload)
+              print(f"persisted {rel}")
+          PY
