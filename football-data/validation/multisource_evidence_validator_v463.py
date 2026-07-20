@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Validate multi-source lineup and market evidence for the football project.
 
-This validator does not fetch or invent data. It consumes normalized JSONL evidence
-written by source-specific collectors and decides whether a record is suitable for:
-  * historical probable-lineup validation,
-  * historical synchronized market benchmarking,
-  * KL market-coordination research,
-  * circularity-safe LOMO value validation.
-
-The central rule is source independence: two aggregators carrying the same underlying
-bookmaker quote are not two independent market sources, and copied lineup records do
-not become independent merely because they appear on two websites.
+V4.7.5 hardening:
+- observed starting-XI labels are separated from point-in-time pre-match evidence;
+- date-only/surrogate public lineup records can train future probable-XI models but
+  can never be counted as PIT injury/availability evidence;
+- reports are compact summaries rather than million-line record dumps;
+- no A-grade, KL, LOMO or formal-weight promotion is automatic.
 """
 from __future__ import annotations
 
@@ -27,6 +23,8 @@ LINEUP_ROOT = ROOT / "evidence" / "lineups"
 MARKET_ROOT = ROOT / "evidence" / "markets"
 REPORT_ROOT = ROOT / "validation" / "reports" / "multisource_evidence_v463"
 MANIFEST = ROOT / "manifests" / "multisource_evidence_v463_status.json"
+SAMPLE_LIMIT = 200
+INVALID_SAMPLE_LIMIT = 50
 
 
 def _now() -> str:
@@ -41,16 +39,17 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
         return rows
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid JSONL {path}:{n}: {exc}") from exc
-        if not isinstance(item, dict):
-            raise ValueError(f"JSONL row must be object {path}:{n}")
-        rows.append(item)
+    with path.open("r", encoding="utf-8") as handle:
+        for n, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid JSONL {path}:{n}: {exc}") from exc
+            if not isinstance(item, dict):
+                raise ValueError(f"JSONL row must be object {path}:{n}")
+            rows.append(item)
     return rows
 
 
@@ -73,69 +72,100 @@ def _lineup_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
+def _pit_eligible_lineup_record(row: dict[str, Any]) -> bool:
+    if row.get("pit_eligible") is not True:
+        return False
+    observed = row.get("source_observed_at_utc")
+    kickoff = row.get("kickoff_utc")
+    if not observed or not kickoff:
+        return False
+    try:
+        return _parse_time(observed) <= _parse_time(kickoff)
+    except Exception:
+        return False
+
+
 def validate_lineups(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
     grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    invalid: list[dict[str, Any]] = []
+    invalid_samples: list[dict[str, Any]] = []
+    invalid_count = 0
+
     for row in rows:
         starters = row.get("starters")
         try:
             _parse_time(row.get("kickoff_utc"))
         except Exception as exc:
-            invalid.append({"row": row, "reason": f"invalid kickoff: {exc}"})
+            invalid_count += 1
+            if len(invalid_samples) < INVALID_SAMPLE_LIMIT:
+                invalid_samples.append({"reason": f"invalid kickoff: {exc}", "competition_id": row.get("competition_id")})
             continue
         if not isinstance(starters, list) or len(starters) != 11 or len({str(x) for x in starters}) != 11:
-            invalid.append({"row": row, "reason": "lineup must contain exactly 11 unique starters"})
+            invalid_count += 1
+            if len(invalid_samples) < INVALID_SAMPLE_LIMIT:
+                invalid_samples.append({"reason": "lineup must contain exactly 11 unique starters", "competition_id": row.get("competition_id")})
             continue
         if not row.get("source_group") or not (row.get("source_url") or row.get("provider_record_id")):
-            invalid.append({"row": row, "reason": "missing source provenance"})
+            invalid_count += 1
+            if len(invalid_samples) < INVALID_SAMPLE_LIMIT:
+                invalid_samples.append({"reason": "missing source provenance", "competition_id": row.get("competition_id")})
             continue
         grouped[_lineup_key(row)].append(row)
 
-    verified = 0
+    verified_observed = 0
+    pit_verified = 0
     single_source = 0
     conflicted = 0
-    details = []
+    detail_samples: list[dict[str, Any]] = []
+    per_competition: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
     for key, items in sorted(grouped.items()):
+        cid = key[0]
         source_groups = {str(item["source_group"]) for item in items}
         starter_sets = {tuple(sorted(map(str, item["starters"]))) for item in items}
         official_present = "official_competition_or_club" in source_groups
+        any_pit = any(_pit_eligible_lineup_record(item) for item in items)
+
         if len(starter_sets) > 1:
             status = "CONFLICT"
             conflicted += 1
+            per_competition[cid]["conflicted"] += 1
         elif len(source_groups) >= 2 or (official_present and len(items) >= 2):
-            status = "VERIFIED"
-            verified += 1
+            status = "VERIFIED_OBSERVED_LABEL"
+            verified_observed += 1
+            per_competition[cid]["verified_observed"] += 1
+            if any_pit:
+                pit_verified += 1
+                per_competition[cid]["pit_verified"] += 1
         else:
-            status = "SINGLE_SOURCE_WARNING"
+            status = "SINGLE_SOURCE_OBSERVED_LABEL"
             single_source += 1
-        details.append({
-            "key": key,
-            "status": status,
-            "source_groups": sorted(source_groups),
-            "record_count": len(items),
-        })
+            per_competition[cid]["single_source"] += 1
 
+        if len(detail_samples) < SAMPLE_LIMIT:
+            detail_samples.append({
+                "key": key,
+                "status": status,
+                "source_groups": sorted(source_groups),
+                "record_count": len(items),
+                "pit_eligible_record_present": any_pit,
+            })
+
+    valid_rows = sum(len(v) for v in grouped.values())
     return {
         "rows": len(rows),
-        "valid_rows": sum(len(v) for v in grouped.values()),
-        "invalid_rows": len(invalid),
-        "verified_lineup_labels": verified,
+        "valid_rows": valid_rows,
+        "invalid_rows": invalid_count,
+        "verified_observed_lineup_labels": verified_observed,
+        "pit_verified_lineup_labels": pit_verified,
         "single_source_lineup_labels": single_source,
         "conflicted_lineup_labels": conflicted,
-        "a_grade_route_eligible": verified >= int(config.get("minimum_verified_lineup_labels", 200)),
-        "details": details,
-        "invalid": invalid,
+        "probable_lineup_training_route_available": verified_observed + single_source > 0,
+        "a_grade_route_eligible": pit_verified >= int(config.get("minimum_verified_lineup_labels", 200)),
+        "per_competition": {cid: dict(counts) for cid, counts in sorted(per_competition.items())},
+        "detail_samples": detail_samples,
+        "invalid_samples": invalid_samples,
+        "report_compaction": {"detail_sample_limit": SAMPLE_LIMIT, "invalid_sample_limit": INVALID_SAMPLE_LIMIT},
     }
-
-
-def _market_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:
-    return (
-        str(row.get("competition_id") or ""),
-        str(row.get("fixture_key") or ""),
-        str(row.get("freeze_time_utc") or ""),
-        str(row.get("bookmaker_group") or row.get("bookmaker") or ""),
-        str(row.get("provider_group") or row.get("source_group") or ""),
-    )
 
 
 def _market_complete(row: dict[str, Any]) -> bool:
@@ -153,34 +183,36 @@ def _market_complete(row: dict[str, Any]) -> bool:
 
 def validate_markets(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
     valid: list[dict[str, Any]] = []
-    invalid: list[dict[str, Any]] = []
+    invalid_count = 0
+    invalid_samples: list[dict[str, Any]] = []
+
     for row in rows:
+        reason = None
         try:
             freeze = _parse_time(row.get("freeze_time_utc"))
             observed = _parse_time(row.get("observed_at_utc"))
+            if observed > freeze:
+                reason = "market observed after freeze"
         except Exception as exc:
-            invalid.append({"row": row, "reason": f"invalid timestamp: {exc}"})
-            continue
-        if observed > freeze:
-            invalid.append({"row": row, "reason": "market observed after freeze"})
-            continue
-        if not _market_complete(row):
-            invalid.append({"row": row, "reason": "incomplete 1X2/AH/OU surface"})
-            continue
-        if not row.get("provider_group") or not (row.get("bookmaker_group") or row.get("bookmaker")):
-            invalid.append({"row": row, "reason": "missing provider/bookmaker provenance"})
-            continue
+            reason = f"invalid timestamp: {exc}"
+        if reason is None and not _market_complete(row):
+            reason = "incomplete 1X2/AH/OU surface"
+        if reason is None and (not row.get("provider_group") or not (row.get("bookmaker_group") or row.get("bookmaker"))):
+            reason = "missing provider/bookmaker provenance"
         source_times = row.get("market_observed_at_utc") or {}
-        if isinstance(source_times, dict) and source_times:
+        if reason is None and isinstance(source_times, dict) and source_times:
             try:
                 times = [_parse_time(v) for v in source_times.values()]
+                skew = (max(times) - min(times)).total_seconds()
+                if skew > int(config.get("max_market_skew_seconds", 900)):
+                    reason = f"market skew {skew:.0f}s exceeds limit"
             except Exception as exc:
-                invalid.append({"row": row, "reason": f"invalid market timestamps: {exc}"})
-                continue
-            skew = (max(times) - min(times)).total_seconds()
-            if skew > int(config.get("max_market_skew_seconds", 900)):
-                invalid.append({"row": row, "reason": f"market skew {skew:.0f}s exceeds limit"})
-                continue
+                reason = f"invalid market timestamps: {exc}"
+        if reason is not None:
+            invalid_count += 1
+            if len(invalid_samples) < INVALID_SAMPLE_LIMIT:
+                invalid_samples.append({"competition_id": row.get("competition_id"), "fixture_key": row.get("fixture_key"), "reason": reason})
+            continue
         valid.append(row)
 
     by_fixture: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -190,8 +222,11 @@ def validate_markets(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict
     crosschecked = 0
     single_provider = 0
     duplicate_economic_sources = 0
-    details = []
+    detail_samples: list[dict[str, Any]] = []
+    per_competition: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
     for key, items in sorted(by_fixture.items()):
+        cid = key[0]
         providers = {str(item.get("provider_group")) for item in items}
         bookmaker_groups = {str(item.get("bookmaker_group") or item.get("bookmaker")) for item in items}
         if len(items) > len(bookmaker_groups):
@@ -199,27 +234,32 @@ def validate_markets(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict
         if len(providers) >= 2:
             status = "CROSSCHECKED"
             crosschecked += 1
+            per_competition[cid]["crosschecked_freezes"] += 1
         else:
             status = "SINGLE_PROVIDER_WARNING"
             single_provider += 1
-        details.append({
-            "key": key,
-            "status": status,
-            "provider_groups": sorted(providers),
-            "bookmaker_groups": sorted(bookmaker_groups),
-            "record_count": len(items),
-        })
+            per_competition[cid]["single_provider_freezes"] += 1
+        if len(detail_samples) < SAMPLE_LIMIT:
+            detail_samples.append({
+                "key": key,
+                "status": status,
+                "provider_groups": sorted(providers),
+                "bookmaker_groups": sorted(bookmaker_groups),
+                "record_count": len(items),
+            })
 
     return {
         "rows": len(rows),
         "valid_synchronized_snapshots": len(valid),
-        "invalid_rows": len(invalid),
+        "invalid_rows": invalid_count,
         "crosschecked_fixture_freezes": crosschecked,
         "single_provider_fixture_freezes": single_provider,
         "duplicate_economic_source_records": duplicate_economic_sources,
         "a_grade_market_evidence_available": crosschecked >= int(config.get("minimum_crosschecked_market_freezes", 200)),
-        "details": details,
-        "invalid": invalid,
+        "per_competition": {cid: dict(counts) for cid, counts in sorted(per_competition.items())},
+        "detail_samples": detail_samples,
+        "invalid_samples": invalid_samples,
+        "report_compaction": {"detail_sample_limit": SAMPLE_LIMIT, "invalid_sample_limit": INVALID_SAMPLE_LIMIT},
     }
 
 
@@ -241,12 +281,12 @@ def run() -> dict[str, Any]:
     lineup = validate_lineups(lineup_rows, thresholds)
     market = validate_markets(market_rows, thresholds)
     result = {
-        "schema_version": "V4.6.3",
+        "schema_version": "V4.7.5-compact-pit-separated",
         "generated_at_utc": _now(),
         "status": "EVIDENCE_VALIDATED" if lineup["rows"] or market["rows"] else "PIPELINE_CONFIGURED_DATA_BACKFILL_REQUIRED",
         "lineup": lineup,
         "market": market,
-        "promotion_note": "No A-grade, KL, or LOMO promotion is automatic. Missing independent evidence remains fail-closed.",
+        "promotion_note": "Observed XI labels may support probable-lineup training. Only timestamp-proven PIT records can support A-grade pre-match availability evidence. No A-grade, KL or LOMO promotion is automatic.",
     }
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     (REPORT_ROOT / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -261,7 +301,16 @@ def main() -> int:
     args = parser.parse_args()
     result = run()
     if args.print_summary:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "status": result["status"],
+            "lineup": {k: result["lineup"][k] for k in (
+                "rows", "valid_rows", "verified_observed_lineup_labels", "pit_verified_lineup_labels",
+                "single_source_lineup_labels", "conflicted_lineup_labels", "a_grade_route_eligible"
+            )},
+            "market": {k: result["market"][k] for k in (
+                "rows", "valid_synchronized_snapshots", "crosschecked_fixture_freezes", "a_grade_market_evidence_available"
+            )},
+        }, ensure_ascii=False, indent=2))
     return 0
 
 
