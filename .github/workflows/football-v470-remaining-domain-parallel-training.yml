@@ -1,0 +1,146 @@
+name: Football V4.7 Remaining Domain Parallel Training
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/train_one_remaining_challenger_v470.py"
+      - "football-data/validation/aggregate_remaining_challengers_v470.py"
+      - "football-data/validation/train_priority_challengers_v470.py"
+      - "football-data/engine/conditional_allocation_challenger_v470.py"
+      - "football-data/engine/total_tail_challenger_v470.py"
+      - "football-data/engine/football_v460_engine.py"
+      - ".github/workflows/football-v470-remaining-domain-parallel-training.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-remaining-domain-parallel-training
+  cancel-in-progress: false
+
+jobs:
+  train:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+          - ESP_LaLiga
+          - POR_PrimeiraLiga
+          - NED_Eredivisie
+          - SUI_SuperLeague
+          - SCO_Premiership
+          - JPN_J1
+          - BRA_SerieA
+          - ARG_Primera
+          - UEFA_ChampionsLeague
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile worker assets
+        run: |
+          python -m py_compile football-data/engine/conditional_allocation_challenger_v470.py
+          python -m py_compile football-data/engine/total_tail_challenger_v470.py
+          python -m py_compile football-data/validation/train_priority_challengers_v470.py
+          python -m py_compile football-data/validation/train_one_remaining_challenger_v470.py
+
+      - name: Train isolated competition
+        id: worker
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/train_one_remaining_challenger_v470.py --competition "${{ matrix.competition }}"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit isolated receipt and artifact
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "football-data/manifests/remaining_competition_challengers_v470/${{ matrix.competition }}.json"
+          if [ -f "football-data/models/challengers_v470/${{ matrix.competition }}/priority_v470.json" ]; then
+            git add "football-data/models/challengers_v470/${{ matrix.competition }}/priority_v470.json"
+          fi
+          if git diff --cached --quiet; then
+            echo "No isolated artifact changes for ${{ matrix.competition }}."
+          else
+            git commit -m "training(football): persist ${{ matrix.competition }} V4.7 challenger evidence"
+            for attempt in 1 2 3 4 5 6; do
+              git pull --rebase origin main && git push origin HEAD:main && break
+              if [ "$attempt" = "6" ]; then
+                echo "Failed to persist ${{ matrix.competition }} after retries" >&2
+                exit 1
+              fi
+              sleep $((attempt * 2))
+            done
+          fi
+
+      - name: Preserve worker failure state
+        if: steps.worker.outputs.rc != '0'
+        run: exit 1
+
+  aggregate:
+    if: always()
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh all isolated receipts
+        run: git pull --rebase origin main
+
+      - name: Aggregate existing receipts
+        id: aggregate
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/aggregate_remaining_challengers_v470.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit aggregate receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/remaining_competition_challenger_training_v470_status.json
+          if git diff --cached --quiet; then
+            echo "No aggregate receipt changes."
+          else
+            git commit -m "training(football): aggregate remaining-domain V4.7 challenger evidence"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce complete aggregate
+        if: steps.aggregate.outputs.rc != '0'
+        run: exit 1
