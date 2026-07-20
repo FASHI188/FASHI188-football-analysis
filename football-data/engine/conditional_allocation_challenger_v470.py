@@ -59,18 +59,39 @@ def apply_conditional_exponential_tilt(
     matrix: list[dict[str, Any]],
     parameters: dict[str, Any] | None,
 ) -> tuple[list[dict[str, float | int]], dict[str, Any]]:
-    """Tilt P(H,A|T) while preserving P(T) exactly up to floating-point error."""
+    """Tilt P(H,A|T) while preserving P(T) exactly up to floating-point error.
+
+    A base matrix can legitimately contain an explicit far-tail bucket whose total
+    marginal is exactly zero after floating-point tail aggregation. Such a bucket is
+    structural support, not an invalid distribution. Zero-mass buckets are therefore
+    preserved unchanged at probability zero; negative or non-finite probabilities
+    still fail closed.
+    """
     params = normalize_parameters(parameters)
     before_total = _total_marginal(matrix)
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for cell in matrix:
+        probability = float(cell["probability"])
+        if not math.isfinite(probability) or probability < 0.0:
+            raise ValueError("matrix contains negative or non-finite probability")
         grouped[int(cell["home_goals"]) + int(cell["away_goals"])].append(cell)
 
     output: list[dict[str, float | int]] = []
+    zero_mass_totals: list[int] = []
     for total, cells in sorted(grouped.items()):
         p_total = sum(float(cell["probability"]) for cell in cells)
-        if p_total <= 0.0 or not math.isfinite(p_total):
+        if not math.isfinite(p_total) or p_total < 0.0:
             raise ValueError(f"invalid total probability for total={total}")
+        if p_total == 0.0:
+            zero_mass_totals.append(total)
+            for cell in cells:
+                output.append({
+                    "home_goals": int(cell["home_goals"]),
+                    "away_goals": int(cell["away_goals"]),
+                    "probability": 0.0,
+                })
+            continue
+
         weighted: list[tuple[int, int, float]] = []
         for cell in cells:
             home = int(cell["home_goals"])
@@ -110,6 +131,7 @@ def apply_conditional_exponential_tilt(
     audit = {
         "probability_sum": sum(float(cell["probability"]) for cell in output),
         "max_total_marginal_residual": max_total_residual,
+        "zero_mass_totals_preserved": zero_mass_totals,
         "parameters": params,
         "feature_names": list(FEATURE_NAMES),
         "formal_weight": 0,
