@@ -135,7 +135,11 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
 
 
 def apply_market_coordination_state(context: dict[str, Any], calculation: dict[str, Any]) -> dict[str, Any]:
-    """Set market-coordination runtime state from actual optimization evidence only."""
+    """Set market-coordination state from actual optimization evidence only.
+
+    A converged candidate with complete audit evidence is 部分通过 when it was not
+    formally applied because the competition/season LOMO gate is still closed.
+    """
     states = calculation.setdefault("module_states", {})
     audit = calculation.get("optimization_audit")
     market = context.get("market_assessment") or {}
@@ -175,13 +179,20 @@ def apply_market_coordination_state(context: dict[str, Any], calculation: dict[s
         return calculation
 
     passed = residual <= 1e-6 and abs(probability_sum - 1.0) <= 1e-8
-    states["market_coordination"] = "通过" if passed else "失败"
-    calculation["market_coordination_reason"] = (
-        "实际优化审计完整且收敛残差/概率守恒通过。"
-        if passed
-        else "实际优化已运行，但残差或概率守恒未通过。"
-    )
-    calculation["market_coordination_market_gate"] = bool(market.get("ev_gate"))
+    formal_applied = bool(audit.get("formal_applied"))
+    if not passed:
+        states["market_coordination"] = "失败"
+        calculation["market_coordination_reason"] = "实际优化已运行，但残差或概率守恒未通过。"
+    elif formal_applied:
+        states["market_coordination"] = "通过"
+        calculation["market_coordination_reason"] = "实际优化审计完整、收敛通过，且赛事域LOMO正式门允许协调矩阵进入正式中心。"
+    else:
+        states["market_coordination"] = "部分通过"
+        calculation["market_coordination_reason"] = (
+            "实际KL优化已运行且审计通过，但赛事域LOMO正式门尚未通过；候选权重0，正式概率矩阵未改变。"
+        )
+    calculation["market_coordination_market_gate"] = bool(market.get("snapshot_complete_gate"))
+    calculation["formal_market_coordination_gate"] = bool(market.get("formal_market_coordination_gate"))
     return calculation
 
 
