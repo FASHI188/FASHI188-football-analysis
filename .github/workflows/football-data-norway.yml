@@ -7,6 +7,7 @@ on:
     paths:
       - "football-data/config/league_source_norway.json"
       - "football-data/engine/ingest_norway.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_ingest_norway.py"
       - ".github/workflows/football-data-norway.yml"
   pull_request:
@@ -14,37 +15,43 @@ on:
     paths:
       - "football-data/config/league_source_norway.json"
       - "football-data/engine/ingest_norway.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_ingest_norway.py"
       - ".github/workflows/football-data-norway.yml"
   schedule:
     - cron: "27 3 * * 1,4"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-data-norway-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   ingest:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository integrity preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile ingestion and persistence helper
+        run: |
+          python -m py_compile football-data/engine/ingest_norway.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Test Norway ingestion
         run: python -m unittest football-data/tests/test_ingest_norway.py -v
@@ -64,22 +71,18 @@ jobs:
           assert set(profile["seasons"]) == {"2021", "2022", "2023", "2024", "2025", "2026"}
           PY
 
-      - name: Commit refreshed Norway data
-        shell: bash
+      - name: Persist refreshed Norway data safely
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/raw/NOR_Eliteserien
-          git add football-data/processed/NOR_Eliteserien
-          git add football-data/league_profiles/NOR_Eliteserien
-          git add football-data/manifests/latest_norway_ingestion.json
-          if git diff --cached --quiet; then
-            echo "No Norway data changes."
-            exit 0
-          fi
-          git commit -m "data(football): refresh Norway Eliteserien"
-          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/raw/NOR_Eliteserien/ \
+            --allow-prefix football-data/processed/NOR_Eliteserien/ \
+            --allow-prefix football-data/league_profiles/NOR_Eliteserien/ \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "data(football): persist validated Norway artifact"
 
-# V4.7.2 maintenance trigger: restore Norway assets after batch-001 root-replacement defect.
+# V4.7.4 hardening: no direct git commit/pull/rebase/push; PRs validate read-only.
