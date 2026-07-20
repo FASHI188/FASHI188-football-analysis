@@ -1,0 +1,60 @@
+name: Football V4.7 Activate MLS D Runtime
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/activate_mls_d_conditional_runtime_v470.py"
+      - "football-data/manifests/promotions/USA_MLS_d_conditional_v470.json"
+      - "football-data/engine/promoted_challenger_runtime_v470.py"
+      - "football-data/engine/promoted_challenger_runtime_gate_v470.py"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - ".github/workflows/football-v470-activate-mls-d-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-activate-mls-d-runtime
+  cancel-in-progress: false
+
+jobs:
+  activate-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile runtime and activation assets
+        run: |
+          python -m py_compile football-data/engine/promoted_challenger_runtime_v470.py
+          python -m py_compile football-data/engine/promoted_challenger_runtime_gate_v470.py
+          python -m py_compile football-data/engine/run_formal_prediction_actionable.py
+          python -m py_compile football-data/validation/activate_mls_d_conditional_runtime_v470.py
+
+      - name: Build hash-bound runtime activation manifest
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/activate_mls_d_conditional_runtime_v470.py
+
+      - name: Commit runtime activation manifest
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/promotions/USA_MLS_d_conditional_v470_runtime_activation.json
+          if git diff --cached --quiet; then
+            echo "No runtime activation changes."
+            exit 0
+          fi
+          git commit -m "governance(football): activate hash-bound USA_MLS D conditional runtime"
+          git pull --rebase origin main
+          git push origin HEAD:main
