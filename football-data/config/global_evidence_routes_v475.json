@@ -1,0 +1,123 @@
+{
+  "schema_version": "V4.7.5-global-evidence-routes",
+  "researched_at_utc": "2026-07-20T07:00:00Z",
+  "formal_weight_change": false,
+  "automatic_promotion": false,
+  "purpose": "Executable source routing for the remaining evidence gaps across all 17 registered competition domains. Route availability must never be confused with acquired data.",
+  "global_policies": {
+    "historical_market": {
+      "primary_backfill_provider": "the_odds_api_historical",
+      "primary_reason": "timestamped bookmaker snapshots with closest-snapshot-at-or-before semantics and broad soccer coverage from 2020 onward",
+      "required_markets": ["h2h", "spreads", "totals"],
+      "normalized_formal_markets": ["1X2", "AH", "OU"],
+      "freeze_offsets_minutes": [60, 30, 10],
+      "include_last_verified_pre_kickoff": true,
+      "same_bookmaker_same_window_required_for_formal_snapshot": true,
+      "max_market_skew_seconds": 900,
+      "reject_if_spread_is_not_a_valid_two_way_handicap_surface": true,
+      "never_infer_missing_quarter_handicap_or_total": true,
+      "credential_env": "THE_ODDS_API_KEY",
+      "access": "paid_api_key"
+    },
+    "market_crosschecks": [
+      {
+        "provider": "betfair_historical_exchange",
+        "role": "independent_exchange_crosscheck",
+        "history_start": "2015-04",
+        "note": "Exchange prices are a distinct economic source and must not be counted as an independent bookmaker quote."
+      },
+      {
+        "provider": "oddspapi_historical",
+        "role": "bookmaker_history_crosscheck_and_2026_forward_backfill",
+        "history_start": "2026-01",
+        "credential_env": "ODDSPAPI_KEY",
+        "note": "Use createdAt timestamps and explicit bookmaker identity; validate market IDs before normalization."
+      },
+      {
+        "provider": "sportmonks_premium_odds",
+        "role": "ongoing_capture_and_near_term_history",
+        "history_retention_note": "premium pre-match odd history is documented as available until 7 days after fixture start",
+        "credential_env": "SPORTMONKS_API_TOKEN",
+        "note": "Capture proactively; do not rely on it for old multi-season backfill."
+      }
+    ],
+    "lineup_and_availability": {
+      "observed_lineup_primary": ["official_match_report", "transfermarkt_datasets_lineups"],
+      "structured_crosschecks": ["sportmonks_lineups", "api_football_lineups", "statsbomb_open_lineups_where_covered"],
+      "injury_suspension_primary": ["official_club_or_competition_notice", "api_football_injuries", "sportmonks_sidelined"],
+      "api_football_injury_history_start": "2021-04",
+      "point_in_time_rule": "injury/suspension evidence is PIT-eligible only when source_observed_at_utc is at or before the match freeze; a post-match injury page is not retrospective PIT evidence",
+      "lineup_label_rule": "confirmed starting XI is an observed label for future model training; it is not evidence that the XI was known at an earlier freeze unless a pre-kickoff timestamp is preserved",
+      "predicted_xi_rule": "provider predicted lineups remain predictions and must never be written as observed lineups"
+    },
+    "competition_isolation": "No market calibrator, lineup-effect parameter, injury-effect parameter or challenger weight may be pooled across competition_id without a future CURRENT rule explicitly authorizing it."
+  },
+  "providers": {
+    "the_odds_api_historical": {
+      "documentation": "https://the-odds-api.com/historical-odds-data/",
+      "snapshot_interval": "10 minutes historically; 5 minutes from September 2022",
+      "history_access": "paid",
+      "timestamp_semantics": "closest available snapshot equal to or earlier than requested date"
+    },
+    "betfair_historical_exchange": {
+      "documentation": "https://support.developer.betfair.com/hc/en-us/articles/360002407732-What-data-is-provided-by-the-Historical-Data-service",
+      "history_start": "2015-04"
+    },
+    "oddspapi_historical": {
+      "documentation": "https://oddspapi.io/us/docs/get-historical-odds",
+      "history_start": "2026-01",
+      "timestamp_field": "createdAt"
+    },
+    "sportmonks_premium_odds": {
+      "documentation": "https://docs.sportmonks.com/v3/endpoints-and-entities/endpoints/premium-odds-feed/premium-pre-match-odds/get-all-historical-odds"
+    },
+    "sportmonks_lineups": {
+      "documentation": "https://docs.sportmonks.com/v3/tutorials-and-guides/tutorials/lineups-and-formations",
+      "supports": ["confirmed_lineups", "predicted_lineups", "formations", "sidelined"]
+    },
+    "api_football_injuries": {
+      "documentation": "https://www.api-football.com/documentation-beta",
+      "history_start": "2021-04",
+      "supports": ["missing_fixture", "questionable", "suspended", "injured"]
+    },
+    "transfermarkt_datasets_lineups": {
+      "documentation": "https://github.com/dcaribou/transfermarkt-datasets",
+      "access": "public_dataset",
+      "scale_note": "40+ competitions and game_lineups table; observed lineup labels only"
+    },
+    "statsbomb_open_lineups": {
+      "documentation": "https://github.com/statsbomb/open-data",
+      "access": "public_github",
+      "coverage": "limited subset only"
+    }
+  },
+  "competitions": {
+    "ENG_PremierLeague": {"the_odds_api_sport_key": "soccer_epl", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "GER_Bundesliga": {"the_odds_api_sport_key": "soccer_germany_bundesliga", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "ITA_SerieA": {"the_odds_api_sport_key": "soccer_italy_serie_a", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "FRA_Ligue1": {"the_odds_api_sport_key": "soccer_france_ligue_one", "historical_odds_start_utc": "2020-07-16T00:55:00Z", "stage_class": "regular_double_round_robin_team_count_change_handled_by_season", "market_route": "mapped"},
+    "ESP_LaLiga": {"the_odds_api_sport_key": "soccer_spain_la_liga", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "POR_PrimeiraLiga": {"the_odds_api_sport_key": "soccer_portugal_primeira_liga", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "NED_Eredivisie": {"the_odds_api_sport_key": "soccer_netherlands_eredivisie", "historical_odds_start_utc": "2020-09-04T16:15:00Z", "stage_class": "regular_league_only_postseason_playoffs_excluded", "market_route": "mapped"},
+    "SUI_SuperLeague": {"the_odds_api_sport_key": "soccer_switzerland_superleague", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "rounds_1_33_then_championship_1_6_and_relegation_7_12_rounds_34_38", "market_route": "mapped", "stage_format_verified": true},
+    "SCO_Premiership": {"the_odds_api_sport_key": "soccer_spl", "historical_odds_start_utc": "2020-07-17T13:55:00Z", "stage_class": "rounds_1_33_then_top6_bottom6_five_matches", "market_route": "mapped", "stage_format_verified": true},
+    "SWE_Allsvenskan": {"the_odds_api_sport_key": "soccer_sweden_allsvenskan", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_league_promotion_playoffs_excluded", "market_route": "mapped"},
+    "NOR_Eliteserien": {"the_odds_api_sport_key": "soccer_norway_eliteserien", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "regular_league_promotion_playoffs_excluded", "market_route": "mapped"},
+    "JPN_J1": {"the_odds_api_sport_key": "soccer_japan_j_league", "historical_odds_start_utc": "2020-06-23T00:25:00Z", "stage_class": "2026_special_transition_separate_from_2026_27_target_season", "market_route": "mapped", "stage_format_verified": true},
+    "KOR_KLeague1": {"the_odds_api_sport_key": "soccer_korea_kleague1", "historical_odds_start_utc": "2020-06-06T10:05:00Z", "stage_class": "rounds_1_33_then_final_rounds_34_38", "market_route": "mapped", "stage_format_verified": true},
+    "BRA_SerieA": {"the_odds_api_sport_key": "soccer_brazil_campeonato", "historical_odds_start_utc": "2020-07-28T22:15:00Z", "stage_class": "regular_double_round_robin", "market_route": "mapped"},
+    "ARG_Primera": {"the_odds_api_sport_key": "soccer_argentina_primera_division", "historical_odds_start_utc": "2020-10-30T15:15:00Z", "stage_class": "2026_apertura_and_clausura_separate_two_zones_of_15_then_knockout", "market_route": "mapped", "stage_format_verified": true},
+    "USA_MLS": {"the_odds_api_sport_key": "soccer_usa_mls", "historical_odds_start_utc": "2020-06-27T03:05:00Z", "stage_class": "2026_regular_season_separate_from_wild_card_best_of_3_and_single_elimination_playoffs", "market_route": "mapped", "stage_format_verified": true},
+    "UEFA_ChampionsLeague": {"the_odds_api_sport_key": "soccer_uefa_champs_league", "historical_odds_start_utc": "2020-07-10T16:15:00Z", "qualification_sport_key": "soccer_uefa_champs_league_qualification", "qualification_history_start_utc": "2023-07-22T06:50:40Z", "stage_class": "qualifying_separate_from_36_team_league_phase_and_knockout", "market_route": "mapped", "stage_format_verified": true, "formal_domain_policy": "main_tournament_and_qualifying_must_not_be_pooled_without_separate_validation"}
+  },
+  "alignment_summary": {
+    "registered_competitions": 17,
+    "historical_market_routes_mapped": 17,
+    "lineup_routes_defined": 17,
+    "injury_suspension_routes_defined": 17,
+    "actual_paid_historical_market_backfill_complete": false,
+    "actual_pit_injury_backfill_complete": false,
+    "blocker": "provider credentials/subscriptions are required for complete timestamped historical market and broad PIT injury backfill",
+    "free_public_data_role": "supplemental observed lineup labels and limited open event data; insufficient by itself for complete 17-domain PIT evidence"
+  }
+}
