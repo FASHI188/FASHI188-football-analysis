@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """V4.6.4 staged actionable wrapper.
 
-Adds question-time evidence intake flags and total-goal peak/plateau reporting
-without changing the frozen V4.6.x probability engine.
+Adds question-time evidence intake flags, total-goal peak/plateau reporting and a
+unified price/EV/No-Bet state machine without changing the frozen V4.6.x
+probability engine hash.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import run_formal_prediction_actionable as current_runner
 from audit_receipt_utils_v464 import total_peak_diagnostics
+from decision_state_policy_v477 import apply_price_ev_state
 
 
 def _arg_value(flag: str) -> str | None:
@@ -24,6 +26,7 @@ def _arg_value(flag: str) -> str | None:
 def _postprocess() -> None:
     context_path = _arg_value("--context-output")
     calculation_path = _arg_value("--calculation-output")
+    context = None
 
     if context_path and Path(context_path).exists():
         path = Path(context_path)
@@ -39,7 +42,10 @@ def _postprocess() -> None:
         gates["probable_lineup_policy"] = (
             "do not wait for official XI; use supported probable XI from current-season verified XI history plus current roster, injuries, suspensions and team news"
         )
-        context["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-report-r2"
+        # Formal execution EV remains closed until a competition-specific LOMO /
+        # price-execution validation receipt explicitly opens this gate.
+        gates.setdefault("formal_ev_execution_validated", False)
+        context["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r3"
         path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if calculation_path and Path(calculation_path).exists():
@@ -72,7 +78,12 @@ def _postprocess() -> None:
                     f"次选{peak['secondary']}球；差距{peak['gap']:.2%}；完整0—7+分布保留。"
                 )
 
-        calculation["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-report-r2"
+        if context is None and context_path and Path(context_path).exists():
+            context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+        if isinstance(context, dict):
+            calculation = apply_price_ev_state(context, calculation)
+
+        calculation["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r3"
         path.write_text(json.dumps(calculation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
