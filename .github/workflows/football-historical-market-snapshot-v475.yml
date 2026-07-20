@@ -1,0 +1,93 @@
+name: Football V4.7.5 Historical Market Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      competition:
+        description: "Registered competition_id"
+        required: true
+        type: string
+      home:
+        description: "Home team as listed by provider"
+        required: true
+        type: string
+      away:
+        description: "Away team as listed by provider"
+        required: true
+        type: string
+      freeze_time:
+        description: "ISO8601 freeze timestamp, e.g. 2025-05-01T18:30:00Z"
+        required: true
+        type: string
+      regions:
+        description: "The Odds API bookmaker regions"
+        required: false
+        default: "eu,uk"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-historical-market-snapshot-v475-${{ github.event.inputs.competition }}
+  cancel-in-progress: false
+
+jobs:
+  acquire-and-validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Require licensed provider credential
+        run: |
+          if [ -z "$THE_ODDS_API_KEY" ]; then
+            echo "THE_ODDS_API_KEY is not configured; historical timestamped market acquisition cannot run."
+            exit 2
+          fi
+
+      - name: Compile acquisition validation and persistence tooling
+        run: |
+          python -m py_compile football-data/ingestion/historical_market_snapshot_v475.py
+          python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
+
+      - name: Collect requested historical snapshot
+        run: |
+          python football-data/ingestion/historical_market_snapshot_v475.py \
+            --competition "${{ inputs.competition }}" \
+            --home "${{ inputs.home }}" \
+            --away "${{ inputs.away }}" \
+            --freeze-time "${{ inputs.freeze_time }}" \
+            --regions "${{ inputs.regions }}"
+
+      - name: Validate all normalized evidence
+        run: python football-data/validation/multisource_evidence_validator_v463.py --print-summary
+
+      - name: Persist only generated market evidence and compact validation receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/evidence/markets/ \
+            --allow-prefix football-data/manifests/multisource_evidence_v463_status.json \
+            --allow-prefix football-data/validation/reports/multisource_evidence_v463/summary.json \
+            --message-prefix "data(football): persist timestamped historical-market artifact"
+
+# Manual only: prevents accidental quota burn. A route or API key does not imply
+# that complete 1X2/AH/OU coverage exists for every bookmaker/fixture/period.
