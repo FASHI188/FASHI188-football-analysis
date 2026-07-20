@@ -8,7 +8,10 @@ invalidation condition and may trigger a new run when requested.
 
 V4.7 competition-specific promoted challengers are receipt-gated. The validated
 ESP/NED dynamic-strength route is ordered before OOF matrix calibration; the
-existing MLS conditional-allocation promotion remains ordered after OOF. The final
+existing MLS conditional-allocation promotion remains ordered after OOF. A genuine
+market-coordination KL candidate is then evaluated on the final model matrix. It
+may run with a complete synchronized market snapshot, but it cannot mutate the
+formal centre without a competition/season LOMO promotion receipt. The final
 total-goals peak diagnostic is read-only and runs last.
 
 For a new target season, this wrapper may inject separately validated, hash-bound
@@ -30,6 +33,7 @@ from formal_next_season_parameter_runtime_v470 import (
     audit_rollforward_parameters,
     select_rollforward_parameters,
 )
+from market_coordination_runtime_v470 import apply_market_coordination_runtime
 from oof_next_season_runtime_v470 import load_rollforward_calibrator
 from platform_core import PlatformError
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
@@ -159,7 +163,8 @@ def main() -> int:
 
         calibrated["oof_next_season_rollforward_audit"] = oof_rollforward_audit
         promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)
-        diagnosed = apply_total_goals_peak_diagnostics(promoted)
+        coordinated = apply_market_coordination_runtime(context, promoted)
+        diagnosed = apply_total_goals_peak_diagnostics(coordinated)
         return apply_formal_governance_runtime(diagnosed)
 
     base_runner.prepare_match_context = actionable_prepare
