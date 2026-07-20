@@ -39,7 +39,7 @@ def _postprocess() -> None:
         gates["probable_lineup_policy"] = (
             "do not wait for official XI; use supported probable XI from current-season verified XI history plus current roster, injuries, suspensions and team news"
         )
-        context["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-gate-r1"
+        context["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-report-r2"
         path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if calculation_path and Path(calculation_path).exists():
@@ -54,26 +54,25 @@ def _postprocess() -> None:
             conclusions["total_goals_primary_secondary_gap"] = peak["gap"]
             conclusions["total_goals_single_point_status"] = peak["single_point_status"]
             conclusions["total_goals_reporting_mode"] = peak["reporting_mode"]
+            conclusions["total_goals_display_primary"] = peak["primary"]
+            conclusions["total_goals_display_secondary"] = peak["secondary"]
+            conclusions["total_goals_plateau_label"] = peak.get("plateau_label")
 
             if peak["reporting_mode"] == "plateau":
                 label = peak.get("plateau_label") or "Top-2平台"
                 conclusions["total_goals_text"] = (
-                    f"总进球主选：{label}；单一总进球主选弃权；"
-                    f"原始Top-1为{peak['primary']}球（{peak['primary_probability']:.2%}），"
-                    f"Top-2为{peak['secondary']}球（{peak['secondary_probability']:.2%}），"
-                    f"差距仅{peak['gap']:.2%}；完整0—7+分布保留。"
+                    f"模型总进球Top-1：{peak['primary']}球（{peak['primary_probability']:.2%}，{peak['strength']}）；"
+                    f"次选{peak['secondary']}球（{peak['secondary_probability']:.2%}）；"
+                    f"{label}；第一第二差距仅{peak['gap']:.2%}；"
+                    "保留Top-1，但不得表述为高置信单一总进球；完整0—7+分布保留。"
                 )
-                conclusions["total_goals_display_primary"] = label
-                conclusions["total_goals_display_secondary"] = "单点弃权"
             else:
                 conclusions["total_goals_text"] = (
                     f"模型总进球Top-1：{peak['primary']}球（{peak['strength']}）；"
                     f"次选{peak['secondary']}球；差距{peak['gap']:.2%}；完整0—7+分布保留。"
                 )
-                conclusions["total_goals_display_primary"] = peak["primary"]
-                conclusions["total_goals_display_secondary"] = peak["secondary"]
 
-        calculation["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-gate-r1"
+        calculation["runtime_hardening_revision"] = "V4.6.4-staged-total-plateau-report-r2"
         path.write_text(json.dumps(calculation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
