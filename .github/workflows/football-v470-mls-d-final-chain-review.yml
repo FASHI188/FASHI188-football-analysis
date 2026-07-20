@@ -1,0 +1,61 @@
+name: Football V4.7 MLS D Conditional Final Chain Review
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/review_mls_d_conditional_final_chain_v470.py"
+      - "football-data/validation/train_priority_challengers_v470.py"
+      - "football-data/engine/conditional_allocation_challenger_v470.py"
+      - "football-data/engine/oof_matrix_calibration.py"
+      - "football-data/models/challengers_v470/USA_MLS/priority_v470.json"
+      - "football-data/models/formal_core_v460/USA_MLS/oof_matrix_calibrator.json"
+      - ".github/workflows/football-v470-mls-d-final-chain-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-mls-d-final-chain-review
+  cancel-in-progress: false
+
+jobs:
+  review-mls-d-final-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile review assets
+        run: |
+          python -m py_compile football-data/engine/conditional_allocation_challenger_v470.py
+          python -m py_compile football-data/engine/oof_matrix_calibration.py
+          python -m py_compile football-data/validation/train_priority_challengers_v470.py
+          python -m py_compile football-data/validation/review_mls_d_conditional_final_chain_v470.py
+
+      - name: Run MLS D conditional exact deployment-chain outer-OOF review
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/review_mls_d_conditional_final_chain_v470.py
+
+      - name: Commit final-chain review receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/mls_d_conditional_final_chain_v470_status.json
+          if git diff --cached --quiet; then
+            echo "No final-chain review receipt changes."
+            exit 0
+          fi
+          git commit -m "audit(football): persist V4.7 MLS D conditional final-chain review"
+          git pull --rebase origin main
+          git push origin HEAD:main
