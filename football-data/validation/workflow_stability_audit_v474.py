@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Repository-wide GitHub Actions stability audit.
+"""Repository-wide GitHub Actions stability gate.
 
-Engineering-only diagnostic. It scans workflow text for patterns that commonly
-create noisy red runs, recursive CI, stale generated commits, concurrency races,
-or deprecated JavaScript action runtimes. It never changes model weights,
-probabilities, CURRENT, or competition outputs.
+This engineering gate blocks workflow patterns that previously created noisy red
+runs, recursive writes, concurrent-main rebase races, or deprecated Node runtimes.
+It never changes model weights, probabilities, CURRENT, or competition outputs.
 """
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 OUT = ROOT / "football-data" / "manifests" / "workflow_stability_v474_status.json"
 
-NODE20_PATTERNS = {
+DEPRECATED_ACTION_PATTERNS = {
     "actions/checkout@v4": "actions/checkout@v6",
     "actions/setup-python@v5": "actions/setup-python@v6",
     "actions/upload-artifact@v4": "actions/upload-artifact@v7",
@@ -33,7 +32,6 @@ def rel(path: Path) -> str:
 
 
 def _top_level_contents_write(text: str) -> bool:
-    """Detect top-level `permissions: contents: write` without multiline regexes."""
     lines = text.splitlines()
     in_permissions = False
     permissions_indent = -1
@@ -79,8 +77,7 @@ def _extract_push_paths(text: str) -> list[str]:
                 in_paths = False
                 continue
             if stripped.startswith("-"):
-                value = stripped[1:].strip().strip('"\'')
-                paths.append(value)
+                paths.append(stripped[1:].strip().strip('"\''))
     return paths
 
 
@@ -93,7 +90,7 @@ def audit() -> dict[str, Any]:
     cancel_in_progress_true: list[str] = []
     always_jobs: list[str] = []
     missing_timeout: list[str] = []
-    node20_refs: list[dict[str, str]] = []
+    deprecated_action_refs: list[dict[str, str]] = []
     generated_manifest_writers: list[str] = []
     contents_api_writers: list[str] = []
     self_trigger_risks: list[dict[str, Any]] = []
@@ -122,34 +119,48 @@ def audit() -> dict[str, Any]:
         if "api.github.com/repos/" in text and "/contents/" in text:
             contents_api_writers.append(name)
 
-        for old, recommended in NODE20_PATTERNS.items():
+        for old, recommended in DEPRECATED_ACTION_PATTERNS.items():
             if old in text:
-                node20_refs.append({"workflow": name, "reference": old, "recommended": recommended})
+                deprecated_action_refs.append({"workflow": name, "reference": old, "recommended": recommended})
 
-        writes_repo = bool(re.search(r"(?m)^\s*git\s+push\b", text)) or (
+        writes_repo_directly = bool(re.search(r"(?m)^\s*git\s+push\b", text)) or (
             "api.github.com/repos/" in text and "/contents/" in text
         )
-        if writes_repo and push_paths:
+        if writes_repo_directly and push_paths:
             self_trigger_risks.append({
                 "workflow": name,
                 "push_paths": push_paths,
-                "reason": "repository-writing workflow also has push triggers; verify written paths are excluded",
+                "reason": "workflow contains direct repository-writing logic and push triggers; shared persistence helpers should be used instead",
             })
 
+    critical_findings = {
+        "direct_git_push_workflows": direct_git_push,
+        "git_pull_rebase_workflows": git_pull_rebase,
+        "global_contents_write_workflows": global_contents_write,
+        "deprecated_action_references": deprecated_action_refs,
+        "missing_timeout_workflows": missing_timeout,
+        "direct_contents_api_writers": contents_api_writers,
+        "self_trigger_risks": self_trigger_risks,
+    }
+    critical_count = sum(len(items) for items in critical_findings.values())
     risk_score = (
         5 * len(direct_git_push)
+        + 5 * len(git_pull_rebase)
         + 3 * len(global_contents_write)
-        + 2 * len(cancel_in_progress_true)
-        + len(node20_refs)
-        + len(missing_timeout)
+        + 2 * len(deprecated_action_refs)
+        + 2 * len(missing_timeout)
+        + 3 * len(contents_api_writers)
+        + 3 * len(self_trigger_risks)
     )
 
     return {
-        "schema_version": "V4.7.4-workflow-stability-audit-r2",
+        "schema_version": "V4.7.4-workflow-stability-gate-r3",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "status": "PASS_DIAGNOSTIC",
+        "status": "PASS" if critical_count == 0 else "FAIL",
         "workflow_count": len(workflow_files),
+        "critical_finding_count": critical_count,
         "risk_score": risk_score,
+        "critical_findings": critical_findings,
         "findings": {
             "direct_git_push_workflows": direct_git_push,
             "git_pull_rebase_workflows": git_pull_rebase,
@@ -158,15 +169,20 @@ def audit() -> dict[str, Any]:
             "cancel_in_progress_true_workflows": cancel_in_progress_true,
             "always_condition_workflows": always_jobs,
             "missing_timeout_workflows": missing_timeout,
-            "node20_action_references": node20_refs,
+            "deprecated_action_references": deprecated_action_refs,
             "generated_manifest_writers": generated_manifest_writers,
             "contents_api_writers": contents_api_writers,
             "self_trigger_risks": self_trigger_risks,
         },
+        "informational_policy": {
+            "cancel_in_progress_true": "allowed and recommended for stale push-triggered work where a newer run supersedes the older run",
+            "job_scoped_contents_write": "allowed only for jobs that persist validated generated artifacts through the shared safe persistence helpers",
+            "always_condition": "allowed when used to preserve failure receipts or aggregate matrix-job outcomes truthfully",
+        },
         "formal_weight_change": False,
         "automatic_promotion": False,
         "current_rule_change": False,
-        "policy": "Diagnostic only during stabilization. Findings do not fail CI until repository writers are migrated and a clean baseline is established.",
+        "policy": "Fail closed on direct git push/rebase, global write permissions, deprecated action runtimes, missing timeouts, direct Contents API implementations, or self-trigger write risks. Shared persistence helpers and job-scoped least privilege are required.",
     }
 
 
@@ -174,23 +190,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-receipt", action="store_true")
     parser.add_argument("--print-summary", action="store_true")
+    parser.add_argument("--strict-exit", action="store_true")
     args = parser.parse_args()
     report = audit()
     if args.write_receipt:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.print_summary:
-        findings = report["findings"]
         print(json.dumps({
             "status": report["status"],
             "workflow_count": report["workflow_count"],
+            "critical_finding_count": report["critical_finding_count"],
             "risk_score": report["risk_score"],
-            "direct_git_push_count": len(findings["direct_git_push_workflows"]),
-            "global_contents_write_count": len(findings["global_contents_write_workflows"]),
-            "node20_reference_count": len(findings["node20_action_references"]),
-            "cancel_in_progress_true_count": len(findings["cancel_in_progress_true_workflows"]),
+            "critical_findings": report["critical_findings"],
         }, ensure_ascii=False, indent=2))
-    return 0
+    return 2 if args.strict_exit and report["status"] != "PASS" else 0
 
 
 if __name__ == "__main__":
