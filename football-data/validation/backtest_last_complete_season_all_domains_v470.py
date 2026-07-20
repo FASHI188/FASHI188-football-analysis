@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Strict point-in-time last-complete-season descriptive backtest for all 17 domains.
+"""Strict point-in-time previous-complete-season descriptive backtest for all 17 domains.
 
 Primary descriptive metric: 1X2 Top-1 accuracy (home/draw/away argmax versus actual
 90-minute result). Exact-score Top-1 is reported separately and must never be called
 1X2 win rate.
 
+Season scope is explicitly frozen for the user's "last season" request at 2026-07-20:
+- European autumn-spring domains and UEFA Champions League: 2025/26;
+- calendar-year domains: 2025.
+
 The replay uses, per competition:
-- the latest outer season already present in the nested chronological formal-core
-  validation report;
-- that outer fold's parameter set, selected only from prior seasons;
-- same-season match history strictly before each match date via the frozen formal
-  engine functions;
+- the nested chronological outer fold for that exact completed season;
+- that fold's parameter set, selected only from prior seasons;
+- same-season match history strictly before each match date via frozen formal-engine
+  functions;
 - the target-season OOF full-matrix calibrator when replay-safe and available.
 
-No historical odds, market coordination, EV, lineup hindsight, current-season
-challenger promotion or post-match information is injected. Processed matches are
-loaded once per competition for speed; probability formulas and hard sample gates
-are identical to the frozen formal engine.
+No historical odds, market coordination, EV, lineup hindsight, 2026 partial-season
+results or post-match information is injected. Processed matches are loaded once per
+competition for speed; probability formulas and hard sample gates are identical to
+the frozen formal engine.
 """
 from __future__ import annotations
 
@@ -55,6 +58,20 @@ from platform_core import (
 FORMAL_STATUS = ROOT / "manifests" / "formal_core_v460_status.json"
 REPORT_ROOT = ROOT / "validation" / "reports" / "formal_core_v460"
 OUT = ROOT / "manifests" / "last_complete_season_backtest_v470_status.json"
+
+CALENDAR_YEAR_DOMAINS = {
+    "SWE_Allsvenskan",
+    "NOR_Eliteserien",
+    "JPN_J1",
+    "KOR_KLeague1",
+    "BRA_SerieA",
+    "ARG_Primera",
+    "USA_MLS",
+}
+
+
+def _requested_last_complete_season(competition_id: str) -> str:
+    return "2025" if competition_id in CALENDAR_YEAR_DOMAINS else "2025/26"
 
 
 def _actual_result(home_goals: int, away_goals: int) -> str:
@@ -103,11 +120,16 @@ def _target_season_temperature(competition_id: str, season: str) -> tuple[float,
     return float(item.get("temperature", 1.0)), str(item.get("mode") or "unknown")
 
 
-def _last_outer_fold(report: dict[str, Any]) -> dict[str, Any]:
+def _fold_for_season(report: dict[str, Any], target_season: str) -> dict[str, Any]:
     folds = report.get("folds") or []
-    if not folds:
-        raise PlatformError("formal-core validation report has no outer folds")
-    return folds[-1]
+    candidates = [fold for fold in folds if str(fold.get("outer_season")) == target_season]
+    if not candidates:
+        raise PlatformError(f"formal-core validation report has no outer fold for completed season {target_season}")
+    if len(candidates) != 1:
+        # The full-season formal-core report is expected to have one fold per season.
+        # Fail closed rather than silently choosing among multiple parameter states.
+        raise PlatformError(f"formal-core report has {len(candidates)} folds for {target_season}; expected exactly one")
+    return candidates[0]
 
 
 def _predict_from_loaded_matches(
@@ -118,7 +140,6 @@ def _predict_from_loaded_matches(
     season: str,
     selected_parameters: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Exact frozen-engine base matrix using one in-memory processed-match list."""
     config = load_config()
     params = _merge_parameters(config, selected_parameters)
     _, history = current_season_history(all_matches, cutoff, season)
@@ -140,11 +161,11 @@ def _backtest_competition(competition_id: str) -> dict[str, Any]:
     if not report_path.exists():
         raise PlatformError(f"missing formal-core report for {competition_id}")
     report = load_json(report_path)
-    fold = _last_outer_fold(report)
-    season = str(fold.get("outer_season") or "")
+    season = _requested_last_complete_season(competition_id)
+    fold = _fold_for_season(report, season)
     selected_parameters = fold.get("selected_parameters")
-    if not season or not isinstance(selected_parameters, dict):
-        raise PlatformError(f"invalid latest outer fold for {competition_id}")
+    if not isinstance(selected_parameters, dict):
+        raise PlatformError(f"invalid selected parameters for {competition_id} season {season}")
 
     all_matches = read_processed_matches(competition_id)
     matches = [m for m in all_matches if str(m.season) == season]
@@ -291,8 +312,13 @@ def main() -> int:
             failures[cid] = f"{type(exc).__name__}: {exc}"
 
     payload = {
-        "schema_version": "V4.7.0-last-complete-season-backtest-r2",
+        "schema_version": "V4.7.0-last-complete-season-backtest-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "season_scope_as_of": "2026-07-20",
+        "season_policy": {
+            "calendar_year_domains": "2025",
+            "autumn_spring_and_ucl_domains": "2025/26",
+        },
         "status": "PASS" if len(reports) == len(competitions) and not failures else "PARTIAL",
         "competition_count_requested": len(competitions),
         "competition_count_completed": len(reports),
