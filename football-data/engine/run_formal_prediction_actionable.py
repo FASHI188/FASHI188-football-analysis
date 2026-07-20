@@ -12,13 +12,16 @@ The final total-goals peak diagnostic is read-only and runs last.
 Formal EV and market coordination are separately fail-closed behind a
 competition-specific LOMO/OOS receipt. A lineup status label is not enough to
 receive lineup confidence credit: an official XI or executable probable-XI
-projection must actually be present. Final rule authority is normalized from the
-active governance manifest while preserving the underlying implementation version.
+projection must actually be present. Dynamic-strength live evidence is audited at
+question time but cannot change probabilities without a separate hash-bound
+competition/season promotion. Final rule authority is normalized from the active
+governance manifest while preserving the underlying implementation version.
 """
 from __future__ import annotations
 
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
+from dynamic_strength_live_input_contract_v470 import apply_dynamic_strength_live_input_audit
 from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
 from formal_governance_runtime_v470 import apply_formal_governance_runtime
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
@@ -39,6 +42,9 @@ def main() -> int:
             context.setdefault("match_identity", {})["season"] = str(match_input["season"]).strip()
         context = apply_formal_ev_lomo_gate(context)
         context = apply_probable_lineup_runtime(match_input, context)
+        context = apply_dynamic_strength_live_input_audit(
+            context, match_input.get("dynamic_strength_evidence")
+        )
 
         lineup_audit = context.get("probable_lineup_v470_audit") or {}
         lineup_runtime_status = str(lineup_audit.get("status") or "不可用")
@@ -52,6 +58,10 @@ def main() -> int:
         context.setdefault("gates", {})["new_freeze_required_on_official_lineup_or_major_market_move"] = False
         context["gates"]["question_time_decision_freeze_locked"] = True
         context["gates"]["probable_lineup_allowed"] = lineup_detail_available
+        context["gates"]["dynamic_strength_live_input_passed"] = (
+            (context.get("dynamic_strength_live_input_audit") or {}).get("status") == "通过"
+        )
+        context["gates"]["dynamic_strength_probability_effect_enabled"] = False
         context["gates"]["refreeze_policy"] = (
             "Do not wait for official lineups or closing odds. Re-run only on user request or a major confirmed "
             "change before the user's action deadline."
