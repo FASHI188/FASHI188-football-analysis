@@ -7,10 +7,11 @@ on:
     paths:
       - ".github/workflows/football-public-lineup-backfill.yml"
       - "football-data/ingestion/public_lineup_backfill_v463.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/config/multisource_evidence_v463.json"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-public-lineup-backfill-${{ github.ref }}
@@ -18,24 +19,27 @@ concurrency:
 
 jobs:
   backfill-lineups:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Compile collectors and validator
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile collectors validator and persistence helper
         run: |
           python -m py_compile football-data/ingestion/public_lineup_backfill_v463.py
           python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Backfill Transfermarkt-datasets and StatsBomb Open lineups
         run: python football-data/ingestion/public_lineup_backfill_v463.py --source all
@@ -43,15 +47,17 @@ jobs:
       - name: Validate independent-source consistency
         run: python football-data/validation/multisource_evidence_validator_v463.py --print-summary
 
-      - name: Commit normalized public evidence and validation status
+      - name: Persist normalized public evidence safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/evidence/lineups football-data/manifests/multisource_evidence_v463_status.json football-data/validation/reports/multisource_evidence_v463/summary.json
-          if git diff --cached --quiet; then
-            echo "No public lineup evidence changes to commit."
-            exit 0
-          fi
-          git commit -m "data(football): backfill public multi-source lineup evidence"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/evidence/lineups/ \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/validation/reports/ \
+            --message-prefix "data(football): persist validated public-lineup artifact"
+
+# V4.7.4 hardening: collector and validator must pass before persistence. No
+# direct git commit/pull/rebase/push occurs inside this workflow.
