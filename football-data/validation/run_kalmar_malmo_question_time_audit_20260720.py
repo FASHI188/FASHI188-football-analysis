@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import json
-import math
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -24,7 +23,7 @@ from platform_core import (
 
 COMP = "SWE_Allsvenskan"
 SEASON = "2026"
-HOME = "Kalmar FF"
+HOME = "Kalmar"
 AWAY = "Malmo FF"
 CUTOFF = datetime(2026, 7, 20, 12, 43, 31, tzinfo=timezone.utc)
 OUT = ROOT / "manifests" / "question_time_audits" / "SWE_Allsvenskan_2026-07-20_Kalmar_FF_vs_Malmo_FF.json"
@@ -63,7 +62,6 @@ def main() -> int:
     existing = read_processed_matches(COMP)
     existing_keys = {(m.season, m.date.date().isoformat(), m.home_team.casefold(), m.away_team.casefold()) for m in existing}
 
-    # Add only question-time completed matches absent from the persisted dataset.
     rows = []
     for date, home, away, hg, ag in SUPPLEMENTAL:
         iso = datetime.strptime(date, "%d/%m/%Y").date().isoformat()
@@ -85,7 +83,8 @@ def main() -> int:
         if rows:
             with overlay.open("w", encoding="utf-8", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=["competition_id","season","stage","Date","HomeTeam","AwayTeam","FTHG","FTAG"])
-                writer.writeheader(); writer.writerows(rows)
+                writer.writeheader()
+                writer.writerows(rows)
 
         after = read_processed_matches(COMP)
         history = [m for m in after if m.season == SEASON and m.date.date() < CUTOFF.date()]
@@ -96,7 +95,6 @@ def main() -> int:
         ah = score_market(matrix, 0.25, settle_home_handicap)
         ou = score_market(matrix, 2.5, settle_over_total)
 
-        # 2026 SWE OOF calibrator is identity_guardrail T=1.0, so the final matrix equals the core matrix.
         probs = margins["1x2"]
         no_vig_raw = {k: 1.0 / MARKET["one_x_two"][k] for k in ("home","draw","away")}
         s = sum(no_vig_raw.values())
@@ -104,14 +102,17 @@ def main() -> int:
 
         total_rank = sorted(margins["total_goals"].items(), key=lambda kv: (-kv[1], kv[0]))
         result = {
-            "schema_version": "V4.7.0-question-time-formal-audit-r1",
+            "schema_version": "V4.7.0-question-time-formal-audit-r2",
+            "status": "PASS",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "match_identity": {
                 "competition_id": COMP,
                 "season": SEASON,
                 "round": 13,
                 "home_team": HOME,
+                "display_home_team": "Kalmar FF",
                 "away_team": AWAY,
+                "display_away_team": "Malmo FF",
                 "kickoff_utc": "2026-07-20T17:00:00+00:00",
                 "freeze_time_utc": CUTOFF.isoformat(),
                 "settlement": "90_minutes_including_stoppage",
