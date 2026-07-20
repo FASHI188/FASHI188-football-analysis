@@ -6,25 +6,32 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/football-full-chain-diagnostic.yml"
+      - "football-data/validation/persist_files_v474.py"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: football-full-chain-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   diagnose-full-chain:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Compile persistence helper
+        run: python -m py_compile football-data/validation/persist_files_v474.py
 
       - name: Run long-chain diagnostics without stopping early
         shell: bash
@@ -103,7 +110,7 @@ jobs:
           failed = [name for name, item in checks.items() if not item["passed"]]
           first_failed = failed[0] if failed else None
           report = {
-              "schema_version": "V4.6.5-full-chain-diagnostic",
+              "schema_version": "V4.7.4-full-chain-diagnostic",
               "all_passed": not failed,
               "first_failed_check": first_failed,
               "failed_checks": failed,
@@ -113,19 +120,30 @@ jobs:
           print(json.dumps({"all_passed": report["all_passed"], "first_failed_check": first_failed, "failed_checks": failed}, ensure_ascii=False, indent=2))
           PY
 
-      - name: Persist diagnostic only
+      - name: Persist diagnostic safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
           git reset --hard HEAD
           git clean -fd
           mkdir -p football-data/manifests
           cp "$RUNNER_TEMP/football_full_chain_diagnostic.json" football-data/manifests/full_chain_diagnostic_v465.json
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/full_chain_diagnostic_v465.json
-          if git diff --cached --quiet; then
-            echo "No diagnostic changes to commit."
-            exit 0
-          fi
-          git commit -m "audit(football): persist full-chain failure diagnostic"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/full_chain_diagnostic_v465.json \
+            --message-prefix "audit(football): persist full-chain diagnostic"
+
+      - name: Enforce diagnostic truthfulness
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("football-data/manifests/full_chain_diagnostic_v465.json").read_text(encoding="utf-8"))
+          if not report.get("all_passed"):
+              raise SystemExit(f"full chain has real failures: {report.get('failed_checks')}")
+          print("full chain PASS")
+          PY
+
+# V4.7.4 hardening: all subchecks run before status is decided. Persistence uses
+# Contents API; red means the diagnostic chain itself contains real failures, not
+# a git rebase/push race.
