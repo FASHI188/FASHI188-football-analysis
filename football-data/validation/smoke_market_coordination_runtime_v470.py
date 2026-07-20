@@ -13,7 +13,7 @@ ENGINE = ROOT / "engine"
 if str(ENGINE) not in sys.path:
     sys.path.insert(0, str(ENGINE))
 
-from market_coordination_runtime_v470 import apply_market_coordination_runtime
+from market_coordination_runtime_basis_v470 import apply_market_coordination_runtime
 from platform_core import derive_score_marginals, sha256_json
 
 OUT = ROOT / "manifests" / "market_coordination_runtime_v470_smoke.json"
@@ -87,10 +87,13 @@ def main() -> int:
         blocked = apply_market_coordination_runtime(blocked_context, copy.deepcopy(base))
 
         audit = candidate.get("optimization_audit") or {}
+        fit = audit.get("market_fit_diagnostics") or {}
         checks = {
             "candidate_optimization_converged": audit.get("converged") is True,
             "candidate_residual_lte_1e_6": float(audit.get("max_constraint_residual", 1.0)) <= 1e-6,
             "candidate_probability_sum_conserved": abs(float(audit.get("probability_sum", 0.0)) - 1.0) <= 1e-8,
+            "nonredundant_constraint_basis_used": audit.get("constraint_basis") == "1X2_DRAW + AH_FAIR_SETTLEMENT + OU_FAIR_SETTLEMENT",
+            "full_1x2_fit_diagnostics_reported": isinstance(fit.get("one_x_two_residuals"), dict),
             "candidate_without_lomo_is_partial": candidate.get("module_states", {}).get("market_coordination") == "部分通过",
             "candidate_without_lomo_does_not_mutate_formal_matrix": sha256_json(candidate["probabilities"]["score_matrix"]) == prior_sha,
             "candidate_summary_exists": isinstance(candidate.get("market_coordination_candidate"), dict),
@@ -101,7 +104,7 @@ def main() -> int:
         }
         status = "PASS" if all(checks.values()) else "FAIL"
         return _write({
-            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r2",
+            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r3",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "status": status,
             "checks": checks,
@@ -114,7 +117,7 @@ def main() -> int:
         })
     except Exception as exc:
         return _write({
-            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r2",
+            "schema_version": "V4.7.0-market-coordination-runtime-smoke-r3",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "status": "FAIL",
             "checks": {},
