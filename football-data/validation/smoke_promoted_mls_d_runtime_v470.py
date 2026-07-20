@@ -14,6 +14,7 @@ if str(ENGINE_DIR) not in sys.path:
 
 from platform_core import ROOT, derive_score_marginals, atomic_write_json
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
+from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 OUT = ROOT / "manifests" / "promotions" / "USA_MLS_d_conditional_v470_runtime_smoke.json"
 
@@ -64,6 +65,7 @@ def main() -> int:
 
     context = {"match_identity": {"competition_id": "USA_MLS", "season": "2026"}}
     promoted = apply_hash_bound_promoted_v470_challengers(context, calculation)
+    promoted = apply_total_goals_peak_diagnostics(promoted)
     after = derive_score_marginals(promoted["probabilities"]["score_matrix"])
     after_margin2 = _margin2plus(promoted["probabilities"]["score_matrix"])
     total_keys = ("0", "1", "2", "3", "4", "5", "6", "7+")
@@ -78,6 +80,10 @@ def main() -> int:
         calculation,
     )
 
+    runtime_audit = promoted.get("conditional_allocation_v470_audit") or {}
+    transform_audit = runtime_audit.get("transform_audit") or {}
+    peak_audit = promoted.get("total_goals_peak_audit") or {}
+    conclusions = promoted.get("conclusions") or {}
     checks = {
         "mls_2026_module_passed": promoted.get("module_states", {}).get("conditional_allocation_v470") == "通过",
         "probability_conservation": abs(after["probability_sum"] - 1.0) <= 1e-10,
@@ -87,11 +93,17 @@ def main() -> int:
         "new_season_without_receipt_not_activated": wrong_season.get("module_states", {}).get("conditional_allocation_v470") == "未启用",
         "handicap_recomputed": isinstance(promoted.get("derived_markets", {}).get("home_handicap", {}).get("win"), float),
         "total_market_recomputed": isinstance(promoted.get("derived_markets", {}).get("over_total", {}).get("win"), float),
-        "top_score_rebuilt": bool(promoted.get("conclusions", {}).get("top_score")),
+        "top_score_rebuilt": bool(conclusions.get("top_score")),
+        "promoted_transform_status_normalized": transform_audit.get("status") == "PROMOTED_RUNTIME_ACTIVE" and float(transform_audit.get("formal_weight", 0.0)) == 1.0,
+        "total_goals_peak_diagnostic_passed": peak_audit.get("status") == "通过",
+        "total_goals_top1_probability_exposed": isinstance(conclusions.get("total_goals_top1_probability"), float),
+        "total_goals_top2_probability_exposed": isinstance(conclusions.get("total_goals_top2_probability"), float),
+        "total_goals_gap_exposed": isinstance(conclusions.get("total_goals_top1_top2_gap"), float),
+        "total_goals_peak_label_exposed": conclusions.get("total_goals_peak_status") in {"WEAK_PEAK_PLATFORM", "DISTINCT_TOP1"},
     }
     status = "PASS" if all(checks.values()) else "FAIL"
     payload = {
-        "schema_version": "V4.7.0-USA_MLS-promoted-runtime-smoke-r1",
+        "schema_version": "V4.7.0-USA_MLS-promoted-runtime-smoke-r2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
         "checks": checks,
@@ -99,7 +111,8 @@ def main() -> int:
         "probability_sum_residual": after["probability_sum"] - 1.0,
         "margin2plus_before": before_margin2,
         "margin2plus_after": after_margin2,
-        "mls_runtime_audit": promoted.get("conditional_allocation_v470_audit"),
+        "mls_runtime_audit": runtime_audit,
+        "total_goals_peak_audit": peak_audit,
     }
     atomic_write_json(OUT, payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
