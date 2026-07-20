@@ -1,0 +1,92 @@
+name: Football V4.7.7 Action Runtime Repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/football-action-runtime-repair-v477.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-action-runtime-repair-v477
+  cancel-in-progress: false
+
+jobs:
+  repair-action-versions:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Repair unsupported action-version references
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | \
+            xargs -0 sed -i \
+              -e 's#actions/setup-python@v6#actions/setup-python@v5#g' \
+              -e 's#actions/upload-artifact@v7#actions/upload-artifact@v4#g' \
+              -e 's#actions/download-artifact@v8#actions/download-artifact@v5#g'
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('football-data/validation/workflow_stability_audit_v474.py')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('DEPRECATED_ACTION_PATTERNS = {')
+          end = text.index('\n}\n', start) + 3
+          replacement = '''DEPRECATED_ACTION_PATTERNS = {
+    "actions/checkout@v4": "actions/checkout@v6",
+    "actions/setup-python@v4": "actions/setup-python@v5",
+    "actions/upload-artifact@v3": "actions/upload-artifact@v4",
+    "actions/download-artifact@v4": "actions/download-artifact@v5",
+}'''
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          if grep -R -n -E 'actions/setup-python@v6|actions/upload-artifact@v7|actions/download-artifact@v8' .github/workflows; then
+            echo 'Unsupported action references remain.'
+            exit 2
+          fi
+
+      - name: Atomically persist all repaired workflow files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          base_sha=$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')
+          base_tree=$(gh api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')
+
+          mapfile -t files < <(git diff --name-only -- .github/workflows football-data/validation/workflow_stability_audit_v474.py)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo 'No action-version changes required.'
+            exit 0
+          fi
+
+          tree='[]'
+          for file in "${files[@]}"; do
+            encoded=$(base64 -w0 "$file")
+            blob_sha=$(gh api --method POST "repos/$repo/git/blobs" \
+              -f content="$encoded" -f encoding='base64' --jq '.sha')
+            tree=$(jq --arg path "$file" --arg sha "$blob_sha" \
+              '. + [{"path":$path,"mode":"100644","type":"blob","sha":$sha}]' <<<"$tree")
+          done
+
+          tree_payload=$(jq -n --arg base "$base_tree" --argjson entries "$tree" '{base_tree:$base,tree:$entries}')
+          tree_sha=$(gh api --method POST "repos/$repo/git/trees" --input - --jq '.sha' <<<"$tree_payload")
+          commit_payload=$(jq -n --arg tree "$tree_sha" --arg parent "$base_sha" \
+            '{message:"repair(football): use officially supported GitHub Action versions",tree:$tree,parents:[$parent]}')
+          commit_sha=$(gh api --method POST "repos/$repo/git/commits" --input - --jq '.sha' <<<"$commit_payload")
+          ref_payload=$(jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}')
+          gh api --method PATCH "repos/$repo/git/refs/heads/main" --input - <<<"$ref_payload"
+          echo "Persisted atomic repair commit: $commit_sha"
+
+# One-time repair only. Remove after the atomic repair commit lands.
