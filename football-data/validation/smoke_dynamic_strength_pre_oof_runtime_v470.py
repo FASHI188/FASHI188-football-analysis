@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,10 +40,12 @@ def rows(season: str, start: datetime, count: int) -> list[MatchRow]:
 def max_diff(a, b):
     amap = {(int(x["home_goals"]), int(x["away_goals"])): float(x["probability"]) for x in a}
     bmap = {(int(x["home_goals"]), int(x["away_goals"])): float(x["probability"]) for x in b}
+    if set(amap) != set(bmap):
+        raise RuntimeError("matrix cell sets differ")
     return max(abs(amap[key] - bmap[key]) for key in amap)
 
 
-def main() -> int:
+def run_smoke() -> dict:
     cfg = load_config()
     params = _merge_parameters(cfg, {
         "half_life_days": 180.0,
@@ -73,8 +76,9 @@ def main() -> int:
         "structural_break_score": 0.18,
         "feature_complete": True,
     }
-    hw = commensurability_score(**{k: home_feat[k] for k in ("roster_continuity","coach_continuity","promoted_or_relegated","structural_break_score")}, coefficients=candidate["coefficients"])
-    aw = commensurability_score(**{k: away_feat[k] for k in ("roster_continuity","coach_continuity","promoted_or_relegated","structural_break_score")}, coefficients=candidate["coefficients"])
+    keys = ("roster_continuity", "coach_continuity", "promoted_or_relegated", "structural_break_score")
+    hw = commensurability_score(**{k: home_feat[k] for k in keys}, coefficients=candidate["coefficients"])
+    aw = commensurability_score(**{k: away_feat[k] for k in keys}, coefficients=candidate["coefficients"])
 
     research_full, _ = challenger_matrix(current_state, prior_state, 1, 2, home_feat, away_feat, candidate, params, cfg)
     runtime_full, runtime_full_audit = build_dynamic_strength_matrix(
@@ -129,8 +133,8 @@ def main() -> int:
         "full_probability_conserved": abs(sum(float(x["probability"]) for x in runtime_full) - 1.0) <= 1e-12,
         "allocation_probability_conserved": abs(sum(float(x["probability"]) for x in runtime_alloc) - 1.0) <= 1e-12,
     }
-    result = {
-        "schema_version": "V4.7.0-dynamic-strength-pre-oof-runtime-smoke-r1",
+    return {
+        "schema_version": "V4.7.0-dynamic-strength-pre-oof-runtime-smoke-r2",
         "status": "PASS" if all(checks.values()) else "FAIL",
         "checks": checks,
         "full_dynamic_max_abs_probability_difference": full_diff,
@@ -141,6 +145,21 @@ def main() -> int:
         "formal_weight_change": False,
         "probability_change": False,
     }
+
+
+def main() -> int:
+    try:
+        result = run_smoke()
+    except Exception as exc:
+        result = {
+            "schema_version": "V4.7.0-dynamic-strength-pre-oof-runtime-smoke-r2",
+            "status": "FAIL",
+            "failure_class": "ENGINEERING_OR_TEST_EXCEPTION",
+            "reason": str(exc),
+            "traceback_tail": traceback.format_exc().splitlines()[-16:],
+            "formal_weight_change": False,
+            "probability_change": False,
+        }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
