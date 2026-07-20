@@ -1,0 +1,146 @@
+name: Football V4.8 Direct Total Recalibration Review
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/manifests/direct_total_distribution_v480_status.json"
+      - "football-data/validation/direct_total_distribution_recalibration_v480.py"
+      - "football-data/validation/aggregate_direct_total_recalibration_v480.py"
+      - ".github/workflows/football-v480-direct-total-recalibration-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v480-direct-total-recalibration-review
+  cancel-in-progress: true
+
+jobs:
+  review-domain:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+          - ESP_LaLiga
+          - POR_PrimeiraLiga
+          - NED_Eredivisie
+          - SUI_SuperLeague
+          - SCO_Premiership
+          - SWE_Allsvenskan
+          - NOR_Eliteserien
+          - JPN_J1
+          - KOR_KLeague1
+          - BRA_SerieA
+          - ARG_Primera
+          - USA_MLS
+          - UEFA_ChampionsLeague
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile recalibration assets
+        run: |
+          python -m py_compile football-data/validation/direct_total_distribution_challenger_v480.py
+          python -m py_compile football-data/validation/direct_total_distribution_recalibration_v480.py
+          python -m py_compile football-data/validation/aggregate_direct_total_recalibration_v480.py
+
+      - name: Run isolated recalibration review
+        id: worker
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/direct_total_distribution_recalibration_v480.py --competition "${{ matrix.competition }}"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit isolated recalibration evidence
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "football-data/manifests/direct_total_distribution_v480_recalibration/${{ matrix.competition }}.json"
+          if [ -f "football-data/models/challengers_v480/${{ matrix.competition }}/direct_total_distribution_recalibration_review.json" ]; then
+            git add "football-data/models/challengers_v480/${{ matrix.competition }}/direct_total_distribution_recalibration_review.json"
+          fi
+          if git diff --cached --quiet; then
+            echo "No V4.8 recalibration changes for ${{ matrix.competition }}."
+          else
+            git commit -m "research(football): persist ${{ matrix.competition }} V4.8 total recalibration review"
+            for attempt in 1 2 3 4 5 6; do
+              git pull --rebase origin main && git push origin HEAD:main && break
+              if [ "$attempt" = "6" ]; then
+                echo "Failed to persist ${{ matrix.competition }} recalibration evidence" >&2
+                exit 1
+              fi
+              sleep $((attempt * 2))
+            done
+          fi
+
+      - name: Preserve worker failure state
+        if: steps.worker.outputs.rc != '0'
+        run: exit 1
+
+  aggregate:
+    if: always()
+    needs: review-domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh isolated reviews
+        run: git pull --rebase origin main
+
+      - name: Aggregate recalibration evidence
+        id: aggregate
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/aggregate_direct_total_recalibration_v480.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit recalibration aggregate
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/direct_total_distribution_v480_recalibration_status.json
+          if git diff --cached --quiet; then
+            echo "No V4.8 recalibration aggregate changes."
+          else
+            git commit -m "research(football): aggregate V4.8 total recalibration evidence"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce complete aggregate
+        if: steps.aggregate.outputs.rc != '0'
+        run: exit 1
