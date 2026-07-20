@@ -64,16 +64,18 @@ def main() -> int:
 
     checks = {
         "complete_snapshot_without_lomo_keeps_ev_closed": no_receipt["gates"]["market_snapshot_complete"] is True and no_receipt["gates"]["ev_may_be_calculated"] is False,
-        "complete_snapshot_without_lomo_keeps_market_coordination_closed": no_receipt["gates"]["market_coordination_may_run"] is False,
+        "complete_snapshot_without_lomo_allows_coordination_candidate": no_receipt["gates"]["market_coordination_candidate_may_run"] is True,
+        "complete_snapshot_without_lomo_keeps_formal_coordination_closed": no_receipt["gates"]["formal_market_coordination_may_apply"] is False and no_receipt["gates"]["market_coordination_may_run"] is False,
         "valid_competition_season_receipt_opens_ev": valid_receipt["gates"]["ev_may_be_calculated"] is True,
-        "valid_competition_season_receipt_opens_market_coordination": valid_receipt["gates"]["market_coordination_may_run"] is True,
+        "valid_competition_season_receipt_opens_formal_market_coordination": valid_receipt["gates"]["formal_market_coordination_may_apply"] is True,
         "wrong_season_receipt_keeps_ev_closed": wrong_season["gates"]["ev_may_be_calculated"] is False,
+        "wrong_season_still_allows_candidate_when_snapshot_complete": wrong_season["gates"]["market_coordination_candidate_may_run"] is True and wrong_season["gates"]["formal_market_coordination_may_apply"] is False,
         "no_probability_or_price_mutation_claimed": no_receipt["market_lomo_gate_audit"]["probability_mutation"] is False and no_receipt["market_lomo_gate_audit"]["price_mutation"] is False,
         "snapshot_quality_remains_distinct_from_ev": no_receipt["module_states"]["synchronized_market"] == "通过" and no_receipt["module_states"]["price_ev_no_bet"] == "未启用",
     }
     status = "PASS" if all(checks.values()) else "FAIL"
     payload = {
-        "schema_version": "V4.7.0-formal-ev-lomo-gate-smoke-r1",
+        "schema_version": "V4.7.0-formal-ev-lomo-gate-smoke-r2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
         "checks": checks,
@@ -82,7 +84,7 @@ def main() -> int:
         "wrong_season_audit": wrong_season["market_lomo_gate_audit"],
         "formal_weight_change": False,
         "production_receipt_created": False,
-        "policy": "Smoke uses an isolated temporary receipt root. No production LOMO receipt or formal EV activation is created.",
+        "policy": "Smoke uses an isolated temporary receipt root. Coordination candidates may run without LOMO, but no production LOMO receipt or formal EV activation is created.",
     }
     atomic_write_json(OUT, payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
