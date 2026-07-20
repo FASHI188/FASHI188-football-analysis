@@ -1,0 +1,59 @@
+name: Football V4.7 Promote MLS D Conditional
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/promote_mls_d_conditional_v470.py"
+      - "football-data/manifests/mls_d_conditional_final_chain_v470_status.json"
+      - "football-data/models/challengers_v470/USA_MLS/priority_v470.json"
+      - "football-data/models/formal_core_v460/USA_MLS/oof_matrix_calibrator.json"
+      - "football-data/engine/conditional_allocation_challenger_v470.py"
+      - "football-data/config/competition_independent_v470.json"
+      - "football-data/manifests/runtime_maintenance_v473_status.json"
+      - "football-data/manifests/final_chain_replay_v463_status.json"
+      - ".github/workflows/football-v470-promote-mls-d-conditional.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-promote-mls-d-conditional
+  cancel-in-progress: false
+
+jobs:
+  sign-promotion-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile independent governance builder
+        run: python -m py_compile football-data/validation/promote_mls_d_conditional_v470.py
+
+      - name: Build fail-closed USA MLS D conditional promotion receipt
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/promote_mls_d_conditional_v470.py
+
+      - name: Commit promotion receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/promotions/USA_MLS_d_conditional_v470.json
+          if git diff --cached --quiet; then
+            echo "No promotion receipt changes."
+            exit 0
+          fi
+          git commit -m "governance(football): promote USA_MLS D conditional V4.7 module"
+          git pull --rebase origin main
+          git push origin HEAD:main
