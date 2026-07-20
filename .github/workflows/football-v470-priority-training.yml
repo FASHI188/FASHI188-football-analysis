@@ -7,6 +7,7 @@ on:
     paths:
       - "football-data/validation/train_priority_challengers_v470.py"
       - "football-data/validation/train_one_priority_challenger_v470.py"
+      - "football-data/validation/persist_files_v474.py"
       - "football-data/engine/conditional_allocation_challenger_v470.py"
       - "football-data/engine/total_tail_challenger_v470.py"
       - ".github/workflows/football-v470-priority-training.yml"
@@ -74,6 +75,14 @@ jobs:
         with:
           ref: main
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile shared persistence helper
+        run: python -m py_compile football-data/validation/persist_files_v474.py
+
       - name: Download competition receipts
         continue-on-error: true
         uses: actions/download-artifact@v8
@@ -123,7 +132,7 @@ jobs:
           pass_count = sum(1 for cid in expected if cid not in failures)
           status = "PASS" if pass_count == len(expected) else "FAIL" if pass_count == 0 else "PARTIAL"
           manifest = {
-              "schema_version": "V4.7.0-priority-challenger-training-r3",
+              "schema_version": "V4.7.0-priority-challenger-training-r4",
               "generated_at_utc": datetime.now(timezone.utc).isoformat(),
               "status": status,
               "priority_competitions": expected,
@@ -137,94 +146,40 @@ jobs:
           }
           out = root / "manifests" / "priority_challenger_training_v470_status.json"
           out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          print(json.dumps({
-              "status": status,
-              "pass_count": pass_count,
-              "failures": failures,
-              "summary": {
-                  cid: {
-                      "conditional": reports[cid].get("conditional_allocation", {}).get("status"),
-                      "tail": reports[cid].get("total_tail", {}).get("status"),
-                  }
-                  for cid in expected
-              },
-          }, ensure_ascii=False, indent=2))
+          print(json.dumps({"status": status, "pass_count": pass_count, "failures": failures}, ensure_ascii=False, indent=2))
           PY
 
-      - name: Persist aggregate receipt and successful artifacts safely
+      - name: Persist aggregate diagnostic receipt even when training fails
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
-        shell: bash
         run: |
-          python - <<'PY'
-          import base64
-          import json
-          import os
-          import time
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-          from pathlib import Path
-
-          repo = os.environ["GH_REPOSITORY"]
-          token = os.environ["GH_TOKEN"]
-          files = [Path("football-data/manifests/priority_challenger_training_v470_status.json")]
-          files.extend(sorted(Path("football-data/models/challengers_v470").glob("*/priority_v470.json")))
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-              "User-Agent": "football-v470-priority-training",
-          }
-
-          def request(method, url, payload=None, allow_conflict=False):
-              data = None if payload is None else json.dumps(payload).encode("utf-8")
-              req = urllib.request.Request(url, data=data, headers=headers, method=method)
-              try:
-                  with urllib.request.urlopen(req) as response:
-                      body = response.read().decode("utf-8")
-                      return response.status, json.loads(body) if body else None
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", errors="replace")
-                  if exc.code == 404:
-                      return 404, None
-                  if allow_conflict and exc.code in {409, 422}:
-                      return exc.code, body
-                  raise RuntimeError(f"GitHub API {method} {url} failed: {exc.code} {body}") from exc
-
-          for path in files:
-              rel = path.as_posix()
-              encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in rel.split("/"))
-              get_url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}?ref=main"
-              put_url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}"
-              content = base64.b64encode(path.read_bytes()).decode("ascii")
-              for attempt in range(1, 4):
-                  status, current = request("GET", get_url)
-                  payload = {
-                      "message": f"training(football): persist {rel}",
-                      "content": content,
-                      "branch": "main",
-                  }
-                  if status == 200 and current:
-                      payload["sha"] = current["sha"]
-                  put_status, detail = request("PUT", put_url, payload, allow_conflict=True)
-                  if put_status in {200, 201}:
-                      print(f"persisted {rel}")
-                      break
-                  if attempt == 3:
-                      raise RuntimeError(f"failed to persist {rel} after conflict retries: {put_status} {detail}")
-                  time.sleep(attempt)
-          PY
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/priority_challenger_training_v470_status.json \
+            --message-prefix "training(football): persist priority-training aggregate receipt"
 
       - name: Enforce aggregate training truthfulness
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          path = Path("football-data/manifests/priority_challenger_training_v470_status.json")
-          report = json.loads(path.read_text(encoding="utf-8"))
+          report = json.loads(Path("football-data/manifests/priority_challenger_training_v470_status.json").read_text(encoding="utf-8"))
           if report.get("status") != "PASS":
               raise SystemExit(f"priority challenger training not PASS: {report.get('failures')}")
           print("priority challenger training PASS")
           PY
+
+      - name: Persist all four successful competition artifacts safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_files_v474.py \
+            football-data/models/challengers_v470/KOR_KLeague1/priority_v470.json \
+            football-data/models/challengers_v470/NOR_Eliteserien/priority_v470.json \
+            football-data/models/challengers_v470/SWE_Allsvenskan/priority_v470.json \
+            football-data/models/challengers_v470/USA_MLS/priority_v470.json \
+            --message-prefix "training(football): persist validated priority challenger artifact"
+
+# V4.7.4 hardening: per-competition failures are truthful nonzero jobs; aggregate
+# failure receipts remain inspectable; only a PASS aggregate can persist model artifacts.
