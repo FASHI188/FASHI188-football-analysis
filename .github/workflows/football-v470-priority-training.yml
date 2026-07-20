@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "football-data/validation/train_priority_challengers_v470.py"
+      - "football-data/validation/train_one_priority_challenger_v470.py"
       - "football-data/engine/conditional_allocation_challenger_v470.py"
       - "football-data/engine/total_tail_challenger_v470.py"
       - ".github/workflows/football-v470-priority-training.yml"
@@ -19,7 +20,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  train-priority-challengers:
+  train:
+    strategy:
+      fail-fast: false
+      matrix:
+        competition:
+          - KOR_KLeague1
+          - NOR_Eliteserien
+          - SWE_Allsvenskan
+          - USA_MLS
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,16 +40,105 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compile challenger training assets
+      - name: Compile training assets
         run: |
           python -m py_compile football-data/engine/conditional_allocation_challenger_v470.py
           python -m py_compile football-data/engine/total_tail_challenger_v470.py
           python -m py_compile football-data/validation/train_priority_challengers_v470.py
+          python -m py_compile football-data/validation/train_one_priority_challenger_v470.py
 
-      - name: Train competition-independent priority challengers
+      - name: Train ${{ matrix.competition }}
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/train_priority_challengers_v470.py
+        run: python football-data/validation/train_one_priority_challenger_v470.py "${{ matrix.competition }}"
+
+      - name: Upload competition receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: receipt-${{ matrix.competition }}
+          path: football-data/manifests/priority_challenger_training_v470_${{ matrix.competition }}.json
+          if-no-files-found: error
+
+  aggregate:
+    needs: train
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download competition receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: receipt-*
+          path: training-receipts
+          merge-multiple: true
+
+      - name: Aggregate receipts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path("football-data")
+          receipt_dir = Path("training-receipts")
+          receipts = []
+          for path in sorted(receipt_dir.glob("priority_challenger_training_v470_*.json")):
+              receipts.append(json.loads(path.read_text(encoding="utf-8")))
+
+          reports = {}
+          failures = {}
+          for receipt in receipts:
+              cid = receipt["competition_id"]
+              if receipt.get("status") == "PASS" and isinstance(receipt.get("artifact"), dict):
+                  artifact = receipt["artifact"]
+                  reports[cid] = artifact
+                  target = root / "models" / "challengers_v470" / cid
+                  target.mkdir(parents=True, exist_ok=True)
+                  (target / "priority_v470.json").write_text(
+                      json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8",
+                  )
+              else:
+                  failures[cid] = receipt.get("error", "training receipt failed")
+                  reports[cid] = {"competition_id": cid, "status": "失败", "reason": failures[cid]}
+
+          expected = ["KOR_KLeague1", "NOR_Eliteserien", "SWE_Allsvenskan", "USA_MLS"]
+          for cid in expected:
+              if cid not in reports:
+                  failures[cid] = "missing training receipt"
+                  reports[cid] = {"competition_id": cid, "status": "失败", "reason": "missing training receipt"}
+
+          status = "PASS" if not failures else "PARTIAL"
+          manifest = {
+              "schema_version": "V4.7.0-priority-challenger-training-r2",
+              "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "status": status,
+              "priority_competitions": expected,
+              "formal_weight_change": False,
+              "automatic_promotion": False,
+              "method": "four competition-independent parallel nested chronological OOF jobs; no cross-competition training rows, calibrators or weights",
+              "reports": reports,
+              "failures": failures,
+          }
+          out = root / "manifests" / "priority_challenger_training_v470_status.json"
+          out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps({
+              "status": status,
+              "failures": failures,
+              "summary": {
+                  cid: {
+                      "conditional": reports[cid].get("conditional_allocation", {}).get("status"),
+                      "tail": reports[cid].get("total_tail", {}).get("status"),
+                  }
+                  for cid in expected
+              },
+          }, ensure_ascii=False, indent=2))
+          PY
 
       - name: Commit training receipts and artifacts
         shell: bash
