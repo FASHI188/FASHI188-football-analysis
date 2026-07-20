@@ -1,0 +1,61 @@
+name: Football V4.7 Remaining Domain Challenger Training
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/train_remaining_competition_challengers_v470.py"
+      - "football-data/validation/train_priority_challengers_v470.py"
+      - "football-data/engine/conditional_allocation_challenger_v470.py"
+      - "football-data/engine/total_tail_challenger_v470.py"
+      - "football-data/engine/football_v460_engine.py"
+      - ".github/workflows/football-v470-remaining-domain-challenger-training.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-remaining-domain-challenger-training
+  cancel-in-progress: false
+
+jobs:
+  train-remaining-domains:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile training assets
+        run: |
+          python -m py_compile football-data/engine/conditional_allocation_challenger_v470.py
+          python -m py_compile football-data/engine/total_tail_challenger_v470.py
+          python -m py_compile football-data/validation/train_priority_challengers_v470.py
+          python -m py_compile football-data/validation/train_remaining_competition_challengers_v470.py
+
+      - name: Train remaining 13 domains independently
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/train_remaining_competition_challengers_v470.py
+
+      - name: Commit training artifacts and aggregate receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/models/challengers_v470
+          git add football-data/manifests/remaining_competition_challenger_training_v470_status.json
+          if git diff --cached --quiet; then
+            echo "No remaining-domain training changes."
+            exit 0
+          fi
+          git commit -m "training(football): persist remaining-domain V4.7 challenger evidence"
+          git pull --rebase origin main
+          git push origin HEAD:main
