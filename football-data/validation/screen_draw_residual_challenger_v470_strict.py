@@ -4,10 +4,13 @@
 This wrapper replaces the base research script's training-season collector with a
 strict season-start-year gate. Any fold whose season starts in or after the target
 season is excluded, including transition labels such as 2026_special when testing
-2025. The underlying challenger remains research-only with formal weight 0.
+2025. It also preserves zero-probability total layers unchanged during the research
+matrix transform. The underlying challenger remains research-only with formal
+weight 0.
 """
 from __future__ import annotations
 
+import math
 import re
 
 import screen_draw_residual_challenger_v470 as base
@@ -83,7 +86,60 @@ def _strict_season_training_rows(cid, report, all_matches, target_season):
     return features, labels, seasons_used
 
 
+def _safe_tilt_diagonal_to_target(matrix, target_draw):
+    rows = list(base.score_matrix_rows(matrix))
+    even_mass = sum(p for h, a, p in rows if (h + a) % 2 == 0)
+    if even_mass <= 0.0:
+        return [
+            {"home_goals": h, "away_goals": a, "probability": p}
+            for h, a, p in rows
+        ], 0.0, 0.0
+    target = min(even_mass - 1e-9, max(1e-9, float(target_draw)))
+    low, high = -20.0, 20.0
+    for _ in range(80):
+        mid = 0.5 * (low + high)
+        value = base._draw_probability_after_lambda(matrix, mid)
+        if value < target:
+            low = mid
+        else:
+            high = mid
+    lam = 0.5 * (low + high)
+    exp_lam = math.exp(lam)
+    grouped = {}
+    for h, a, p in rows:
+        grouped.setdefault(h + a, []).append((h, a, p))
+    output = []
+    max_total_residual = 0.0
+    for _, items in grouped.items():
+        total_mass = sum(p for _, _, p in items)
+        if total_mass <= 0.0:
+            output.extend(
+                {"home_goals": h, "away_goals": a, "probability": 0.0}
+                for h, a, _ in items
+            )
+            continue
+        weights = [(h, a, p * (exp_lam if h == a else 1.0)) for h, a, p in items]
+        denominator = sum(w for _, _, w in weights)
+        if denominator <= 0.0 or not math.isfinite(denominator):
+            output.extend(
+                {"home_goals": h, "away_goals": a, "probability": p}
+                for h, a, p in items
+            )
+            continue
+        transformed = [(h, a, total_mass * w / denominator) for h, a, w in weights]
+        max_total_residual = max(
+            max_total_residual,
+            abs(sum(p for _, _, p in transformed) - total_mass),
+        )
+        output.extend(
+            {"home_goals": h, "away_goals": a, "probability": p}
+            for h, a, p in transformed
+        )
+    return output, lam, max_total_residual
+
+
 base._season_training_rows = _strict_season_training_rows
+base._tilt_diagonal_to_target = _safe_tilt_diagonal_to_target
 
 
 if __name__ == "__main__":
