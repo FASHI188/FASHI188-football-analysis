@@ -1,0 +1,49 @@
+name: Football V5 Upgrade Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/v500_multisource_challenger_registry.json"
+      - "football-data/manifests/v480_upgrade_status.json"
+      - "football-data/manifests/v500_upgrade_status.json"
+      - "football-data/manifests/formal_governance_runtime_v480_smoke.json"
+      - "football-data/manifests/selective_direction_gate_v500_smoke.json"
+      - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500_selection.json"
+      - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500.json"
+      - "football-data/manifests/total_residual_kl_tilt_rolling_oof_v470_status.json"
+      - "football-data/validation/validate_v500_upgrade_acceptance.py"
+      - ".github/workflows/football-v500-upgrade-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v500-upgrade-acceptance
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_v500_upgrade_acceptance.py
+      - name: Validate
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/validation/validate_v500_upgrade_acceptance.py
+      - name: Commit acceptance receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v500_upgrade_acceptance_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist V5 upgrade acceptance receipt"
+          git pull --rebase origin main
+          git push origin HEAD:main
