@@ -36,7 +36,7 @@ on:
     - cron: "23 4 * * 1"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-repository-integrity-v471-${{ github.ref }}
@@ -44,14 +44,13 @@ concurrency:
 
 jobs:
   repository-integrity:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -65,29 +64,91 @@ jobs:
           python -m py_compile football-data/validation/repository_asset_topology_v472.py
           python -m py_compile football-data/validation/workflow_stability_audit_v474.py
 
-      - name: Run repository-wide preflight and write receipts
+      - name: Run repository-wide preflight and write local receipts
         run: |
           python football-data/validation/repository_integrity_runtime_v473.py --write-receipt --print-summary
           python football-data/validation/repository_asset_topology_v472.py --write-receipt --print-summary
           python football-data/validation/workflow_stability_audit_v474.py --write-receipt --print-summary
 
-      - name: Persist integrity receipts
-        if: github.event_name != 'pull_request'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/repository_integrity_v471_status.json
-          git add football-data/manifests/repository_asset_topology_v472_status.json
-          git add football-data/manifests/workflow_stability_v474_status.json
-          if git diff --cached --quiet; then
-            echo "No repository-integrity receipt changes."
-          else
-            git commit -m "audit(football): persist integrity and workflow-stability receipts [skip ci]"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
-
-      - name: Enforce fail-closed integrity gates
+      - name: Enforce fail-closed integrity gates before persistence
         run: |
           python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
           python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
+
+      - name: Persist PASS integrity and diagnostic receipts via GitHub Contents API
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          files = [
+              Path("football-data/manifests/repository_integrity_v471_status.json"),
+              Path("football-data/manifests/repository_asset_topology_v472_status.json"),
+              Path("football-data/manifests/workflow_stability_v474_status.json"),
+          ]
+          for required in files[:2]:
+              report = json.loads(required.read_text(encoding="utf-8"))
+              if report.get("status") != "PASS":
+                  raise SystemExit(f"refusing to persist non-PASS gate receipt: {required}")
+
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "football-repository-integrity-v471",
+          }
+
+          def request(method, url, payload=None, allow_conflict=False):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      body = response.read().decode("utf-8")
+                      return response.status, json.loads(body) if body else None
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  if exc.code == 404:
+                      return 404, None
+                  if allow_conflict and exc.code in {409, 422}:
+                      return exc.code, body
+                  raise RuntimeError(f"GitHub API {method} {url} failed: {exc.code} {body}") from exc
+
+          for path in files:
+              rel = path.as_posix()
+              encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in rel.split("/"))
+              get_url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}?ref=main"
+              put_url = f"https://api.github.com/repos/{repo}/contents/{encoded_path}"
+              content = base64.b64encode(path.read_bytes()).decode("ascii")
+              for attempt in range(1, 4):
+                  status, current = request("GET", get_url)
+                  payload = {
+                      "message": f"audit(football): persist {rel}",
+                      "content": content,
+                      "branch": "main",
+                  }
+                  if status == 200 and current:
+                      payload["sha"] = current["sha"]
+                  put_status, detail = request("PUT", put_url, payload, allow_conflict=True)
+                  if put_status in {200, 201}:
+                      print(f"persisted {rel}")
+                      break
+                  if attempt == 3:
+                      raise RuntimeError(f"failed to persist {rel}: {put_status} {detail}")
+                  time.sleep(attempt)
+          PY
+
+# V4.7.4 hardening: no git commit/pull/rebase/push occurs inside integrity CI.
+# Validation is fail-closed first; only PASS gate receipts are persisted afterwards.
