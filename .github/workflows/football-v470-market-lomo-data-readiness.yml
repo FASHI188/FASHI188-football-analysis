@@ -10,6 +10,7 @@ on:
       - "football-data/manifests/market_lomo_research/**"
       - "football-data/config/global_evidence_routes_v475.json"
       - "football-data/validation/market_lomo_data_readiness_v470.py"
+      - "football-data/validation/run_market_lomo_data_readiness_safe_v470.py"
       - ".github/workflows/football-v470-market-lomo-data-readiness.yml"
   workflow_dispatch:
 
@@ -29,8 +30,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m py_compile football-data/validation/market_lomo_data_readiness_v470.py
-      - run: python football-data/validation/market_lomo_data_readiness_v470.py
+      - name: Compile readiness assets
+        run: |
+          python -m py_compile football-data/validation/market_lomo_data_readiness_v470.py
+          python -m py_compile football-data/validation/run_market_lomo_data_readiness_safe_v470.py
+      - name: Run readiness audit and preserve exit code
+        id: audit
+        shell: bash
+        env:
+          PYTHONPATH: football-data/validation
+        run: |
+          set +e
+          python football-data/validation/run_market_lomo_data_readiness_safe_v470.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
       - name: Commit readiness receipt
         shell: bash
         run: |
@@ -41,3 +55,6 @@ jobs:
           git commit -m "audit(football): persist all-domain market LOMO data readiness"
           git pull --rebase origin main
           git push origin HEAD:main
+      - name: Preserve audit failure state after receipt persistence
+        if: steps.audit.outputs.rc != '0'
+        run: exit 1
