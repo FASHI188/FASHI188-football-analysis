@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit receipt helpers for V4.6.4 hardening.
 
-This module does not alter formal model probabilities.  It only derives robust
+This module does not alter formal model probabilities. It only derives robust
 reporting fields from an already-produced unified score matrix / marginal map.
 """
 from __future__ import annotations
@@ -19,10 +19,10 @@ def total_goals_0_7plus(
 ) -> dict[str, float]:
     """Return an audited 0,1,...,6,7+ total-goals vector.
 
-    Prefer the canonical ``7+`` bucket when it already exists.  If a caller
+    Prefer the canonical ``7+`` bucket when it already exists. If a caller
     supplies legacy exact numeric tail keys, aggregate every integer key >=7.
     When a score matrix is available, derive the canonical vector from that
-    matrix and use it as the authoritative fallback.  This prevents the old
+    matrix and use it as the authoritative fallback. This prevents the old
     one-off receipt bug where a canonical ``7+`` key was ignored and reported
     as zero.
     """
@@ -53,12 +53,35 @@ def total_goals_0_7plus(
     raise PlatformError(f"total-goals 0-7+ vector sums to {total:.12f}, not 1 and no score matrix was supplied")
 
 
+def _total_bucket_index(bucket: str) -> int:
+    """Map canonical total-goal bucket labels to an ordered integer index."""
+    return 7 if bucket == "7+" else int(bucket)
+
+
+def _plateau_label(primary: str, secondary: str) -> str:
+    first, second = sorted((primary, secondary), key=_total_bucket_index)
+    if second == "7+":
+        return f"{first}—7+球平台"
+    return f"{first}—{second}球平台"
+
+
 def total_peak_diagnostics(total_goals: dict[str, Any]) -> dict[str, Any]:
-    """Describe whether the total-goals Top-1 is a strong or weak discrete peak."""
-    canonical = {key: float(total_goals.get(key, 0.0) or 0.0) for key in ("0", "1", "2", "3", "4", "5", "6", "7+")}
-    ranking = sorted(canonical.items(), key=lambda item: (-item[1], item[0]))
+    """Audit whether a total-goals Top-1 is strong enough for single-point wording.
+
+    A weak discrete mode is not converted into a fake single-goal recommendation.
+    When the top two adjacent buckets are separated by less than two percentage
+    points, reporting is downgraded to a two-bucket plateau and the single-point
+    selection explicitly abstains. This changes reporting only, never P(T).
+    """
+    canonical = {
+        key: float(total_goals.get(key, 0.0) or 0.0)
+        for key in ("0", "1", "2", "3", "4", "5", "6", "7+")
+    }
+    ranking = sorted(canonical.items(), key=lambda item: (-item[1], _total_bucket_index(item[0])))
     primary, secondary = ranking[0], ranking[1]
     gap = primary[1] - secondary[1]
+    adjacent = abs(_total_bucket_index(primary[0]) - _total_bucket_index(secondary[0])) == 1
+
     if gap < 0.01:
         strength = "极弱Top-1"
     elif gap < 0.02:
@@ -67,16 +90,35 @@ def total_peak_diagnostics(total_goals: dict[str, Any]) -> dict[str, Any]:
         strength = "中等Top-1"
     else:
         strength = "强Top-1"
+
+    # Existing V4.6.4 diagnostics already treated <2pp as weak. The reporting
+    # gate now enforces that diagnosis instead of still printing a single-point
+    # 'main pick'. Adjacent weak peaks become a natural discrete plateau.
+    single_point_eligible = gap >= 0.02
+    reporting_mode = "single_peak" if single_point_eligible else "plateau"
+    plateau = _plateau_label(primary[0], secondary[0]) if adjacent and not single_point_eligible else None
+
     return {
         "primary": primary[0],
         "primary_probability": primary[1],
         "secondary": secondary[0],
         "secondary_probability": secondary[1],
         "gap": gap,
+        "gap_percentage_points": gap * 100.0,
         "strength": strength,
+        "adjacent_top_two": adjacent,
+        "top_two_probability": primary[1] + secondary[1],
+        "single_point_eligible": single_point_eligible,
+        "single_point_status": "候选" if single_point_eligible else "弃权",
+        "reporting_mode": reporting_mode,
+        "plateau_label": plateau,
         "interpretation": (
-            "Top-1仅为离散众数，不应表述为锁定单一总进球数。"
-            if gap < 0.02
-            else "Top-1与第二选择存在可见分离，但仍应同时报告完整0-7+分布。"
+            f"{plateau}；第一第二差距不足2个百分点，单一总进球主选弃权。"
+            if plateau
+            else (
+                "Top-1与Top-2差距不足2个百分点；单一总进球主选弃权，保留完整0—7+分布。"
+                if not single_point_eligible
+                else "Top-1与第二选择存在可见分离，但仍应同时报告完整0—7+分布。"
+            )
         ),
     }
