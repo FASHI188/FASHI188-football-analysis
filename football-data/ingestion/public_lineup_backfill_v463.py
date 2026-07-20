@@ -21,8 +21,6 @@ import re
 import unicodedata
 import urllib.request
 from collections import defaultdict
-from contextlib import contextmanager
-from dateutil.parser import isoparse
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -105,8 +103,6 @@ def _canonical_season(competition_id: str, match_date: str) -> str:
 
 
 def _surrogate_kickoff(match_date: str) -> str:
-    # Public Transfermarkt prepared table exposes date but not exact kickoff time.
-    # Noon UTC is only a deterministic matching surrogate. It is not PIT evidence.
     return f"{match_date[:10]}T12:00:00+00:00"
 
 
@@ -150,8 +146,6 @@ def collect_transfermarkt() -> dict[str, int]:
         club_to_team[(game_id, games[game_id]["home_club_id"])] = games[game_id]["home_club_name"]
         club_to_team[(game_id, games[game_id]["away_club_id"])] = games[game_id]["away_club_name"]
 
-    # Only selected competitions' starting-XI rows are retained. This avoids
-    # materializing the multi-million-row prepared lineup table.
     grouped: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
     for row in _iter_csv_gz(f"{TM_BASE}/game_lineups.csv.gz"):
         game_id = str(row.get("game_id") or "")
