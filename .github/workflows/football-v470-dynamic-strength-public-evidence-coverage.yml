@@ -1,0 +1,55 @@
+name: Football V4.7 Dynamic Strength Public Evidence Coverage
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/config/dynamic_strength_public_evidence_v470.json"
+      - "football-data/validation/dynamic_strength_public_evidence_coverage_v470.py"
+      - ".github/workflows/football-v470-dynamic-strength-public-evidence-coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-dynamic-strength-public-evidence-coverage
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile coverage audit
+        run: python -m py_compile football-data/validation/dynamic_strength_public_evidence_coverage_v470.py
+
+      - name: Run public evidence coverage audit
+        run: python football-data/validation/dynamic_strength_public_evidence_coverage_v470.py
+
+      - name: Commit coverage receipts
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/dynamic_strength_public_evidence_v470_status.json
+          git add football-data/manifests/dynamic_strength_public_evidence_v470/*.json
+          if git diff --cached --quiet; then
+            echo "No dynamic-strength public evidence coverage changes."
+            exit 0
+          fi
+          git commit -m "audit(football): persist dynamic-strength public evidence coverage"
+          for attempt in 1 2 3 4 5 6; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep $((attempt * 3))
+          done
+          exit 1
