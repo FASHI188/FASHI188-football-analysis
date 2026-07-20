@@ -15,7 +15,8 @@ on:
       - "football-data/engine/match_pipeline.py"
       - "football-data/engine/validate_platform.py"
       - "football-data/engine/evaluate_audits.py"
-      - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/repository_integrity_runtime_v473.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_platform_core.py"
       - "football-data/tests/test_team_strengths.py"
       - "football-data/tests/test_prediction_pipeline.py"
@@ -34,7 +35,8 @@ on:
       - "football-data/engine/match_pipeline.py"
       - "football-data/engine/validate_platform.py"
       - "football-data/engine/evaluate_audits.py"
-      - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/repository_integrity_runtime_v473.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_platform_core.py"
       - "football-data/tests/test_team_strengths.py"
       - "football-data/tests/test_prediction_pipeline.py"
@@ -44,31 +46,34 @@ on:
     - cron: "17 4 * * 1,4"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-platform-integrity-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository-wide fail-closed preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile persistence helper
+        run: python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Run platform tests
         env:
@@ -90,7 +95,7 @@ jobs:
 
       - name: Upload team-feature diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: football-team-strength-diagnostics
           path: |
@@ -117,26 +122,22 @@ jobs:
           PYTHONPATH: football-data/engine
         run: python football-data/engine/validate_platform.py --print-summary
 
-      - name: Commit deterministic generated artifacts
-        if: steps.team_features.outputs.status == '0'
-        shell: bash
+      - name: Persist deterministic generated artifacts safely
+        if: ${{ github.event_name != 'pull_request' && steps.team_features.outputs.status == '0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/team_strengths football-data/training_datasets
-          git add football-data/manifests/latest_team_strengths.json
-          git add football-data/manifests/latest_training_datasets.json
-          git add football-data/manifests/platform_status.json
-          git add football-data/manifests/postmatch_evaluation_summary.json
-          if git diff --cached --quiet; then
-            echo "No generated football platform changes."
-            exit 0
-          fi
-          git commit -m "data(football): refresh team features and validation datasets"
-          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/team_strengths/ \
+            --allow-prefix football-data/training_datasets/ \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "data(football): persist validated platform artifact"
 
       - name: Enforce team-feature build result
         if: steps.team_features.outputs.status != '0'
         run: exit 1
+
+# V4.7.4 hardening: PRs validate without mutation; failed builders never persist;
+# generated artifacts use optimistic Contents API writes rather than git rebase/push.
