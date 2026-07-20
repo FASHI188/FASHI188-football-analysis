@@ -1,28 +1,89 @@
 {
-  "schema_version": "V4.7.0-staged",
-  "status": "SOURCE_ROUTES_DEFINED_DATA_ACQUISITION_REQUIRED",
+  "schema_version": "V4.7.5-global-aligned",
+  "status": "ALL_17_SOURCE_ROUTES_MAPPED_ACQUISITION_CREDENTIAL_GATED",
   "formal_weight_change": false,
+  "automatic_promotion": false,
+  "route_matrix": "football-data/config/global_evidence_routes_v475.json",
   "policies": {
     "market": {
-      "primary_historical_exchange_route": "Betfair Historical Data where competition/market coverage and licensing permit",
-      "auxiliary_historical_route": "football-data.co.uk or official/archived bookmaker snapshots only as independently timestamped auxiliary evidence",
+      "primary_historical_bookmaker_route": "The Odds API historical snapshots",
+      "primary_documentation": "https://the-odds-api.com/historical-odds-data/",
+      "coverage_policy": "all 17 registered competition domains have explicit sport-key routes in global_evidence_routes_v475.json",
+      "historical_availability": "from each competition-specific earliest supported timestamp, generally 2020 onward",
+      "credential_env": "THE_ODDS_API_KEY",
+      "access": "paid_api_key",
       "required_freezes": ["T-60", "T-30", "T-10", "last_verified_pre_kickoff"],
-      "required_markets": ["1X2", "AH", "OU"],
-      "same_window_preferred": true,
+      "required_raw_markets": ["h2h", "spreads", "totals"],
+      "required_normalized_markets": ["1X2", "AH", "OU"],
+      "same_bookmaker_same_window_preferred": true,
+      "max_market_skew_seconds": 900,
+      "snapshot_rule": "use the closest provider snapshot equal to or earlier than the requested freeze; preserve provider snapshot timestamp and bookmaker last_update",
+      "handicap_normalization_rule": "a provider spread is accepted as AH evidence only when it is a valid two-way football handicap surface with explicit line and both side prices; quarter-line values must never be fabricated",
+      "total_normalization_rule": "OU evidence requires an explicit total line plus both over and under prices",
       "postmatch_residual_pages_forbidden": true,
-      "target_market_lomo_required_for_ev": true
+      "target_market_lomo_required_for_ev": true,
+      "secondary_routes": [
+        {
+          "source": "Betfair Historical Data",
+          "role": "independent exchange crosscheck",
+          "history": "detailed historical exchange market data from April 2015",
+          "documentation": "https://support.developer.betfair.com/hc/en-us/articles/360002407732-What-data-is-provided-by-the-Historical-Data-service",
+          "caveat": "exchange prices are not bookmaker quotes and must remain a separate economic source"
+        },
+        {
+          "source": "OddsPapi historical odds",
+          "role": "bookmaker-history crosscheck and 2026-forward backfill",
+          "history": "documented historical odds since January 2026",
+          "credential_env": "ODDSPAPI_KEY",
+          "documentation": "https://oddspapi.io/us/docs/get-historical-odds",
+          "caveat": "market IDs, bookmaker identity and createdAt timestamps require field-level validation before formal normalization"
+        },
+        {
+          "source": "Sportmonks Premium Odds",
+          "role": "ongoing capture and near-term line movement",
+          "credential_env": "SPORTMONKS_API_TOKEN",
+          "documentation": "https://docs.sportmonks.com/v3/endpoints-and-entities/endpoints/premium-odds-feed/premium-pre-match-odds/get-all-historical-odds",
+          "caveat": "documented historical pre-match odd values are retained for access up to 7 days after fixture start, so proactive capture is required and it is not the primary old-history backfill route"
+        },
+        {
+          "source": "football-data.co.uk",
+          "role": "retrospective closing/opening reference only",
+          "documentation": "https://www.football-data.co.uk/data.php",
+          "caveat": "rows without original quote timestamps are not formal PIT synchronized market snapshots"
+        }
+      ]
     },
     "lineup": {
-      "primary": "official league/club/competition sources",
-      "structured_optional": ["Sportradar", "Hudl Wyscout"],
-      "same_target_season_only": true,
-      "predicted_xi_never_written_as_observed": true
+      "primary_observed_sources": ["official league/club/competition match sheets", "Transfermarkt-datasets game_lineups"],
+      "structured_crosschecks": ["Sportmonks lineups", "API-Football lineups", "StatsBomb Open Data where covered"],
+      "sportmonks_documentation": "https://docs.sportmonks.com/v3/tutorials-and-guides/tutorials/lineups-and-formations",
+      "api_football_documentation": "https://www.api-football.com/documentation-beta",
+      "transfermarkt_dataset_documentation": "https://github.com/dcaribou/transfermarkt-datasets",
+      "statsbomb_open_documentation": "https://github.com/statsbomb/open-data",
+      "same_target_season_only_for_active_strength": true,
+      "predicted_xi_never_written_as_observed": true,
+      "confirmed_xi_pit_rule": "confirmed XI may enter a historical freeze only when its observed/published timestamp is proven to be at or before that freeze; otherwise it is an observed label for training only"
+    },
+    "injury_suspension": {
+      "primary_sources": ["official club/competition notices", "API-Football injuries", "Sportmonks sidelined"],
+      "api_football_history": "injury endpoint data documented from April 2021",
+      "api_football_credential_env": "API_FOOTBALL_KEY",
+      "sportmonks_credential_env": "SPORTMONKS_API_TOKEN",
+      "pit_rule": "source_observed_at_utc must be at or before the requested freeze; retrieval after the match without an original publication timestamp is retrospective reference only",
+      "conflict_rule": "preserve contradictory availability states and downgrade; never manually choose the convenient status"
     },
     "xg_events": {
       "research_open_route": "StatsBomb Open Data where coverage exists",
-      "broad_structured_optional": ["Hudl Wyscout", "other licensed event providers"],
+      "broad_structured_optional": ["Hudl Wyscout", "licensed event providers"],
       "formal_entry": "competition-specific chronological OOF incremental improvement required"
     }
   },
-  "competition_isolation": "Every source-derived model artifact and weight is learned and validated separately by competition_id."
+  "acquisition_gate": {
+    "route_defined_is_not_data_acquired": true,
+    "missing_credentials_status": "CREDENTIAL_REQUIRED_NOT_DATA_COMPLETE",
+    "no_secret_in_repository": true,
+    "formal_market_complete_only_after": "normalized 1X2/AH/OU snapshots with original timestamps pass multi-source validator and competition-specific LOMO/OOS gates",
+    "formal_lineup_injury_complete_only_after": "PIT records with original timestamps and competition-specific coverage audits pass"
+  },
+  "competition_isolation": "Every source-derived model artifact, calibrator and weight is learned and validated separately by competition_id."
 }
