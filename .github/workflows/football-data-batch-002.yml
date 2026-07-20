@@ -9,6 +9,7 @@ on:
       - "football-data/engine/ingest_batch_002.py"
       - "football-data/engine/ingest_batch_002_accuracy_adapter.py"
       - "football-data/engine/ingest_batch_002_kleague_adapter.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_ingest_batch_002*.py"
       - "football-data/manifests/league_batch_002.json"
       - ".github/workflows/football-data-batch-002.yml"
@@ -19,6 +20,7 @@ on:
       - "football-data/engine/ingest_batch_002.py"
       - "football-data/engine/ingest_batch_002_accuracy_adapter.py"
       - "football-data/engine/ingest_batch_002_kleague_adapter.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_ingest_batch_002*.py"
       - "football-data/manifests/league_batch_002.json"
       - ".github/workflows/football-data-batch-002.yml"
@@ -26,31 +28,36 @@ on:
     - cron: "47 3 * * 1,4"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-data-batch-002-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   ingest:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository integrity preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile ingestion and persistence helper
+        run: |
+          python -m py_compile football-data/engine/ingest_batch_002_kleague_adapter.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Run integrity tests
         run: python -m unittest discover -s football-data/tests -p "test_ingest_batch_002*.py" -v
@@ -73,7 +80,6 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-
           root = Path("football-data")
           manifest = json.loads((root / "manifests/latest_ingestion_batch_002.json").read_text(encoding="utf-8"))
           summary = manifest["summary"]
@@ -103,38 +109,24 @@ jobs:
               raise SystemExit("K League 2026 current results are missing")
           PY
 
-      - name: Commit validated batch-002 snapshots only
-        if: steps.ingest.outputs.status == '0'
-        shell: bash
+      - name: Persist validated batch-002 snapshots safely
+        if: ${{ github.event_name != 'pull_request' && steps.ingest.outputs.status == '0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [[ -f football-data/manifests/batch_002_run.txt ]]; then
-            git add -f football-data/manifests/batch_002_run.txt
-          fi
-          for competition in JPN_J1 KOR_KLeague1 BRA_SerieA ARG_Primera USA_MLS UEFA_ChampionsLeague; do
-            for base in raw processed league_profiles; do
-              path="football-data/${base}/${competition}"
-              if [[ -e "$path" ]]; then
-                git add "$path"
-              fi
-            done
-          done
-          if [[ -f football-data/manifests/latest_ingestion_batch_002.json ]]; then
-            git add football-data/manifests/latest_ingestion_batch_002.json
-          fi
-          if git diff --cached --quiet; then
-            echo "No batch 002 data changes."
-            exit 0
-          fi
-          git commit -m "data(football): record batch 002 ingestion"
-          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/raw/ \
+            --allow-prefix football-data/processed/ \
+            --allow-prefix football-data/league_profiles/ \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "data(football): persist validated batch-002 artifact"
 
       - name: Enforce ingestion result
         if: steps.ingest.outputs.status != '0'
         shell: bash
         run: exit 1
 
-# V4.7.2 maintenance trigger: restore batch-002 domains after batch-001 root-replacement defect.
+# V4.7.4 hardening: no direct git commit/pull/rebase/push; failed ingestion is
+# never persisted; PRs validate read-only; stale runs are cancelled.
