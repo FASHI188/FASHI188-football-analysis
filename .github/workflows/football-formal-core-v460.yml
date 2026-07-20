@@ -21,6 +21,7 @@ on:
       - "football-data/validation/oof_matrix_calibration_v461.py"
       - "football-data/validation/promotion_policy.json"
       - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_football_v460_engine.py"
       - "football-data/tests/test_nested_backtest_v460.py"
       - "football-data/tests/test_oof_matrix_calibration_v461.py"
@@ -40,6 +41,7 @@ on:
       - "football-data/validation/oof_matrix_calibration_v461.py"
       - "football-data/validation/promotion_policy.json"
       - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_football_v460_engine.py"
       - "football-data/tests/test_nested_backtest_v460.py"
       - "football-data/tests/test_oof_matrix_calibration_v461.py"
@@ -50,7 +52,7 @@ on:
     - cron: "47 4 * * 1,4"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-formal-core-v460-${{ github.ref }}
@@ -58,23 +60,26 @@ concurrency:
 
 jobs:
   validate-core:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      - name: Compile persistence helper
+        run: python -m py_compile football-data/validation/persist_generated_worktree_v474.py
+
       - name: Repository-wide fail-closed preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
       - name: Run formal-core tests
         env:
@@ -152,19 +157,16 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/engine/validate_platform.py --print-summary
 
-      - name: Commit validated runtime, model and calibration artifacts
-        if: ${{ github.event.inputs.competition == '' || github.event.inputs.competition == null }}
-        shell: bash
+      - name: Persist validated generated artifacts safely
+        if: ${{ github.event_name != 'pull_request' && (github.event.inputs.competition == '' || github.event.inputs.competition == null) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -- .github/workflows/football-formal-core-v460.yml
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No formal-core, runtime or OOF calibration changes."
-            exit 0
-          fi
-          git commit -m "model(football): harden V4.6.2 point-in-time core and OOF calibration"
-          branch="${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --message-prefix "model(football): persist validated formal-core artifact"
+
+# V4.7.4 CI hardening: validation remains fail-closed, but generated artifacts are
+# persisted through optimistic Contents API writes. No git commit/pull/rebase/push
+# occurs inside this long-running builder, removing concurrent-main write races.
