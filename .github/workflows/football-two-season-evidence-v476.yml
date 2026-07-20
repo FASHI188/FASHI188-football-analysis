@@ -7,6 +7,7 @@ on:
     paths:
       - "football-data/config/two_season_evidence_scope_v476.json"
       - "football-data/validation/two_season_evidence_backfill_v476.py"
+      - "football-data/validation/two_season_backfill_plan_v476.py"
       - "football-data/validation/persist_files_v474.py"
       - "football-data/evidence/lineups/**"
       - "football-data/evidence/injuries/**"
@@ -39,25 +40,32 @@ jobs:
       - name: Repository integrity preflight
         run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
-      - name: Compile audit and persistence tooling
+      - name: Compile audit plan and persistence tooling
         run: |
           python -m py_compile football-data/validation/two_season_evidence_backfill_v476.py
+          python -m py_compile football-data/validation/two_season_backfill_plan_v476.py
           python -m py_compile football-data/validation/persist_files_v474.py
+
+      - name: Build exact recent-two-season backfill plan
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/validation/two_season_backfill_plan_v476.py --print-summary --strict-exit
 
       - name: Audit actual recent-two-season evidence coverage
         env:
           PYTHONPATH: football-data/engine
         run: python football-data/validation/two_season_evidence_backfill_v476.py --write-receipt --print-summary --strict-exit
 
-      - name: Persist compact coverage receipt safely
+      - name: Persist compact plan and coverage receipts safely
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           python football-data/validation/persist_files_v474.py \
+            football-data/manifests/two_season_backfill_plan_v476_status.json \
             football-data/manifests/two_season_evidence_backfill_v476_status.json \
             football-data/validation/reports/two_season_evidence_v476/summary.json \
-            --message-prefix "audit(football): persist two-season evidence coverage"
+            --message-prefix "audit(football): persist two-season backfill plan and coverage"
 
 # V4.7.6: only the most recent two competition-specific seasons are mandatory.
 # Observed XI, PIT lineup, PIT injury/suspension and synchronized market evidence
