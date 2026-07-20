@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fail-closed live-input contract for a validated V4.7 dynamic-strength candidate.
+"""Fail-closed live-input contract for validated V4.7 dynamic-strength candidates.
 
-This module validates and derives question-time roster/manager/transfer continuity
-features.  It does not alter probabilities and keeps formal effect weight at zero
-unless a separate competition/season hash-bound promotion gate explicitly enables
-it.  Predicted or retrospective evidence is never silently treated as PIT input.
+Question-time roster/manager/transfer continuity is derived only from evidence
+observed at or before the freeze. Candidate coefficients are not hard-coded by
+competition: they are loaded from the audited next-season frozen-selection receipt.
+This layer never changes probabilities by itself.
 """
 from __future__ import annotations
 
@@ -13,19 +13,9 @@ from datetime import datetime
 from typing import Any
 
 from dynamic_strength_challenger_v470 import commensurability_score
-from platform_core import PlatformError, parse_iso_datetime
+from platform_core import ROOT, PlatformError, load_json, parse_iso_datetime
 
-ESP_VALIDATED_CANDIDATE = {
-    "id": "adaptive_6",
-    "coefficients": {
-        "intercept": -0.5,
-        "beta_roster_continuity": 3.0,
-        "beta_coach_continuity": 1.0,
-        "beta_promoted_or_relegated": -6.0,
-        "beta_structural_break": -3.0,
-    },
-    "max_prior_equivalent_matches": 6.0,
-}
+SELECTION_PATH = ROOT / "manifests" / "dynamic_strength_next_season_selection_v470_status.json"
 
 
 def _require_text(value: Any, field: str) -> str:
@@ -33,6 +23,30 @@ def _require_text(value: Any, field: str) -> str:
     if not token:
         raise PlatformError(f"{field} must be non-empty")
     return token
+
+
+def _load_frozen_candidate(competition_id: str, target_season: str) -> dict[str, Any]:
+    if not SELECTION_PATH.exists():
+        raise PlatformError("next-season frozen dynamic-strength selection receipt missing")
+    receipt = load_json(SELECTION_PATH)
+    report = (receipt.get("reports") or {}).get(competition_id)
+    if not isinstance(report, dict):
+        raise PlatformError("competition has no frozen dynamic-strength selection")
+    if report.get("status") != "NEXT_SEASON_CANDIDATE_FROZEN_RESEARCH_ONLY":
+        raise PlatformError("competition frozen dynamic-strength selection is not valid")
+    if str(report.get("target_season") or "") != target_season:
+        raise PlatformError("frozen dynamic-strength selection target season mismatch")
+    spec = report.get("selected_candidate_spec")
+    if not isinstance(spec, dict) or not isinstance(spec.get("coefficients"), dict):
+        raise PlatformError("frozen dynamic-strength candidate specification missing")
+    return {
+        "candidate_id": _require_text(spec.get("id"), "selected_candidate_spec.id"),
+        "coefficients": spec["coefficients"],
+        "max_prior_equivalent_matches": float(spec.get("max_prior_equivalent_matches", 0.0)),
+        "mode": str(report.get("mode") or ""),
+        "selection_season": str(report.get("selection_season") or ""),
+        "selection_receipt_status": report.get("status"),
+    }
 
 
 def _source(source: Any, freeze: datetime, field: str) -> dict[str, Any]:
@@ -71,7 +85,7 @@ def _starter_weights(values: Any, field: str) -> dict[str, float]:
     return output
 
 
-def _team_features(team: Any, freeze: datetime, field: str) -> dict[str, Any]:
+def _team_features(team: Any, freeze: datetime, field: str, candidate: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(team, dict):
         raise PlatformError(f"{field} must be an object")
     team_name = _require_text(team.get("team_name"), f"{field}.team_name")
@@ -126,7 +140,7 @@ def _team_features(team: Any, freeze: datetime, field: str) -> dict[str, Any]:
         coach_continuity=coach_for_borrowing,
         promoted_or_relegated=promoted,
         structural_break_score=structural_for_borrowing,
-        coefficients=ESP_VALIDATED_CANDIDATE["coefficients"],
+        coefficients=candidate["coefficients"],
     )
     if promoted:
         borrowing_weight = 0.0
@@ -137,7 +151,7 @@ def _team_features(team: Any, freeze: datetime, field: str) -> dict[str, Any]:
         "coach_continuity": coach_continuity,
         "structural_break_score": structural_break,
         "borrowing_weight_research_candidate": borrowing_weight,
-        "max_prior_equivalent_matches": ESP_VALIDATED_CANDIDATE["max_prior_equivalent_matches"],
+        "max_prior_equivalent_matches": candidate["max_prior_equivalent_matches"],
         "prior_starter_player_count": len(weights),
         "current_roster_player_count": len(roster),
         "dated_transfer_movement_player_count": len(movements),
@@ -152,8 +166,7 @@ def validate_dynamic_strength_live_input(context: dict[str, Any], evidence: Any)
     competition_id = str(identity.get("competition_id") or "")
     target_season = str(identity.get("season") or "")
     freeze = parse_iso_datetime(identity.get("freeze_time_utc"), "freeze_time_utc")
-    if competition_id != "ESP_LaLiga":
-        raise PlatformError("current validated live-input contract is ESP_LaLiga only")
+    candidate = _load_frozen_candidate(competition_id, target_season)
     if not isinstance(evidence, dict):
         raise PlatformError("dynamic_strength_evidence must be an object")
     if str(evidence.get("competition_id") or "") != competition_id:
@@ -164,30 +177,34 @@ def validate_dynamic_strength_live_input(context: dict[str, Any], evidence: Any)
     if overall_observed > freeze:
         raise PlatformError("dynamic-strength evidence observed after freeze")
     prior_season = _require_text(evidence.get("prior_season"), "dynamic_strength_evidence.prior_season")
+    if prior_season != candidate["selection_season"]:
+        raise PlatformError("dynamic-strength prior season does not match frozen selection season")
     teams = evidence.get("teams")
     if not isinstance(teams, dict):
         raise PlatformError("dynamic_strength_evidence.teams must be an object")
-    home = _team_features(teams.get("home"), freeze, "dynamic_strength_evidence.teams.home")
-    away = _team_features(teams.get("away"), freeze, "dynamic_strength_evidence.teams.away")
+    home = _team_features(teams.get("home"), freeze, "dynamic_strength_evidence.teams.home", candidate)
+    away = _team_features(teams.get("away"), freeze, "dynamic_strength_evidence.teams.away", candidate)
     expected_home = str(identity.get("home_team") or "").strip()
     expected_away = str(identity.get("away_team") or "").strip()
     if home["team_name"] != expected_home or away["team_name"] != expected_away:
         raise PlatformError("dynamic-strength team identity mismatch")
     return {
-        "schema_version": "V4.7.0-dynamic-strength-live-input-contract-r1",
+        "schema_version": "V4.7.0-dynamic-strength-live-input-contract-r2",
         "status": "通过",
         "competition_id": competition_id,
         "target_season": target_season,
         "prior_season": prior_season,
         "freeze_time_utc": freeze.isoformat(),
         "evidence_observed_at_utc": overall_observed.isoformat(),
-        "candidate_id": ESP_VALIDATED_CANDIDATE["id"],
+        "candidate_id": candidate["candidate_id"],
+        "candidate_mode": candidate["mode"],
+        "selection_season": candidate["selection_season"],
         "home": home,
         "away": away,
         "formal_probability_effect_weight": 0,
         "formal_activation_eligible": False,
         "probability_mutation": False,
-        "reason": "Live PIT feature contract passed, but a separate competition/season promotion and hash-bound runtime activation are still required.",
+        "reason": "Live PIT feature contract passed and is bound to the frozen next-season candidate, but a separate competition/season promotion and hash-bound runtime activation are still required.",
     }
 
 
@@ -197,7 +214,7 @@ def apply_dynamic_strength_live_input_audit(context: dict[str, Any], evidence: A
         audit = validate_dynamic_strength_live_input(output, evidence)
     except PlatformError as exc:
         audit = {
-            "schema_version": "V4.7.0-dynamic-strength-live-input-contract-r1",
+            "schema_version": "V4.7.0-dynamic-strength-live-input-contract-r2",
             "status": "不可用",
             "formal_probability_effect_weight": 0,
             "formal_activation_eligible": False,
