@@ -1,0 +1,43 @@
+name: Football Kalmar Malmo Question-Time Audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/run_kalmar_malmo_question_time_audit_20260720.py"
+      - ".github/workflows/football-kalmar-malmo-question-time-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kalmar-malmo-question-time-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/run_kalmar_malmo_question_time_audit_20260720.py
+      - name: Run formal audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/run_kalmar_malmo_question_time_audit_20260720.py
+      - name: Commit audit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/question_time_audits/SWE_Allsvenskan_2026-07-20_Kalmar_FF_vs_Malmo_FF.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist Kalmar Malmo formal calculation receipt"
+          git pull --rebase origin main
+          git push origin HEAD:main
