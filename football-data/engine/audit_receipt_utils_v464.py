@@ -66,12 +66,13 @@ def _plateau_label(primary: str, secondary: str) -> str:
 
 
 def total_peak_diagnostics(total_goals: dict[str, Any]) -> dict[str, Any]:
-    """Audit whether a total-goals Top-1 is strong enough for single-point wording.
+    """Audit total-goals peak strength without hiding the actual modal result.
 
-    A weak discrete mode is not converted into a fake single-goal recommendation.
-    When the top two adjacent buckets are separated by less than two percentage
-    points, reporting is downgraded to a two-bucket plateau and the single-point
-    selection explicitly abstains. This changes reporting only, never P(T).
+    The model Top-1 is always retained as the mathematical mode of P(T). When the
+    top two buckets are separated by less than two percentage points, reporting
+    additionally labels the result as a plateau/weak peak so the mode is not
+    mistaken for a high-confidence single-goal prediction. This changes reporting
+    only, never P(T).
     """
     canonical = {
         key: float(total_goals.get(key, 0.0) or 0.0)
@@ -91,12 +92,9 @@ def total_peak_diagnostics(total_goals: dict[str, Any]) -> dict[str, Any]:
     else:
         strength = "强Top-1"
 
-    # Existing V4.6.4 diagnostics already treated <2pp as weak. The reporting
-    # gate now enforces that diagnosis instead of still printing a single-point
-    # 'main pick'. Adjacent weak peaks become a natural discrete plateau.
-    single_point_eligible = gap >= 0.02
-    reporting_mode = "single_peak" if single_point_eligible else "plateau"
-    plateau = _plateau_label(primary[0], secondary[0]) if adjacent and not single_point_eligible else None
+    strong_single_peak = gap >= 0.02
+    reporting_mode = "single_peak" if strong_single_peak else "plateau"
+    plateau = _plateau_label(primary[0], secondary[0]) if adjacent and not strong_single_peak else None
 
     return {
         "primary": primary[0],
@@ -108,16 +106,16 @@ def total_peak_diagnostics(total_goals: dict[str, Any]) -> dict[str, Any]:
         "strength": strength,
         "adjacent_top_two": adjacent,
         "top_two_probability": primary[1] + secondary[1],
-        "single_point_eligible": single_point_eligible,
-        "single_point_status": "候选" if single_point_eligible else "弃权",
+        "single_point_eligible": True,
+        "single_point_status": "保留Top-1" if strong_single_peak else "弱峰保留Top-1",
         "reporting_mode": reporting_mode,
         "plateau_label": plateau,
         "interpretation": (
-            f"{plateau}；第一第二差距不足2个百分点，单一总进球主选弃权。"
+            f"{plateau}；仍保留{primary[0]}球作为数学Top-1，但不得表述为高置信单点。"
             if plateau
             else (
-                "Top-1与Top-2差距不足2个百分点；单一总进球主选弃权，保留完整0—7+分布。"
-                if not single_point_eligible
+                f"Top-1为{primary[0]}球，但与Top-2差距不足2个百分点；保留Top-1并标记弱峰。"
+                if not strong_single_peak
                 else "Top-1与第二选择存在可见分离，但仍应同时报告完整0—7+分布。"
             )
         ),
