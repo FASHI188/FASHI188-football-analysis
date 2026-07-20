@@ -7,12 +7,13 @@ on:
     paths:
       - "football-data/config/multisource_evidence_v463.json"
       - "football-data/validation/multisource_evidence_validator_v463.py"
+      - "football-data/validation/persist_files_v474.py"
       - "football-data/evidence/lineups/**"
       - "football-data/evidence/markets/**"
       - ".github/workflows/football-multisource-evidence.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-multisource-evidence-${{ github.ref }}
@@ -20,38 +21,39 @@ concurrency:
 
 jobs:
   validate-evidence:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository integrity preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
-      - name: Compile validator
-        run: python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+      - name: Compile validator and persistence helper
+        run: |
+          python -m py_compile football-data/validation/multisource_evidence_validator_v463.py
+          python -m py_compile football-data/validation/persist_files_v474.py
 
       - name: Validate normalized multi-source evidence
         run: python football-data/validation/multisource_evidence_validator_v463.py --print-summary
 
-      - name: Commit evidence manifest and reports
+      - name: Persist evidence manifest and report safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/multisource_evidence_v463_status.json football-data/validation/reports/multisource_evidence_v463/summary.json
-          if git diff --cached --quiet; then
-            echo "No evidence status changes to commit."
-            exit 0
-          fi
-          git commit -m "data(football): refresh multi-source evidence status"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/multisource_evidence_v463_status.json \
+            football-data/validation/reports/multisource_evidence_v463/summary.json \
+            --message-prefix "data(football): persist validated evidence artifact"
+
+# V4.7.4 hardening: validation must pass before persistence; no direct git
+# commit/pull/rebase/push occurs inside this workflow.
