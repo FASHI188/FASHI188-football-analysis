@@ -1,0 +1,53 @@
+name: Football Orgryte Djurgarden Question-Time Audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/run_orgryte_djurgarden_question_time_audit_20260720.py"
+      - ".github/workflows/football-orgryte-djurgarden-question-time-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-orgryte-djurgarden-question-time-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/run_orgryte_djurgarden_question_time_audit_20260720.py
+      - name: Run formal audit
+        id: audit
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/run_orgryte_djurgarden_question_time_audit_20260720.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit audit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/question_time_audits/SWE_Allsvenskan_2026-07-20_Orgryte_vs_Djurgarden.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist Orgryte Djurgarden formal calculation receipt"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve failure state
+        if: steps.audit.outputs.rc != '0'
+        run: exit 1
