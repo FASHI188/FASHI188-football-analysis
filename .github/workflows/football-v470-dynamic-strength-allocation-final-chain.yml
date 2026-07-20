@@ -1,0 +1,57 @@
+name: Football V4.7 Allocation-Only Dynamic Strength Final Chain
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/dynamic_strength_allocation_only_final_chain_v470.py"
+      - ".github/workflows/football-v470-dynamic-strength-allocation-final-chain.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-dynamic-strength-allocation-final-chain
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/dynamic_strength_oof_screen_v470.py
+          python -m py_compile football-data/validation/dynamic_strength_allocation_only_oof_v470.py
+          python -m py_compile football-data/validation/dynamic_strength_final_chain_replay_v470.py
+          python -m py_compile football-data/validation/dynamic_strength_allocation_only_final_chain_v470.py
+      - name: Replay NED final chain
+        id: replay
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/dynamic_strength_allocation_only_final_chain_v470.py --competition NED_Eredivisie
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/dynamic_strength_allocation_only_final_chain_v470/NED_Eredivisie.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist NED_Eredivisie allocation-only dynamic-strength final-chain replay"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve failure state
+        if: steps.replay.outputs.rc != '0'
+        run: exit 1
