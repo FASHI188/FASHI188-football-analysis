@@ -1,0 +1,58 @@
+name: Football V4.7 Formal Next Season Parameter Rollforward
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/formal_next_season_parameter_rollforward_v470.py"
+      - "football-data/models/formal_core_v460/ESP_LaLiga/model.json"
+      - "football-data/models/formal_core_v460/NED_Eredivisie/model.json"
+      - "football-data/validation/reports/formal_core_v460/ESP_LaLiga.json"
+      - "football-data/validation/reports/formal_core_v460/NED_Eredivisie.json"
+      - "football-data/config/formal_core_v460.json"
+      - ".github/workflows/football-v470-formal-next-season-parameter-rollforward.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-formal-next-season-parameter-rollforward
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/formal_next_season_parameter_rollforward_v470.py
+      - name: Build parameter rollforward receipt
+        id: build
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/formal_next_season_parameter_rollforward_v470.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/formal_next_season_parameter_rollforward_v470_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "governance(football): persist 2026_27 formal parameter rollforward"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve failure state
+        if: steps.build.outputs.rc != '0'
+        run: exit 1
