@@ -7,11 +7,12 @@ on:
     paths:
       - "football-data/ingestion/jpn_j1_transition_official_v467.py"
       - "football-data/validation/jpn_j1_promotion_review_v467.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/config/league_sources_batch_002.json"
       - ".github/workflows/football-jpn-j1-promotion-review-v467.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-jpn-j1-promotion-review-v467-${{ github.ref }}
@@ -19,27 +20,27 @@ concurrency:
 
 jobs:
   validate-route-and-review:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository integrity preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
-      - name: Compile V4.6.7 JPN modules
+      - name: Compile V4.6.7 JPN modules and persistence helper
         run: |
           python -m py_compile football-data/ingestion/jpn_j1_transition_official_v467.py
           python -m py_compile football-data/validation/jpn_j1_promotion_review_v467.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Ingest official 2026 special J1 results
         run: python football-data/ingestion/jpn_j1_transition_official_v467.py --print-summary
@@ -103,22 +104,18 @@ jobs:
           registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           PY
 
-      - name: Persist V4.6.7 JPN route and governance evidence
+      - name: Persist validated JPN route and governance evidence safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            football-data/processed/JPN_J1/official_2026_special.csv \
-            football-data/raw/JPN_J1/official_2026_special_source.json \
-            football-data/manifests/jpn_j1_2026_special_official_v467_status.json \
-            football-data/manifests/jpn_j1_promotion_review_v467_status.json \
-            football-data/config/platform_registry.json
-          if git diff --cached --quiet; then
-            echo "No JPN V4.6.7 route or governance changes to commit."
-            exit 0
-          fi
-          git commit -m "audit(football): validate JPN_J1 official transition route and promotion precheck [skip ci]"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/processed/JPN_J1/ \
+            --allow-prefix football-data/raw/JPN_J1/ \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/config/platform_registry.json \
+            --message-prefix "audit(football): persist validated JPN route artifact"
 
-# V4.7.2 maintenance trigger: rebuild JPN 2026_special assets after batch-001 root-replacement defect.
+# V4.7.4 hardening: no direct git commit/pull/rebase/push; route validation must
+# pass before any generated evidence or registry update is persisted.
