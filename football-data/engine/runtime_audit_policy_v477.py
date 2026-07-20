@@ -17,15 +17,32 @@ import math
 from typing import Any
 
 
-_VALID_RUNTIME_STATES = {"通过", "部分通过", "警告", "失败", "未启用", "不可用", "降级", "弃权", "不适用"}
-
-
 def _as_float(value: Any) -> float | None:
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _set_score_text(conclusions: dict[str, Any], status: str) -> None:
+    top_score = conclusions.get("top_score")
+    if not top_score:
+        conclusions["score_text"] = "精确比分不可用。"
+        conclusions["score_label"] = "精确比分不可用"
+        return
+    if status == "通过":
+        conclusions["score_text"] = f"正式Top-1比分 {top_score}；EXACT门控通过。"
+        conclusions["score_label"] = "正式Top-1比分"
+    elif status == "失败":
+        conclusions["score_text"] = f"模型Top-1比分 {top_score}；EXACT置信门控失败，但矩阵Top-1仍保留。"
+        conclusions["score_label"] = "模型Top-1比分"
+    elif status == "未启用":
+        conclusions["score_text"] = f"模型Top-1比分 {top_score}；EXACT置信门控未启用，因缺少冻结阈值。"
+        conclusions["score_label"] = "模型Top-1比分"
+    else:
+        conclusions["score_text"] = "精确比分不可用。"
+        conclusions["score_label"] = "精确比分不可用"
 
 
 def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +60,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         conclusions["exact_gate"] = None
         conclusions["exact_gate_status"] = "不可用"
         conclusions["exact_gate_reason"] = "统一比分矩阵未通过，EXACT门控不可用。"
+        _set_score_text(conclusions, "不可用")
         return calculation
 
     top_score = conclusions.get("top_score")
@@ -61,6 +79,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
             "统一比分矩阵可用并保留Top-1/Top-2，但当前正式规则未提供冻结的数值EXACT阈值；"
             "不得把缺失阈值硬编码成永久False，也不得自行发明阈值。"
         )
+        _set_score_text(conclusions, "未启用")
         return calculation
 
     required = ("min_top1_probability", "min_top1_top2_gap", "min_top3_cumulative")
@@ -68,6 +87,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         conclusions["exact_gate"] = None
         conclusions["exact_gate_status"] = "不可用"
         conclusions["exact_gate_reason"] = "EXACT门控配置不完整，拒绝部分阈值判断。"
+        _set_score_text(conclusions, "不可用")
         return calculation
 
     matrix = calculation.get("probabilities", {}).get("score_matrix")
@@ -75,6 +95,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         conclusions["exact_gate"] = None
         conclusions["exact_gate_status"] = "不可用"
         conclusions["exact_gate_reason"] = "比分矩阵或Top-1缺失。"
+        _set_score_text(conclusions, "不可用")
         return calculation
 
     top_probability = None
@@ -91,6 +112,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         conclusions["exact_gate"] = None
         conclusions["exact_gate_status"] = "不可用"
         conclusions["exact_gate_reason"] = "EXACT门控所需概率或阈值不可解析。"
+        _set_score_text(conclusions, "不可用")
         return calculation
 
     passed = (
@@ -99,7 +121,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         and top3 >= thresholds["min_top3_cumulative"]
     )
     conclusions["exact_gate"] = passed
-    conclusions["exact_gate_status"] = "通过" if passed else "未通过"
+    conclusions["exact_gate_status"] = "通过" if passed else "失败"
     conclusions["exact_gate_reason"] = {
         "top1": top_score,
         "top2": second_score,
@@ -108,6 +130,7 @@ def apply_exact_gate_state(context: dict[str, Any], calculation: dict[str, Any])
         "top3_cumulative": top3,
         "criteria": thresholds,
     }
+    _set_score_text(conclusions, conclusions["exact_gate_status"])
     return calculation
 
 
