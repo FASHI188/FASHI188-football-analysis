@@ -10,11 +10,13 @@ The replay uses, per competition:
   validation report;
 - that outer fold's parameter set, selected only from prior seasons;
 - same-season match history strictly before each match date via the frozen formal
-  engine;
+  engine functions;
 - the target-season OOF full-matrix calibrator when replay-safe and available.
 
 No historical odds, market coordination, EV, lineup hindsight, current-season
-challenger promotion or post-match information is injected.
+challenger promotion or post-match information is injected. Processed matches are
+loaded once per competition for speed; probability formulas and hard sample gates
+are identical to the frozen formal engine.
 """
 from __future__ import annotations
 
@@ -31,7 +33,15 @@ ENGINE = ROOT / "engine"
 if str(ENGINE) not in sys.path:
     sys.path.insert(0, str(ENGINE))
 
-from football_v460_engine import predict_joint_distribution
+from football_v460_engine import (
+    _merge_parameters,
+    build_score_matrix,
+    current_season_history,
+    expected_goals,
+    fit_current_season_state,
+    load_config,
+    low_score_factors,
+)
 from oof_matrix_calibration import load_oof_matrix_calibrator, temperature_scale_matrix
 from platform_core import (
     PlatformError,
@@ -60,7 +70,6 @@ def _one_x_two_brier(prob: dict[str, float], actual: str) -> float:
 
 
 def _one_x_two_rps(prob: dict[str, float], actual: str) -> float:
-    # Ordered categories home, draw, away; standard three-category RPS / (K-1).
     actual_vec = {
         "home": (1.0, 0.0, 0.0),
         "draw": (0.0, 1.0, 0.0),
@@ -74,14 +83,9 @@ def _one_x_two_rps(prob: dict[str, float], actual: str) -> float:
 
 def _joint_log_score(matrix: list[dict[str, Any]], hg: int, ag: int) -> float:
     probability = 0.0
-    max_total = -1
     for h, a, p in score_matrix_rows(matrix):
-        max_total = max(max_total, h + a)
         if h == hg and a == ag:
             probability += p
-    # The frozen engine aggregates 7+ to a finite representative support. A true
-    # score outside explicit support cannot be assigned an exact-cell log score;
-    # report it as unavailable for this descriptive replay rather than invent mass.
     if probability <= 0.0:
         return float("nan")
     return -math.log(max(1e-15, probability))
@@ -106,6 +110,31 @@ def _last_outer_fold(report: dict[str, Any]) -> dict[str, Any]:
     return folds[-1]
 
 
+def _predict_from_loaded_matches(
+    all_matches,
+    home_team: str,
+    away_team: str,
+    cutoff: datetime,
+    season: str,
+    selected_parameters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Exact frozen-engine base matrix using one in-memory processed-match list."""
+    config = load_config()
+    params = _merge_parameters(config, selected_parameters)
+    _, history = current_season_history(all_matches, cutoff, season)
+    state = fit_current_season_state(history, cutoff, params, config)
+    means = expected_goals(state, home_team, away_team, params, config)
+    factors = low_score_factors(state, params)
+    return build_score_matrix(
+        float(means["mu_home"]),
+        float(means["mu_away"]),
+        float(state["nb_dispersion_k"]),
+        float(params["beta_binomial_concentration"]),
+        int(config["max_total_goals_exact"]),
+        factors,
+    )
+
+
 def _backtest_competition(competition_id: str) -> dict[str, Any]:
     report_path = REPORT_ROOT / f"{competition_id}.json"
     if not report_path.exists():
@@ -113,11 +142,12 @@ def _backtest_competition(competition_id: str) -> dict[str, Any]:
     report = load_json(report_path)
     fold = _last_outer_fold(report)
     season = str(fold.get("outer_season") or "")
-    params = fold.get("selected_parameters")
-    if not season or not isinstance(params, dict):
+    selected_parameters = fold.get("selected_parameters")
+    if not season or not isinstance(selected_parameters, dict):
         raise PlatformError(f"invalid latest outer fold for {competition_id}")
 
-    matches = [m for m in read_processed_matches(competition_id) if str(m.season) == season]
+    all_matches = read_processed_matches(competition_id)
+    matches = [m for m in all_matches if str(m.season) == season]
     matches.sort(key=lambda m: (m.date, m.home_team, m.away_team))
     if not matches:
         raise PlatformError(f"no processed matches for {competition_id} season {season}")
@@ -141,20 +171,19 @@ def _backtest_competition(competition_id: str) -> dict[str, Any]:
     for match in matches:
         cutoff = match.date
         try:
-            prediction = predict_joint_distribution(
-                competition_id,
+            matrix = _predict_from_loaded_matches(
+                all_matches,
                 match.home_team,
                 match.away_team,
                 cutoff,
-                season=season,
-                selected_parameters=params,
+                season,
+                selected_parameters,
             )
         except PlatformError as exc:
             skipped += 1
             skip_reasons[str(exc)] += 1
             continue
 
-        matrix = prediction["probabilities"]["score_matrix"]
         if abs(temperature - 1.0) > 1e-15:
             matrix = temperature_scale_matrix(matrix, temperature)
         marginals = derive_score_marginals(matrix)
@@ -204,7 +233,7 @@ def _backtest_competition(competition_id: str) -> dict[str, Any]:
         "eligible_prediction_count": predicted,
         "skipped_by_formal_sample_gates": skipped,
         "coverage_rate": predicted / len(matches),
-        "selected_parameters": params,
+        "selected_parameters": selected_parameters,
         "parameter_selection_prior_seasons": fold.get("prior_seasons") or [],
         "oof_calibration": {
             "temperature": temperature,
@@ -262,7 +291,7 @@ def main() -> int:
             failures[cid] = f"{type(exc).__name__}: {exc}"
 
     payload = {
-        "schema_version": "V4.7.0-last-complete-season-backtest-r1",
+        "schema_version": "V4.7.0-last-complete-season-backtest-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS" if len(reports) == len(competitions) and not failures else "PARTIAL",
         "competition_count_requested": len(competitions),
