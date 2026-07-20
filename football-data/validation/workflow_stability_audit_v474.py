@@ -33,9 +33,24 @@ def rel(path: Path) -> str:
 
 
 def _top_level_contents_write(text: str) -> bool:
-    # Conservative text check. Job-level write permission is also reported because
-    # it is still a repository writer, but global write permission is the larger risk.
-    return bool(re.search(r"(?ms)^permissions:\s*\n(?:^[ \t]+.*\n)*?^[ \t]+contents:\s*write\s*$", text))
+    """Detect top-level `permissions: contents: write` without multiline regexes."""
+    lines = text.splitlines()
+    in_permissions = False
+    permissions_indent = -1
+    for raw in lines:
+        stripped = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 0 and stripped == "permissions:":
+            in_permissions = True
+            permissions_indent = indent
+            continue
+        if in_permissions and indent <= permissions_indent:
+            in_permissions = False
+        if in_permissions and stripped == "contents: write":
+            return True
+    return False
 
 
 def _extract_push_paths(text: str) -> list[str]:
@@ -88,9 +103,9 @@ def audit() -> dict[str, Any]:
         name = rel(path)
         push_paths = _extract_push_paths(text)
 
-        if "git push" in text:
+        if re.search(r"(?m)^\s*git\s+push\b", text):
             direct_git_push.append(name)
-        if "git pull --rebase" in text:
+        if re.search(r"(?m)^\s*git\s+pull\s+--rebase\b", text):
             git_pull_rebase.append(name)
         if "contents: write" in text:
             contents_write.append(name)
@@ -111,9 +126,9 @@ def audit() -> dict[str, Any]:
             if old in text:
                 node20_refs.append({"workflow": name, "reference": old, "recommended": recommended})
 
-        # Heuristic: a workflow that writes tracked files and has broad push paths can
-        # recursively trigger itself or sibling CI even if commit messages attempt skip-ci.
-        writes_repo = "git push" in text or ("api.github.com/repos/" in text and "/contents/" in text)
+        writes_repo = bool(re.search(r"(?m)^\s*git\s+push\b", text)) or (
+            "api.github.com/repos/" in text and "/contents/" in text
+        )
         if writes_repo and push_paths:
             self_trigger_risks.append({
                 "workflow": name,
@@ -130,7 +145,7 @@ def audit() -> dict[str, Any]:
     )
 
     return {
-        "schema_version": "V4.7.4-workflow-stability-audit",
+        "schema_version": "V4.7.4-workflow-stability-audit-r2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": "PASS_DIAGNOSTIC",
         "workflow_count": len(workflow_files),
