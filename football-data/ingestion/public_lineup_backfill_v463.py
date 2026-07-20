@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Backfill historical starting-XI evidence from public independent datasets.
 
-Sources currently supported:
+Sources:
   1) dcaribou/transfermarkt-datasets (CC0 curated dataset; Transfermarkt-derived)
   2) StatsBomb Open Data (research/open-data subset)
 
-The output is normalized JSONL under football-data/evidence/lineups/<competition>/.
-This collector never promotes evidence by itself. The multi-source validator decides
-whether two records are genuinely independent and consistent enough for a verified
-historical lineup label.
+Large Transfermarkt CSVs are streamed from gzip instead of materialized in
+memory. Output is normalized JSONL under football-data/evidence/lineups/<competition>/.
+This collector never promotes evidence by itself; the validator decides whether
+records are independent and consistent enough for verified historical labels.
 """
 from __future__ import annotations
 
@@ -21,15 +21,18 @@ import re
 import unicodedata
 import urllib.request
 from collections import defaultdict
-from datetime import date, datetime
+from contextlib import contextmanager
+from dateutil.parser import isoparse
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_ROOT = ROOT / "evidence" / "lineups"
 
 TM_BASE = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data"
 SB_BASE = "https://raw.githubusercontent.com/statsbomb/open-data/master/data"
+USER_AGENT = "football-evidence-v475/1.0"
 
 CROSS_YEAR = {
     "ENG_PremierLeague", "GER_Bundesliga", "ITA_SerieA", "FRA_Ligue1",
@@ -38,28 +41,43 @@ CROSS_YEAR = {
 }
 
 
-def _http_bytes(url: str, timeout: int = 120) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "HHH1-football-evidence/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+def _request(url: str, timeout: int = 180):
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
+        timeout=timeout,
+    )
+
+
+def _http_bytes(url: str, timeout: int = 180) -> bytes:
+    with _request(url, timeout=timeout) as response:
         return response.read()
+
+
+def _iter_csv_gz(url: str) -> Iterator[dict[str, str]]:
+    """Stream a remote gzip CSV row-by-row without building a full Python list."""
+    with _request(url) as response:
+        with gzip.GzipFile(fileobj=response) as gz:
+            text = io.TextIOWrapper(gz, encoding="utf-8-sig", newline="")
+            reader = csv.DictReader(text)
+            for row in reader:
+                yield row
 
 
 def _norm(text: Any) -> str:
     value = unicodedata.normalize("NFKD", str(text or ""))
     value = "".join(ch for ch in value if not unicodedata.combining(ch)).lower()
-    value = re.sub(r"[^a-z0-9]+", " ", value).strip()
-    return value
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
 def _competition_id(name: Any, country: Any) -> str | None:
     n, c = _norm(name), _norm(country)
     rules = [
         ("ENG_PremierLeague", c in {"england", "great britain"} and "premier league" in n),
-        ("GER_Bundesliga", c == "germany" and (n == "1 bundesliga" or n == "bundesliga")),
+        ("GER_Bundesliga", c == "germany" and n in {"1 bundesliga", "bundesliga"}),
         ("ITA_SerieA", c == "italy" and "serie a" in n),
         ("FRA_Ligue1", c == "france" and "ligue 1" in n),
-        ("ESP_LaLiga", c == "spain" and ("la liga" in n or "laliga" in n or "primera division" in n)),
-        ("POR_PrimeiraLiga", c == "portugal" and ("primeira liga" in n or "liga portugal" in n)),
+        ("ESP_LaLiga", c == "spain" and any(x in n for x in ("la liga", "laliga", "primera division"))),
+        ("POR_PrimeiraLiga", c == "portugal" and any(x in n for x in ("primeira liga", "liga portugal"))),
         ("NED_Eredivisie", c in {"netherlands", "holland"} and "eredivisie" in n),
         ("SUI_SuperLeague", c == "switzerland" and "super league" in n),
         ("SCO_Premiership", c == "scotland" and "premiership" in n),
@@ -87,9 +105,8 @@ def _canonical_season(competition_id: str, match_date: str) -> str:
 
 
 def _surrogate_kickoff(match_date: str) -> str:
-    # The public Transfermarkt prepared table exposes match date but not kickoff time.
-    # Noon UTC is a deterministic ordering surrogate. Evidence consumers must treat
-    # same-team/same-date collisions as ambiguous and exclude them from PIT validation.
+    # Public Transfermarkt prepared table exposes date but not exact kickoff time.
+    # Noon UTC is only a deterministic matching surrogate. It is not PIT evidence.
     return f"{match_date[:10]}T12:00:00+00:00"
 
 
@@ -97,28 +114,23 @@ def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
     materialized = list(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     materialized.sort(key=lambda r: (str(r.get("kickoff_utc")), str(r.get("team")), str(r.get("source_group"))))
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in materialized), encoding="utf-8")
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in materialized),
+        encoding="utf-8",
+    )
     return len(materialized)
 
 
-def _csv_gz(url: str) -> list[dict[str, str]]:
-    data = gzip.decompress(_http_bytes(url))
-    text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig", newline="")
-    return list(csv.DictReader(text))
-
-
 def collect_transfermarkt() -> dict[str, int]:
-    competitions = _csv_gz(f"{TM_BASE}/competitions.csv.gz")
     comp_map: dict[str, str] = {}
-    for row in competitions:
+    for row in _iter_csv_gz(f"{TM_BASE}/competitions.csv.gz"):
         target = _competition_id(row.get("name"), row.get("country_name"))
         if target:
             comp_map[str(row.get("competition_id"))] = target
 
-    games_rows = _csv_gz(f"{TM_BASE}/games.csv.gz")
     games: dict[str, dict[str, Any]] = {}
     club_to_team: dict[tuple[str, str], str] = {}
-    for row in games_rows:
+    for row in _iter_csv_gz(f"{TM_BASE}/games.csv.gz"):
         target = comp_map.get(str(row.get("competition_id")))
         if not target or not row.get("game_id") or not row.get("date"):
             continue
@@ -138,28 +150,24 @@ def collect_transfermarkt() -> dict[str, int]:
         club_to_team[(game_id, games[game_id]["home_club_id"])] = games[game_id]["home_club_name"]
         club_to_team[(game_id, games[game_id]["away_club_id"])] = games[game_id]["away_club_name"]
 
-    lineup_rows = _csv_gz(f"{TM_BASE}/game_lineups.csv.gz")
-    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
-    for row in lineup_rows:
+    # Only selected competitions' starting-XI rows are retained. This avoids
+    # materializing the multi-million-row prepared lineup table.
+    grouped: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
+    for row in _iter_csv_gz(f"{TM_BASE}/game_lineups.csv.gz"):
         game_id = str(row.get("game_id") or "")
-        if game_id not in games:
-            continue
-        lineup_type = _norm(row.get("type"))
-        if "start" not in lineup_type:
+        if game_id not in games or "start" not in _norm(row.get("type")):
             continue
         club_id = str(row.get("club_id") or "")
-        grouped[(game_id, club_id)].append(row)
+        player_id = str(row.get("player_id") or row.get("player_name") or "")
+        if player_id:
+            grouped[(game_id, club_id)][player_id] = str(row.get("player_name") or player_id)
 
     output: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for (game_id, club_id), items in grouped.items():
-        meta = games[game_id]
-        unique_players: dict[str, str] = {}
-        for item in items:
-            player_id = str(item.get("player_id") or item.get("player_name") or "")
-            if player_id:
-                unique_players[player_id] = str(item.get("player_name") or player_id)
+    retrieved = datetime.now(timezone.utc).isoformat()
+    for (game_id, club_id), unique_players in grouped.items():
         if len(unique_players) != 11:
             continue
+        meta = games[game_id]
         team = club_to_team.get((game_id, club_id))
         if not team:
             continue
@@ -168,7 +176,7 @@ def collect_transfermarkt() -> dict[str, int]:
             "competition_id": meta["competition_id"],
             "season": meta["season"],
             "kickoff_utc": _surrogate_kickoff(meta["date"]),
-            "kickoff_time_quality": "date_only_surrogate",
+            "kickoff_time_quality": "date_only_surrogate_not_pit",
             "team": team,
             "team_token": _norm(team),
             "starters": sorted(unique_players.values()),
@@ -178,7 +186,9 @@ def collect_transfermarkt() -> dict[str, int]:
             "source_group": "transfermarkt_datasets",
             "source_url": meta["url"] or "https://github.com/dcaribou/transfermarkt-datasets",
             "provider_record_id": game_id,
-            "retrieved_at_utc": datetime.utcnow().isoformat() + "+00:00",
+            "source_observed_at_utc": None,
+            "pit_eligible": False,
+            "retrieved_at_utc": retrieved,
         })
 
     return {
@@ -191,8 +201,7 @@ def _sb_starters(team_obj: dict[str, Any]) -> list[tuple[str, str]]:
     starters: list[tuple[str, str]] = []
     for player in team_obj.get("lineup") or []:
         positions = player.get("positions") or []
-        started = any(str(position.get("from") or "").startswith("00:00") for position in positions)
-        if not started:
+        if not any(str(position.get("from") or "").startswith("00:00") for position in positions):
             continue
         player_id = str(player.get("player_id") or player.get("player_name") or "")
         player_name = str(player.get("player_name") or player_id)
@@ -204,6 +213,7 @@ def _sb_starters(team_obj: dict[str, Any]) -> list[tuple[str, str]]:
 def collect_statsbomb() -> dict[str, int]:
     competitions = json.loads(_http_bytes(f"{SB_BASE}/competitions.json").decode("utf-8"))
     output: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    retrieved = datetime.now(timezone.utc).isoformat()
     for comp in competitions:
         if comp.get("competition_gender") != "male":
             continue
@@ -235,7 +245,7 @@ def collect_statsbomb() -> dict[str, int]:
                     "competition_id": target,
                     "season": _canonical_season(target, match_date),
                     "kickoff_utc": _surrogate_kickoff(match_date),
-                    "kickoff_time_quality": "date_only_surrogate",
+                    "kickoff_time_quality": "date_only_surrogate_not_pit",
                     "team": team,
                     "team_token": _norm(team),
                     "starters": sorted(name for _, name in starters),
@@ -245,7 +255,9 @@ def collect_statsbomb() -> dict[str, int]:
                     "source_group": "statsbomb_open",
                     "source_url": f"https://github.com/statsbomb/open-data/blob/master/data/lineups/{match_id}.json",
                     "provider_record_id": str(match_id),
-                    "retrieved_at_utc": datetime.utcnow().isoformat() + "+00:00",
+                    "source_observed_at_utc": None,
+                    "pit_eligible": False,
+                    "retrieved_at_utc": retrieved,
                 })
     return {
         cid: _write_jsonl(OUT_ROOT / cid / "statsbomb_open.jsonl", rows)
