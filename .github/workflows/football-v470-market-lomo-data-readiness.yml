@@ -1,0 +1,43 @@
+name: Football V4.7 Market LOMO Data Readiness
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/evidence/markets/**"
+      - "football-data/manifests/market_lomo/**"
+      - "football-data/manifests/market_lomo_research/**"
+      - "football-data/config/global_evidence_routes_v475.json"
+      - "football-data/validation/market_lomo_data_readiness_v470.py"
+      - ".github/workflows/football-v470-market-lomo-data-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-market-lomo-data-readiness
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/market_lomo_data_readiness_v470.py
+      - run: python football-data/validation/market_lomo_data_readiness_v470.py
+      - name: Commit readiness receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/market_lomo_data_readiness_v470_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist all-domain market LOMO data readiness"
+          git pull --rebase origin main
+          git push origin HEAD:main
