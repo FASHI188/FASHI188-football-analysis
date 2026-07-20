@@ -27,6 +27,21 @@ def _unavailable(calculation: dict[str, Any], reason: str) -> dict[str, Any]:
     return output
 
 
+def _normalize_promoted_transform_audit(output: dict[str, Any]) -> dict[str, Any]:
+    """Remove stale challenger-only labels after a receipt-gated formal promotion."""
+    audit = output.get("conditional_allocation_v470_audit")
+    if not isinstance(audit, dict) or audit.get("status") != "通过":
+        return output
+    transform = audit.get("transform_audit")
+    if isinstance(transform, dict):
+        transform = copy.deepcopy(transform)
+        transform["status"] = "PROMOTED_RUNTIME_ACTIVE"
+        transform["formal_weight"] = float(audit.get("formal_weight", 1.0))
+        transform["registration_status"] = audit.get("registration_status", "V4.7挑战层逐赛事域已晋级")
+        audit["transform_audit"] = transform
+    return output
+
+
 def apply_hash_bound_promoted_v470_challengers(
     context: dict[str, Any], calculation: dict[str, Any]
 ) -> dict[str, Any]:
@@ -63,4 +78,5 @@ def apply_hash_bound_promoted_v470_challengers(
         if str(expected.get(key) or "") != value:
             return _unavailable(calculation, f"runtime activation hash mismatch: {key}")
 
-    return apply_promoted_v470_post_calibration_challengers(context, calculation)
+    output = apply_promoted_v470_post_calibration_challengers(context, calculation)
+    return _normalize_promoted_transform_audit(output)
