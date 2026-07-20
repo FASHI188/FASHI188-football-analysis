@@ -135,8 +135,8 @@ def extract() -> dict[str, Any]:
                                 "source_class": family["source_class"],
                                 "source_path": str(path.relative_to(ROOT)),
                                 "quote_timestamp_status": "unavailable",
-                                "formal_pit_eligible": false,
-                                "formal_synchronized_snapshot_eligible": false,
+                                "formal_pit_eligible": False,
+                                "formal_synchronized_snapshot_eligible": False,
                                 "usage": "retrospective_market_reference_only",
                                 **surface,
                             })
