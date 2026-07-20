@@ -20,6 +20,7 @@ from statistics import mean
 from dynamic_strength_second_stage_v470 import season_predictions as full_season_predictions
 from dynamic_strength_allocation_only_second_stage_v470 import season_predictions as allocation_season_predictions
 from dynamic_strength_oof_screen_v470 import CANDIDATES, MODEL_ROOT, build_season_indexes, load_domain_data
+from football_v460_engine import _merge_parameters, load_config
 from platform_core import load_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,8 +56,12 @@ def select_one(cid: str, spec: dict) -> dict:
             "formal_weight": 0,
             "probability_change": False,
         }
+    # Full-dynamic season_predictions expects the complete formal parameter set;
+    # the model artifact stores only selected tunable values. Merge the frozen
+    # defaults exactly as the validated formal pipeline does before evaluation.
+    merged_params = _merge_parameters(load_config(), pmap[selection_season])
     baseline, candidates = spec["season_predictions"](
-        cid, selection_season, pmap[selection_season], data, indexes
+        cid, selection_season, merged_params, data, indexes
     )
     scored = []
     for candidate in CANDIDATES:
