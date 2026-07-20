@@ -30,10 +30,17 @@ jobs:
         run: |
           python -m py_compile football-data/engine/market_coordination_runtime_v470.py
           python -m py_compile football-data/validation/smoke_market_coordination_runtime_v470.py
-      - name: Run smoke
+      - name: Run smoke and preserve exit code
+        id: smoke
+        shell: bash
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/smoke_market_coordination_runtime_v470.py
+        run: |
+          set +e
+          python football-data/validation/smoke_market_coordination_runtime_v470.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
       - name: Commit smoke receipt
         shell: bash
         run: |
@@ -44,3 +51,6 @@ jobs:
           git commit -m "audit(football): persist market coordination runtime smoke"
           git pull --rebase origin main
           git push origin HEAD:main
+      - name: Preserve failure state after receipt persistence
+        if: steps.smoke.outputs.rc != '0'
+        run: exit 1
