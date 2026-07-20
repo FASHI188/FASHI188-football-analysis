@@ -6,6 +6,9 @@ collection schedule (Friday afternoons for weekend games / Tuesday afternoons fo
 midweek games) rather than a row-level original bookmaker quote timestamp.
 Therefore it may screen LOMO methodology but can never create a production formal
 LOMO receipt by itself.
+
+Every run writes a coverage manifest, including failures, so a missing output can
+never be mistaken for an unfinished background task.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ import csv
 import hashlib
 import io
 import json
+import traceback
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,83 +109,105 @@ def _surface_average(row: dict[str, str]) -> dict[str, Any] | None:
     }
 
 
-def main() -> int:
-    raw = _download()
-    text = _decode(raw)
-    reader = csv.DictReader(io.StringIO(text))
-    fieldnames = list(reader.fieldnames or [])
-    normalized = []
-    row_count = 0
-    b365_count = 0
-    average_count = 0
-    dates = []
-
-    for row in reader:
-        row_count += 1
-        match_date = _date(row.get("Date", ""))
-        home = str(row.get("HomeTeam") or "").strip()
-        away = str(row.get("AwayTeam") or "").strip()
-        if not match_date or not home or not away:
-            continue
-        try:
-            home_goals = int(float(str(row.get("FTHG") or "")))
-            away_goals = int(float(str(row.get("FTAG") or "")))
-        except ValueError:
-            continue
-        b365 = _surface_b365(row)
-        average = _surface_average(row)
-        if b365:
-            surface = b365
-            b365_count += 1
-        elif average:
-            surface = average
-            average_count += 1
-        else:
-            continue
-        dates.append(match_date)
-        normalized.append({
-            "competition_id": "SWE_Allsvenskan",
-            "season": "2026",
-            "match_date": match_date,
-            "home_team": home,
-            "away_team": away,
-            "home_goals": home_goals,
-            "away_goals": away_goals,
-            **surface,
-            "source_id": "football_data_co_uk_free_sweden",
-            "source_url": SOURCE_URL,
-            "quote_timestamp_utc": None,
-            "timestamp_grade": "COARSE_COLLECTION_SCHEDULE_ONLY",
-            "documented_collection_schedule": "Friday afternoons for weekend games; Tuesday afternoons for midweek games",
-            "formal_lomo_eligible": False,
-        })
-
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in normalized), encoding="utf-8")
-    manifest = {
-        "schema_version": "V4.7.0-free-market-research-coverage-r1",
-        "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "status": "PASS" if normalized else "NO_USABLE_COMPLETE_SURFACES",
-        "competition_id": "SWE_Allsvenskan",
-        "source_url": SOURCE_URL,
-        "source_sha256": hashlib.sha256(raw).hexdigest(),
-        "csv_row_count": row_count,
-        "normalized_complete_surface_count": len(normalized),
-        "same_bookmaker_b365_count": b365_count,
-        "market_average_composite_count": average_count,
-        "date_min": min(dates) if dates else None,
-        "date_max": max(dates) if dates else None,
-        "fieldnames": fieldnames,
-        "formal_lomo_eligible": False,
-        "formal_ev_enabled": False,
-        "production_lomo_receipt_created": False,
-        "blocker": "row-level original quote timestamps are unavailable in this free dataset",
-        "policy": "Research screening only. This artifact must never be copied into manifests/market_lomo as a formal receipt.",
-    }
+def _write_manifest(payload: dict[str, Any]) -> None:
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return 0 if normalized else 2
+    MANIFEST.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def main() -> int:
+    generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    try:
+        raw = _download()
+        text = _decode(raw)
+        reader = csv.DictReader(io.StringIO(text))
+        fieldnames = list(reader.fieldnames or [])
+        normalized = []
+        row_count = 0
+        b365_count = 0
+        average_count = 0
+        dates = []
+
+        for row in reader:
+            row_count += 1
+            match_date = _date(row.get("Date", ""))
+            home = str(row.get("HomeTeam") or "").strip()
+            away = str(row.get("AwayTeam") or "").strip()
+            if not match_date or not home or not away:
+                continue
+            try:
+                home_goals = int(float(str(row.get("FTHG") or "")))
+                away_goals = int(float(str(row.get("FTAG") or "")))
+            except ValueError:
+                continue
+            b365 = _surface_b365(row)
+            average = _surface_average(row)
+            if b365:
+                surface = b365
+                b365_count += 1
+            elif average:
+                surface = average
+                average_count += 1
+            else:
+                continue
+            dates.append(match_date)
+            normalized.append({
+                "competition_id": "SWE_Allsvenskan",
+                "season": "2026",
+                "match_date": match_date,
+                "home_team": home,
+                "away_team": away,
+                "home_goals": home_goals,
+                "away_goals": away_goals,
+                **surface,
+                "source_id": "football_data_co_uk_free_sweden",
+                "source_url": SOURCE_URL,
+                "quote_timestamp_utc": None,
+                "timestamp_grade": "COARSE_COLLECTION_SCHEDULE_ONLY",
+                "documented_collection_schedule": "Friday afternoons for weekend games; Tuesday afternoons for midweek games",
+                "formal_lomo_eligible": False,
+            })
+
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        OUT.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in normalized), encoding="utf-8")
+        status = "PASS" if normalized else "NO_USABLE_COMPLETE_SURFACES"
+        manifest = {
+            "schema_version": "V4.7.0-free-market-research-coverage-r2",
+            "generated_at_utc": generated,
+            "status": status,
+            "competition_id": "SWE_Allsvenskan",
+            "source_url": SOURCE_URL,
+            "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "csv_row_count": row_count,
+            "normalized_complete_surface_count": len(normalized),
+            "same_bookmaker_b365_count": b365_count,
+            "market_average_composite_count": average_count,
+            "date_min": min(dates) if dates else None,
+            "date_max": max(dates) if dates else None,
+            "fieldnames": fieldnames,
+            "formal_lomo_eligible": False,
+            "formal_ev_enabled": False,
+            "production_lomo_receipt_created": False,
+            "blocker": "row-level original quote timestamps are unavailable in this free dataset",
+            "policy": "Research screening only. This artifact must never be copied into manifests/market_lomo as a formal receipt.",
+        }
+        _write_manifest(manifest)
+        return 0 if normalized else 2
+    except Exception as exc:
+        _write_manifest({
+            "schema_version": "V4.7.0-free-market-research-coverage-r2",
+            "generated_at_utc": generated,
+            "status": "FAILED",
+            "competition_id": "SWE_Allsvenskan",
+            "source_url": SOURCE_URL,
+            "formal_lomo_eligible": False,
+            "formal_ev_enabled": False,
+            "production_lomo_receipt_created": False,
+            "reason": str(exc),
+            "traceback_tail": traceback.format_exc().splitlines()[-20:],
+            "policy": "Failure receipt only; no formal LOMO or EV activation is created.",
+        })
+        return 2
 
 
 if __name__ == "__main__":
