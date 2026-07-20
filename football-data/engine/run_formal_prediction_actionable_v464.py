@@ -32,7 +32,8 @@ def _postprocess() -> None:
         path = Path(context_path)
         context = json.loads(path.read_text(encoding="utf-8"))
         gates = context.setdefault("gates", {})
-        market_status = context.get("market_assessment", {}).get("status")
+        market_assessment = context.get("market_assessment", {})
+        market_status = market_assessment.get("status")
         lineup_status = context.get("lineup_assessment", {}).get("status")
         gates["question_time_market_freeze_policy"] = (
             "unplayed=user question-time prices; historical replay=last verifiable complete pre-kickoff snapshot"
@@ -45,7 +46,18 @@ def _postprocess() -> None:
         # Formal execution EV remains closed until a competition-specific LOMO /
         # price-execution validation receipt explicitly opens this gate.
         gates.setdefault("formal_ev_execution_validated", False)
-        context["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r3"
+
+        # Pre-calculation state must describe data availability only. No Bet is a
+        # later decision outcome and must never be used as a runtime state here.
+        context_states = context.setdefault("module_states", {})
+        if market_status in {None, "不可用"}:
+            context_states["price_ev_no_bet"] = "不可用"
+        elif market_assessment.get("ev_gate"):
+            context_states["price_ev_no_bet"] = "未启用"
+        else:
+            context_states["price_ev_no_bet"] = "降级"
+
+        context["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r4"
         path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if calculation_path and Path(calculation_path).exists():
@@ -83,7 +95,7 @@ def _postprocess() -> None:
         if isinstance(context, dict):
             calculation = apply_price_ev_state(context, calculation)
 
-        calculation["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r3"
+        calculation["runtime_hardening_revision"] = "V4.6.4-staged-decision-state-r4"
         path.write_text(json.dumps(calculation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
