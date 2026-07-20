@@ -8,6 +8,7 @@ on:
       - ".github/workflows/**"
       - "football-data/validation/workflow_stability_audit_v474.py"
       - "football-data/validation/persist_files_v474.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
 
 permissions:
   contents: read
@@ -35,19 +36,23 @@ jobs:
         run: |
           python -m py_compile football-data/validation/workflow_stability_audit_v474.py
           python -m py_compile football-data/validation/persist_files_v474.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
-      - name: Scan all workflows
+      - name: Scan all workflows and write local receipt
         run: python football-data/validation/workflow_stability_audit_v474.py --write-receipt --print-summary
 
-      - name: Persist diagnostic receipt safely
+      - name: Persist stability receipt safely
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           python football-data/validation/persist_files_v474.py \
             football-data/manifests/workflow_stability_v474_status.json \
-            --message-prefix "audit(football): persist"
+            --message-prefix "audit(football): persist workflow-stability receipt"
 
-# Diagnostic-only baseline. It intentionally does not fail on findings while the
-# legacy workflows are being migrated. Once the baseline is clean, the audit will
-# be promoted to a fail-closed workflow hygiene gate.
+      - name: Enforce fail-closed workflow hygiene gate
+        run: python football-data/validation/workflow_stability_audit_v474.py --strict-exit --print-summary
+
+# V4.7.4 baseline is now clean. This gate remains fail-closed so direct git
+# writeback, global write permission, deprecated action runtimes, missing timeouts,
+# or direct per-workflow Contents API implementations cannot silently return.
