@@ -1,0 +1,43 @@
+name: Football V4.8 Governance Runtime Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/manifests/v480_upgrade_status.json"
+      - "football-data/engine/formal_governance_runtime_v470.py"
+      - "football-data/validation/formal_governance_runtime_v480_smoke.py"
+      - ".github/workflows/football-v480-governance-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v480-governance-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/engine/formal_governance_runtime_v470.py football-data/validation/formal_governance_runtime_v480_smoke.py
+      - name: Run smoke
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/validation/formal_governance_runtime_v480_smoke.py
+      - name: Commit smoke receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/formal_governance_runtime_v480_smoke.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist V4.8 governance runtime smoke"
+          git pull --rebase origin main
+          git push origin HEAD:main
