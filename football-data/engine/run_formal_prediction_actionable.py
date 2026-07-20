@@ -9,11 +9,14 @@ invalidation condition and may trigger a new run when requested.
 V4.7 competition-specific promoted challengers are applied only through the
 hash-bound runtime activation gate after the existing OOF matrix calibration.
 The final total-goals peak diagnostic is read-only and runs last.
+Formal EV and market coordination are separately fail-closed behind a
+competition-specific LOMO/OOS receipt.
 """
 from __future__ import annotations
 
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
+from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
@@ -24,6 +27,12 @@ def main() -> int:
 
     def actionable_prepare(match_input):
         context = original_prepare(match_input)
+        # The base formal wrapper requires explicit season and writes it after
+        # prepare(). Put the same value into the actionable context before the
+        # LOMO gate so future season-bound receipts can be checked correctly.
+        if str(match_input.get("season") or "").strip():
+            context.setdefault("match_identity", {})["season"] = str(match_input["season"]).strip()
+        context = apply_formal_ev_lomo_gate(context)
         lineup_status = context.get("lineup_assessment", {}).get("status")
         context.setdefault("gates", {})["new_freeze_required_on_official_lineup_or_major_market_move"] = False
         context["gates"]["question_time_decision_freeze_locked"] = True
