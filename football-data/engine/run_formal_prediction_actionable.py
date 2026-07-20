@@ -10,13 +10,16 @@ V4.7 competition-specific promoted challengers are applied only through the
 hash-bound runtime activation gate after the existing OOF matrix calibration.
 The final total-goals peak diagnostic is read-only and runs last.
 Formal EV and market coordination are separately fail-closed behind a
-competition-specific LOMO/OOS receipt.
+competition-specific LOMO/OOS receipt. A lineup status label is not enough to
+receive lineup confidence credit: an official XI or executable probable-XI
+projection must actually be present.
 """
 from __future__ import annotations
 
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
 from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
+from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
@@ -28,15 +31,25 @@ def main() -> int:
     def actionable_prepare(match_input):
         context = original_prepare(match_input)
         # The base formal wrapper requires explicit season and writes it after
-        # prepare(). Put the same value into the actionable context before the
-        # LOMO gate so future season-bound receipts can be checked correctly.
+        # prepare(). Put the same value into the actionable context before
+        # season-bound evidence gates run.
         if str(match_input.get("season") or "").strip():
             context.setdefault("match_identity", {})["season"] = str(match_input["season"]).strip()
         context = apply_formal_ev_lomo_gate(context)
-        lineup_status = context.get("lineup_assessment", {}).get("status")
+        context = apply_probable_lineup_runtime(match_input, context)
+
+        lineup_audit = context.get("probable_lineup_v470_audit") or {}
+        lineup_runtime_status = str(lineup_audit.get("status") or "不可用")
+        # The formal core uses lineup_assessment.status for confidence grading.
+        # Feed it the audited runtime result, not the user's bare status label.
+        context.setdefault("lineup_assessment", {})["status"] = (
+            lineup_runtime_status if lineup_runtime_status in {"通过", "部分通过"} else "不可用"
+        )
+        lineup_detail_available = bool((context.get("lineup_projection") or {}).get("starting_xi"))
+
         context.setdefault("gates", {})["new_freeze_required_on_official_lineup_or_major_market_move"] = False
         context["gates"]["question_time_decision_freeze_locked"] = True
-        context["gates"]["probable_lineup_allowed"] = lineup_status in {"通过", "部分通过"}
+        context["gates"]["probable_lineup_allowed"] = lineup_detail_available
         context["gates"]["refreeze_policy"] = (
             "Do not wait for official lineups or closing odds. Re-run only on user request or a major confirmed "
             "change before the user's action deadline."
