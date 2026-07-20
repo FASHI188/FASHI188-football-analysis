@@ -1,0 +1,60 @@
+name: Football V4.7 Priority Top-k Review
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/review_priority_challenger_topk_v470.py"
+      - "football-data/validation/train_priority_challengers_v470.py"
+      - "football-data/engine/conditional_allocation_challenger_v470.py"
+      - "football-data/engine/total_tail_challenger_v470.py"
+      - "football-data/models/challengers_v470/USA_MLS/priority_v470.json"
+      - ".github/workflows/football-v470-priority-topk-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-priority-topk-review
+  cancel-in-progress: false
+
+jobs:
+  review-score-topk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Top-k review assets
+        run: |
+          python -m py_compile football-data/engine/conditional_allocation_challenger_v470.py
+          python -m py_compile football-data/engine/total_tail_challenger_v470.py
+          python -m py_compile football-data/validation/train_priority_challengers_v470.py
+          python -m py_compile football-data/validation/review_priority_challenger_topk_v470.py
+
+      - name: Run USA MLS combined score Top-k outer-OOF review
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/review_priority_challenger_topk_v470.py
+
+      - name: Commit Top-k review receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/priority_challenger_topk_review_v470_status.json
+          if git diff --cached --quiet; then
+            echo "No Top-k review receipt changes."
+            exit 0
+          fi
+          git commit -m "audit(football): persist V4.7 MLS challenger Top-k review"
+          git pull --rebase origin main
+          git push origin HEAD:main
