@@ -10,10 +10,11 @@ on:
       - "football-data/validation/stage_gate_resolution_v470.py"
       - "football-data/validation/active_league_promotion_review_v470.py"
       - "football-data/validation/remaining_work_v470.py"
-      - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/repository_integrity_runtime_v473.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-all-remaining-v470-${{ github.ref }}
@@ -21,24 +22,23 @@ concurrency:
 
 jobs:
   execute-all-actionable:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository-wide fail-closed preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
-      - name: Compile V4.7.0 additions and required OOS runners
+      - name: Compile V4.7.0 additions OOS runners and persistence helper
         run: |
           python -m py_compile football-data/validation/stage_gate_resolution_v470.py
           python -m py_compile football-data/validation/active_league_promotion_review_v470.py
@@ -46,6 +46,7 @@ jobs:
           python -m py_compile football-data/validation/total_goals_dynamic_challenger_v464.py
           python -m py_compile football-data/validation/total_goals_round2_v465.py
           python -m py_compile football-data/validation/total_goals_joint_integration_v466.py
+          python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
       - name: Resolve official stage routing where evidence supports it
         run: python football-data/validation/stage_gate_resolution_v470.py
@@ -110,16 +111,17 @@ jobs:
       - name: Consolidate remaining-work status
         run: python football-data/validation/remaining_work_v470.py
 
-      - name: Persist all actionable V4.7.0 evidence
+      - name: Persist validated V4.7.0 evidence safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests
-          git add football-data/validation/reports || true
-          if git diff --cached --quiet; then
-            echo "No V4.7.0 evidence changes to commit."
-            exit 0
-          fi
-          git commit -m "audit(football): persist V4.7.0 all-actionable evidence [skip ci]"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/validation/reports/ \
+            --message-prefix "audit(football): persist validated V4.7 remaining-work artifact"
+
+# V4.7.4 hardening: all validation must finish before persistence. Generated
+# evidence is allowlisted and written with optimistic Contents API concurrency;
+# no direct git commit/pull/rebase/push occurs inside this workflow.
