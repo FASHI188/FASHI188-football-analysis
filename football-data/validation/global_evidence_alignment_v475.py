@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Validate global evidence-route alignment for all 17 football domains.
+"""Validate global evidence routes and the mandatory recent-two-season scope.
 
-This is an engineering/data-governance gate. It verifies that every registered
-competition has an explicit historical market route, lineup/injury route policy,
-and appropriate format/stage policy. It never treats a mapped route as acquired
-data and never changes CURRENT or formal model weights.
+Engineering/data-governance only. A mapped route is not acquired data. Missing
+paid-provider credentials remain acquisition blockers and never become PASS data.
 """
 from __future__ import annotations
 
@@ -20,24 +18,17 @@ REGISTRY = ROOT / "config" / "platform_registry.json"
 ROUTES = ROOT / "config" / "global_evidence_routes_v475.json"
 SOURCES = ROOT / "config" / "evidence_sources_v470.json"
 STAGES = ROOT / "config" / "stage_format_registry_v470.json"
+SCOPE = ROOT / "config" / "recent_two_season_evidence_scope_v476.json"
 OUT = ROOT / "manifests" / "global_evidence_alignment_v475_status.json"
 LINEUP_ROOT = ROOT / "evidence" / "lineups"
 MARKET_ROOT = ROOT / "evidence" / "markets"
 
 COMPLEX_STAGE_DOMAINS = {
-    "ARG_Primera",
-    "USA_MLS",
-    "SUI_SuperLeague",
-    "SCO_Premiership",
-    "UEFA_ChampionsLeague",
-    "JPN_J1",
-    "KOR_KLeague1",
+    "ARG_Primera", "USA_MLS", "SUI_SuperLeague", "SCO_Premiership",
+    "UEFA_ChampionsLeague", "JPN_J1", "KOR_KLeague1",
 }
 CREDENTIALS = [
-    "THE_ODDS_API_KEY",
-    "ODDSPAPI_KEY",
-    "SPORTMONKS_API_TOKEN",
-    "API_FOOTBALL_KEY",
+    "THE_ODDS_API_KEY", "ODDSPAPI_KEY", "SPORTMONKS_API_TOKEN", "API_FOOTBALL_KEY",
 ]
 
 
@@ -46,8 +37,7 @@ def load(path: Path) -> dict[str, Any]:
 
 
 def count_jsonl_rows(root: Path) -> tuple[int, int]:
-    files = 0
-    rows = 0
+    files = rows = 0
     if not root.exists():
         return files, rows
     for path in sorted(root.glob("**/*.jsonl")):
@@ -62,11 +52,12 @@ def audit() -> dict[str, Any]:
     routes = load(ROUTES)
     sources = load(SOURCES)
     stages = load(STAGES)
+    scope = load(SCOPE)
 
     registered = [str(item["competition_id"]) for item in registry.get("competitions", [])]
     registered_set = set(registered)
     route_map = routes.get("competitions", {})
-    route_set = set(route_map)
+    scope_map = scope.get("competitions", {})
     stage_map = stages.get("competitions", {})
 
     structural_errors: list[dict[str, Any]] = []
@@ -79,18 +70,25 @@ def audit() -> dict[str, Any]:
             "actual": len(registered),
             "unique": len(registered_set),
         })
-
-    if registered_set != route_set:
+    if registered_set != set(route_map):
         structural_errors.append({
             "code": "route_registry_mismatch",
-            "missing_routes": sorted(registered_set - route_set),
-            "extra_routes": sorted(route_set - registered_set),
+            "missing_routes": sorted(registered_set - set(route_map)),
+            "extra_routes": sorted(set(route_map) - registered_set),
+        })
+    if registered_set != set(scope_map):
+        structural_errors.append({
+            "code": "two_season_scope_registry_mismatch",
+            "missing_scope": sorted(registered_set - set(scope_map)),
+            "extra_scope": sorted(set(scope_map) - registered_set),
         })
 
     per_competition: dict[str, Any] = {}
     for cid in sorted(registered_set):
         route = route_map.get(cid) or {}
+        scope_item = scope_map.get(cid) or {}
         errors: list[str] = []
+        seasons = scope_item.get("mandatory_backfill_seasons")
         if not route.get("the_odds_api_sport_key"):
             errors.append("missing_the_odds_api_sport_key")
         if not route.get("historical_odds_start_utc"):
@@ -99,6 +97,10 @@ def audit() -> dict[str, Any]:
             errors.append("market_route_not_mapped")
         if not route.get("stage_class"):
             errors.append("missing_stage_class")
+        if not isinstance(seasons, list) or len(seasons) != 2 or len(set(map(str, seasons))) != 2:
+            errors.append("mandatory_backfill_seasons_must_be_exactly_two_unique_seasons")
+        if not scope_item.get("forward_capture_target"):
+            errors.append("missing_forward_capture_target")
 
         if cid in COMPLEX_STAGE_DOMAINS:
             stage = stage_map.get(cid)
@@ -114,6 +116,8 @@ def audit() -> dict[str, Any]:
             "market_route": route.get("market_route"),
             "the_odds_api_sport_key": route.get("the_odds_api_sport_key"),
             "historical_odds_start_utc": route.get("historical_odds_start_utc"),
+            "mandatory_backfill_seasons": seasons,
+            "forward_capture_target": scope_item.get("forward_capture_target"),
             "stage_class": route.get("stage_class"),
             "complex_stage_format_verified": None if cid not in COMPLEX_STAGE_DOMAINS else bool((stage_map.get(cid) or {}).get("format_verified")),
             "structural_status": "PASS" if not errors else "FAIL",
@@ -133,21 +137,22 @@ def audit() -> dict[str, Any]:
     missing_credentials = [name for name, present in credential_status.items() if not present]
     if missing_credentials:
         warnings.append({
-            "code": "credential_gated_backfill_pending",
+            "code": "credential_gated_two_season_backfill_pending",
             "missing_credentials": missing_credentials,
-            "reason": "Route alignment can pass without secrets, but paid historical market and broad PIT injury backfills cannot be declared complete.",
+            "reason": "Only the recent-two-season window is mandatory now, but timestamped market and broad PIT injury backfills still require provider access.",
         })
 
     lineup_files, lineup_rows = count_jsonl_rows(LINEUP_ROOT)
     market_files, market_rows = count_jsonl_rows(MARKET_ROOT)
-
     actual_acquisition = {
+        "mandatory_scope_seasons_per_competition": 2,
         "lineup_jsonl_files": lineup_files,
         "lineup_rows": lineup_rows,
         "market_jsonl_files": market_files,
         "market_rows": market_rows,
-        "timestamped_historical_market_backfill_complete": False,
-        "pit_injury_suspension_backfill_complete": False,
+        "timestamped_historical_market_two_season_backfill_complete": False,
+        "pit_lineup_two_season_backfill_complete": False,
+        "pit_injury_suspension_two_season_backfill_complete": False,
     }
     if market_rows == 0:
         warnings.append({"code": "no_normalized_historical_market_rows_present"})
@@ -156,7 +161,7 @@ def audit() -> dict[str, Any]:
 
     structural_status = "PASS" if not structural_errors else "FAIL"
     acquisition_status = (
-        "ROUTES_ALIGNED_ACQUISITION_PENDING"
+        "TWO_SEASON_ROUTES_ALIGNED_ACQUISITION_PENDING"
         if structural_status == "PASS" and (missing_credentials or not market_rows)
         else "STRUCTURAL_ALIGNMENT_FAILED"
         if structural_status != "PASS"
@@ -164,12 +169,15 @@ def audit() -> dict[str, Any]:
     )
 
     return {
-        "schema_version": "V4.7.5-global-evidence-alignment",
+        "schema_version": "V4.7.6-global-evidence-two-season-alignment",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": structural_status,
         "acquisition_status": acquisition_status,
+        "mandatory_backfill_window_seasons": 2,
+        "older_history_policy": "retain_existing_not_required_for_completion",
         "registered_competition_count": len(registered_set),
-        "route_mapped_competition_count": len(route_set & registered_set),
+        "route_mapped_competition_count": len(set(route_map) & registered_set),
+        "scope_mapped_competition_count": len(set(scope_map) & registered_set),
         "complex_stage_domains_expected": sorted(COMPLEX_STAGE_DOMAINS),
         "structural_errors": structural_errors,
         "warnings": warnings,
@@ -179,7 +187,7 @@ def audit() -> dict[str, Any]:
         "formal_weight_change": False,
         "automatic_promotion": False,
         "current_rule_change": False,
-        "policy": "Route alignment is structural only. Historical market/PIT injury completeness requires actual timestamped records and downstream validation; missing credentials must never be disguised as completed data.",
+        "policy": "Mandatory completion is limited to each competition's recent two-season evidence window. Older history is retained but not a blocker. Actual PIT/timestamped records remain required; missing credentials must never be disguised as completed data.",
     }
 
 
@@ -197,8 +205,10 @@ def main() -> int:
         print(json.dumps({
             "status": report["status"],
             "acquisition_status": report["acquisition_status"],
+            "mandatory_backfill_window_seasons": report["mandatory_backfill_window_seasons"],
             "registered_competition_count": report["registered_competition_count"],
             "route_mapped_competition_count": report["route_mapped_competition_count"],
+            "scope_mapped_competition_count": report["scope_mapped_competition_count"],
             "structural_error_count": len(report["structural_errors"]),
             "warning_count": len(report["warnings"]),
             "actual_acquisition": report["actual_acquisition"],
