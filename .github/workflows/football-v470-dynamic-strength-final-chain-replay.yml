@@ -1,0 +1,55 @@
+name: Football V4.7 Dynamic Strength Final Chain Replay
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/dynamic_strength_final_chain_replay_v470.py"
+      - ".github/workflows/football-v470-dynamic-strength-final-chain-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-dynamic-strength-final-chain-replay
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile replay assets
+        run: |
+          python -m py_compile football-data/validation/dynamic_strength_oof_screen_v470.py
+          python -m py_compile football-data/validation/dynamic_strength_final_chain_replay_v470.py
+      - name: Replay ESP LaLiga final chain
+        id: replay
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/dynamic_strength_final_chain_replay_v470.py --competition ESP_LaLiga
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit final-chain receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/dynamic_strength_final_chain_replay_v470/ESP_LaLiga.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist ESP_LaLiga dynamic-strength final-chain replay"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve replay failure state
+        if: steps.replay.outputs.rc != '0'
+        run: exit 1
