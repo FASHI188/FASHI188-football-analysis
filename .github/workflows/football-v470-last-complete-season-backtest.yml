@@ -1,0 +1,56 @@
+name: Football V4.7 Last Complete Season Backtest
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/backtest_last_complete_season_all_domains_v470.py"
+      - ".github/workflows/football-v470-last-complete-season-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-last-complete-season-backtest
+  cancel-in-progress: true
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/backtest_last_complete_season_all_domains_v470.py
+      - name: Run strict PIT backtest
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/backtest_last_complete_season_all_domains_v470.py
+          code=$?
+          echo "backtest_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Commit backtest receipt even on partial failure
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -f football-data/manifests/last_complete_season_backtest_v470_status.json ]; then
+            git add football-data/manifests/last_complete_season_backtest_v470_status.json
+            if ! git diff --cached --quiet; then
+              git commit -m "audit(football): persist 17-domain last-season backtest"
+              git pull --rebase origin main
+              git push origin HEAD:main
+            fi
+          fi
+      - name: Enforce pass
+        shell: bash
+        run: |
+          test "${backtest_exit_code:-2}" = "0"
