@@ -2,9 +2,9 @@
 """V4.6.4 staged actionable wrapper.
 
 Adds question-time evidence intake flags, total-goal peak/plateau reporting,
-a unified price/EV/No-Bet state machine, runtime CURRENT receipt stamping, and
-safe repair of the legacy 26+ tail-only matrix downgrade without changing the
-frozen V4.6.x probability-engine hash.
+a unified price/EV/No-Bet state machine, runtime CURRENT receipt stamping, safe
+repair of the legacy 26+ tail-only matrix downgrade, and V4.7.x runtime audit
+policies without changing the frozen V4.6.x probability-engine hash.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pathlib import Path
 import run_formal_prediction_actionable as current_runner
 from audit_receipt_utils_v464 import total_peak_diagnostics
 from decision_state_policy_v477 import apply_price_ev_state
+from runtime_audit_policy_v477 import apply_runtime_audit_policies
 
 RUNTIME_RULE_ANCHOR = Path(__file__).resolve().parents[1] / "config" / "runtime_rule_anchor_v477.json"
 
@@ -106,7 +107,7 @@ def _repair_legacy_tail_only_matrix_downgrade(calculation: dict) -> None:
         conclusions["second_score"] = ranked[1][0] if len(ranked) > 1 else None
         conclusions["top3_cumulative"] = sum(item[1] for item in ranked[:3])
         conclusions["top1_top2_gap"] = ranked[0][1] - ranked[1][1] if len(ranked) > 1 else None
-        conclusions["score_text"] = f"模型中心比分 {ranked[0][0]}；EXACT独立门控未通过。"
+        conclusions["score_text"] = f"模型中心比分 {ranked[0][0]}；EXACT门控见exact_gate_status。"
         conclusions["score_label"] = "模型中心比分"
 
 
@@ -145,6 +146,11 @@ def _postprocess() -> None:
         else:
             context_states["price_ev_no_bet"] = "降级"
 
+        # EXACT confidence criteria must come from an explicit frozen policy. Do not
+        # invent thresholds in the runtime wrapper. Matrix Top-1 remains publishable
+        # independently when the unified matrix passes.
+        gates.setdefault("exact_score_gate_criteria", None)
+
         if rule_anchor:
             context["runtime_rule_anchor"] = {
                 "formal_rule_version": rule_anchor.get("formal_rule_version"),
@@ -152,7 +158,7 @@ def _postprocess() -> None:
                 "authority": rule_anchor.get("authority"),
             }
 
-        context["runtime_hardening_revision"] = "V4.6.4-staged-runtime-hardening-r5"
+        context["runtime_hardening_revision"] = "V4.6.4-staged-runtime-hardening-r6"
         path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if calculation_path and Path(calculation_path).exists():
@@ -194,13 +200,14 @@ def _postprocess() -> None:
             context = json.loads(Path(context_path).read_text(encoding="utf-8"))
         if isinstance(context, dict):
             calculation = apply_price_ev_state(context, calculation)
+            calculation = apply_runtime_audit_policies(context, calculation)
 
         if rule_anchor:
             calculation["rule_version"] = rule_anchor.get("formal_rule_version")
             calculation["formal_rule_file"] = rule_anchor.get("formal_rule_file")
             calculation["runtime_rule_anchor_authority"] = rule_anchor.get("authority")
 
-        calculation["runtime_hardening_revision"] = "V4.6.4-staged-runtime-hardening-r5"
+        calculation["runtime_hardening_revision"] = "V4.6.4-staged-runtime-hardening-r6"
         path.write_text(json.dumps(calculation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
