@@ -7,9 +7,10 @@ on:
     paths:
       - ".github/workflows/football-snapshot-manifest-v472.yml"
       - "football-data/validation/repository_snapshot_manifest_v472.py"
+      - "football-data/validation/persist_files_v474.py"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-snapshot-manifest-v472-${{ github.ref }}
@@ -17,35 +18,38 @@ concurrency:
 
 jobs:
   build-snapshot-manifest:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Compile manifest builder
-        run: python -m py_compile football-data/validation/repository_snapshot_manifest_v472.py
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile manifest builder and persistence helper
+        run: |
+          python -m py_compile football-data/validation/repository_snapshot_manifest_v472.py
+          python -m py_compile football-data/validation/persist_files_v474.py
 
       - name: Build deterministic repository snapshot manifest
         run: python football-data/validation/repository_snapshot_manifest_v472.py
 
-      - name: Persist manifest
+      - name: Persist snapshot manifest safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/repository_snapshot_v472.json
-          if git diff --cached --quiet; then
-            echo "No snapshot manifest change."
-            exit 0
-          fi
-          git commit -m "audit(football): persist V4.7.2 repository snapshot [skip ci]"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/repository_snapshot_v472.json \
+            --message-prefix "audit(football): persist repository snapshot"
+
+# V4.7.4 hardening: snapshot builder is validation-first and uses optimistic
+# Contents API persistence. No direct git commit/pull/rebase/push occurs in CI.
