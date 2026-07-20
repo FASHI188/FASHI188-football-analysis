@@ -1,0 +1,63 @@
+name: Football V4.7.5 Global Evidence Alignment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/platform_registry.json"
+      - "football-data/config/evidence_sources_v470.json"
+      - "football-data/config/global_evidence_routes_v475.json"
+      - "football-data/config/stage_format_registry_v470.json"
+      - "football-data/validation/global_evidence_alignment_v475.py"
+      - "football-data/validation/persist_files_v474.py"
+      - ".github/workflows/football-global-evidence-alignment-v475.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-global-evidence-alignment-v475-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-global-evidence-routes:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile alignment and persistence tooling
+        run: |
+          python -m py_compile football-data/validation/global_evidence_alignment_v475.py
+          python -m py_compile football-data/validation/persist_files_v474.py
+
+      - name: Build global evidence alignment receipt
+        run: python football-data/validation/global_evidence_alignment_v475.py --write-receipt --print-summary
+
+      - name: Persist alignment receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/global_evidence_alignment_v475_status.json \
+            --message-prefix "audit(football): persist global-evidence alignment receipt"
+
+      - name: Enforce structural alignment
+        run: python football-data/validation/global_evidence_alignment_v475.py --strict-exit --print-summary
+
+# Missing paid-provider credentials are reported as acquisition blockers, not
+# structural failures. Missing/misaligned competition routes or complex formats
+# are fail-closed. No model weight or CURRENT changes are permitted here.
