@@ -6,21 +6,15 @@ valid for the primary answer; publication of official lineups does not by itself
 make the already-frozen answer unavailable. Major confirmed changes remain an
 invalidation condition and may trigger a new run when requested.
 
-V4.7 competition-specific promoted challengers are applied only through the
-hash-bound runtime activation gate after the existing OOF matrix calibration.
-The final total-goals peak diagnostic is read-only and runs last.
-Formal EV and market coordination are separately fail-closed behind a
-competition-specific LOMO/OOS receipt. A lineup status label is not enough to
-receive lineup confidence credit: an official XI or executable probable-XI
-projection must actually be present. Dynamic-strength live evidence is audited at
-question time but cannot change probabilities without a separate hash-bound
-competition/season promotion.
+V4.7 competition-specific promoted challengers are receipt-gated. The validated
+ESP/NED dynamic-strength route is ordered before OOF matrix calibration; the
+existing MLS conditional-allocation promotion remains ordered after OOF. The final
+total-goals peak diagnostic is read-only and runs last.
 
-For a new target season, this wrapper may also inject separately validated,
-hash-bound next-season hyperparameters and an OOF calibrator while leaving the
-frozen formal engine and calibration-module files unchanged. These bridges never
-roll forward team strength and therefore cannot bypass the formal same-season
-competition/team sample gates.
+For a new target season, this wrapper may inject separately validated, hash-bound
+next-season hyperparameters and an OOF calibrator while leaving the frozen formal
+engine and calibration-module files unchanged. These bridges never roll forward
+team strength and cannot bypass the same-season competition/team sample gates.
 """
 from __future__ import annotations
 
@@ -29,6 +23,7 @@ import oof_matrix_calibration as calibration_module
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
 from dynamic_strength_live_input_contract_v470 import apply_dynamic_strength_live_input_audit
+from dynamic_strength_pre_oof_runtime_v470 import apply_promoted_dynamic_strength_pre_oof
 from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
 from formal_governance_runtime_v470 import apply_formal_governance_runtime
 from formal_next_season_parameter_runtime_v470 import (
@@ -44,6 +39,7 @@ from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 def main() -> int:
     original_prepare = base_runner.prepare_match_context
+    original_calculation = base_runner.calculation_from_context
     original_calibration = base_runner.apply_oof_matrix_calibration
     original_parameter_selector = engine_module._select_point_in_time_parameters
     original_calibrator_loader = calibration_module.load_oof_matrix_calibrator
@@ -56,9 +52,6 @@ def main() -> int:
 
     def actionable_prepare(match_input):
         context = original_prepare(match_input)
-        # The base formal wrapper requires explicit season and writes it after
-        # prepare(). Put the same value into the actionable context before
-        # season-bound evidence gates run.
         if str(match_input.get("season") or "").strip():
             context.setdefault("match_identity", {})["season"] = str(match_input["season"]).strip()
         context = apply_formal_ev_lomo_gate(context)
@@ -75,8 +68,6 @@ def main() -> int:
 
         lineup_audit = context.get("probable_lineup_v470_audit") or {}
         lineup_runtime_status = str(lineup_audit.get("status") or "不可用")
-        # The formal core uses lineup_assessment.status for confidence grading.
-        # Feed it the audited runtime result, not the user's bare status label.
         context.setdefault("lineup_assessment", {})["status"] = (
             lineup_runtime_status if lineup_runtime_status in {"通过", "部分通过"} else "不可用"
         )
@@ -89,6 +80,7 @@ def main() -> int:
             (context.get("dynamic_strength_live_input_audit") or {}).get("status") == "通过"
         )
         context["gates"]["dynamic_strength_probability_effect_enabled"] = False
+        context["gates"]["dynamic_strength_pre_oof_runtime_wired"] = True
         context["gates"]["next_season_parameter_rollforward_available"] = (
             parameter_rollforward_audit.get("status") == "通过"
         )
@@ -97,6 +89,15 @@ def main() -> int:
             "change before the user's action deadline."
         )
         return context
+
+    def champion_then_dynamic_strength(context):
+        calculation = original_calculation(context)
+        transformed = apply_promoted_dynamic_strength_pre_oof(context, calculation)
+        audit = transformed.get("dynamic_strength_pre_oof_audit") or {}
+        context.setdefault("gates", {})["dynamic_strength_probability_effect_enabled"] = (
+            audit.get("status") == "通过" and float(audit.get("formal_weight", 0.0)) > 0.0
+        )
+        return transformed
 
     def calibrated_then_promoted(context, calculation):
         identity = context.get("match_identity") or {}
@@ -162,12 +163,14 @@ def main() -> int:
         return apply_formal_governance_runtime(diagnosed)
 
     base_runner.prepare_match_context = actionable_prepare
+    base_runner.calculation_from_context = champion_then_dynamic_strength
     base_runner.apply_oof_matrix_calibration = calibrated_then_promoted
     engine_module._select_point_in_time_parameters = parameter_selector_with_rollforward
     try:
         return live_runner.main()
     finally:
         base_runner.prepare_match_context = original_prepare
+        base_runner.calculation_from_context = original_calculation
         base_runner.apply_oof_matrix_calibration = original_calibration
         engine_module._select_point_in_time_parameters = original_parameter_selector
         calibration_module.load_oof_matrix_calibrator = original_calibrator_loader
