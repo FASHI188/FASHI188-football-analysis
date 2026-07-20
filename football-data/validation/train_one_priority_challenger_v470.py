@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 from football_v460_engine import load_config
 from platform_core import ROOT
@@ -22,6 +21,7 @@ def main() -> int:
     if len(sys.argv) != 2 or sys.argv[1] not in ALLOWED:
         raise SystemExit("usage: train_one_priority_challenger_v470.py <competition_id>")
     competition_id = sys.argv[1]
+    exit_code = 0
     try:
         artifact = train_competition(competition_id, load_config())
         receipt = {
@@ -34,6 +34,7 @@ def main() -> int:
             "artifact": artifact,
         }
     except Exception as exc:
+        exit_code = 1
         receipt = {
             "schema_version": "V4.7.0-priority-challenger-single-receipt",
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -41,12 +42,12 @@ def main() -> int:
             "status": "FAIL",
             "formal_weight_change": False,
             "automatic_promotion": False,
-            "error": str(exc),
+            "error": f"{type(exc).__name__}: {exc}",
         }
     path = ROOT / "manifests" / f"priority_challenger_training_v470_{competition_id}.json"
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(receipt, ensure_ascii=False, indent=2))
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
