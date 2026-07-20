@@ -1,0 +1,64 @@
+name: Football V4.7.6 Two-Season Evidence Coverage
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/two_season_evidence_scope_v476.json"
+      - "football-data/validation/two_season_evidence_backfill_v476.py"
+      - "football-data/validation/persist_files_v474.py"
+      - "football-data/evidence/lineups/**"
+      - "football-data/evidence/injuries/**"
+      - "football-data/evidence/markets/**"
+      - "football-data/processed/**"
+      - ".github/workflows/football-two-season-evidence-v476.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-two-season-evidence-v476-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-two-season-coverage:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Repository integrity preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+
+      - name: Compile audit and persistence tooling
+        run: |
+          python -m py_compile football-data/validation/two_season_evidence_backfill_v476.py
+          python -m py_compile football-data/validation/persist_files_v474.py
+
+      - name: Audit actual recent-two-season evidence coverage
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/validation/two_season_evidence_backfill_v476.py --write-receipt --print-summary --strict-exit
+
+      - name: Persist compact coverage receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/two_season_evidence_backfill_v476_status.json \
+            football-data/validation/reports/two_season_evidence_v476/summary.json \
+            --message-prefix "audit(football): persist two-season evidence coverage"
+
+# V4.7.6: only the most recent two competition-specific seasons are mandatory.
+# Observed XI, PIT lineup, PIT injury/suspension and synchronized market evidence
+# remain separate dimensions; missing data is reported and never inferred.
