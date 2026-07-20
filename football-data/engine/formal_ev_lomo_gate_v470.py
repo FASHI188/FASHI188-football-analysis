@@ -35,13 +35,23 @@ def _receipt_path(competition_id: str) -> Path:
     return RECEIPT_ROOT / f"{competition_id}.json"
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        # Test harnesses may deliberately redirect RECEIPT_ROOT outside the
+        # repository. Production receipts still live under ROOT.
+        return str(path)
+
+
 def _validate_receipt(competition_id: str, season: str) -> tuple[bool, dict[str, Any]]:
     path = _receipt_path(competition_id)
+    display_path = _display_path(path)
     if not path.exists():
         return False, {
             "status": "不可用",
             "reason": "competition-specific LOMO validation receipt missing",
-            "receipt_path": str(path.relative_to(ROOT)),
+            "receipt_path": display_path,
         }
     try:
         receipt = load_json(path)
@@ -49,7 +59,7 @@ def _validate_receipt(competition_id: str, season: str) -> tuple[bool, dict[str,
         return False, {
             "status": "失败",
             "reason": f"LOMO receipt unreadable: {exc}",
-            "receipt_path": str(path.relative_to(ROOT)),
+            "receipt_path": display_path,
         }
     checks = {
         "status_validated": receipt.get("status") == EXPECTED_STATUS,
@@ -63,7 +73,7 @@ def _validate_receipt(competition_id: str, season: str) -> tuple[bool, dict[str,
     return valid, {
         "status": "通过" if valid else "不可用",
         "reason": "validated competition-specific LOMO receipt" if valid else "LOMO receipt failed one or more hard checks",
-        "receipt_path": str(path.relative_to(ROOT)),
+        "receipt_path": display_path,
         "receipt_sha256": sha256_file(path),
         "checks": checks,
     }
