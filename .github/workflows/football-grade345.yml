@@ -6,10 +6,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/football-grade345.yml"
-      - "football-data/tools/apply_v462_grade_345_fixes.py"
-      - "football-data/tools/apply_v462_grade_345_fixes_r2.py"
-      - "football-data/tools/apply_v462_grade_345_fixes_r3.py"
-      - "football-data/tools/apply_v463_correct_fold_semantics.py"
       - "football-data/engine/market_kl_projection_v463.py"
       - "football-data/validation/competition_replay_receipts_v462.py"
       - "football-data/validation/probable_lineup_route_v462.py"
@@ -19,14 +15,14 @@ on:
       - "football-data/validation/market_baseline_v463.py"
       - "football-data/validation/lomo_value_validation_v463.py"
       - "football-data/validation/a_grade_auditor_v463.py"
-      - "football-data/validation/repository_integrity_v471.py"
+      - "football-data/validation/persist_generated_worktree_v474.py"
       - "football-data/tests/test_market_kl_projection_v463.py"
       - "football-data/markets/**"
   pull_request:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-grade345-${{ github.ref }}
@@ -34,31 +30,23 @@ concurrency:
 
 jobs:
   validate-grade345:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Repository-wide fail-closed preflight
-        run: python football-data/validation/repository_integrity_v471.py --strict-exit --print-summary
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
 
-      - name: Apply staged gate 3 4 5 engineering migrations
-        run: |
-          python football-data/tools/apply_v462_grade_345_fixes.py
-          python football-data/tools/apply_v462_grade_345_fixes_r2.py
-          python football-data/tools/apply_v462_grade_345_fixes_r3.py
-          python football-data/tools/apply_v463_correct_fold_semantics.py
-
-      - name: Compile modified and evidence modules
+      - name: Compile evidence modules and persistence helper
         run: |
           python -m py_compile \
             football-data/engine/football_v460_engine.py \
@@ -72,7 +60,8 @@ jobs:
             football-data/validation/a_grade_diagnostics_v463.py \
             football-data/validation/market_baseline_v463.py \
             football-data/validation/lomo_value_validation_v463.py \
-            football-data/validation/a_grade_auditor_v463.py
+            football-data/validation/a_grade_auditor_v463.py \
+            football-data/validation/persist_generated_worktree_v474.py
 
       - name: Run formal core tests
         env:
@@ -140,7 +129,6 @@ jobs:
           sys.path.insert(0, "football-data/validation")
           from a_grade_auditor_v463 import audit_competition
           from platform_core import load_registry
-
           results = {}
           for item in load_registry()["competitions"]:
               cid = item["competition_id"]
@@ -189,16 +177,20 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/engine/validate_platform.py --print-summary
 
-      - name: Commit validated gate 3 4 5 artifacts
-        if: ${{ github.event_name != 'pull_request' }}
+      - name: Persist validated gate 3-4-5 evidence safely
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No gate 3/4/5 evidence changes to commit."
-            exit 0
-          fi
-          git commit -m "model(football): validate corrected A-grade evidence chain"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --branch main \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/models/ \
+            --allow-prefix football-data/calibration/ \
+            --allow-prefix football-data/validation/reports/ \
+            --message-prefix "model(football): persist validated A-grade evidence artifact"
+
+# V4.7.4 hardening: completed migration scripts are no longer executed in CI.
+# This workflow is validation-only for source code and can persist only generated
+# evidence/model/report paths through optimistic Contents API writes.
