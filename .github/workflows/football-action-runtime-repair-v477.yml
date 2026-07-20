@@ -55,16 +55,13 @@ jobs:
             exit 2
           fi
 
-      - name: Atomically persist all repaired workflow files
+      - name: Atomically persist all repaired workflow files with ref-race retry
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
-          base_sha=$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')
-          base_tree=$(gh api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')
-
           mapfile -t files < <(git diff --name-only -- .github/workflows football-data/validation/workflow_stability_audit_v474.py)
           if [ "${#files[@]}" -eq 0 ]; then
             echo 'No action-version changes required.'
@@ -80,13 +77,23 @@ jobs:
               '. + [{"path":$path,"mode":"100644","type":"blob","sha":$sha}]' <<<"$tree")
           done
 
-          tree_payload=$(jq -n --arg base "$base_tree" --argjson entries "$tree" '{base_tree:$base,tree:$entries}')
-          tree_sha=$(gh api --method POST "repos/$repo/git/trees" --input - --jq '.sha' <<<"$tree_payload")
-          commit_payload=$(jq -n --arg tree "$tree_sha" --arg parent "$base_sha" \
-            '{message:"repair(football): use officially supported GitHub Action versions",tree:$tree,parents:[$parent]}')
-          commit_sha=$(gh api --method POST "repos/$repo/git/commits" --input - --jq '.sha' <<<"$commit_payload")
-          ref_payload=$(jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}')
-          gh api --method PATCH "repos/$repo/git/refs/heads/main" --input - <<<"$ref_payload"
-          echo "Persisted atomic repair commit: $commit_sha"
+          for attempt in 1 2 3 4 5; do
+            base_sha=$(gh api "repos/$repo/git/ref/heads/main" --jq '.object.sha')
+            base_tree=$(gh api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')
+            tree_payload=$(jq -n --arg base "$base_tree" --argjson entries "$tree" '{base_tree:$base,tree:$entries}')
+            tree_sha=$(gh api --method POST "repos/$repo/git/trees" --input - --jq '.sha' <<<"$tree_payload")
+            commit_payload=$(jq -n --arg tree "$tree_sha" --arg parent "$base_sha" \
+              '{message:"repair(football): use officially supported GitHub Action versions",tree:$tree,parents:[$parent]}')
+            commit_sha=$(gh api --method POST "repos/$repo/git/commits" --input - --jq '.sha' <<<"$commit_payload")
+            ref_payload=$(jq -n --arg sha "$commit_sha" '{sha:$sha,force:false}')
+            if gh api --method PATCH "repos/$repo/git/refs/heads/main" --input - <<<"$ref_payload"; then
+              echo "Persisted atomic repair commit: $commit_sha"
+              exit 0
+            fi
+            echo "main moved during repair attempt $attempt; retrying against latest head"
+            sleep $((attempt * 2))
+          done
+          echo 'Atomic Action-version repair could not acquire a stable main ref after 5 attempts.'
+          exit 2
 
 # One-time repair only. Remove after the atomic repair commit lands.
