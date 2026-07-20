@@ -1,0 +1,44 @@
+name: Football V4.7 Formal Next Season Runtime Readiness
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/formal_next_season_runtime_readiness_v470.py"
+      - "football-data/manifests/formal_next_season_parameter_rollforward_v470_status.json"
+      - "football-data/manifests/formal_next_season_parameter_runtime_v470_smoke.json"
+      - "football-data/manifests/oof_next_season_rollforward_v470_status.json"
+      - "football-data/manifests/oof_next_season_runtime_v470_smoke.json"
+      - "football-data/config/platform_registry.json"
+      - "football-data/config/formal_core_v460.json"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - ".github/workflows/football-v470-formal-next-season-runtime-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/formal_next_season_runtime_readiness_v470.py
+      - run: |
+          PYTHONPATH=football-data/engine:football-data/validation \
+          python football-data/validation/formal_next_season_runtime_readiness_v470.py
+      - name: Commit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/formal_next_season_runtime_readiness_v470_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist 2026_27 formal runtime readiness"
+          git pull --rebase origin main
+          git push origin HEAD:main
