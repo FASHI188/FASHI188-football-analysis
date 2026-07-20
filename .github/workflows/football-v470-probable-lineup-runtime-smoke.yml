@@ -1,0 +1,59 @@
+name: Football V4.7 Probable Lineup Runtime Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/engine/probable_lineup_challenger_v470.py"
+      - "football-data/engine/probable_lineup_runtime_v470.py"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - "football-data/validation/smoke_probable_lineup_runtime_v470.py"
+      - ".github/workflows/football-v470-probable-lineup-runtime-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v470-probable-lineup-runtime-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile lineup runtime assets
+        run: |
+          python -m py_compile football-data/engine/probable_lineup_challenger_v470.py
+          python -m py_compile football-data/engine/probable_lineup_runtime_v470.py
+          python -m py_compile football-data/engine/run_formal_prediction_actionable.py
+          python -m py_compile football-data/validation/smoke_probable_lineup_runtime_v470.py
+
+      - name: Run probable-lineup runtime smoke audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/smoke_probable_lineup_runtime_v470.py
+
+      - name: Commit smoke receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/probable_lineup_runtime_v470_smoke.json
+          if git diff --cached --quiet; then
+            echo "No probable-lineup runtime smoke changes."
+            exit 0
+          fi
+          git commit -m "audit(football): persist probable-lineup runtime smoke receipt"
+          git pull --rebase origin main
+          git push origin HEAD:main
