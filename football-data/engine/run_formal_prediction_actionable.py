@@ -14,16 +14,29 @@ competition-specific LOMO/OOS receipt. A lineup status label is not enough to
 receive lineup confidence credit: an official XI or executable probable-XI
 projection must actually be present. Dynamic-strength live evidence is audited at
 question time but cannot change probabilities without a separate hash-bound
-competition/season promotion. Final rule authority is normalized from the active
-governance manifest while preserving the underlying implementation version.
+competition/season promotion.
+
+For a new target season, this wrapper may also inject separately validated,
+hash-bound next-season hyperparameters and an OOF calibrator while leaving the
+frozen formal engine and calibration-module files unchanged. These bridges never
+roll forward team strength and therefore cannot bypass the formal same-season
+competition/team sample gates.
 """
 from __future__ import annotations
 
+import football_v460_engine as engine_module
+import oof_matrix_calibration as calibration_module
 import run_formal_prediction_live as live_runner
 import run_formal_prediction_v460 as base_runner
 from dynamic_strength_live_input_contract_v470 import apply_dynamic_strength_live_input_audit
 from formal_ev_lomo_gate_v470 import apply_formal_ev_lomo_gate
 from formal_governance_runtime_v470 import apply_formal_governance_runtime
+from formal_next_season_parameter_runtime_v470 import (
+    audit_rollforward_parameters,
+    select_rollforward_parameters,
+)
+from oof_next_season_runtime_v470 import load_rollforward_calibrator
+from platform_core import PlatformError
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
@@ -32,6 +45,14 @@ from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 def main() -> int:
     original_prepare = base_runner.prepare_match_context
     original_calibration = base_runner.apply_oof_matrix_calibration
+    original_parameter_selector = engine_module._select_point_in_time_parameters
+    original_calibrator_loader = calibration_module.load_oof_matrix_calibrator
+
+    def parameter_selector_with_rollforward(artifact, target_season):
+        try:
+            return original_parameter_selector(artifact, target_season)
+        except PlatformError:
+            return select_rollforward_parameters(artifact, target_season)
 
     def actionable_prepare(match_input):
         context = original_prepare(match_input)
@@ -45,6 +66,12 @@ def main() -> int:
         context = apply_dynamic_strength_live_input_audit(
             context, match_input.get("dynamic_strength_evidence")
         )
+
+        identity = context.get("match_identity") or {}
+        competition_id = str(identity.get("competition_id") or "")
+        target_season = str(identity.get("season") or "")
+        parameter_rollforward_audit = audit_rollforward_parameters(competition_id, target_season)
+        context["formal_next_season_parameter_rollforward_audit"] = parameter_rollforward_audit
 
         lineup_audit = context.get("probable_lineup_v470_audit") or {}
         lineup_runtime_status = str(lineup_audit.get("status") or "不可用")
@@ -62,6 +89,9 @@ def main() -> int:
             (context.get("dynamic_strength_live_input_audit") or {}).get("status") == "通过"
         )
         context["gates"]["dynamic_strength_probability_effect_enabled"] = False
+        context["gates"]["next_season_parameter_rollforward_available"] = (
+            parameter_rollforward_audit.get("status") == "通过"
+        )
         context["gates"]["refreeze_policy"] = (
             "Do not wait for official lineups or closing odds. Re-run only on user request or a major confirmed "
             "change before the user's action deadline."
@@ -69,18 +99,78 @@ def main() -> int:
         return context
 
     def calibrated_then_promoted(context, calculation):
-        calibrated = original_calibration(context, calculation)
+        identity = context.get("match_identity") or {}
+        competition_id = str(identity.get("competition_id") or "")
+        target_season = str(identity.get("season") or "")
+        freeze_time_utc = str(identity.get("freeze_time_utc") or "")
+
+        parameter_audit = context.get("formal_next_season_parameter_rollforward_audit") or {}
+        if parameter_audit.get("status") == "通过":
+            calculation.setdefault("model_audit", {})["parameter_source"] = (
+                f"hash_bound_next_season_rollforward:{target_season}"
+            )
+            calculation["formal_next_season_parameter_rollforward_audit"] = parameter_audit
+
+        canonical = original_calibrator_loader(competition_id) if competition_id else None
+        canonical_has_target = False
+        if canonical is not None:
+            _, canonical_artifact = canonical
+            season_map = canonical_artifact.get("season_calibrators")
+            canonical_has_target = isinstance(season_map, dict) and isinstance(season_map.get(target_season), dict)
+
+        oof_rollforward_audit = {
+            "status": "不适用" if canonical_has_target else "不可用",
+            "competition_id": competition_id,
+            "target_season": target_season,
+            "probability_mutation": False,
+            "reason": "canonical target-season calibrator available" if canonical_has_target else "rollforward not used",
+        }
+
+        if canonical_has_target:
+            calibrated = original_calibration(context, calculation)
+        else:
+            try:
+                rollforward_path, augmented_artifact, oof_rollforward_audit = load_rollforward_calibrator(
+                    competition_id,
+                    target_season,
+                    freeze_time_utc,
+                )
+
+                def temporary_loader(requested_competition_id):
+                    if requested_competition_id == competition_id:
+                        return rollforward_path, augmented_artifact
+                    return original_calibrator_loader(requested_competition_id)
+
+                calibration_module.load_oof_matrix_calibrator = temporary_loader
+                try:
+                    calibrated = original_calibration(context, calculation)
+                finally:
+                    calibration_module.load_oof_matrix_calibrator = original_calibrator_loader
+            except PlatformError as exc:
+                oof_rollforward_audit = {
+                    "status": "不可用",
+                    "competition_id": competition_id,
+                    "target_season": target_season,
+                    "probability_mutation": False,
+                    "reason": str(exc),
+                }
+                calibrated = original_calibration(context, calculation)
+
+        calibrated["oof_next_season_rollforward_audit"] = oof_rollforward_audit
         promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)
         diagnosed = apply_total_goals_peak_diagnostics(promoted)
         return apply_formal_governance_runtime(diagnosed)
 
     base_runner.prepare_match_context = actionable_prepare
     base_runner.apply_oof_matrix_calibration = calibrated_then_promoted
+    engine_module._select_point_in_time_parameters = parameter_selector_with_rollforward
     try:
         return live_runner.main()
     finally:
         base_runner.prepare_match_context = original_prepare
         base_runner.apply_oof_matrix_calibration = original_calibration
+        engine_module._select_point_in_time_parameters = original_parameter_selector
+        calibration_module.load_oof_matrix_calibrator = original_calibrator_loader
 
 
 if __name__ == "__main__":
