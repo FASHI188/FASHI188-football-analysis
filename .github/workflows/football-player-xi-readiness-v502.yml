@@ -1,0 +1,46 @@
+name: football-player-xi-readiness-v502
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/player_xi_source_contract_v502.json"
+      - "football-data/config/platform_registry.json"
+      - "football-data/validation/player_xi_data_readiness_v502.py"
+      - "football-data/validation/probable_lineup_route_v462.py"
+      - "football-data/lineups/**"
+      - "football-data/availability/**"
+      - ".github/workflows/football-player-xi-readiness-v502.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run player/XI readiness audit
+        run: |
+          python football-data/validation/player_xi_data_readiness_v502.py \
+            --write-receipt \
+            --print-summary
+
+      - name: Commit refreshed receipt
+        run: |
+          if git diff --quiet -- football-data/manifests/player_xi_data_readiness_v502_status.json; then
+            echo "No receipt change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/player_xi_data_readiness_v502_status.json
+          git commit -m "audit(football): refresh V5.0.2 player-XI readiness receipt"
+          git push
