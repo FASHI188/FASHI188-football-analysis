@@ -1,0 +1,96 @@
+name: football-marathonbet-formal-pit-capture-v5518
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/marathonbet_formal_pit_capture_v5518.py"
+      - ".github/workflows/football-marathonbet-formal-pit-capture-v5518.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-marathonbet-formal-pit-capture-v5518
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile capture chain
+        run: |
+          python -m py_compile football-data/validation/marathonbet_v523_adapter_v5517.py
+          python -m py_compile football-data/validation/marathonbet_formal_pit_capture_v5518.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run formal single-provider PIT capture
+        id: capture
+        continue-on-error: true
+        run: python football-data/validation/marathonbet_formal_pit_capture_v5518.py
+
+      - name: Validate capture receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/marathonbet_formal_pit_capture_v5518_status.json')
+          if not p.exists():
+              raise SystemExit('V5.5.18 capture receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'marathonbet':
+              raise SystemExit('provider_group must remain marathonbet')
+          if data.get('status') != 'PASS_SINGLE_PROVIDER_PIT_EVIDENCE':
+              raise SystemExit(f"formal single-provider PIT capture did not fully pass: {data.get('status')}")
+          if int(data.get('independent_provider_consensus_count_change', -1)) != 0:
+              raise SystemExit('single-provider capture must not create provider consensus')
+          if int(data.get('promotion_sample_count_change', -1)) != 0:
+              raise SystemExit('single-provider capture must not create promotion sample')
+          if data.get('formal_weight_change') is not False or data.get('probability_change') is not False:
+              raise SystemExit('capture cannot change formal weights/probabilities')
+          cases = data.get('cases') or []
+          if len(cases) != 2:
+              raise SystemExit('expected exactly two accepted target cases')
+          for case in cases:
+              if case.get('status') not in ('VALID_PIT_SNAPSHOT_WRITTEN','ALREADY_PRESENT_IDENTICAL'):
+                  raise SystemExit('target case failed closed')
+              if case.get('promotion_sample_eligible') is not False:
+                  raise SystemExit('single-provider PIT must remain promotion-ineligible')
+              validation = case.get('v523_validation') or {}
+              if validation.get('passed') is not True or validation.get('formal_pit_eligible') is not True:
+                  raise SystemExit('written PIT snapshot lacks V5.2.3 PASS')
+          print(json.dumps({
+              'status': data.get('status'),
+              'formal_snapshot_count_written': data.get('formal_snapshot_count_written'),
+              'targets': [x.get('competition_id') for x in cases],
+              'promotion_samples_added': 0,
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist formal PIT artifacts safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --message-prefix "audit(football): persist V5.5.18 Marathonbet formal PIT evidence"
+
+      - name: Fail workflow only if capture execution failed
+        if: steps.capture.outcome != 'success'
+        run: exit 1
