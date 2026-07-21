@@ -53,6 +53,7 @@ jobs:
             --competition "${{ matrix.competition }}" \
             --out "tmp-gdelt-v517/${{ matrix.competition }}.json"
       - name: Upload report and evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gdelt-v517-${{ matrix.competition }}
@@ -60,9 +61,10 @@ jobs:
             tmp-gdelt-v517/${{ matrix.competition }}.json
             football-data/evidence/gdelt_context_v517/${{ matrix.competition }}_articles.jsonl
             football-data/evidence/gdelt_context_v517/${{ matrix.competition }}_fixture_coverage.jsonl
-          if-no-files-found: error
+          if-no-files-found: warn
 
   aggregate:
+    if: always()
     needs: domain
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -74,20 +76,23 @@ jobs:
         with:
           python-version: "3.11"
       - name: Download reports and evidence
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           pattern: gdelt-v517-*
           merge-multiple: true
           path: tmp-gdelt-all
-      - name: Restore files
+      - name: Restore files and always build r2 aggregate
         run: |
+          mkdir -p tmp-gdelt-all
           mkdir -p football-data/manifests/gdelt_recent_context_coverage_v517
           mkdir -p football-data/evidence/gdelt_context_v517
           find tmp-gdelt-all -maxdepth 2 -type f -name '*.json' -exec cp {} football-data/manifests/gdelt_recent_context_coverage_v517/ \;
           find tmp-gdelt-all -type f -name '*_articles.jsonl' -exec cp {} football-data/evidence/gdelt_context_v517/ \;
           find tmp-gdelt-all -type f -name '*_fixture_coverage.jsonl' -exec cp {} football-data/evidence/gdelt_context_v517/ \;
           python football-data/validation/gdelt_recent_context_aggregate_v517.py
-      - name: Commit coverage evidence
+      - name: Commit coverage evidence or partial r2 diagnostic
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -99,6 +104,6 @@ jobs:
             echo "No GDELT context evidence changed."
             exit 0
           fi
-          git commit -m "research(football): persist GDELT exact-kickoff context coverage"
+          git commit -m "research(football): persist GDELT r2 context coverage"
           git pull --rebase origin main
           git push
