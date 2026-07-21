@@ -5,9 +5,9 @@ import argparse
 import hashlib
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ START = "20250725000000"
 END = "20260615235959"
 LOOKBACK_DAYS = 7
 MAXRECORDS = 250
+INTER_QUERY_SECONDS = 3.0
 
 LEAGUE_TERMS = {
     "ENG_PremierLeague": '"Premier League"',
@@ -78,7 +79,7 @@ def parse_seen(value: str) -> datetime | None:
     return None
 
 
-def request_json(query: str, retries: int = 3) -> dict[str, Any]:
+def request_json(query: str, retries: int = 6) -> dict[str, Any]:
     params = {
         "query": query,
         "mode": "artlist",
@@ -96,10 +97,21 @@ def request_json(query: str, retries: int = 3) -> dict[str, Any]:
             with urllib.request.urlopen(req, timeout=45) as response:
                 payload = response.read().decode("utf-8", errors="replace")
             return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code != 429:
+                time.sleep(3.0 * (attempt + 1))
+                continue
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            try:
+                delay = float(retry_after) if retry_after else 12.0 * (attempt + 1)
+            except (TypeError, ValueError):
+                delay = 12.0 * (attempt + 1)
+            time.sleep(min(90.0, max(10.0, delay)))
         except Exception as exc:
             last = exc
-            time.sleep(2.0 * (attempt + 1))
-    raise RuntimeError(f"GDELT request failed: {last}")
+            time.sleep(4.0 * (attempt + 1))
+    raise RuntimeError(f"GDELT request failed after rate-limit-aware retries: {last}")
 
 
 def evidence_id(team: str, article: dict[str, Any]) -> str:
@@ -159,14 +171,12 @@ def main() -> int:
         except Exception as exc:
             query_failures[team] = f"{type(exc).__name__}: {exc}"
             team_articles[team] = []
-        time.sleep(0.25)
+        time.sleep(INTER_QUERY_SECONDS)
 
     fixture_rows = []
     both_covered = either_covered = 0
     total_home_articles = total_away_articles = 0
     for match in matches:
-        # Processed sources are date-only. Use midnight UTC as a conservative freeze proxy;
-        # only articles observed strictly before the calendar day can count.
         freeze = match.date
         window_start = freeze - timedelta(days=LOOKBACK_DAYS)
         def eligible(team: str):
@@ -213,7 +223,7 @@ def main() -> int:
 
     all_articles = [article for team in teams for article in team_articles[team]]
     report = {
-        "schema_version": "V5.1.7-gdelt-recent-context-coverage-domain-r1",
+        "schema_version": "V5.1.7-gdelt-recent-context-coverage-domain-r2",
         "generated_at_utc": utc_now(),
         "competition_id": cid,
         "season": SEASON,
@@ -240,6 +250,7 @@ def main() -> int:
         "automatic_promotion": False,
         "timestamp_semantics": "GDELT seendate is stored as source_observed_at_utc, not publisher publication time.",
         "formal_use": "DISCOVERY_METADATA_ONLY_UNTIL_SOURCE_CONTENT_AND_TIMESTAMP_PROVEN",
+        "rate_limit_policy": "Sequential league execution, three-second inter-query spacing, explicit HTTP 429 Retry-After/exponential backoff.",
         "article_output": str(evidence_path.relative_to(ROOT)),
         "fixture_output": str(fixture_path.relative_to(ROOT)),
     }
