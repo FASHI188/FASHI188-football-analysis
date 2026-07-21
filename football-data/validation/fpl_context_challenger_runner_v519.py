@@ -48,6 +48,19 @@ def _token_variants(value) -> set[str]:
 
 def _patched_download_gameweeks(source_sha: str):
     bundles, hashes = _ORIGINAL_DOWNLOAD(source_sha)
+
+    # Preserve the provider's original per-GW feature snapshots before mutating
+    # the target bundles. The README states that By Gameweek is an end-of-GW
+    # snapshot, while only a subset of fields is explicitly deadline-safe.
+    # Therefore target GW g uses feature files from GW g-1; GW1 is excluded.
+    original_feature_files = {
+        gw: {
+            filename: bundles[gw][filename]
+            for filename in ("players.csv", "player_gameweek_stats.csv", "teams.csv")
+        }
+        for gw in bundles
+    }
+
     for gw, bundle in bundles.items():
         fixture_bundle = bundle["fixtures.csv"]
         rows = list(fixture_bundle["rows"])
@@ -55,11 +68,29 @@ def _patched_download_gameweeks(source_sha: str):
             row for row in rows
             if str(row.get("tournament") or "").strip().lower() == "prem"
         ]
+        if gw == 1:
+            # No earlier snapshot exists, so GW1 cannot be a clean pre-match
+            # context observation under the one-GW lag contract.
+            premier = []
+            feature_snapshot_gw = None
+        else:
+            feature_snapshot_gw = gw - 1
+            for filename in ("players.csv", "player_gameweek_stats.csv", "teams.csv"):
+                bundle[filename] = original_feature_files[gw - 1][filename]
+
         bundle["_fixture_filter_audit"] = {
             "raw_fixture_rows": len(rows),
-            "premier_league_fixture_rows": len(premier),
-            "non_premier_rows_excluded": len(rows) - len(premier),
+            "premier_league_fixture_rows_before_lag_gate": sum(
+                1 for row in rows if str(row.get("tournament") or "").strip().lower() == "prem"
+            ),
+            "target_fixture_rows_after_lag_gate": len(premier),
+            "non_premier_rows_excluded": len(rows) - sum(
+                1 for row in rows if str(row.get("tournament") or "").strip().lower() == "prem"
+            ),
             "allowed_tournament": "prem",
+            "target_gameweek": gw,
+            "feature_snapshot_gameweek": feature_snapshot_gw,
+            "feature_snapshot_policy": "STRICT_PREVIOUS_GAMEWEEK_ONLY",
         }
         fixture_bundle["rows"] = premier
     return bundles, hashes
@@ -147,7 +178,7 @@ def main() -> int:
         return int(core.main())
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.9-fpl-context-challenger-execution-r7",
+            "schema_version": "V5.1.9-fpl-context-challenger-execution-r8",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "competition_id": "ENG_PremierLeague",
             "season": "2025/26",
