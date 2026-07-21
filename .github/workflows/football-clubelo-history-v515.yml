@@ -1,0 +1,47 @@
+name: football-clubelo-history-v515
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/clubelo_residual_challenger_v515.json"
+      - "football-data/validation/clubelo_history_ingest_v515.py"
+      - ".github/workflows/football-clubelo-history-v515.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-clubelo-history-v515
+  cancel-in-progress: true
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m py_compile football-data/validation/clubelo_history_ingest_v515.py
+      - name: Ingest ClubElo histories
+        run: python football-data/validation/clubelo_history_ingest_v515.py
+      - name: Commit evidence and receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/evidence/clubelo_v515 \
+            football-data/manifests/clubelo_history_ingest_v515_status.json
+          if git diff --cached --quiet; then
+            echo "No ClubElo history evidence changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist ClubElo history evidence"
+          git pull --rebase origin main
+          git push
