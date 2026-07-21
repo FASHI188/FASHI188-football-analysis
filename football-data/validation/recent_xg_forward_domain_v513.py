@@ -13,6 +13,7 @@ if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
 import recent_xg_forward_shadow_v513 as core
+import recent_xg_forward_fast_v513 as fast
 
 
 def main() -> int:
@@ -25,7 +26,7 @@ def main() -> int:
         raise SystemExit(f"competition not frozen in config: {args.competition}")
 
     try:
-        report = core._domain(args.competition, cfg)
+        report = fast.domain(args.competition, cfg)
     except Exception as exc:
         report = {
             "schema_version": "V5.1.3-recent-xg-forward-shadow-domain-execution-r1",
