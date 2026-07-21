@@ -6,7 +6,8 @@ on:
     paths:
       - "football-data/config/clubelo_residual_challenger_v515.json"
       - "football-data/validation/clubelo_history_ingest_v515.py"
-      - "football-data/validation/clubelo_history_runner_v515.py"
+      - "football-data/validation/clubelo_history_domain_v515.py"
+      - "football-data/validation/clubelo_history_aggregate_v515.py"
       - "football-data/tests/test_clubelo_identity_v515.py"
       - ".github/workflows/football-clubelo-history-v515.yml"
 
@@ -18,13 +19,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ingest:
+  domain:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -34,22 +43,54 @@ jobs:
         run: |
           python -m py_compile \
             football-data/validation/clubelo_history_ingest_v515.py \
-            football-data/validation/clubelo_history_runner_v515.py
+            football-data/validation/clubelo_history_domain_v515.py
           python -m pytest -q football-data/tests/test_clubelo_identity_v515.py
-      - name: Ingest ClubElo histories or persist execution failure
-        run: python football-data/validation/clubelo_history_runner_v515.py
-      - name: Commit evidence or r2 diagnostic receipt
+      - name: Run one ClubElo domain with auditable failure receipt
+        run: |
+          mkdir -p tmp-clubelo-v515
+          python football-data/validation/clubelo_history_domain_v515.py \
+            --competition "${{ matrix.competition }}" \
+            --report "tmp-clubelo-v515/${{ matrix.competition }}.json" \
+            --history "tmp-clubelo-v515/${{ matrix.competition }}.jsonl"
+      - name: Upload domain receipt and history
+        uses: actions/upload-artifact@v4
+        with:
+          name: clubelo-v515-${{ matrix.competition }}
+          path: tmp-clubelo-v515/*
+          if-no-files-found: error
+
+  aggregate:
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download all domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: clubelo-v515-*
+          merge-multiple: true
+          path: tmp-clubelo-v515-all
+      - name: Aggregate r2 evidence
+        run: |
+          python -m py_compile football-data/validation/clubelo_history_aggregate_v515.py
+          python football-data/validation/clubelo_history_aggregate_v515.py --input tmp-clubelo-v515-all
+      - name: Commit complete r2 evidence
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -d football-data/evidence/clubelo_v515 ]; then
-            git add -A -- football-data/evidence/clubelo_v515
-          fi
-          git add -A -- football-data/manifests/clubelo_history_ingest_v515_status.json
+          git add -A -- \
+            football-data/evidence/clubelo_v515 \
+            football-data/manifests/clubelo_history_ingest_v515_status.json
           if git diff --cached --quiet; then
-            echo "No ClubElo history evidence changed."
+            echo "No ClubElo r2 evidence changed."
             exit 0
           fi
-          git commit -m "research(football): persist ClubElo history evidence"
+          git commit -m "research(football): persist ClubElo r2 history evidence"
           git pull --rebase origin main
           git push
