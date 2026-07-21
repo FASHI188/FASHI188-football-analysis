@@ -1,0 +1,59 @@
+name: football-ger-three-surface-dual-v542
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/ger_three_surface_market_projection_v542_dual.py"
+      - ".github/workflows/football-ger-three-surface-dual-v542.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-ger-three-surface-dual-v542
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run direct dual minimum-KL three-surface audit
+        run: |
+          python -m py_compile \
+            football-data/validation/ger_three_surface_market_projection_v534.py \
+            football-data/validation/ger_three_surface_market_projection_v542_dual.py
+          python football-data/validation/ger_three_surface_market_projection_v542_dual.py
+      - name: Commit success or diagnostic receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f football-data/manifests/ger_three_surface_market_projection_v542_status.json ]; then
+            python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/ger_three_surface_market_projection_v542_status.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps({
+            'schema_version':'V5.4.2-GER-three-surface-direct-dual-workflow-diagnostic-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'WORKFLOW_FAIL_NO_RECEIPT',
+            'formal_weight_change':False,'probability_change':False,
+            'formal_pit_market_eligible':False
+          }, ensure_ascii=False, indent=2),encoding='utf-8')
+          PY
+          fi
+          git add -A -- football-data/manifests/ger_three_surface_market_projection_v542_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist direct dual GER three-surface receipt"
+          git pull --rebase origin main
+          git push
