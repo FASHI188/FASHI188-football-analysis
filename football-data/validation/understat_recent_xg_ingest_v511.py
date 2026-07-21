@@ -21,32 +21,19 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _fetch(url: str) -> bytes:
+def _fetch_json(url: str):
     req = urllib.request.Request(
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; FASHI188-football-analysis/1.0; research audit)",
-            "Accept": "text/html,application/xhtml+xml",
+            "Accept": "application/json,text/plain,*/*",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://understat.com/"
         },
     )
     with urllib.request.urlopen(req, timeout=60) as response:
-        return response.read()
-
-
-def _parse_dates_data(html: str):
-    marker = "datesData"
-    idx = html.find(marker)
-    if idx < 0:
-        raise RuntimeError(f"datesData not found; response_length={len(html)} prefix={html[:160]!r}")
-    start = html.find("(", idx)
-    end = html.find(")", start)
-    if start < 0 or end < 0:
-        raise RuntimeError("datesData JSON.parse wrapper not found")
-    raw = html[start + 2:end - 1]
-    decoded = bytes(raw, "utf-8").decode("unicode_escape")
-    return json.loads(decoded)
+        content = response.read()
+    return json.loads(content.decode("utf-8")), content
 
 
 def _as_float(value):
@@ -106,11 +93,10 @@ def main() -> int:
 
     for competition_id, spec in cfg["domains"].items():
         league = spec["understat_league"]
-        url = f"https://understat.com/league/{league}/2025"
+        url = f"https://understat.com/getLeagueData/{league}/2025"
         try:
-            content = _fetch(url)
-            html = content.decode("utf-8", errors="replace")
-            data = _parse_dates_data(html)
+            payload, content = _fetch_json(url)
+            data = payload.get("dates") or []
             rows = []
             for item in data:
                 row = _normalize_match(item, competition_id, url, observed_at)
@@ -123,8 +109,9 @@ def main() -> int:
             reports[competition_id] = {
                 "status": "PASS" if len(rows) >= min_rows else "FAIL_BELOW_MINIMUM_MATCH_COUNT",
                 "source_url": url,
-                "source_html_sha256": _sha256_bytes(content),
-                "row_count": len(rows),
+                "source_json_sha256": _sha256_bytes(content),
+                "date_record_count": len(data),
+                "result_xg_row_count": len(rows),
                 "minimum_required": min_rows,
                 "first_match_datetime": rows[0]["match_datetime_source"] if rows else None,
                 "last_match_datetime": rows[-1]["match_datetime_source"] if rows else None,
@@ -135,10 +122,11 @@ def main() -> int:
             failures[competition_id] = f"{type(exc).__name__}: {exc}"
 
     passed = [k for k, v in reports.items() if v["status"] == "PASS"]
-    payload = {
-        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r2",
+    manifest = {
+        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r3",
         "generated_at_utc": observed_at,
         "season": "2025/26",
+        "endpoint_semantics": "Understat getLeagueData AJAX JSON; match rows from dates[]",
         "requested_domains": list(cfg["domains"].keys()),
         "completed_domains": list(reports.keys()),
         "passed_domains": passed,
@@ -151,8 +139,8 @@ def main() -> int:
         "pit_policy": "Retrospective xG content may be used only as lagged historical shadow features; no formal PIT claim is made."
     }
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0 if reports else 1
 
 
