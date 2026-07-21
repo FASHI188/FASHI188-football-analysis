@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - "football-data/config/current_season_team_identity_v5524.json"
+      - "football-data/validation/kambi_four_league_discovery_v5523.py"
       - "football-data/validation/kambi_priority_target_capture_v5512.py"
       - "football-data/validation/marathonbet_four_league_capture_v5522.py"
       - "football-data/validation/prospective_market_consensus_strict_v5519.py"
@@ -40,12 +41,16 @@ jobs:
 
       - name: Compile synchronized chain
         run: |
+          python -m py_compile football-data/validation/kambi_four_league_discovery_v5523.py
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/kambi_priority_target_capture_v5512.py
           python -m py_compile football-data/validation/marathonbet_four_league_capture_v5522.py
           python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
           python -m py_compile football-data/validation/synchronized_dual_provider_consensus_v5521.py
           rm -rf football-data/validation/__pycache__
+
+      - name: Discover Kambi four-league metadata
+        run: python football-data/validation/kambi_four_league_discovery_v5523.py
 
       - name: Capture Kambi direct PIT
         run: python football-data/validation/kambi_priority_target_capture_v5512.py
@@ -88,6 +93,12 @@ jobs:
           m = json.loads(marathon.read_text(encoding='utf-8'))
           if m.get('formal_weight_change') is not False or m.get('probability_change') is not False:
               raise SystemExit('four-league capture cannot change formal weights/probabilities')
+          kambi_discovery = Path('football-data/manifests/kambi_four_league_discovery_v5523_status.json')
+          if not kambi_discovery.exists():
+              raise SystemExit('V5.5.23 Kambi discovery receipt missing')
+          kd = json.loads(kambi_discovery.read_text(encoding='utf-8'))
+          if kd.get('formal_snapshot_written') is not False or kd.get('formal_weight_change') is not False or kd.get('probability_change') is not False:
+              raise SystemExit('Kambi discovery must remain read-only research metadata')
           print(json.dumps({
               'status': data.get('status'),
               'strict_consensus_count_written': data.get('strict_consensus_count_written', 0),
@@ -95,6 +106,8 @@ jobs:
               'research_only_line_mismatch_count': data.get('research_only_line_mismatch_count', 0),
               'marathon_four_league_snapshots_written': m.get('formal_snapshot_count_written', 0),
               'marathon_complete_surface_fixtures': m.get('complete_surface_fixture_count', 0),
+              'marathon_unresolved_identities': m.get('unresolved_identity_count', 0),
+              'kambi_four_league_matched_events': kd.get('four_league_matched_event_count', 0),
               'fail_closed': True,
           }, ensure_ascii=False, indent=2))
           PY
