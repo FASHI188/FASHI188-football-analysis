@@ -1,0 +1,41 @@
+name: football-fpl-snapshot-readiness-v518
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/fpl_snapshot_readiness_v518.py"
+      - ".github/workflows/football-fpl-snapshot-readiness-v518.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-fpl-snapshot-readiness-v518
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run FPL snapshot audit
+        run: python football-data/validation/fpl_snapshot_readiness_v518.py
+      - name: Commit receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/fpl_snapshot_readiness_v518_status.json
+          if git diff --cached --quiet; then
+            echo "No FPL snapshot receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist FPL snapshot readiness"
+          git pull --rebase origin main
+          git push
