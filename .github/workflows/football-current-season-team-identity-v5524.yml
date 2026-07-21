@@ -1,0 +1,70 @@
+name: football-current-season-team-identity-v5524
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/current_season_team_identity_v5524.json"
+      - "football-data/tests/test_current_season_team_identity_v5524.py"
+      - ".github/workflows/football-current-season-team-identity-v5524.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-current-season-team-identity-v5524
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile identity test
+        run: |
+          python -m py_compile football-data/tests/test_current_season_team_identity_v5524.py
+          rm -rf football-data/tests/__pycache__
+
+      - name: Run identity acceptance
+        run: python football-data/tests/test_current_season_team_identity_v5524.py
+
+      - name: Validate receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/current_season_team_identity_v5524_status.json')
+          if not p.exists():
+              raise SystemExit('identity receipt missing')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          if d.get('status') != 'PASS':
+              raise SystemExit('identity acceptance not PASS')
+          if d.get('alias_ambiguity_found') is not False:
+              raise SystemExit('identity alias ambiguity found')
+          if d.get('fuzzy_cross_club_substitution_allowed') is not False:
+              raise SystemExit('fuzzy cross-club substitution must remain prohibited')
+          if d.get('historical_team_strength_identity_fallback_allowed') is not False:
+              raise SystemExit('historical identity fallback must remain disabled')
+          if d.get('formal_weight_change') is not False or d.get('probability_change') is not False:
+              raise SystemExit('identity registry cannot change weights/probabilities')
+          print(json.dumps({'status':'PASS','competition_count':d.get('competition_count'),'team_counts':d.get('expected_team_counts')}, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.24 current-season identity acceptance"
