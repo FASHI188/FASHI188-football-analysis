@@ -1,0 +1,58 @@
+name: Football V5 Bayesian Dynamic State Second Stage
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/manifests/bayesian_dynamic_state_adjudication_v500_status.json"
+      - "football-data/validation/validate_bayesian_dynamic_state_second_stage_v500.py"
+      - "football-data/validation/bayesian_dynamic_state_oof_v500.py"
+      - ".github/workflows/football-v500-bayesian-dynamic-state-second-stage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v500-bayesian-dynamic-state-second-stage
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v500.py
+          python -m py_compile football-data/validation/validate_bayesian_dynamic_state_second_stage_v500.py
+      - name: Run fixed-profile second-stage validation
+        id: validate
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/validate_bayesian_dynamic_state_second_stage_v500.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit second-stage receipts
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/bayesian_dynamic_state_second_stage_v500_status.json
+          git add football-data/manifests/bayesian_dynamic_state_second_stage_v500 || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist V5 dynamic-state second-stage validation"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve validation failure after receipt persistence
+        if: steps.validate.outputs.rc != '0'
+        run: exit 1
