@@ -1,0 +1,84 @@
+name: football-synchronized-four-league-pit-v5526-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/football-synchronized-four-league-pit-v5526-smoke.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-synchronized-four-league-pit-v5526-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Freeze batch start
+        run: echo "BATCH_STARTED_AT_UTC=$(date -u +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/validation/kambi_four_league_capture_v5525.py
+          python -m py_compile football-data/validation/marathonbet_four_league_capture_v5522.py
+          python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
+          python -m py_compile football-data/validation/synchronized_four_league_consensus_v5526.py
+      - name: Marathonbet fresh four-league capture
+        run: python football-data/validation/marathonbet_four_league_capture_v5522.py
+      - name: Kambi fresh four-league capture
+        run: python football-data/validation/kambi_four_league_capture_v5525.py --batch-start-utc "$BATCH_STARTED_AT_UTC"
+      - name: Strict four-league consensus
+        run: python football-data/validation/synchronized_four_league_consensus_v5526.py --batch-start-utc "$BATCH_STARTED_AT_UTC"
+      - name: Receipt sanity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in [
+              'football-data/manifests/marathonbet_four_league_capture_v5522_status.json',
+              'football-data/manifests/kambi_four_league_capture_v5525_status.json',
+              'football-data/manifests/synchronized_four_league_consensus_v5526_status.json',
+          ]:
+              p=Path(path)
+              if not p.exists(): raise SystemExit(f'missing {path}')
+          m=json.loads(Path('football-data/manifests/marathonbet_four_league_capture_v5522_status.json').read_text())
+          k=json.loads(Path('football-data/manifests/kambi_four_league_capture_v5525_status.json').read_text())
+          c=json.loads(Path('football-data/manifests/synchronized_four_league_consensus_v5526_status.json').read_text())
+          if m.get('formal_weight_change') is not False or m.get('probability_change') is not False: raise SystemExit('Marathon mutation')
+          if k.get('formal_weight_change') is not False or k.get('probability_change') is not False: raise SystemExit('Kambi mutation')
+          if k.get('identity_crosscheck_only_no_market_splicing') is not True: raise SystemExit('Kambi crosscheck contract')
+          if c.get('formal_weight_change') is not False or c.get('probability_change') is not False or c.get('formal_model_promotion') is not False: raise SystemExit('Consensus mutation')
+          print(json.dumps({
+              'marathon_written':m.get('formal_snapshot_count_written',0),
+              'marathon_unresolved':m.get('unresolved_identity_count',0),
+              'kambi_group_events':k.get('target_group_event_count',0),
+              'kambi_crosschecked':k.get('crosschecked_event_count',0),
+              'kambi_written':k.get('formal_snapshot_count_written',0),
+              'dual_provider':c.get('fresh_dual_provider_fixture_count',0),
+              'strict_written':c.get('strict_consensus_count_written',0),
+              'promotion_eligible':c.get('promotion_evidence_eligible_count',0),
+              'line_mismatch':c.get('research_only_line_mismatch_count',0),
+          },indent=2))
+          PY
+      - name: Persist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/league_targets/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/league_pages/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/evidence/market_consensus_prospective/ \
+            --message-prefix "audit(football): persist isolated V5.5.26 synchronized smoke"
