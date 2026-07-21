@@ -1,0 +1,74 @@
+name: football-transfermarkt-lineup-pilot-v502
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/transfermarkt_lineup_map_v502.json"
+      - "football-data/config/player_xi_source_contract_v502.json"
+      - "football-data/engine/ingest_transfermarkt_lineups_v502.py"
+      - "football-data/validation/probable_lineup_route_v502.py"
+      - "football-data/validation/player_xi_data_readiness_v502.py"
+      - ".github/workflows/football-transfermarkt-lineup-pilot-v502.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-transfermarkt-lineup-pilot-v502
+  cancel-in-progress: false
+
+jobs:
+  ingest-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax gates
+        run: |
+          python -m py_compile \
+            football-data/engine/ingest_transfermarkt_lineups_v502.py \
+            football-data/validation/probable_lineup_route_v502.py \
+            football-data/validation/player_xi_data_readiness_v502.py
+
+      - name: Ingest public observed starting-XI pilot
+        run: |
+          python football-data/engine/ingest_transfermarkt_lineups_v502.py \
+            --min-source-season 2021 \
+            --print-summary
+
+      - name: Validate timestamp-safe probable-XI shadow route
+        run: |
+          python football-data/validation/probable_lineup_route_v502.py \
+            --print-summary
+
+      - name: Refresh player-XI data readiness receipt
+        run: |
+          python football-data/validation/player_xi_data_readiness_v502.py \
+            --write-receipt \
+            --print-summary
+
+      - name: Commit generated pilot evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/lineups/ESP_LaLiga \
+            football-data/lineups/GER_Bundesliga \
+            football-data/manifests/transfermarkt_lineup_backfill_v502_status.json \
+            football-data/manifests/probable_lineup_v502_status.json \
+            football-data/manifests/player_xi_data_readiness_v502_status.json \
+            football-data/validation/reports/probable_lineup_v502
+          if git diff --cached --quiet; then
+            echo "No generated evidence changed."
+            exit 0
+          fi
+          git commit -m "data(football): ingest V5.0.2 public lineup pilot"
+          git push
