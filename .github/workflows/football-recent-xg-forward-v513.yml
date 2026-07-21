@@ -1,0 +1,49 @@
+name: football-recent-xg-forward-v513
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/recent_xg_forward_shadow_v513.json"
+      - "football-data/evidence/xg/understat_2025_26_linked/**"
+      - "football-data/validation/recent_xg_forward_shadow_v513.py"
+      - ".github/workflows/football-recent-xg-forward-v513.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-recent-xg-forward-v513
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m py_compile football-data/validation/recent_xg_forward_shadow_v513.py
+      - name: Run five-domain recent xG chronological shadow
+        run: python football-data/validation/recent_xg_forward_shadow_v513.py
+      - name: Commit xG forward receipts
+        if: always()
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/recent_xg_forward_shadow_v513_status.json \
+            football-data/manifests/recent_xg_forward_shadow_v513
+          if git diff --cached --quiet; then
+            echo "No xG forward receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist 2025-26 recent xG forward shadow"
+          git pull --rebase origin main
+          git push
