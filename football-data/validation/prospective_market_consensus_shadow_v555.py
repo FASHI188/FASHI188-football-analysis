@@ -82,7 +82,7 @@ def evaluate_matrix(consensus: dict[str, Any], formal_matrix: list[dict[str, Any
     separate = (registry.get("separate_question_time_candidates") or {}).get(cid)
     cfg = primary or separate
     result = {
-        "schema_version": "V5.5.5-consensus-market-matrix-shadow-r1",
+        "schema_version": "V5.5.5-consensus-market-matrix-shadow-r2",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": cid,
         "consensus_validation_passed": bool(validation.get("passed")),
@@ -104,33 +104,41 @@ def evaluate_matrix(consensus: dict[str, Any], formal_matrix: list[dict[str, Any
     if not cfg:
         result["shadow_status"] = "DOMAIN_NOT_REGISTERED_MATRIX_CANDIDATE"
         return result
+
     one = devig({k: float(consensus["one_x_two"][k]) for k in ("home", "draw", "away")})
     profile = str(cfg.get("profile") or "")
     if cid == "POR_PrimeiraLiga":
         candidate, audit = project_por_1x2(formal_matrix, one)
         result.update({
             "shadow_status": "SHADOW_MARKET_MATRIX_READY",
-            "frozen_profile": cfg.get("profile"),
+            "frozen_profile": profile,
             "de_vigged_1x2_target": one,
             "audit": audit,
             "candidate_matrix": candidate,
         })
         return result
-    ou = consensus.get("over_under")
-    if not isinstance(ou, dict) or abs(float(ou.get("line")) - 2.5) > 1e-9:
+
+    eligibility = consensus.get("surface_consensus_eligibility") or {}
+    ou25 = consensus.get("over_under_2_5")
+    if not bool(eligibility.get("over_under_2_5")) or not isinstance(ou25, dict):
         result["shadow_status"] = "OU25_CONSENSUS_REQUIRED_FOR_FROZEN_PROFILE"
-        result["observed_ou_consensus"] = ou
+        result["observed_main_ou_consensus"] = consensus.get("over_under")
+        result["observed_ou25_consensus"] = ou25
         return result
-    if not bool((consensus.get("surface_consensus_eligibility") or {}).get("over_under_2_5")):
+    if abs(float(ou25.get("line")) - 2.5) > 1e-9:
         result["shadow_status"] = "OU25_CONSENSUS_NOT_ELIGIBLE_FAIL_CLOSED"
+        result["observed_ou25_consensus"] = ou25
         return result
-    ou_prob = devig({k: float(ou[k]) for k in ("over", "under")})
+
+    ou_prob = devig({k: float(ou25[k]) for k in ("over", "under")})
     candidate, audit = project_dual(formal_matrix, one, ou_prob)
     result.update({
         "shadow_status": "SHADOW_MARKET_MATRIX_READY",
         "frozen_profile": profile,
         "de_vigged_1x2_target": one,
         "de_vigged_ou25_target": ou_prob,
+        "main_ou_consensus": consensus.get("over_under"),
+        "fixed_ou25_consensus": ou25,
         "audit": audit,
         "candidate_matrix": candidate,
     })
