@@ -1,0 +1,51 @@
+name: Football V5.0.1 Dynamic State UCL Evidence Receipt
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/run_bayesian_dynamic_state_domain_v501.py"
+      - "football-data/validation/aggregate_bayesian_dynamic_state_oof_v501.py"
+      - ".github/workflows/football-v501-bayesian-dynamic-state-ucl-receipt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v501-bayesian-dynamic-state-ucl-receipt
+  cancel-in-progress: true
+
+jobs:
+  persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v501_same_day_safe.py
+          python -m py_compile football-data/validation/run_bayesian_dynamic_state_domain_v501.py
+          python -m py_compile football-data/validation/aggregate_bayesian_dynamic_state_oof_v501.py
+      - name: Persist UCL fail-closed receipt
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/run_bayesian_dynamic_state_domain_v501.py --competition UEFA_ChampionsLeague
+      - name: Reaggregate all committed domain receipts
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/aggregate_bayesian_dynamic_state_oof_v501.py
+      - name: Commit UCL and aggregate receipts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/bayesian_dynamic_state_oof_v501/UEFA_ChampionsLeague.json
+          git add football-data/manifests/bayesian_dynamic_state_oof_v501_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist UCL evidence-insufficient same-day-safe receipt"
+          git pull --rebase origin main
+          git push origin HEAD:main
