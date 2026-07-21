@@ -1,0 +1,41 @@
+name: Football V5.0.1 Two-Axis Dynamic Projection Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/validate_two_axis_dynamic_projection_v501.py"
+      - "football-data/validation/smoke_two_axis_dynamic_projection_v501.py"
+      - ".github/workflows/football-v501-two-axis-dynamic-projection-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/validate_two_axis_dynamic_projection_v501.py
+          python -m py_compile football-data/validation/smoke_two_axis_dynamic_projection_v501.py
+      - name: Run smoke
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/smoke_two_axis_dynamic_projection_v501.py
+      - name: Commit smoke receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/two_axis_dynamic_projection_v501_smoke.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist two-axis projection smoke"
+          git pull --rebase origin main
+          git push origin HEAD:main
