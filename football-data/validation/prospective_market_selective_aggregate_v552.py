@@ -10,6 +10,7 @@ from statistics import NormalDist, mean
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "prospective_market_selective_challenger_v526.json"
+CONSENSUS_AUDIT = ROOT / "manifests" / "prospective_market_consensus_v554_status.json"
 EVIDENCE = ROOT / "evidence" / "market_selective_prospective_outcomes"
 OUT = ROOT / "manifests" / "prospective_market_selective_validation_v552_status.json"
 
@@ -37,12 +38,26 @@ def _earliest(rows):
     return list(chosen.values()), dict(duplicates)
 
 
+def _load_consensus_audit():
+    if not CONSENSUS_AUDIT.exists():
+        return {}
+    try:
+        return json.loads(CONSENSUS_AUDIT.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def main() -> int:
     config = json.loads(CONFIG.read_text(encoding="utf-8"))
     candidates = set((config.get("candidate_domains") or {}).keys())
     gate = config["prospective_validation_gate"]
+    consensus_audit = _load_consensus_audit()
+    consensus_counts = dict(consensus_audit.get("competition_counts") or {})
+    minimum_consensus = int(gate["minimum_valid_pit_consensus_snapshots_per_domain"])
     raw_rows = []
     invalid = []
+    excluded_market_input_rows = []
+
     for path in sorted(EVIDENCE.glob("*.json")) if EVIDENCE.exists() else []:
         try:
             row = json.loads(path.read_text(encoding="utf-8"))
@@ -51,10 +66,19 @@ def main() -> int:
             continue
         if row.get("status") != "SCORED_SELECTIVE_ROW":
             continue
-        if row.get("competition_id") not in candidates:
+        cid = str(row.get("competition_id") or "")
+        if cid not in candidates:
             continue
-        if not row.get("snapshot_contract_passed") or not row.get("timing_robust_point_gate"):
-            invalid.append({"path": str(path.relative_to(ROOT)), "error": "SNAPSHOT_OR_TIMING_GATE_FAIL"})
+        if row.get("market_input_kind") != "INDEPENDENT_PROVIDER_CONSENSUS" or not bool(row.get("promotion_evidence_eligible")):
+            excluded_market_input_rows.append({
+                "path": str(path.relative_to(ROOT)),
+                "competition_id": cid,
+                "market_input_kind": row.get("market_input_kind"),
+                "promotion_evidence_eligible": bool(row.get("promotion_evidence_eligible")),
+            })
+            continue
+        if not row.get("market_input_validation_passed") or not row.get("timing_robust_point_gate"):
+            invalid.append({"path": str(path.relative_to(ROOT)), "error": "CONSENSUS_OR_TIMING_GATE_FAIL"})
             continue
         raw_rows.append(row)
 
@@ -76,8 +100,9 @@ def main() -> int:
         formal_brier = mean(float(r["formal_brier"]) for r in selected) if selected else None
         market_rps = mean(float(r["market_rps"]) for r in selected) if selected else None
         formal_rps = mean(float(r["formal_rps"]) for r in selected) if selected else None
+        valid_consensus_count = int(consensus_counts.get(cid, 0))
         checks = {
-            "minimum_valid_pit_snapshots": len(items) >= int(gate["minimum_valid_pit_snapshots_per_domain"]),
+            "minimum_valid_pit_consensus_snapshots": valid_consensus_count >= minimum_consensus,
             "minimum_selected_predictions": len(selected) >= int(gate["minimum_selected_predictions_per_domain"]),
             "minimum_selected_accuracy": market_acc is not None and market_acc >= float(gate["minimum_selected_accuracy"]),
             "minimum_accuracy_ci95_lower": ci["lower"] is not None and ci["lower"] >= float(gate["minimum_accuracy_ci95_lower"]),
@@ -90,7 +115,8 @@ def main() -> int:
         reports[key] = {
             "competition_id": cid,
             "config_sha256": cfg_sha,
-            "valid_pit_snapshot_count": len(items),
+            "valid_consensus_snapshot_count": valid_consensus_count,
+            "earliest_scored_consensus_count": len(items),
             "selected_prediction_count": len(selected),
             "market_selected_accuracy": market_acc,
             "formal_direction_accuracy_on_same_selected_matches": formal_acc,
@@ -106,21 +132,25 @@ def main() -> int:
             ready.append(cid)
 
     payload = {
-        "schema_version": "V5.5.2-prospective-market-selective-validation-aggregate-r1",
+        "schema_version": "V5.5.5-prospective-market-selective-validation-aggregate-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "candidate_domains": sorted(candidates),
+        "consensus_audit_status": consensus_audit.get("status") if consensus_audit else "MISSING",
+        "consensus_competition_counts": consensus_counts,
+        "promotion_market_input_kind": "INDEPENDENT_PROVIDER_CONSENSUS",
         "raw_scored_row_count": len(raw_rows),
         "unique_earliest_snapshot_count": len(rows),
         "duplicate_rows_excluded": sum(duplicates.values()),
         "duplicate_match_keys": duplicates,
         "invalid_files": invalid,
+        "excluded_market_input_rows": excluded_market_input_rows,
         "reports": reports,
         "shadow_promotion_ready_domains": sorted(set(ready)),
         "status": "NO_OUTCOME_EVIDENCE_YET" if not rows else "PASS",
         "formal_promotion": False,
         "formal_weight_change": False,
         "probability_change": False,
-        "governance": "Only the earliest valid question-time row per match/config is scored for readiness. This is shadow evidence; formal promotion still requires a later CURRENT-authorized promotion receipt."
+        "governance": "Promotion readiness uses only earliest synchronized independent-provider consensus rows. Single-provider rows are diagnostic and excluded. Formal promotion still requires a later CURRENT-authorized promotion receipt."
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
