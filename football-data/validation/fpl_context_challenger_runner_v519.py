@@ -31,23 +31,36 @@ def _numeric_token(value) -> str:
     return token
 
 
+def _token_variants(value) -> set[str]:
+    raw = str(value or "").strip()
+    token = _numeric_token(value)
+    variants = {item for item in (raw, token) if item}
+    try:
+        number = float(token)
+        if math.isfinite(number) and abs(number - round(number)) < 1e-9:
+            variants.add(f"{int(round(number))}.0")
+    except Exception:
+        pass
+    return variants
+
+
 def _patched_team_features(bundle):
     features, audit = _ORIGINAL_TEAM_FEATURES(bundle)
-    # FPL fixtures use team code values (often serialized like 39.0), while
-    # teams.csv exposes both code and id. Register both deterministically.
+    # FPL fixtures use team code values serialized as floats (e.g. 39.0), while
+    # teams.csv exposes integer-like code/id values. Register raw, normalized and
+    # one-decimal variants so the identity bridge and feature lookup use the same key.
     for row in bundle["teams.csv"]["rows"]:
         name = str(row.get("name") or "").strip()
         if not name:
             continue
         for raw_token in (row.get("code"), row.get("id")):
-            token = _numeric_token(raw_token)
-            if not token:
-                continue
-            FPL_TEAM_TOKEN_TO_NAME[token] = name
-            if name in features:
-                features[token] = features[name]
+            for variant in _token_variants(raw_token):
+                FPL_TEAM_TOKEN_TO_NAME[_numeric_token(variant)] = name
+                if name in features:
+                    features[variant] = features[name]
     audit = dict(audit)
     audit["fixture_team_code_id_bridge_count"] = len(FPL_TEAM_TOKEN_TO_NAME)
+    audit["feature_alias_key_count"] = sum(1 for key in features if str(key).replace(".", "", 1).isdigit())
     return features, audit
 
 
@@ -68,7 +81,7 @@ def main() -> int:
         return int(core.main())
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.9-fpl-context-challenger-execution-r3",
+            "schema_version": "V5.1.9-fpl-context-challenger-execution-r4",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "competition_id": "ENG_PremierLeague",
             "season": "2025/26",
