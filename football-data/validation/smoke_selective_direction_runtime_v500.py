@@ -8,16 +8,17 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-ENGINE = ROOT / "engine"
+FOOTBALL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = FOOTBALL_ROOT.parent
+ENGINE = FOOTBALL_ROOT / "engine"
 if str(ENGINE) not in sys.path:
     sys.path.insert(0, str(ENGINE))
 
 from platform_core import atomic_write_json, load_json
 from selective_direction_gate_v500 import apply_selective_direction_gate
 
-ACTIVATION = ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_direction_v500_runtime_activation.json"
-OUT = ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_direction_v500_runtime_smoke.json"
+ACTIVATION = FOOTBALL_ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_direction_v500_runtime_activation.json"
+OUT = FOOTBALL_ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_direction_v500_runtime_smoke.json"
 
 
 def git_blob_sha(path: Path) -> str:
@@ -33,11 +34,11 @@ def main() -> int:
     expected = activation.get("bound_git_blob_sha") or {}
 
     key_to_path = {
-        "selection_receipt": ROOT / str(root_paths.get("selection_receipt") or ""),
-        "promotion_receipt": ROOT / str(root_paths.get("promotion_receipt") or ""),
-        "runtime_gate": ROOT / str(root_paths.get("runtime_gate") or ""),
-        "actionable_runner": ROOT / str(root_paths.get("actionable_runner") or ""),
-        "v500_governance": ROOT / str(root_paths.get("v500_governance") or ""),
+        "selection_receipt": REPO_ROOT / str(root_paths.get("selection_receipt") or ""),
+        "promotion_receipt": REPO_ROOT / str(root_paths.get("promotion_receipt") or ""),
+        "runtime_gate": REPO_ROOT / str(root_paths.get("runtime_gate") or ""),
+        "actionable_runner": REPO_ROOT / str(root_paths.get("actionable_runner") or ""),
+        "v500_governance": REPO_ROOT / str(root_paths.get("v500_governance") or ""),
     }
     actual_hashes = {}
     for key, path in key_to_path.items():
@@ -86,7 +87,7 @@ def main() -> int:
         errors.append(f"unexpected threshold: {strong_audit.get('threshold')}")
 
     payload = {
-        "schema_version": "V5.0.0-selective-direction-runtime-smoke-r1",
+        "schema_version": "V5.0.0-selective-direction-runtime-smoke-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS" if not errors else "FAIL",
         "competition_id": "ESP_LaLiga",
