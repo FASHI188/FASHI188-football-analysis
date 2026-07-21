@@ -1,0 +1,40 @@
+name: football-kambi-four-league-capture-guard-v5527
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/manifests/kambi_four_league_capture_v5525_status.json"
+      - "football-data/validation/kambi_four_league_capture_guard_v5527.py"
+      - ".github/workflows/football-kambi-four-league-capture-guard-v5527.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Run Kambi current-season identity guard
+        id: guard
+        continue-on-error: true
+        run: python football-data/validation/kambi_four_league_capture_guard_v5527.py
+      - name: Persist governance receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.27 Kambi capture guard"
+      - name: Fail on hard governance error
+        if: steps.guard.outcome != 'success'
+        run: exit 1
