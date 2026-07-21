@@ -1,0 +1,93 @@
+name: football-gdelt-context-coverage-v517
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/context_evidence_contract_v514.json"
+      - "football-data/validation/gdelt_recent_context_coverage_v517.py"
+      - "football-data/validation/gdelt_recent_context_aggregate_v517.py"
+      - ".github/workflows/football-gdelt-context-coverage-v517.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-gdelt-context-coverage-v517
+  cancel-in-progress: true
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run GDELT recent context coverage
+        run: |
+          mkdir -p tmp-gdelt-v517
+          python football-data/validation/gdelt_recent_context_coverage_v517.py \
+            --competition "${{ matrix.competition }}" \
+            --out "tmp-gdelt-v517/${{ matrix.competition }}.json"
+      - name: Upload report and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdelt-v517-${{ matrix.competition }}
+          path: |
+            tmp-gdelt-v517/${{ matrix.competition }}.json
+            football-data/evidence/gdelt_context_v517/${{ matrix.competition }}_articles.jsonl
+            football-data/evidence/gdelt_context_v517/${{ matrix.competition }}_fixture_coverage.jsonl
+          if-no-files-found: error
+
+  aggregate:
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download reports and evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gdelt-v517-*
+          merge-multiple: true
+          path: tmp-gdelt-all
+      - name: Restore files
+        run: |
+          mkdir -p football-data/manifests/gdelt_recent_context_coverage_v517
+          mkdir -p football-data/evidence/gdelt_context_v517
+          find tmp-gdelt-all -type f -name '*.json' -maxdepth 2 -exec cp {} football-data/manifests/gdelt_recent_context_coverage_v517/ \;
+          find tmp-gdelt-all -type f -name '*_articles.jsonl' -exec cp {} football-data/evidence/gdelt_context_v517/ \;
+          find tmp-gdelt-all -type f -name '*_fixture_coverage.jsonl' -exec cp {} football-data/evidence/gdelt_context_v517/ \;
+          python football-data/validation/gdelt_recent_context_aggregate_v517.py
+      - name: Commit coverage evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/evidence/gdelt_context_v517 \
+            football-data/manifests/gdelt_recent_context_coverage_v517 \
+            football-data/manifests/gdelt_recent_context_coverage_v517_status.json
+          if git diff --cached --quiet; then
+            echo "No GDELT context evidence changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist GDELT recent context coverage"
+          git pull --rebase origin main
+          git push
