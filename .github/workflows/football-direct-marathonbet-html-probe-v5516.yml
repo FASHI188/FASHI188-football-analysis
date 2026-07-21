@@ -1,0 +1,79 @@
+name: football-direct-marathonbet-html-probe-v5516
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_marathonbet_html_probe_v5516.py"
+      - ".github/workflows/football-direct-marathonbet-html-probe-v5516.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-marathonbet-html-probe-v5516
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/direct_marathonbet_html_probe_v5516.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run direct Marathonbet HTML probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_marathonbet_html_probe_v5516.py
+
+      - name: Validate fail-closed receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_marathonbet_html_probe_v5516_status.json')
+          if not p.exists():
+              raise SystemExit('Marathonbet probe receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'marathonbet':
+              raise SystemExit('provider_group must remain marathonbet')
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change','consensus_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          print(json.dumps({
+              'status': data.get('status'),
+              'reachable_page_count': data.get('reachable_page_count', 0),
+              'pages_with_both_target_teams': data.get('pages_with_both_target_teams', 0),
+              'pages_with_all_three_market_labels': data.get('pages_with_all_three_market_labels', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist probe evidence safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/ \
+            --message-prefix "audit(football): persist V5.5.16 direct Marathonbet HTML probe"
+
+      - name: Fail workflow only if probe execution failed
+        if: steps.probe.outcome != 'success'
+        run: exit 1
