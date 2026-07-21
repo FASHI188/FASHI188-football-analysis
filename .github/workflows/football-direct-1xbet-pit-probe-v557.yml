@@ -1,0 +1,77 @@
+name: football-direct-1xbet-pit-probe-v557
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_1xbet_pit_probe_v557.py"
+      - ".github/workflows/football-direct-1xbet-pit-probe-v557.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-1xbet-pit-probe-v557
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: python -m py_compile football-data/validation/direct_1xbet_pit_probe_v557.py
+
+      - name: Run direct-provider probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_1xbet_pit_probe_v557.py
+
+      - name: Validate fail-closed manifest contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_1xbet_pit_probe_v557_status.json')
+          if not p.exists():
+              raise SystemExit('probe manifest missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          required_false = ['formal_snapshot_written', 'promotion_consensus_written', 'formal_weight_change', 'probability_change']
+          bad = [k for k in required_false if data.get(k) is not False]
+          if bad:
+              raise SystemExit(f'fail-closed contract violated: {bad}')
+          print(json.dumps({
+              'status': data.get('status'),
+              'listing_matched_target_count': data.get('listing_matched_target_count', 0),
+              'identity_verified_detailed_target_count': data.get('identity_verified_detailed_target_count', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Commit probe evidence and status
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/direct_1xbet_pit_probe_v557_status.json \
+            football-data/evidence/direct_provider_probes/1xbet
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist V5.5.7 direct 1xBet PIT probe"
+          git pull --rebase origin main
+          git push
+
+      - name: Fail workflow only on execution failure
+        if: steps.probe.outcome != 'success'
+        run: exit 1
