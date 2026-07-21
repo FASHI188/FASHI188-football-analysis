@@ -8,7 +8,7 @@ VALIDATION = ROOT / "validation"
 if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
-from prospective_market_matrix_shadow_v531 import evaluate
+from prospective_market_matrix_por_v543 import evaluate
 from prospective_market_snapshot_v523 import canonical_sha256
 
 
@@ -21,9 +21,9 @@ def _matrix():
     return [{"home_goals": h, "away_goals": a, "probability": p} for (h, a), p in raw.items()]
 
 
-def _snapshot(line=2.5):
+def _snapshot(cid="POR_PrimeiraLiga"):
     s = {
-        "competition_id": "POR_PrimeiraLiga",
+        "competition_id": cid,
         "season": "2026/27",
         "home_team": "Home",
         "away_team": "Away",
@@ -42,22 +42,22 @@ def _snapshot(line=2.5):
         "provider_group": "example_group",
         "one_x_two": {"home": 1.90, "draw": 3.60, "away": 4.20},
         "asian_handicap": {"line": -0.5, "home": 1.95, "away": 1.95},
-        "over_under": {"line": line, "over": 1.91, "under": 1.99},
+        "over_under": {"line": 2.75, "over": 1.91, "under": 1.99},
     }
     s["raw_snapshot_sha256"] = canonical_sha256(s)
     return s
 
 
-def test_por_is_registered_dual_surface_candidate():
+def test_por_uses_question_time_1x2_only_and_does_not_require_ou25():
     result = evaluate(_snapshot(), _matrix())
     assert result["shadow_status"] == "SHADOW_MARKET_MATRIX_READY"
-    assert result["audit"]["converged"] is True
-    assert result["audit"]["max_constraint_residual"] <= 1e-10
+    assert result["audit"]["method"] == "minimum_KL_partition_projection_1X2"
+    assert result["audit"]["market_constraint_residual"] <= 1e-10
     assert result["audit"]["probability_sum_residual"] <= 1e-10
     assert result["formal_matrix_override"] is False
     assert result["formal_probability_mutation"] is False
 
 
-def test_por_wrong_ou_line_fails_closed():
-    result = evaluate(_snapshot(2.75), _matrix())
-    assert result["shadow_status"] == "OU25_REFERENCE_REQUIRED_FOR_FROZEN_PROFILE"
+def test_non_por_domain_is_not_routed_into_por_executor():
+    result = evaluate(_snapshot("GER_Bundesliga"), _matrix())
+    assert result["shadow_status"] == "DOMAIN_NOT_REGISTERED_POR_CANDIDATE"
