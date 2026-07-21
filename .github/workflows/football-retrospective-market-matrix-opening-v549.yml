@@ -1,0 +1,58 @@
+name: football-retrospective-market-matrix-opening-v549
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/retrospective_market_matrix_opening_v549.py"
+      - ".github/workflows/football-retrospective-market-matrix-opening-v549.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-retrospective-market-matrix-opening-v549
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run opening 1X2 OU matrix robustness audit
+        run: |
+          python -m py_compile \
+            football-data/validation/retrospective_market_matrix_projection_v530.py \
+            football-data/validation/retrospective_market_matrix_opening_v549.py
+          python football-data/validation/retrospective_market_matrix_opening_v549.py
+      - name: Commit success or diagnostic receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f football-data/manifests/retrospective_market_matrix_opening_v549_status.json ]; then
+            python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/retrospective_market_matrix_opening_v549_status.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps({
+            'schema_version':'V5.4.9-opening-market-matrix-diagnostic-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'WORKFLOW_FAIL_NO_RECEIPT','formal_weight_change':False,
+            'probability_change':False,'formal_pit_market_eligible':False
+          }, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          fi
+          git add -A -- football-data/manifests/retrospective_market_matrix_opening_v549_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist opening-market matrix robustness"
+          git pull --rebase origin main
+          git push
