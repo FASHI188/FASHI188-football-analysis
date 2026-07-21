@@ -1,0 +1,60 @@
+{
+  "schema_version": "V5.2.7-current-market-public-source-registry-r1",
+  "status": "ACTIVE_SOURCE_ROUTING_NO_FORMAL_WEIGHT_CHANGE",
+  "purpose": "Define how publicly accessible current-time market sources may be used when freezing a user-requested pre-match snapshot. Source visibility alone never satisfies the CURRENT synchronization gate.",
+  "sources": {
+    "oddsportal_public": {
+      "source_url": "https://www.oddsportal.com/football/",
+      "access": "public_web_page_normal_access",
+      "documented_markets": ["1X2", "over_under", "handicap"],
+      "role": "PRIMARY_PUBLIC_CURRENT_MARKET_CANDIDATE",
+      "formal_current_snapshot_possible": true,
+      "conditions": [
+        "fixture identity must be exact",
+        "use one explicitly identified bookmaker/provider across 1X2, AH and OU where possible",
+        "capture each surface within the V5.2.3 five-minute synchronization window",
+        "record accessed_at/source_observed_at at capture time",
+        "persist the exact extracted provider prices and canonical SHA-256 snapshot",
+        "do not count aggregator copies as independent bookmakers",
+        "do not use a post-match historical page without original/observed pre-kickoff evidence as formal PIT"
+      ]
+    },
+    "sofascore_public_json": {
+      "source_url": "https://www.sofascore.com/api/v1",
+      "known_endpoints": [
+        "/event/{eventId}/odds/1/all",
+        "/event/{eventId}/odds/1/featured"
+      ],
+      "access": "public_json_observed_in_open_source_wrapper",
+      "verified_structure": ["full_time_1x2", "asian_handicap", "initial_and_current_fractional_values"],
+      "not_yet_verified_for_v523": ["reliable_main_over_under_surface_for_target_fixture", "per-market_quote_update_timestamp_semantics"],
+      "role": "SECONDARY_CURRENT_MARKET_CANDIDATE",
+      "formal_current_snapshot_possible": false,
+      "promotion_to_primary_requires": [
+        "real upcoming fixture test",
+        "complete 1X2 + two-sided AH + two-sided OU extraction",
+        "stable market identity/line parsing",
+        "auditable observation timestamps within five minutes",
+        "no authentication bypass, CAPTCHA bypass or access-control circumvention"
+      ]
+    },
+    "asianodds_public": {
+      "source_url": "https://www.asianodds.org/",
+      "access": "public_web_page",
+      "documented_markets": ["asian_handicap", "over_under", "opening_and_current_movements"],
+      "role": "AH_OU_CROSSCHECK_ONLY",
+      "formal_current_snapshot_possible": false,
+      "reason": "No complete synchronized 1X2 surface; cannot alone satisfy V5.2.3 or CURRENT market snapshot completeness."
+    }
+  },
+  "source_preference_order": [
+    "same-provider complete current 1X2+AH+OU with auditable observation time",
+    "OddsPortal bookmaker-specific complete same-window surface if normally accessible",
+    "Sofascore public JSON only after its OU/timestamp route is verified",
+    "AsianOdds as AH/OU movement crosscheck only"
+  ],
+  "hard_stop": "If a complete same-window current 1X2+AH+OU snapshot cannot be established, market module must downgrade. Never synthesize missing prices/lines and never calculate formal market EV from incomplete price surfaces.",
+  "formal_weight_change": false,
+  "probability_change": false,
+  "current_formal_rule_change": false
+}
