@@ -343,13 +343,13 @@ def ingest(*, min_source_season: int, enabled_only: bool, write: bool) -> dict[s
             "timestamp_policy": config["timestamp_policy"],
             "raw_preservation": {
                 "mode": "public_remote_snapshot_hash_manifest",
-                "local_raw_files_committed": false,
-                "reason": "The upstream full curated files are large; immutable URLs, byte sizes, SHA256 hashes and acquisition time are recorded for reproducibility."
+                "local_raw_files_committed": False,
+                "reason": "The upstream full curated files are large; immutable URLs, byte sizes, SHA256 hashes and acquisition time are recorded for reproducibility.",
             },
-            "formal_weight_change": false,
-            "probability_change": false,
-            "automatic_promotion": false,
-            "policy": "Observed-label research backfill only. No availability inference and no formal probability influence."
+            "formal_weight_change": False,
+            "probability_change": False,
+            "automatic_promotion": False,
+            "policy": "Observed-label research backfill only. No availability inference and no formal probability influence.",
         }
         if write:
             OUT_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
