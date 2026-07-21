@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -52,7 +51,15 @@ TARGETS = [
     },
 ]
 
-DEFAULT_BASES = ["https://1xbet.com", "https://tw.1xbet.com"]
+# Regional bases are included only because those exact 1xBet domains have already
+# exposed the target event pages in the project evidence. They remain one provider
+# group and can never be counted as independent consensus sources.
+DEFAULT_BASES = [
+    "https://1xbet.com",
+    "https://tw.1xbet.com",
+    "https://ir.1xbet.com",
+    "https://jo.1xbet.com",
+]
 USER_AGENT = "Mozilla/5.0 (compatible; football-pit-research/5.5.7; +https://github.com/FASHI188/FASHI188-football-analysis)"
 
 
@@ -77,21 +84,32 @@ def similarity(a: object, b: object) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
-def fetch_json(base: str, path: str, params: dict[str, object], timeout: int = 25) -> tuple[dict, bytes, str]:
+def fetch_json(
+    base: str,
+    path: str,
+    params: dict[str, object],
+    timeout: int = 25,
+) -> tuple[dict, bytes, str, int]:
+    """Fetch direct-provider JSON without treating HTTP 203 as an automatic failure.
+
+    HTTP 203 is still a successful 2xx response class. It is not promoted to formal
+    evidence here: the caller must additionally verify the expected JSON structure,
+    event identity and market mapping. Raw status is preserved for auditability.
+    """
     url = f"{base.rstrip('/')}/{path.lstrip('/')}?{urlencode(params)}"
     req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json,text/plain,*/*"})
     with urlopen(req, timeout=timeout) as resp:  # nosec - fixed bookmaker endpoints only
         raw = resp.read()
-        status = getattr(resp, "status", 200)
-        if status != 200:
-            raise RuntimeError(f"HTTP {status}")
+        status = int(getattr(resp, "status", 200))
+    if not 200 <= status < 300:
+        raise RuntimeError(f"HTTP {status}")
     data = json.loads(raw.decode("utf-8"))
     if not isinstance(data, dict):
         raise ValueError("provider response is not a JSON object")
-    return data, raw, url
+    return data, raw, url, status
 
 
-def choose_base() -> tuple[str | None, dict | None, bytes | None, str | None, list[dict]]:
+def choose_base() -> tuple[str | None, dict | None, bytes | None, str | None, int | None, list[dict]]:
     configured = os.environ.get("ONE_X_BET_BASES", "").strip()
     bases = [x.strip() for x in configured.split(",") if x.strip()] if configured else DEFAULT_BASES
     attempts: list[dict] = []
@@ -107,15 +125,21 @@ def choose_base() -> tuple[str | None, dict | None, bytes | None, str | None, li
     for base in bases:
         observed = now_utc()
         try:
-            data, raw, url = fetch_json(base, "LineFeed/Get1x2_VZip", params)
+            data, raw, url, http_status = fetch_json(base, "LineFeed/Get1x2_VZip", params)
             values = data.get("Value")
             if not isinstance(values, list):
-                raise ValueError("response.Value is not a list")
-            attempts.append({"base": base, "observed_at_utc": observed, "status": "PASS", "event_count": len(values)})
-            return base, data, raw, url, attempts
+                raise ValueError(f"response.Value is not a list (HTTP {http_status})")
+            attempts.append({
+                "base": base,
+                "observed_at_utc": observed,
+                "status": "PASS_JSON_STRUCTURE",
+                "http_status": http_status,
+                "event_count": len(values),
+            })
+            return base, data, raw, url, http_status, attempts
         except Exception as exc:  # fail closed; diagnostics only
             attempts.append({"base": base, "observed_at_utc": observed, "status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
-    return None, None, None, None, attempts
+    return None, None, None, None, None, attempts
 
 
 def event_identity(event: dict) -> tuple[str, str, object, object]:
@@ -174,22 +198,32 @@ def group_summary(game_value: dict) -> list[dict]:
     return result
 
 
-def write_evidence(target: dict, base: str, url: str, observed: str, raw: bytes, data: dict) -> tuple[str, str]:
+def write_evidence(
+    target: dict,
+    base: str,
+    url: str,
+    observed: str,
+    http_status: int,
+    raw: bytes,
+    data: dict,
+) -> tuple[str, str]:
     digest = hashlib.sha256(raw).hexdigest()
     token = observed.replace(":", "").replace("+00:00", "Z")
     path = EVIDENCE_ROOT / f"{target['competition_id']}__{token}.json"
     payload = {
-        "schema_version": "V5.5.7-direct-1xbet-probe-raw-envelope-r1",
+        "schema_version": "V5.5.7-direct-1xbet-probe-raw-envelope-r2",
         "provider_name": "1xBet",
         "provider_group": "1xbet",
         "provider_base": base,
         "request_url": url,
+        "http_status": http_status,
         "observed_at_utc": observed,
         "target": target,
         "raw_response_sha256": digest,
         "raw_response": data,
         "formal_evidence": False,
         "research_probe_only": True,
+        "http_203_policy": "2xx JSON may be frozen for research diagnostics only; HTTP status never substitutes for V5.2.3 market/identity/time hard gates",
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -198,30 +232,31 @@ def write_evidence(target: dict, base: str, url: str, observed: str, raw: bytes,
 
 def main() -> int:
     generated = now_utc()
-    base, listing, listing_raw, listing_url, base_attempts = choose_base()
+    base, listing, listing_raw, listing_url, listing_http_status, base_attempts = choose_base()
     manifest: dict = {
-        "schema_version": "V5.5.7-direct-1xbet-pit-probe-r1",
+        "schema_version": "V5.5.7-direct-1xbet-pit-probe-r2",
         "generated_at_utc": generated,
         "provider_name": "1xBet",
         "provider_group": "1xbet",
-        "status": "BLOCKED_PROVIDER_UNREACHABLE",
+        "status": "BLOCKED_PROVIDER_UNREACHABLE_OR_INVALID_JSON",
         "base_attempts": base_attempts,
         "targets": [],
         "formal_snapshot_written": False,
         "promotion_consensus_written": False,
         "formal_weight_change": False,
         "probability_change": False,
-        "policy": "Research probe only. Direct-provider reachability or raw market visibility is not a formal PIT snapshot. V5.2.3 remains fail-closed until complete synchronized 1X2 + two-sided Asian Handicap + two-sided Over/Under are mapped and validated from the same direct provider observation window.",
+        "policy": "Research probe only. A valid 2xx JSON body, including HTTP 203, may be frozen for diagnostics but is not a formal PIT snapshot. V5.2.3 remains fail-closed until complete synchronized 1X2 + two-sided Asian Handicap + two-sided Over/Under are mapped and validated from the same direct provider observation window.",
     }
-    if base is None or listing is None or listing_raw is None or listing_url is None:
+    if base is None or listing is None or listing_raw is None or listing_url is None or listing_http_status is None:
         MANIFEST.parent.mkdir(parents=True, exist_ok=True)
         MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(manifest, ensure_ascii=False, indent=2))
         return 0
 
     events = [x for x in listing.get("Value", []) if isinstance(x, dict)]
-    manifest["status"] = "DIRECT_LISTING_REACHABLE"
+    manifest["status"] = "DIRECT_LISTING_JSON_REACHABLE"
     manifest["provider_base"] = base
+    manifest["listing_http_status"] = listing_http_status
     manifest["listing_event_count"] = len(events)
     manifest["listing_response_sha256"] = hashlib.sha256(listing_raw).hexdigest()
 
@@ -243,7 +278,7 @@ def main() -> int:
         if candidate_id:
             observed = now_utc()
             try:
-                game, raw, url = fetch_json(base, "LineFeed/GetGameZip", {
+                game, raw, url, http_status = fetch_json(base, "LineFeed/GetGameZip", {
                     "id": candidate_id,
                     "lng": "en",
                     "cfview": 0,
@@ -254,7 +289,7 @@ def main() -> int:
                 })
                 value = game.get("Value")
                 if not isinstance(value, dict):
-                    raise ValueError("GetGameZip.Value is not an object")
+                    raise ValueError(f"GetGameZip.Value is not an object (HTTP {http_status})")
                 provider_home = str(value.get("O1") or "")
                 provider_away = str(value.get("O2") or "")
                 home_score = similarity(provider_home, target["home_team"])
@@ -262,6 +297,7 @@ def main() -> int:
                 identity_ok = home_score >= 0.72 and away_score >= 0.72
                 target_result.update({
                     "game_fetch_status": "PASS" if identity_ok else "IDENTITY_MISMATCH",
+                    "http_status": http_status,
                     "observed_at_utc": observed,
                     "provider_home": provider_home,
                     "provider_away": provider_away,
@@ -271,7 +307,7 @@ def main() -> int:
                 })
                 if identity_ok:
                     detailed_count += 1
-                    evidence_path, digest = write_evidence(target, base, url, observed, raw, game)
+                    evidence_path, digest = write_evidence(target, base, url, observed, http_status, raw, game)
                     odds: list[dict] = []
                     flatten_odds(value.get("E"), odds)
                     flatten_odds(value.get("GE"), odds)
@@ -297,7 +333,7 @@ def main() -> int:
     elif matched_count:
         manifest["status"] = "PARTIAL_LISTING_MATCH_NO_VERIFIED_GAME_JSON"
     else:
-        manifest["status"] = "DIRECT_LISTING_REACHABLE_TARGETS_NOT_MATCHED"
+        manifest["status"] = "DIRECT_LISTING_JSON_REACHABLE_TARGETS_NOT_MATCHED"
 
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
