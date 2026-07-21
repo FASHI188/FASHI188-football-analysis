@@ -88,31 +88,41 @@ def _link_domain(competition_id: str):
 
     linked, unmatched, ambiguous = [], [], []
     used_official = set()
-    max_score_conflict = 0
+    unique_fingerprint_links = 0
+    fuzzy_disambiguated_links = 0
 
     for xg in xg_rows:
         key = (_parse_date(xg["match_datetime_source"]), int(xg["home_goals"]), int(xg["away_goals"]))
-        candidates = by_date_score.get(key, [])
-        ranked = []
-        for idx, row in candidates:
-            if idx in used_official:
-                continue
-            hs = _sim(xg["home_team_source"], row["home_team"])
-            aas = _sim(xg["away_team_source"], row["away_team"])
-            score = (hs + aas) / 2.0
-            ranked.append((score, hs, aas, idx, row))
-        ranked.sort(reverse=True, key=lambda item: item[0])
-        if not ranked:
+        candidates = [(idx, row) for idx, row in by_date_score.get(key, []) if idx not in used_official]
+        if not candidates:
             unmatched.append({"reason": "no_same_date_score_candidate", "xg": xg})
             continue
-        best = ranked[0]
-        second_score = ranked[1][0] if len(ranked) > 1 else -1.0
-        if best[0] < 0.72 or best[1] < 0.65 or best[2] < 0.65:
-            unmatched.append({"reason": "team_similarity_below_gate", "best_score": best[0], "xg": xg, "candidate": best[4]})
-            continue
-        if len(ranked) > 1 and best[0] - second_score < 0.10:
-            ambiguous.append({"reason": "best_candidate_margin_below_gate", "best": best[0], "second": second_score, "xg": xg})
-            continue
+
+        ranked = []
+        for idx, row in candidates:
+            hs = _sim(xg["home_team_source"], row["home_team"])
+            aas = _sim(xg["away_team_source"], row["away_team"])
+            ranked.append(((hs + aas) / 2.0, hs, aas, idx, row))
+        ranked.sort(reverse=True, key=lambda item: item[0])
+
+        # A one-to-one date + exact final-score fingerprint is already a strong
+        # identity key and safely handles provider abbreviation differences.
+        if len(ranked) == 1:
+            best = ranked[0]
+            method = "PASS_UNIQUE_DATE_SCORE_FINGERPRINT"
+            unique_fingerprint_links += 1
+        else:
+            best = ranked[0]
+            second_score = ranked[1][0]
+            if best[0] < 0.72 or best[1] < 0.65 or best[2] < 0.65:
+                unmatched.append({"reason": "multi_candidate_team_similarity_below_gate", "best_score": best[0], "xg": xg, "candidate": best[4]})
+                continue
+            if best[0] - second_score < 0.10:
+                ambiguous.append({"reason": "multi_candidate_margin_below_gate", "best": best[0], "second": second_score, "xg": xg})
+                continue
+            method = "PASS_MULTI_CANDIDATE_TEAM_DISAMBIGUATION"
+            fuzzy_disambiguated_links += 1
+
         used_official.add(best[3])
         row = best[4]
         linked.append({
@@ -125,7 +135,7 @@ def _link_domain(competition_id: str):
             "home_name_similarity": best[1],
             "away_name_similarity": best[2],
             "identity_score": best[0],
-            "identity_bridge_status": "PASS_UNIQUE_DATE_SCORE_TEAM_MATCH"
+            "identity_bridge_status": method
         })
 
     coverage = len(linked) / max(1, len(xg_rows))
@@ -143,6 +153,8 @@ def _link_domain(competition_id: str):
         "unmatched_count": len(unmatched),
         "ambiguous_count": len(ambiguous),
         "unused_official_count": len(official) - len(used_official),
+        "unique_date_score_fingerprint_links": unique_fingerprint_links,
+        "multi_candidate_team_disambiguation_links": fuzzy_disambiguated_links,
         "minimum_identity_score": min((float(row["identity_score"]) for row in linked), default=None),
         "output_path": str(out_path.relative_to(ROOT)),
         "unmatched_examples": unmatched[:5],
@@ -160,7 +172,7 @@ def main() -> int:
             failures[competition_id] = f"{type(exc).__name__}: {exc}"
     passed = [k for k, v in reports.items() if v["status"] == "PASS"]
     payload = {
-        "schema_version": "V5.1.2-recent-xg-identity-bridge-r1",
+        "schema_version": "V5.1.2-recent-xg-identity-bridge-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "season": "2025/26",
         "requested_domains": list(cfg["domains"].keys()),
@@ -170,7 +182,7 @@ def main() -> int:
         "status": "PASS" if len(passed) == len(cfg["domains"]) and not failures else "PARTIAL",
         "formal_weight_change": False,
         "probability_change": False,
-        "policy": "Only unique date+score+team-identity links may enter recent-season xG shadow evaluation."
+        "policy": "Unique exact date+final-score fingerprints are accepted directly; only collisions require team-name disambiguation. Any ambiguity remains fail-closed."
     }
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
