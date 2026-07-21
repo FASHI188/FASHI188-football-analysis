@@ -17,7 +17,9 @@ for path in (VALIDATION, ENGINE):
         sys.path.insert(0, str(path))
 
 from platform_core import canonical_json_bytes, sha256_bytes
-from prospective_market_selective_shadow_v526 import evaluate as evaluate_shadow
+from prospective_market_consensus_v554 import validate_consensus
+from prospective_market_consensus_shadow_v555 import evaluate_selective as evaluate_consensus_selective
+from prospective_market_selective_shadow_v526 import evaluate as evaluate_single_selective
 from prospective_market_snapshot_v523 import validate as validate_snapshot
 
 CONFIG = ROOT / "config" / "prospective_market_selective_challenger_v526.json"
@@ -38,10 +40,7 @@ def _formal_probs(value: Any) -> dict[str, float]:
     z = sum(probs.values())
     if z <= 0.0:
         raise ValueError("formal 1X2 probability sum is zero")
-    probs = {k: v / z for k, v in probs.items()}
-    if abs(sum(probs.values()) - 1.0) > 1e-12:
-        raise ValueError("formal 1X2 normalization failed")
-    return probs
+    return {k: v / z for k, v in probs.items()}
 
 
 def _actual(value: str) -> str:
@@ -57,12 +56,9 @@ def _brier(prob: dict[str, float], actual: str) -> float:
 
 
 def _rps(prob: dict[str, float], actual: str) -> float:
-    # Ordered away-draw-home, same orientation used by formal football audits.
     order = ["away", "draw", "home"]
     actual_index = order.index(actual)
-    cp = 0.0
-    co = 0.0
-    score = 0.0
+    cp = co = score = 0.0
     for idx in range(2):
         cp += prob[order[idx]]
         co += 1.0 if actual_index == idx else 0.0
@@ -70,32 +66,50 @@ def _rps(prob: dict[str, float], actual: str) -> float:
     return score / 2.0
 
 
-def score(snapshot: dict[str, Any], formal_one_x_two: Any, actual_outcome: str) -> dict[str, Any]:
-    validation = validate_snapshot(snapshot)
+def score(market_input: dict[str, Any], formal_one_x_two: Any, actual_outcome: str) -> dict[str, Any]:
     formal = _formal_probs(formal_one_x_two)
     actual = _actual(actual_outcome)
     config = json.loads(CONFIG.read_text(encoding="utf-8"))
     config_sha = _sha(config)
-    shadow = evaluate_shadow(snapshot)
-    cid = str(snapshot.get("competition_id") or "")
+    is_consensus = market_input.get("schema_version") == "V5.5.4-prospective-market-consensus-r1"
+    if is_consensus:
+        validation = validate_consensus(market_input)
+        shadow = evaluate_consensus_selective(market_input)
+        market_input_kind = "INDEPENDENT_PROVIDER_CONSENSUS"
+        promotion_eligible = bool(validation.get("passed")) and bool(market_input.get("promotion_evidence_eligible"))
+        freeze_utc = market_input.get("consensus_observed_at_utc")
+        market_hash = market_input.get("consensus_sha256")
+        provider_count = market_input.get("provider_count")
+    else:
+        validation = validate_snapshot(market_input)
+        shadow = evaluate_single_selective(market_input)
+        market_input_kind = "SINGLE_PROVIDER_SNAPSHOT_DIAGNOSTIC"
+        promotion_eligible = False
+        freeze_utc = market_input.get("freeze_utc")
+        market_hash = market_input.get("raw_snapshot_sha256")
+        provider_count = 1
+
+    cid = str(market_input.get("competition_id") or "")
     formal_pick = max(("home", "draw", "away"), key=lambda k: formal[k])
     market_prob = shadow.get("de_vigged_1x2")
     selected = shadow.get("shadow_status") == "SHADOW_MARKET_HIGH_CONFIDENCE_DIRECTION"
-
     result = {
-        "schema_version": "V5.5.2-prospective-market-selective-outcome-r1",
+        "schema_version": "V5.5.5-prospective-market-selective-outcome-r2",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": cid,
-        "season": str(snapshot.get("season") or ""),
-        "home_team": str(snapshot.get("home_team") or ""),
-        "away_team": str(snapshot.get("away_team") or ""),
-        "kickoff_utc": snapshot.get("kickoff_utc"),
-        "freeze_utc": snapshot.get("freeze_utc"),
-        "match_key": f"{cid}|{snapshot.get('season')}|{snapshot.get('kickoff_utc')}|{snapshot.get('home_team')}|{snapshot.get('away_team')}",
-        "snapshot_sha256": snapshot.get("raw_snapshot_sha256"),
+        "season": str(market_input.get("season") or ""),
+        "home_team": str(market_input.get("home_team") or ""),
+        "away_team": str(market_input.get("away_team") or ""),
+        "kickoff_utc": market_input.get("kickoff_utc"),
+        "freeze_utc": freeze_utc,
+        "match_key": f"{cid}|{market_input.get('season')}|{market_input.get('kickoff_utc')}|{market_input.get('home_team')}|{market_input.get('away_team')}",
+        "market_input_kind": market_input_kind,
+        "market_input_sha256": market_hash,
+        "provider_count": provider_count,
+        "promotion_evidence_eligible": promotion_eligible,
         "config_sha256": config_sha,
-        "snapshot_contract_passed": bool(validation.get("passed")),
-        "snapshot_errors": validation.get("errors") or [],
+        "market_input_validation_passed": bool(validation.get("passed")),
+        "market_input_errors": validation.get("errors") or [],
         "shadow_status": shadow.get("shadow_status"),
         "selected_by_shadow_gate": selected,
         "actual_outcome": actual,
@@ -109,7 +123,7 @@ def score(snapshot: dict[str, Any], formal_one_x_two: Any, actual_outcome: str) 
         "formal_weight": 0,
     }
     if not validation.get("passed"):
-        result["status"] = "INVALID_SNAPSHOT_FAIL_CLOSED"
+        result["status"] = "INVALID_MARKET_INPUT_FAIL_CLOSED"
         return result
     if not shadow.get("registered_candidate_domain"):
         result["status"] = "DOMAIN_NOT_REGISTERED_FOR_SELECTIVE_VALIDATION"
@@ -117,7 +131,6 @@ def score(snapshot: dict[str, Any], formal_one_x_two: Any, actual_outcome: str) 
     if not isinstance(market_prob, dict):
         result["status"] = "MARKET_PROBABILITY_MISSING_FAIL_CLOSED"
         return result
-
     market = {k: float(market_prob[k]) for k in ("home", "draw", "away")}
     market_pick = max(("home", "draw", "away"), key=lambda k: market[k])
     result.update({
@@ -136,13 +149,13 @@ def score(snapshot: dict[str, Any], formal_one_x_two: Any, actual_outcome: str) 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("snapshot")
+    parser.add_argument("market_input")
     parser.add_argument("formal_one_x_two")
     parser.add_argument("actual_outcome")
     parser.add_argument("--out")
     args = parser.parse_args()
     payload = score(
-        json.loads(Path(args.snapshot).read_text(encoding="utf-8")),
+        json.loads(Path(args.market_input).read_text(encoding="utf-8")),
         json.loads(Path(args.formal_one_x_two).read_text(encoding="utf-8")),
         args.actual_outcome,
     )
