@@ -1,0 +1,43 @@
+name: football-retrospective-market-all17-v524
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/retrospective_market_all17_ceiling_v524.py"
+      - ".github/workflows/football-retrospective-market-all17-v524.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-retrospective-market-all17-v524
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run all-17 last-complete-season market ceiling
+        run: |
+          python -m py_compile football-data/validation/retrospective_market_all17_ceiling_v524.py
+          python football-data/validation/retrospective_market_all17_ceiling_v524.py
+      - name: Commit diagnostic receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/retrospective_market_all17_ceiling_v524_status.json
+          if git diff --cached --quiet; then
+            echo "No all-17 market ceiling result changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist 17-domain retrospective market ceiling"
+          git pull --rebase origin main
+          git push
