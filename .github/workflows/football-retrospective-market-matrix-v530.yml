@@ -1,0 +1,44 @@
+name: football-retrospective-market-matrix-v530
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/market_surface_coordination_registry_v529.json"
+      - "football-data/validation/retrospective_market_matrix_projection_v530.py"
+      - ".github/workflows/football-retrospective-market-matrix-v530.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-retrospective-market-matrix-v530
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run five-league unified market projection ceiling
+        run: |
+          python -m py_compile football-data/validation/retrospective_market_matrix_projection_v530.py
+          python football-data/validation/retrospective_market_matrix_projection_v530.py
+      - name: Commit projection receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/retrospective_market_matrix_projection_v530_status.json
+          if git diff --cached --quiet; then
+            echo "No market projection result changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist unified market matrix projection ceiling"
+          git pull --rebase origin main
+          git push
