@@ -1,0 +1,102 @@
+name: football-predictability-gate-v516
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/predictability_gate_v516.json"
+      - "football-data/validation/predictability_gate_v516.py"
+      - "football-data/validation/predictability_gate_domain_v516.py"
+      - "football-data/validation/predictability_gate_aggregate_v516.py"
+      - ".github/workflows/football-predictability-gate-v516.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-predictability-gate-v516
+  cancel-in-progress: true
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+          - ESP_LaLiga
+          - POR_PrimeiraLiga
+          - NED_Eredivisie
+          - SUI_SuperLeague
+          - SCO_Premiership
+          - SWE_Allsvenskan
+          - NOR_Eliteserien
+          - JPN_J1
+          - KOR_KLeague1
+          - BRA_SerieA
+          - ARG_Primera
+          - USA_MLS
+          - UEFA_ChampionsLeague
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            football-data/validation/predictability_gate_v516.py \
+            football-data/validation/predictability_gate_domain_v516.py
+      - name: Run strict domain research
+        run: |
+          mkdir -p tmp-predictability-v516
+          python football-data/validation/predictability_gate_domain_v516.py \
+            --competition "${{ matrix.competition }}" \
+            --out "tmp-predictability-v516/${{ matrix.competition }}.json"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: predictability-v516-${{ matrix.competition }}
+          path: tmp-predictability-v516/${{ matrix.competition }}.json
+          if-no-files-found: error
+
+  aggregate:
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: predictability-v516-*
+          merge-multiple: true
+          path: football-data/manifests/predictability_gate_v516
+      - name: Aggregate receipts
+        run: |
+          python -m py_compile football-data/validation/predictability_gate_aggregate_v516.py
+          python football-data/validation/predictability_gate_aggregate_v516.py
+      - name: Commit receipts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/predictability_gate_v516_status.json \
+            football-data/manifests/predictability_gate_v516
+          if git diff --cached --quiet; then
+            echo "No predictability receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist all-domain predictability gate"
+          git pull --rebase origin main
+          git push
