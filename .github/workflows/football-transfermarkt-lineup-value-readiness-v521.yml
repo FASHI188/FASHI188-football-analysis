@@ -1,0 +1,43 @@
+name: football-transfermarkt-lineup-value-readiness-v521
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/transfermarkt_lineup_value_readiness_v521.py"
+      - ".github/workflows/football-transfermarkt-lineup-value-readiness-v521.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-transfermarkt-lineup-value-readiness-v521
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m py_compile football-data/validation/transfermarkt_lineup_value_readiness_v521.py
+      - name: Run exact lineup valuation audit
+        run: python football-data/validation/transfermarkt_lineup_value_readiness_v521.py
+      - name: Commit receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/transfermarkt_lineup_value_readiness_v521_status.json
+          if git diff --cached --quiet; then
+            echo "No lineup-value readiness receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist lineup valuation readiness"
+          git pull --rebase origin main
+          git push
