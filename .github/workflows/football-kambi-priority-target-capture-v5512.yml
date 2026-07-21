@@ -1,0 +1,86 @@
+name: football-kambi-priority-target-capture-v5512
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/kambi_priority_target_capture_v5512.py"
+      - "football-data/validation/kambi_v523_adapter_v5511.py"
+      - ".github/workflows/football-kambi-priority-target-capture-v5512.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kambi-priority-target-capture-v5512
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile capture chain
+        run: |
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/validation/kambi_priority_target_capture_v5512.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run Kambi priority target capture
+        id: capture
+        continue-on-error: true
+        run: python football-data/validation/kambi_priority_target_capture_v5512.py
+
+      - name: Validate capture receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/kambi_priority_target_capture_v5512_status.json')
+          if not p.exists():
+              raise SystemExit('V5.5.12 capture receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'kambi':
+              raise SystemExit('provider_group must remain kambi')
+          if data.get('formal_weight_change') is not False or data.get('probability_change') is not False or data.get('consensus_change') is not False:
+              raise SystemExit('capture may not change formal weights/probabilities/consensus')
+          written = int(data.get('formal_snapshot_count_written', 0))
+          for row in data.get('targets', []):
+              if row.get('formal_snapshot_written'):
+                  validation = row.get('v523_validation') or {}
+                  if validation.get('passed') is not True or validation.get('formal_pit_eligible') is not True:
+                      raise SystemExit('written snapshot lacks V5.2.3 PASS')
+          print(json.dumps({
+              'status': data.get('status'),
+              'formal_snapshot_count_written': written,
+              'raw_target_envelope_count_written': data.get('raw_target_envelope_count_written', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist capture artifacts safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/priority_targets/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --message-prefix "audit(football): persist V5.5.12 Kambi priority target capture"
+
+      - name: Fail workflow only if capture execution failed
+        if: steps.capture.outcome != 'success'
+        run: exit 1
