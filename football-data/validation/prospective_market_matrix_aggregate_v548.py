@@ -18,7 +18,6 @@ METRICS = [
     "one_x_two_accuracy", "one_x_two_brier", "one_x_two_rps", "joint_log",
     "score_top1", "score_top3", "total_top1", "total_top2", "total_rps", "ou_brier",
 ]
-LOWER_BETTER = {"one_x_two_brier", "one_x_two_rps", "joint_log", "total_rps", "ou_brier"}
 
 
 def _blocks(rows: list[dict[str, Any]], size: int):
@@ -49,7 +48,7 @@ def _earliest_unique(rows: list[dict[str, Any]]):
     chosen = {}
     duplicates = defaultdict(int)
     for row in sorted(rows, key=lambda r: (str(r.get("freeze_utc")), str(r.get("evaluated_at_utc")))):
-        key = (str(row.get("match_key")), str(row.get("registry_sha256")))
+        key = (str(row.get("match_key")), str(row.get("registry_sha256")), str(row.get("profile")))
         if key in chosen:
             duplicates[str(row.get("match_key"))] += 1
             continue
@@ -57,21 +56,40 @@ def _earliest_unique(rows: list[dict[str, Any]]):
     return list(chosen.values()), dict(duplicates)
 
 
+def _constraint_residual(audit: dict[str, Any]) -> float:
+    for key in ("max_constraint_residual", "market_constraint_residual"):
+        if key in audit:
+            return float(audit[key])
+    return 1.0
+
+
 def main() -> int:
     cfg = json.loads(CFG.read_text(encoding="utf-8"))
     eligible = set(cfg["eligible_domains"])
+    expected_profiles = dict(cfg["eligible_profiles"])
     all_rows = []
     invalid_files = []
+    excluded_profile_rows = []
     for path in sorted(EVIDENCE.glob("*.json")) if EVIDENCE.exists() else []:
         try:
             row = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
             invalid_files.append({"path": str(path.relative_to(ROOT)), "error": f"{type(exc).__name__}: {exc}"})
             continue
-        if row.get("status") != "SCORED_SHADOW_ROW" or row.get("competition_id") not in eligible:
+        cid = str(row.get("competition_id") or "")
+        if row.get("status") != "SCORED_SHADOW_ROW" or cid not in eligible:
+            continue
+        expected_profile = expected_profiles.get(cid)
+        if str(row.get("profile") or "") != str(expected_profile or ""):
+            excluded_profile_rows.append({
+                "path": str(path.relative_to(ROOT)),
+                "competition_id": cid,
+                "observed_profile": row.get("profile"),
+                "expected_profile": expected_profile,
+            })
             continue
         audit = row.get("projection_audit") or {}
-        if float(audit.get("probability_sum_residual") or 1.0) > 1e-10 or float(audit.get("max_constraint_residual") or 1.0) > 1e-10:
+        if float(audit.get("probability_sum_residual") or 1.0) > 1e-10 or _constraint_residual(audit) > 1e-10:
             invalid_files.append({"path": str(path.relative_to(ROOT)), "error": "PROJECTION_AUDIT_FAIL"})
             continue
         all_rows.append(row)
@@ -79,12 +97,12 @@ def main() -> int:
     rows, duplicates = _earliest_unique(all_rows)
     grouped = defaultdict(list)
     for row in rows:
-        grouped[(row["competition_id"], row["registry_sha256"])].append(row)
+        grouped[(row["competition_id"], row["registry_sha256"], row["profile"])].append(row)
 
     reports = {}
     ready_domains = []
     boot_cfg = cfg["chronological_block_bootstrap"]
-    for (cid, profile_hash), items in grouped.items():
+    for (cid, profile_hash, profile_name), items in grouped.items():
         formal = {m: mean(float(r["formal_metrics"][m]) for r in items) for m in METRICS}
         candidate = {m: mean(float(r["candidate_metrics"][m]) for r in items) for m in METRICS}
         delta = {m: candidate[m] - formal[m] for m in METRICS}
@@ -110,10 +128,11 @@ def main() -> int:
             ),
         }
         readiness = enough_rows and all(checks.values())
-        key = f"{cid}|{profile_hash}"
+        key = f"{cid}|{profile_hash}|{profile_name}"
         reports[key] = {
             "competition_id": cid,
             "profile_hash": profile_hash,
+            "profile": profile_name,
             "evaluated_match_count": len(items),
             "formal": formal, "candidate": candidate, "candidate_minus_formal": delta,
             "bootstrap": bootstrap, "readiness_checks": checks,
@@ -123,20 +142,21 @@ def main() -> int:
             ready_domains.append(cid)
 
     payload = {
-        "schema_version": "V5.4.8-prospective-market-matrix-validation-aggregate-r1",
+        "schema_version": "V5.4.9-prospective-market-matrix-validation-aggregate-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "evidence_file_count": len(all_rows),
         "unique_scored_match_count": len(rows),
         "duplicate_rows_excluded": sum(duplicates.values()),
         "duplicate_match_keys": duplicates,
         "invalid_files": invalid_files,
+        "excluded_profile_rows": excluded_profile_rows,
         "reports": reports,
         "shadow_promotion_ready_domains": sorted(set(ready_domains)),
         "status": "NO_OUTCOME_EVIDENCE_YET" if not rows else "PASS",
         "formal_promotion": False,
         "formal_weight_change": False,
         "probability_change": False,
-        "governance": "Readiness is shadow evidence only. A later CURRENT-authorized promotion receipt is mandatory before any formal model change."
+        "governance": "Readiness is shadow evidence only. Rows from superseded or non-matching profiles are excluded. A later CURRENT-authorized promotion receipt is mandatory before any formal model change."
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
