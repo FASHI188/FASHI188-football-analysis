@@ -1,0 +1,83 @@
+{
+  "schema_version": "V5.1.9-fpl-context-challenger-config-r1",
+  "competition_id": "ENG_PremierLeague",
+  "season": "2025/26",
+  "source_repository": "olbauday/FPL-Core-Insights",
+  "source_ref_policy": "Resolve main to an immutable Git commit SHA before downloading; record SHA and per-file hashes.",
+  "source_snapshot": "player_gameweek_stats.csv at the source-defined gameweek deadline snapshot",
+  "allowed_same_gameweek_fields": [
+    "status",
+    "news",
+    "news_added",
+    "chance_of_playing_next_round",
+    "chance_of_playing_this_round",
+    "now_cost",
+    "selected_by_percent",
+    "form"
+  ],
+  "forbidden_same_gameweek_fields": [
+    "event_points",
+    "minutes",
+    "goals_scored",
+    "assists",
+    "clean_sheets",
+    "bonus",
+    "bps",
+    "expected_goals",
+    "expected_assists",
+    "expected_goal_involvements",
+    "any match result or performance calculated from the target gameweek"
+  ],
+  "team_features": [
+    "unavailable_count",
+    "injured_count",
+    "doubtful_count",
+    "suspended_count",
+    "news_count",
+    "unavailable_selected_sum",
+    "unavailable_cost_sum",
+    "unavailable_form_sum",
+    "news_selected_sum",
+    "known_chance_mean",
+    "top11_form_sum",
+    "top11_unavailable_count",
+    "top11_unavailable_selected_sum"
+  ],
+  "model": {
+    "target": "actual_goal_difference_minus_formal_matrix_expected_goal_difference",
+    "feature_transform": "home_team_feature_minus_away_team_feature",
+    "regression": "ridge_linear",
+    "ridge_alpha_grid": [0.0, 1.0, 10.0, 100.0],
+    "projection_scale_grid": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "inner_train_fraction": 0.70,
+    "outer_training_fraction": 0.45,
+    "selection_objective": "mean_1x2_rps + 0.25*mean_1x2_brier + 0.02*mean_joint_log"
+  },
+  "projection": {
+    "type": "within_total_minimum_KL_exponential_tilt",
+    "log_weight": "projection_scale * predicted_margin_residual * (home_goals-away_goals)",
+    "preserve_each_total_goal_marginal": true
+  },
+  "forward_gate": {
+    "minimum_forward_predictions": 170,
+    "nonzero_projection_scale": true,
+    "at_least_one_one_x_two_proper_score_ci95_upper_below_zero": true,
+    "other_one_x_two_proper_score_ci95_upper_noninferiority": 0.001,
+    "one_x_two_accuracy_nonworse": true,
+    "joint_log_nonworse": true,
+    "score_top1_nonworse": true,
+    "score_top3_nonworse": true,
+    "total_metrics_exactly_preserved": true,
+    "probability_sum_tolerance": 1e-10,
+    "total_marginal_tolerance": 1e-10
+  },
+  "bootstrap": {
+    "draws": 2000,
+    "block_size": 20,
+    "seed": 5192026
+  },
+  "formal_weight": 0,
+  "probability_change": false,
+  "automatic_promotion": false,
+  "formal_pit_blocker": "Third-party snapshot provenance and original collection time are not yet independently hash-bound at each historical deadline. This is shadow research only even if forward metrics improve."
+}
