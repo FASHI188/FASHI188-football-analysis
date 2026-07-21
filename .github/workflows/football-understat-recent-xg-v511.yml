@@ -1,0 +1,52 @@
+name: football-understat-recent-xg-v511
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/recent_xg_shadow_v511.json"
+      - "football-data/validation/understat_recent_xg_ingest_v511.py"
+      - ".github/workflows/football-understat-recent-xg-v511.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-understat-recent-xg-v511
+  cancel-in-progress: true
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check
+        run: python -m py_compile football-data/validation/understat_recent_xg_ingest_v511.py
+
+      - name: Fetch and normalize 2025-26 xG
+        run: python football-data/validation/understat_recent_xg_ingest_v511.py
+
+      - name: Commit evidence and receipt
+        if: always()
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/evidence/xg/understat_2025_26 \
+            football-data/manifests/understat_recent_xg_ingest_v511_status.json
+          if git diff --cached --quiet; then
+            echo "No xG evidence changed."
+            exit 0
+          fi
+          git commit -m "data(football): persist 2025-26 Understat xG shadow evidence"
+          git pull --rebase origin main
+          git push
