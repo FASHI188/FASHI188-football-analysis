@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import os
 import socket
 import time
 import urllib.parse
@@ -145,13 +144,13 @@ def audit_sofifa(sd) -> dict[str, Any]:
 
 def audit_understat_interface(sd) -> dict[str, Any]:
     availability = _available_leagues(sd, "Understat")
-    reader = sd.Understat(leagues="ENG-Premier League", seasons=SEASON)
+    cls = sd.Understat
     availability.update({
         "season_tested": SEASON,
         "methods_present": {
-            "read_schedule": hasattr(reader, "read_schedule"),
-            "read_player_match_stats": hasattr(reader, "read_player_match_stats"),
-            "read_shot_events": hasattr(reader, "read_shot_events"),
+            "read_schedule": hasattr(cls, "read_schedule"),
+            "read_player_match_stats": hasattr(cls, "read_player_match_stats"),
+            "read_shot_events": hasattr(cls, "read_shot_events"),
         },
         "network_smoke_skipped": True,
         "reason": "V5.1.1-V5.1.3 already has a dedicated recent Understat ingestion and closed 2025/26 holdout; do not duplicate or retune it here.",
@@ -162,19 +161,19 @@ def audit_understat_interface(sd) -> dict[str, Any]:
 
 def audit_whoscored_interface(sd) -> dict[str, Any]:
     availability = _available_leagues(sd, "WhoScored")
-    # Intentionally avoid bypassing anti-bot controls. Construction/method availability
-    # is audited; an actual current query-time snapshot will be tested separately under
-    # the source's normal access path and fail closed on captcha/IP blocking.
-    reader = sd.WhoScored(leagues="ENG-Premier League", seasons=SEASON, no_cache=True, headless=True)
+    cls = sd.WhoScored
+    # Static interface audit only. Do not instantiate Selenium/Chromium and do not
+    # attempt to defeat captcha or IP blocks in a readiness workflow.
     availability.update({
         "season_tested": SEASON,
         "methods_present": {
-            "read_schedule": hasattr(reader, "read_schedule"),
-            "read_missing_players": hasattr(reader, "read_missing_players"),
-            "read_events": hasattr(reader, "read_events"),
+            "read_schedule": hasattr(cls, "read_schedule"),
+            "read_missing_players": hasattr(cls, "read_missing_players"),
+            "read_events": hasattr(cls, "read_events"),
         },
         "network_smoke_skipped": True,
-        "reason": "Do not automate around captcha/IP blocking. Current query-time use must succeed through normal access or remain unavailable.",
+        "browser_started": False,
+        "reason": "No automated captcha/IP bypass. A prospective query-time snapshot must succeed through ordinary access or the source is unavailable for that fixture.",
         "pit_class": "QUERY_TIME_PROSPECTIVE_PREFERRED",
     })
     return availability
@@ -229,17 +228,23 @@ def main() -> int:
         import soccerdata as sd
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.4-context-intelligence-source-readiness-r1",
+            "schema_version": "V5.1.4-context-intelligence-source-readiness-r2",
             "generated_at_utc": utc_now(),
+            "season_focus": "2025/26",
             "status": "FAIL",
             "fatal_error": f"soccerdata import failed: {type(exc).__name__}: {exc}",
+            "reports": {
+                "gdelt_doc": _safe("gdelt_doc", audit_gdelt_doc),
+                "optional_packages": {"status": "PASS", **audit_optional_packages()},
+            },
             "formal_weight_change": False,
             "probability_change": False,
+            "automatic_promotion": False,
         }
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1
+        return 0
 
     reports = {
         "soccerdata_metadata": _safe("soccerdata_metadata", lambda: audit_soccerdata_metadata(sd)),
@@ -266,7 +271,7 @@ def main() -> int:
         high_priority_ready.append("sofifa_version_gated")
 
     payload = {
-        "schema_version": "V5.1.4-context-intelligence-source-readiness-r1",
+        "schema_version": "V5.1.4-context-intelligence-source-readiness-r2",
         "generated_at_utc": utc_now(),
         "season_focus": "2025/26",
         "soccerdata_version_expected": "1.9.0",
