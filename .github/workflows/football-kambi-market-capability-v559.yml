@@ -1,0 +1,78 @@
+name: football-kambi-market-capability-v559
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/kambi_market_capability_v559.py"
+      - ".github/workflows/football-kambi-market-capability-v559.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kambi-market-capability-v559
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile diagnostic
+        run: |
+          python -m py_compile football-data/validation/kambi_market_capability_v559.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run Kambi capability diagnostic
+        id: diagnostic
+        continue-on-error: true
+        run: python football-data/validation/kambi_market_capability_v559.py
+
+      - name: Validate fail-closed contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/kambi_market_capability_v559_status.json')
+          if not p.exists():
+              raise SystemExit('Kambi capability manifest missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          if data.get('provider_group') != 'kambi':
+              raise SystemExit('provider_group must remain kambi')
+          print(json.dumps({
+              'status': data.get('status'),
+              'event_count': data.get('event_count', 0),
+              'events_with_all_three_recognized': data.get('events_with_all_three_recognized', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist diagnostics safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/capability_samples/ \
+            --message-prefix "audit(football): persist V5.5.9 Kambi market capability"
+
+      - name: Fail workflow only on execution failure
+        if: steps.diagnostic.outcome != 'success'
+        run: exit 1
