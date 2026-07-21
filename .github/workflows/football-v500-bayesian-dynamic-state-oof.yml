@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "football-data/validation/bayesian_dynamic_state_oof_v500.py"
+      - "football-data/validation/run_bayesian_dynamic_state_domain_v500.py"
+      - "football-data/validation/aggregate_bayesian_dynamic_state_oof_v500.py"
       - "football-data/validation/backtest_last_complete_season_all_domains_v470.py"
       - "football-data/engine/football_v460_engine.py"
       - "football-data/engine/oof_matrix_calibration.py"
@@ -20,7 +22,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  validate-domain:
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix:
+        competition:
+          - ARG_Primera
+          - BRA_SerieA
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - FRA_Ligue1
+          - GER_Bundesliga
+          - ITA_SerieA
+          - JPN_J1
+          - KOR_KLeague1
+          - NED_Eredivisie
+          - NOR_Eliteserien
+          - POR_PrimeiraLiga
+          - SCO_Premiership
+          - SUI_SuperLeague
+          - SWE_Allsvenskan
+          - UEFA_ChampionsLeague
+          - USA_MLS
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -34,38 +58,86 @@ jobs:
           from pathlib import Path
           path = Path("football-data/validation/bayesian_dynamic_state_oof_v500.py")
           text = path.read_text(encoding="utf-8")
-          text = text.replace('"handicap_fourth_target_available": false', '"handicap_fourth_target_available": False')
-          text = text.replace('"automatic_promotion": false', '"automatic_promotion": False')
-          text = text.replace('"probability_change": false', '"probability_change": False')
-          text = text.replace('"formal_weight_change": false', '"formal_weight_change": False')
+          for old, new in (
+              ('"handicap_fourth_target_available": false', '"handicap_fourth_target_available": False'),
+              ('"automatic_promotion": false', '"automatic_promotion": False'),
+              ('"probability_change": false', '"probability_change": False'),
+              ('"formal_weight_change": false', '"formal_weight_change": False'),
+          ):
+              text = text.replace(old, new)
           path.write_text(text, encoding="utf-8")
           PY
       - name: Compile
         run: |
           python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v500.py
-      - name: Run 17-domain strict chronological OOF
-        id: validate
+          python -m py_compile football-data/validation/run_bayesian_dynamic_state_domain_v500.py
+      - name: Run competition-local strict chronological OOF
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/run_bayesian_dynamic_state_domain_v500.py --competition "${{ matrix.competition }}"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayesian-${{ matrix.competition }}
+          path: football-data/manifests/bayesian_dynamic_state_oof_v500/${{ matrix.competition }}.json
+          if-no-files-found: error
+          retention-days: 3
+
+  aggregate:
+    if: always()
+    needs: validate-domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bayesian-*
+          path: football-data/manifests/bayesian_dynamic_state_oof_v500
+          merge-multiple: true
+      - name: Normalize committed Python boolean literals
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("football-data/validation/bayesian_dynamic_state_oof_v500.py")
+          text = path.read_text(encoding="utf-8")
+          for old, new in (
+              ('"handicap_fourth_target_available": false', '"handicap_fourth_target_available": False'),
+              ('"automatic_promotion": false', '"automatic_promotion": False'),
+              ('"probability_change": false', '"probability_change": False'),
+              ('"formal_weight_change": false', '"formal_weight_change": False'),
+          ):
+              text = text.replace(old, new)
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Aggregate receipts
+        id: aggregate
         shell: bash
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: |
           set +e
-          python football-data/validation/bayesian_dynamic_state_oof_v500.py
+          python football-data/validation/aggregate_bayesian_dynamic_state_oof_v500.py
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Commit repaired script and research receipts
+      - name: Commit repaired source and research receipts
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add football-data/validation/bayesian_dynamic_state_oof_v500.py
           git add football-data/manifests/bayesian_dynamic_state_oof_v500_status.json
-          git add football-data/manifests/bayesian_dynamic_state_oof_v500 || true
+          git add football-data/manifests/bayesian_dynamic_state_oof_v500
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "research(football): persist V5 Bayesian dynamic-state OOF"
           git pull --rebase origin main
           git push origin HEAD:main
-      - name: Preserve validation failure after receipt persistence
-        if: steps.validate.outputs.rc != '0'
+      - name: Preserve aggregate failure after receipt persistence
+        if: steps.aggregate.outputs.rc != '0'
         run: exit 1
