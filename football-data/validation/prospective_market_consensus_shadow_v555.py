@@ -13,12 +13,28 @@ VALIDATION = ROOT / "validation"
 if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
-from prospective_market_consensus_v554 import validate_consensus
+from prospective_market_consensus_v554 import validate_consensus as validate_consensus_v554
+from prospective_market_consensus_strict_v5519 import validate_consensus as validate_consensus_v5519
 from prospective_market_matrix_por_v543 import project as project_por_1x2
 from prospective_market_matrix_shadow_v531 import _devig as devig, project as project_dual
 
 SELECTIVE_CFG = ROOT / "config" / "prospective_market_selective_challenger_v526.json"
 MATRIX_REGISTRY = ROOT / "config" / "market_matrix_projection_final_registry_v531.json"
+
+
+def validate_consensus(consensus: dict[str, Any]) -> dict[str, Any]:
+    schema = str(consensus.get("schema_version") or "")
+    if schema.startswith("V5.5.19-strict-three-surface-market-consensus"):
+        result = validate_consensus_v5519(consensus)
+        return {
+            "passed": bool(result.get("passed")),
+            "errors": list(result.get("errors") or []),
+            "promotion_evidence_eligible": bool(result.get("promotion_evidence_eligible")),
+            "validator": "V5.5.19_STRICT_THREE_SURFACE",
+        }
+    result = validate_consensus_v554(consensus)
+    result["validator"] = "V5.5.4_BASE_CONSENSUS"
+    return result
 
 
 def evaluate_selective(consensus: dict[str, Any]) -> dict[str, Any]:
@@ -27,11 +43,12 @@ def evaluate_selective(consensus: dict[str, Any]) -> dict[str, Any]:
     cid = str(consensus.get("competition_id") or "")
     candidate = (cfg.get("candidate_domains") or {}).get(cid)
     result = {
-        "schema_version": "V5.5.5-consensus-selective-shadow-r1",
+        "schema_version": "V5.5.5-consensus-selective-shadow-r2",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": cid,
         "consensus_validation_passed": bool(validation.get("passed")),
         "consensus_errors": validation.get("errors") or [],
+        "consensus_validator": validation.get("validator"),
         "market_input_kind": "INDEPENDENT_PROVIDER_CONSENSUS",
         "promotion_evidence_eligible": bool(consensus.get("promotion_evidence_eligible")),
         "provider_count": consensus.get("provider_count"),
@@ -44,6 +61,9 @@ def evaluate_selective(consensus: dict[str, Any]) -> dict[str, Any]:
     }
     if not validation.get("passed"):
         result["shadow_status"] = "CONSENSUS_INVALID_FAIL_CLOSED"
+        return result
+    if not consensus.get("promotion_evidence_eligible"):
+        result["shadow_status"] = "CONSENSUS_RESEARCH_ONLY_NOT_PROMOTION_ELIGIBLE"
         return result
     if not candidate:
         result["shadow_status"] = "DOMAIN_NOT_REGISTERED_FOR_MARKET_SELECTIVE_SHADOW"
@@ -82,11 +102,12 @@ def evaluate_matrix(consensus: dict[str, Any], formal_matrix: list[dict[str, Any
     separate = (registry.get("separate_question_time_candidates") or {}).get(cid)
     cfg = primary or separate
     result = {
-        "schema_version": "V5.5.5-consensus-market-matrix-shadow-r2",
+        "schema_version": "V5.5.5-consensus-market-matrix-shadow-r3",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": cid,
         "consensus_validation_passed": bool(validation.get("passed")),
         "consensus_errors": validation.get("errors") or [],
+        "consensus_validator": validation.get("validator"),
         "market_input_kind": "INDEPENDENT_PROVIDER_CONSENSUS",
         "promotion_evidence_eligible": bool(consensus.get("promotion_evidence_eligible")),
         "provider_count": consensus.get("provider_count"),
@@ -100,6 +121,9 @@ def evaluate_matrix(consensus: dict[str, Any], formal_matrix: list[dict[str, Any
     }
     if not validation.get("passed"):
         result["shadow_status"] = "CONSENSUS_INVALID_FAIL_CLOSED"
+        return result
+    if not consensus.get("promotion_evidence_eligible"):
+        result["shadow_status"] = "CONSENSUS_RESEARCH_ONLY_NOT_PROMOTION_ELIGIBLE"
         return result
     if not cfg:
         result["shadow_status"] = "DOMAIN_NOT_REGISTERED_MATRIX_CANDIDATE"
