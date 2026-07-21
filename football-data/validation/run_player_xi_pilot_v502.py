@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Execute the V5.0.2 public-lineup pilot and always persist an audit receipt.
 
-The orchestrator intentionally returns success after writing its receipt so the
-workflow can commit diagnostic evidence even when an internal stage fails. A
-later workflow gate reads the receipt and fails the job when status != PASS.
+The orchestrator returns success after writing its receipt so the workflow can
+commit diagnostic evidence even when an internal stage fails. A later workflow
+gate reads the receipt and fails when status != PASS.
 """
 
 from __future__ import annotations
@@ -41,8 +41,8 @@ def run_stage(name: str, command: list[str], *, enabled: bool = True) -> dict[st
         "status": "PASS" if process.returncode == 0 else "FAIL",
         "return_code": process.returncode,
         "command": command,
-        "stdout_tail": process.stdout[-12000:],
-        "stderr_tail": process.stderr[-12000:],
+        "stdout_tail": process.stdout[-16000:],
+        "stderr_tail": process.stderr[-16000:],
     }
 
 
@@ -59,6 +59,7 @@ def main() -> int:
             "football-data/engine/ingest_transfermarkt_lineups_v502.py",
             "football-data/validation/probable_lineup_route_v502.py",
             "football-data/validation/player_xi_data_readiness_v502.py",
+            "football-data/validation/lineup_match_identity_audit_v502.py",
             "football-data/tests/test_player_xi_v502.py",
         ],
     )
@@ -107,16 +108,27 @@ def main() -> int:
     )
     stages.append(readiness)
 
+    identity = run_stage(
+        "lineup_match_identity_bridge",
+        [
+            python,
+            "football-data/validation/lineup_match_identity_audit_v502.py",
+            "--print-summary",
+        ],
+        enabled=readiness["status"] == "PASS",
+    )
+    stages.append(identity)
+
     overall = "PASS" if all(stage["status"] == "PASS" for stage in stages) else "FAIL"
     report = {
-        "schema_version": "V5.0.2-player-xi-pilot-execution-r1",
+        "schema_version": "V5.0.2-player-xi-pilot-execution-r2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": overall,
         "stages": stages,
         "formal_weight_change": False,
         "probability_change": False,
         "automatic_promotion": False,
-        "policy": "Execution receipt only. A PASS permits lineup-only shadow research, not formal probability influence.",
+        "policy": "Execution receipt only. PASS permits identity-linked lineup-only shadow research, not formal probability influence.",
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
