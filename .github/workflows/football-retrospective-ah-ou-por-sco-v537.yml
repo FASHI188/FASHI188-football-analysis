@@ -1,0 +1,60 @@
+name: football-retrospective-ah-ou-por-sco-v537
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/retrospective_ah_ou_por_sco_v537.py"
+      - ".github/workflows/football-retrospective-ah-ou-por-sco-v537.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-retrospective-ah-ou-por-sco-v537
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run frozen POR and SCO AH OU ceiling
+        run: |
+          python -m py_compile \
+            football-data/validation/retrospective_ah_ou_ceiling_v528.py \
+            football-data/validation/retrospective_ah_ou_por_sco_v537.py
+          python football-data/validation/retrospective_ah_ou_por_sco_v537.py
+      - name: Commit receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f football-data/manifests/retrospective_ah_ou_por_sco_v537_status.json ]; then
+            python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/retrospective_ah_ou_por_sco_v537_status.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps({
+            'schema_version':'V5.3.7-retrospective-ah-ou-por-sco-diagnostic-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'EXECUTION_FAIL_NO_RECEIPT',
+            'formal_weight_change':False,
+            'probability_change':False,
+            'formal_pit_market_eligible':False
+          }, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          fi
+          git add -A -- football-data/manifests/retrospective_ah_ou_por_sco_v537_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist POR SCO AH OU ceiling"
+          git pull --rebase origin main
+          git push
