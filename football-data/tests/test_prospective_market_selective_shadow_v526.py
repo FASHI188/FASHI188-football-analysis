@@ -46,6 +46,7 @@ def test_registered_domain_high_gap_emits_shadow_direction_only():
     assert result["shadow_direction"] == "home"
     assert result["formal_direction_override"] is False
     assert result["probability_mutation"] is False
+    assert result["timing_robust_point_gate"] is True
 
 
 def test_registered_domain_low_gap_does_not_emit_direction():
@@ -58,6 +59,14 @@ def test_non_registered_domain_never_emits_shadow_direction():
     result = evaluate(_snapshot("ENG_PremierLeague", (1.20, 7.0, 12.0)))
     assert result["snapshot_contract_passed"] is True
     assert result["shadow_status"] == "DOMAIN_NOT_REGISTERED_FOR_MARKET_SELECTIVE_SHADOW"
+
+
+def test_nor_and_sco_closing_only_hypotheses_are_not_runtime_candidates():
+    for cid in ("NOR_Eliteserien", "SCO_Premiership"):
+        result = evaluate(_snapshot(cid, (1.15, 8.0, 17.0)))
+        assert result["snapshot_contract_passed"] is True
+        assert result["registered_candidate_domain"] is False
+        assert result["shadow_status"] == "DOMAIN_NOT_REGISTERED_FOR_MARKET_SELECTIVE_SHADOW"
 
 
 def test_invalid_snapshot_fails_closed():
