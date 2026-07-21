@@ -76,6 +76,55 @@ def _safe_project(matrix, elo_diff: float, beta: float, scale: float):
     }
 
 
+def _apply_match_level_coverage_gate(report: dict, competition_id: str) -> dict:
+    cfg = core.load_json(core.CONFIG)
+    threshold = float(
+        cfg["forward_gate"].get(
+            "minimum_target_match_elo_coverage_each_last_two_forward_folds", 0.95
+        )
+    )
+    matches = core.read_processed_matches(competition_id)
+    season_counts = defaultdict(int)
+    for match in matches:
+        season_counts[str(match.season)] += 1
+
+    evaluated = [
+        fold for fold in (report.get("folds") or [])
+        if fold.get("status") == "EVALUATED_FORWARD_FROZEN_BETA"
+    ]
+    for fold in evaluated:
+        season = str(fold.get("target_season") or "")
+        target_count = int(season_counts.get(season, 0))
+        outer = int(fold.get("outer_predictions") or 0)
+        fold["target_match_count"] = target_count
+        fold["elo_eligible_match_coverage"] = outer / target_count if target_count else 0.0
+
+    last_two = evaluated[-2:]
+    pass_coverage = (
+        len(last_two) == 2
+        and all(float(fold.get("elo_eligible_match_coverage") or 0.0) >= threshold for fold in last_two)
+    )
+    checks = dict(report.get("checks") or {})
+    checks["minimum_target_match_elo_coverage_each_last_two_forward_folds"] = pass_coverage
+    report["checks"] = checks
+    report["match_level_pit_coverage_gate"] = {
+        "threshold": threshold,
+        "last_two_forward_folds": [
+            {
+                "target_season": fold.get("target_season"),
+                "outer_predictions": fold.get("outer_predictions"),
+                "target_match_count": fold.get("target_match_count"),
+                "coverage": fold.get("elo_eligible_match_coverage"),
+            }
+            for fold in last_two
+        ],
+        "passed": pass_coverage,
+    }
+    if report.get("status") == "CLUBELO_RESIDUAL_SIGNAL_PASS_SHADOW_ONLY" and not pass_coverage:
+        report["status"] = "REJECT_KEEP_FORMAL_WEIGHT_0"
+    return report
+
+
 core._project = _safe_project
 
 
@@ -87,9 +136,10 @@ def main() -> int:
     try:
         _identity_receipt_guard(args.competition)
         report = core.validate_domain(args.competition)
+        report = _apply_match_level_coverage_gate(report, args.competition)
     except Exception as exc:
         report = {
-            "schema_version": "V5.1.5-clubelo-residual-oof-domain-execution-r3",
+            "schema_version": "V5.1.5-clubelo-residual-oof-domain-execution-r4",
             "competition_id": args.competition,
             "status": "EXECUTION_FAILURE_KEEP_FORMAL_WEIGHT_0",
             "error": f"{type(exc).__name__}: {exc}",
@@ -105,6 +155,7 @@ def main() -> int:
         "competition_id": args.competition,
         "status": report.get("status"),
         "forward_prediction_count": report.get("forward_prediction_count"),
+        "match_level_pit_coverage_gate": report.get("match_level_pit_coverage_gate"),
         "error": report.get("error"),
     }, ensure_ascii=False, indent=2))
     return 0
