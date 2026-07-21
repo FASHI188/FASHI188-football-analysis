@@ -1,0 +1,91 @@
+name: Football V5.0.1 Total-Only Dynamic Projection
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/run_total_only_dynamic_projection_domain_v501.py"
+      - "football-data/validation/aggregate_total_only_dynamic_projection_v501.py"
+      - ".github/workflows/football-v501-total-only-dynamic-projection.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v501-total-only-dynamic-projection
+  cancel-in-progress: true
+
+jobs:
+  validate-domain:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        competition:
+          - ESP_LaLiga
+          - GER_Bundesliga
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/validate_two_axis_dynamic_projection_v501.py
+          python -m py_compile football-data/validation/run_total_only_dynamic_projection_domain_v501.py
+      - name: Run competition-local nested OOF
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/run_total_only_dynamic_projection_domain_v501.py --competition "${{ matrix.competition }}"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-only-${{ matrix.competition }}
+          path: football-data/manifests/total_only_dynamic_projection_v501/${{ matrix.competition }}.json
+          if-no-files-found: error
+          retention-days: 3
+
+  aggregate:
+    if: always()
+    needs: validate-domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: total-only-*
+          path: football-data/manifests/total_only_dynamic_projection_v501
+          merge-multiple: true
+      - name: Aggregate
+        id: aggregate
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/aggregate_total_only_dynamic_projection_v501.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit research receipts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/total_only_dynamic_projection_v501_status.json
+          git add football-data/manifests/total_only_dynamic_projection_v501
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist total-only dynamic projection OOF"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve aggregate failure after receipt persistence
+        if: steps.aggregate.outputs.rc != '0'
+        run: exit 1
