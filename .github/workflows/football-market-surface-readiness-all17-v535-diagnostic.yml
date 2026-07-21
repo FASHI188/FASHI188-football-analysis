@@ -1,0 +1,66 @@
+name: football-market-surface-readiness-all17-v535-diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/football-market-surface-readiness-all17-v535-diagnostic.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-market-surface-readiness-all17-v535-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run frozen 17-domain surface scan
+        id: scan
+        continue-on-error: true
+        run: |
+          python -m py_compile football-data/validation/market_surface_readiness_all17_v535.py
+          python football-data/validation/market_surface_readiness_all17_v535.py
+      - name: Ensure diagnostic receipt exists
+        if: always()
+        run: |
+          if [ ! -f football-data/manifests/market_surface_readiness_all17_v535_status.json ]; then
+            python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p = Path('football-data/manifests/market_surface_readiness_all17_v535_status.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps({
+              'schema_version':'V5.3.5-market-surface-readiness-all17-diagnostic-r1',
+              'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'status':'EXECUTION_FAIL_NO_RECEIPT',
+              'scan_step_outcome':'${{ steps.scan.outcome }}',
+              'formal_weight_change':False,
+              'probability_change':False,
+              'formal_pit_market_eligible':False
+          }, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          fi
+      - name: Commit success or diagnostic receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/market_surface_readiness_all17_v535_status.json
+          if git diff --cached --quiet; then
+            echo "No market surface readiness receipt changed."
+            exit 0
+          fi
+          git commit -m "audit(football): persist 17-domain market surface readiness diagnostic"
+          git pull --rebase origin main
+          git push
