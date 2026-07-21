@@ -1,0 +1,107 @@
+{
+  "schema_version": "V5.0.2-player-xi-source-contract-r1",
+  "purpose": "Canonical point-in-time data contract for observed starting-XI labels, predicted XI inputs, and player availability evidence.",
+  "formal_weight_change": false,
+  "automatic_promotion": false,
+  "competition_isolation_required": true,
+  "observed_lineup": {
+    "path_template": "football-data/lineups/{competition_id}/historical_lineups.jsonl",
+    "required_fields": [
+      "competition_id",
+      "season",
+      "fixture_id",
+      "kickoff_utc",
+      "team",
+      "starters",
+      "label_type",
+      "player_id_namespace",
+      "source_name",
+      "source_url",
+      "source_observed_at_utc",
+      "ingested_at_utc"
+    ],
+    "label_type_allowed": [
+      "observed_starting_xi",
+      "confirmed_starting_xi",
+      "actual_starting_xi"
+    ],
+    "starter_count": 11,
+    "predicted_xi_prohibited_as_label": true,
+    "point_in_time_rule": "For any replay target, a prior lineup row is eligible only when its source_observed_at_utc is strictly before the replay freeze. Kickoff ordering alone is insufficient.",
+    "source_priority": [
+      "official_match_report",
+      "competition_match_report",
+      "transfermarkt_datasets_lineups",
+      "sportmonks_confirmed_lineup",
+      "api_football_confirmed_lineup",
+      "statsbomb_open_lineup"
+    ]
+  },
+  "predicted_xi": {
+    "path_template": "football-data/predicted_lineups/{competition_id}/predicted_lineups.jsonl",
+    "required_fields": [
+      "competition_id",
+      "season",
+      "fixture_id",
+      "freeze_time_utc",
+      "team",
+      "player_probabilities",
+      "provider_or_model",
+      "source_observed_at_utc",
+      "ingested_at_utc"
+    ],
+    "never_written_to_observed_labels": true
+  },
+  "availability": {
+    "path_template": "football-data/availability/{competition_id}/historical_availability.jsonl",
+    "required_fields": [
+      "competition_id",
+      "season",
+      "fixture_id",
+      "freeze_time_utc",
+      "team",
+      "player_id",
+      "player_id_namespace",
+      "status",
+      "source_name",
+      "source_url",
+      "source_observed_at_utc",
+      "ingested_at_utc"
+    ],
+    "status_allowed": [
+      "injured",
+      "suspended",
+      "questionable",
+      "doubtful",
+      "available",
+      "out"
+    ],
+    "hard_gate": "source_observed_at_utc must be at or before freeze_time_utc"
+  },
+  "identity": {
+    "canonical_key": [
+      "player_id_namespace",
+      "player_id"
+    ],
+    "name_only_identity_prohibited": true,
+    "cross_provider_mapping_requires_audited_crosswalk": true
+  },
+  "training": {
+    "strict_chronological_nested_oof": true,
+    "same_day_outcomes_withheld": true,
+    "target_match_actual_xi_prohibited_as_input": true,
+    "cross_competition_parameter_pooling_prohibited": true,
+    "minimum_targets": [
+      "1X2",
+      "AH settlement/direction",
+      "exact score Top-1/Top-k",
+      "total-goals Top-1/Top-2"
+    ],
+    "formal_weight_default": 0
+  },
+  "public_source_note": {
+    "transfermarkt_datasets": "Public CC0 dataset provides observed game_lineups labels across 40+ competitions and is suitable for a first observed-label backfill, subject to competition mapping and source timestamp limitations.",
+    "statsbomb_open_data": "Public lineups exist only for a limited competition subset and are supplemental, not a universal 17-domain route."
+  },
+  "policy": "This contract creates no probability influence. Any provider-specific adapter must preserve raw source files, hashes, acquisition timestamps and row-level provenance."
+}
