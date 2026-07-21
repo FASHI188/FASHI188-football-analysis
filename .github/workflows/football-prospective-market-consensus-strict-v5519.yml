@@ -1,0 +1,89 @@
+name: football-prospective-market-consensus-strict-v5519
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/prospective_market_consensus_strict_v5519.py"
+      - "football-data/tests/test_prospective_market_consensus_strict_v5519.py"
+      - ".github/workflows/football-prospective-market-consensus-strict-v5519.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-prospective-market-consensus-strict-v5519
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile strict gate and tests
+        run: |
+          python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
+          python -m py_compile football-data/tests/test_prospective_market_consensus_strict_v5519.py
+          rm -rf football-data/validation/__pycache__ football-data/tests/__pycache__
+
+      - name: Run strict consensus regression
+        id: regression
+        continue-on-error: true
+        run: python football-data/tests/test_prospective_market_consensus_strict_v5519.py
+
+      - name: Validate acceptance receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/prospective_market_consensus_strict_v5519_status.json')
+          if not p.exists():
+              raise SystemExit('V5.5.19 strict consensus receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('status') != 'PASS':
+              raise SystemExit(f"strict consensus acceptance not PASS: {data.get('status')}")
+          if data.get('full_three_surface_case', {}).get('promotion_evidence_eligible') is not True:
+              raise SystemExit('full three-surface case should be promotion eligible')
+          if data.get('ah_line_mismatch_case', {}).get('promotion_evidence_eligible') is not False:
+              raise SystemExit('AH line mismatch must be promotion ineligible')
+          if data.get('ou_line_mismatch_case', {}).get('promotion_evidence_eligible') is not False:
+              raise SystemExit('OU line mismatch must be promotion ineligible')
+          if data.get('duplicate_provider_group_rejected') is not True:
+              raise SystemExit('duplicate provider group must fail')
+          if data.get('timestamp_skew_over_300s_rejected') is not True:
+              raise SystemExit('>300s timestamp skew must fail')
+          if data.get('formal_weight_change') is not False or data.get('probability_change') is not False:
+              raise SystemExit('governance test cannot mutate weights/probabilities')
+          print(json.dumps({
+              'status': data.get('status'),
+              'full_three_surface_promotion': True,
+              'ah_mismatch_promotion': False,
+              'ou_mismatch_promotion': False,
+              'independence_and_time_gates': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist acceptance receipt safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.19 strict three-surface consensus gate"
+
+      - name: Fail workflow only if regression failed
+        if: steps.regression.outcome != 'success'
+        run: exit 1
