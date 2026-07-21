@@ -1,0 +1,87 @@
+name: football-market-consensus-smoke-v555
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/prospective_market_selective_challenger_v526.json"
+      - "football-data/config/market_matrix_projection_final_registry_v531.json"
+      - "football-data/config/market_matrix_projection_por_v543.json"
+      - "football-data/config/prospective_market_matrix_validation_v548.json"
+      - "football-data/validation/prospective_market_consensus_v554.py"
+      - "football-data/validation/prospective_market_consensus_shadow_v555.py"
+      - "football-data/validation/prospective_market_matrix_outcome_v548.py"
+      - "football-data/validation/prospective_market_selective_outcome_v552.py"
+      - "football-data/tests/test_prospective_market_consensus_v554.py"
+      - "football-data/tests/test_prospective_market_consensus_shadow_v555.py"
+      - "football-data/tests/test_prospective_market_consensus_outcomes_v555.py"
+      - ".github/workflows/football-market-consensus-smoke-v555.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-market-consensus-smoke-v555
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test runner
+        run: python -m pip install pytest
+      - name: Run end-to-end consensus tests
+        id: tests
+        continue-on-error: true
+        run: |
+          python -m py_compile \
+            football-data/validation/prospective_market_consensus_v554.py \
+            football-data/validation/prospective_market_consensus_shadow_v555.py \
+            football-data/validation/prospective_market_matrix_outcome_v548.py \
+            football-data/validation/prospective_market_selective_outcome_v552.py
+          python -m pytest -q \
+            football-data/tests/test_prospective_market_consensus_v554.py \
+            football-data/tests/test_prospective_market_consensus_shadow_v555.py \
+            football-data/tests/test_prospective_market_consensus_outcomes_v555.py
+      - name: Write smoke receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          outcome = "${{ steps.tests.outcome }}"
+          payload = {
+              "schema_version": "V5.5.5-market-consensus-e2e-smoke-r1",
+              "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              "status": "PASS" if outcome == "success" else "FAIL",
+              "test_step_outcome": outcome,
+              "tests": [
+                  "test_prospective_market_consensus_v554.py",
+                  "test_prospective_market_consensus_shadow_v555.py",
+                  "test_prospective_market_consensus_outcomes_v555.py"
+              ],
+              "formal_weight_change": False,
+              "probability_change": False
+          }
+          p = Path("football-data/manifests/market_consensus_e2e_smoke_v555_status.json")
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+          PY
+      - name: Commit smoke receipt
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/market_consensus_e2e_smoke_v555_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist market consensus end-to-end smoke"
+          git pull --rebase origin main
+          git push
