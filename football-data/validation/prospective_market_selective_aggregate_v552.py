@@ -117,9 +117,9 @@ def main() -> int:
         "reports": reports,
         "shadow_promotion_ready_domains": sorted(set(ready)),
         "status": "NO_OUTCOME_EVIDENCE_YET" if not rows else "PASS",
-        "formal_promotion": false,
-        "formal_weight_change": false,
-        "probability_change": false,
+        "formal_promotion": False,
+        "formal_weight_change": False,
+        "probability_change": False,
         "governance": "Only the earliest valid question-time row per match/config is scored for readiness. This is shadow evidence; formal promotion still requires a later CURRENT-authorized promotion receipt."
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
