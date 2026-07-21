@@ -1,0 +1,91 @@
+name: football-clubelo-residual-v515
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/clubelo_residual_challenger_v515.json"
+      - "football-data/evidence/clubelo_v515/**"
+      - "football-data/manifests/clubelo_history_ingest_v515_status.json"
+      - "football-data/validation/clubelo_residual_oof_v515.py"
+      - "football-data/validation/clubelo_residual_domain_v515.py"
+      - "football-data/validation/clubelo_residual_aggregate_v515.py"
+      - ".github/workflows/football-clubelo-residual-v515.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-clubelo-residual-v515
+  cancel-in-progress: true
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            football-data/validation/clubelo_residual_oof_v515.py \
+            football-data/validation/clubelo_residual_domain_v515.py
+      - name: Run ClubElo residual domain
+        run: |
+          mkdir -p tmp-clubelo-v515
+          python football-data/validation/clubelo_residual_domain_v515.py \
+            --competition "${{ matrix.competition }}" \
+            --out "tmp-clubelo-v515/${{ matrix.competition }}.json"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: clubelo-v515-${{ matrix.competition }}
+          path: tmp-clubelo-v515/${{ matrix.competition }}.json
+          if-no-files-found: error
+
+  aggregate:
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clubelo-v515-*
+          merge-multiple: true
+          path: football-data/manifests/clubelo_residual_oof_v515
+      - name: Aggregate ClubElo receipts
+        run: |
+          python -m py_compile football-data/validation/clubelo_residual_aggregate_v515.py
+          python football-data/validation/clubelo_residual_aggregate_v515.py
+      - name: Commit receipts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/clubelo_residual_oof_v515_status.json \
+            football-data/manifests/clubelo_residual_oof_v515
+          if git diff --cached --quiet; then
+            echo "No ClubElo residual receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist ClubElo residual OOF"
+          git pull --rebase origin main
+          git push
