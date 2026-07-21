@@ -34,7 +34,7 @@ def evaluate(snapshot: dict) -> dict:
     candidate = (config.get("candidate_domains") or {}).get(competition_id)
 
     result = {
-        "schema_version": "V5.2.6-prospective-market-selective-shadow-evaluation-r1",
+        "schema_version": "V5.5.0-prospective-market-selective-shadow-evaluation-r2",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": competition_id,
         "snapshot_contract_passed": bool(contract_result.get("passed")),
@@ -66,10 +66,18 @@ def evaluate(snapshot: dict) -> dict:
         "market_top2_probability": top2[1],
         "market_top1_top2_gap": gap,
         "registered_gap_threshold": threshold,
-        "historical_reference_selected": candidate.get("retrospective_selected"),
-        "historical_reference_accuracy": candidate.get("retrospective_accuracy"),
+        "threshold_retuned": bool(candidate.get("threshold_retuned", False)),
+        "timing_robust_point_gate": bool(candidate.get("timing_robust_point_gate", False)),
+        "closing_reference_selected": candidate.get("closing_reference_selected"),
+        "closing_reference_accuracy": candidate.get("closing_reference_accuracy"),
+        "opening_reference_selected": candidate.get("opening_reference_selected"),
+        "opening_reference_accuracy": candidate.get("opening_reference_accuracy"),
+        "opening_wilson95_lower": candidate.get("opening_wilson95_lower"),
     })
 
+    if not bool(candidate.get("timing_robust_point_gate", False)):
+        result["shadow_status"] = "TIMING_ROBUSTNESS_NOT_REGISTERED_FAIL_CLOSED"
+        return result
     if gap >= threshold:
         result["shadow_status"] = "SHADOW_MARKET_HIGH_CONFIDENCE_DIRECTION"
         result["shadow_direction"] = top1[0]
