@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -14,34 +15,50 @@ if str(VALIDATION) not in sys.path:
 
 import fpl_context_challenger_v519 as core
 
-FPL_TEAM_ID_TO_NAME: dict[str, str] = {}
+FPL_TEAM_TOKEN_TO_NAME: dict[str, str] = {}
 _ORIGINAL_TEAM_FEATURES = core._team_features
 _ORIGINAL_PAIR = core._pair_processed_match
 
 
+def _numeric_token(value) -> str:
+    token = str(value or "").strip()
+    try:
+        number = float(token)
+        if math.isfinite(number) and abs(number - round(number)) < 1e-9:
+            return str(int(round(number)))
+    except Exception:
+        pass
+    return token
+
+
 def _patched_team_features(bundle):
     features, audit = _ORIGINAL_TEAM_FEATURES(bundle)
-    # fixtures.csv uses FPL team IDs; teams.csv provides the deterministic ID->name bridge.
+    # FPL fixtures use team code values (often serialized like 39.0), while
+    # teams.csv exposes both code and id. Register both deterministically.
     for row in bundle["teams.csv"]["rows"]:
-        team_id = str(row.get("id") or "").strip()
         name = str(row.get("name") or "").strip()
-        if not team_id or not name:
+        if not name:
             continue
-        FPL_TEAM_ID_TO_NAME[team_id] = name
-        if name in features:
-            features[team_id] = features[name]
+        for raw_token in (row.get("code"), row.get("id")):
+            token = _numeric_token(raw_token)
+            if not token:
+                continue
+            FPL_TEAM_TOKEN_TO_NAME[token] = name
+            if name in features:
+                features[token] = features[name]
     audit = dict(audit)
-    audit["fixture_team_id_bridge_count"] = len(FPL_TEAM_ID_TO_NAME)
+    audit["fixture_team_code_id_bridge_count"] = len(FPL_TEAM_TOKEN_TO_NAME)
     return features, audit
 
 
 def _patched_pair_processed_match(lookup, date: str, home: str, away: str):
-    home_name = FPL_TEAM_ID_TO_NAME.get(str(home), str(home))
-    away_name = FPL_TEAM_ID_TO_NAME.get(str(away), str(away))
+    home_token = _numeric_token(home)
+    away_token = _numeric_token(away)
+    home_name = FPL_TEAM_TOKEN_TO_NAME.get(home_token, str(home))
+    away_name = FPL_TEAM_TOKEN_TO_NAME.get(away_token, str(away))
     return _ORIGINAL_PAIR(lookup, date, home_name, away_name)
 
 
-# Identity-layer correction only. No model feature, parameter grid, split or gate changes.
 core._team_features = _patched_team_features
 core._pair_processed_match = _patched_pair_processed_match
 
@@ -51,14 +68,14 @@ def main() -> int:
         return int(core.main())
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.9-fpl-context-challenger-execution-r2",
+            "schema_version": "V5.1.9-fpl-context-challenger-execution-r3",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "competition_id": "ENG_PremierLeague",
             "season": "2025/26",
             "status": "EXECUTION_FAILURE_KEEP_FORMAL_WEIGHT_0",
             "error": f"{type(exc).__name__}: {exc}",
             "traceback_tail": traceback.format_exc().splitlines()[-30:],
-            "fixture_team_id_bridge_count": len(FPL_TEAM_ID_TO_NAME),
+            "fixture_team_code_id_bridge_count": len(FPL_TEAM_TOKEN_TO_NAME),
             "formal_weight": 0,
             "probability_change": False,
             "automatic_promotion": False,
