@@ -17,6 +17,7 @@ if str(VALIDATION) not in sys.path:
 import fpl_context_challenger_v519 as core
 
 FPL_TEAM_CODE_TO_NAME: dict[str, str] = {}
+_ORIGINAL_DOWNLOAD = core._download_gameweeks
 _ORIGINAL_TEAM_FEATURES = core._team_features
 _ORIGINAL_PAIR = core._pair_processed_match
 
@@ -45,6 +46,25 @@ def _token_variants(value) -> set[str]:
     return variants
 
 
+def _patched_download_gameweeks(source_sha: str):
+    bundles, hashes = _ORIGINAL_DOWNLOAD(source_sha)
+    for gw, bundle in bundles.items():
+        fixture_bundle = bundle["fixtures.csv"]
+        rows = list(fixture_bundle["rows"])
+        premier = [
+            row for row in rows
+            if str(row.get("tournament") or "").strip().lower() == "prem"
+        ]
+        bundle["_fixture_filter_audit"] = {
+            "raw_fixture_rows": len(rows),
+            "premier_league_fixture_rows": len(premier),
+            "non_premier_rows_excluded": len(rows) - len(premier),
+            "allowed_tournament": "prem",
+        }
+        fixture_bundle["rows"] = premier
+    return bundles, hashes
+
+
 def _patched_team_features(bundle):
     features, audit = _ORIGINAL_TEAM_FEATURES(bundle)
     for row in bundle["teams.csv"]["rows"]:
@@ -63,6 +83,7 @@ def _patched_team_features(bundle):
     audit = dict(audit)
     audit["fixture_team_code_bridge_count"] = len(FPL_TEAM_CODE_TO_NAME)
     audit["feature_alias_key_count"] = sum(1 for key in features if str(key).replace(".", "", 1).isdigit())
+    audit["fixture_filter"] = dict(bundle.get("_fixture_filter_audit") or {})
     return features, audit
 
 
@@ -73,12 +94,7 @@ def _patched_pair_processed_match(lookup, date: str, home: str, away: str):
 
 
 def _patched_project(matrix, residual: float, scale: float):
-    """Conditional KL tilt that preserves zero-mass total-goal slices exactly.
-
-    A total-goal slice with original probability mass 0 carries no information and
-    must remain 0. Only positive-mass slices are normalized. A positive-mass slice
-    whose tilted denominator is non-positive remains a hard execution failure.
-    """
+    """Conditional KL tilt that preserves zero-mass total-goal slices exactly."""
     grouped = defaultdict(list)
     original = defaultdict(float)
     for h, a, p in core.score_matrix_rows(matrix):
@@ -120,6 +136,7 @@ def _patched_project(matrix, residual: float, scale: float):
     }
 
 
+core._download_gameweeks = _patched_download_gameweeks
 core._team_features = _patched_team_features
 core._pair_processed_match = _patched_pair_processed_match
 core._project = _patched_project
@@ -130,7 +147,7 @@ def main() -> int:
         return int(core.main())
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.9-fpl-context-challenger-execution-r6",
+            "schema_version": "V5.1.9-fpl-context-challenger-execution-r7",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "competition_id": "ENG_PremierLeague",
             "season": "2025/26",
