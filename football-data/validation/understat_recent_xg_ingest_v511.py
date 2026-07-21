@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +26,9 @@ def _fetch(url: str) -> bytes:
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; FASHI188-football-analysis/1.0; research audit)",
-            "Accept": "text/html,application/xhtml+xml"
+            "Accept": "text/html,application/xhtml+xml",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://understat.com/"
         },
     )
     with urllib.request.urlopen(req, timeout=60) as response:
@@ -38,13 +39,12 @@ def _parse_dates_data(html: str):
     marker = "datesData"
     idx = html.find(marker)
     if idx < 0:
-        raise RuntimeError("datesData not found")
+        raise RuntimeError(f"datesData not found; response_length={len(html)} prefix={html[:160]!r}")
     start = html.find("(", idx)
     end = html.find(")", start)
     if start < 0 or end < 0:
         raise RuntimeError("datesData JSON.parse wrapper not found")
     raw = html[start + 2:end - 1]
-    # Understat stores JSON as an escaped JavaScript string.
     decoded = bytes(raw, "utf-8").decode("unicode_escape")
     return json.loads(decoded)
 
@@ -136,7 +136,7 @@ def main() -> int:
 
     passed = [k for k, v in reports.items() if v["status"] == "PASS"]
     payload = {
-        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r1",
+        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r2",
         "generated_at_utc": observed_at,
         "season": "2025/26",
         "requested_domains": list(cfg["domains"].keys()),
