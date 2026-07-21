@@ -1,0 +1,78 @@
+name: football-direct-betano-frontend-probe-v5514
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_betano_frontend_probe_v5514.py"
+      - ".github/workflows/football-direct-betano-frontend-probe-v5514.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-betano-frontend-probe-v5514
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/direct_betano_frontend_probe_v5514.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run direct Betano frontend probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_betano_frontend_probe_v5514.py
+
+      - name: Validate fail-closed receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_betano_frontend_probe_v5514_status.json')
+          if not p.exists():
+              raise SystemExit('Betano probe receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'kaizen_betano':
+              raise SystemExit('provider_group must remain kaizen_betano')
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change','consensus_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          print(json.dumps({
+              'status': data.get('status'),
+              'valid_listing_json_count': data.get('valid_listing_json_count', 0),
+              'valid_detail_json_count': data.get('valid_detail_json_count', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist probe evidence safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/betano/ \
+            --message-prefix "audit(football): persist V5.5.14 direct Betano frontend probe"
+
+      - name: Fail workflow only if probe execution failed
+        if: steps.probe.outcome != 'success'
+        run: exit 1
