@@ -12,7 +12,17 @@ from prospective_market_consensus_v554 import build, validate_consensus
 from prospective_market_snapshot_v523 import canonical_sha256
 
 
-def _snapshot(group: str, name: str, home: float, draw: float, away: float, minute: int = 0):
+def _snapshot(
+    group: str,
+    name: str,
+    home: float,
+    draw: float,
+    away: float,
+    minute: int = 0,
+    *,
+    main_ou_line: float = 2.5,
+    ou25_reference: tuple[float, float] | None = None,
+):
     ts = f"2026-08-15T15:0{minute}:00+00:00"
     row = {
         "competition_id": "GER_Bundesliga",
@@ -30,8 +40,18 @@ def _snapshot(group: str, name: str, home: float, draw: float, away: float, minu
         "provider_group": group,
         "one_x_two": {"home": home, "draw": draw, "away": away},
         "asian_handicap": {"line": -0.5, "home": 1.95, "away": 1.95},
-        "over_under": {"line": 2.5, "over": 1.91, "under": 1.99},
+        "over_under": {"line": main_ou_line, "over": 1.91, "under": 1.99},
     }
+    if ou25_reference is not None:
+        row["research_reference_surfaces"] = {
+            "over_under_2_5": {
+                "line": 2.5,
+                "over": ou25_reference[0],
+                "under": ou25_reference[1],
+                "observed_at_utc": ts,
+                "role": "fixed_research_reference_surface",
+            }
+        }
     row["raw_snapshot_sha256"] = canonical_sha256(row)
     return row
 
@@ -47,7 +67,31 @@ def test_consensus_uses_arithmetic_mean_decimal_prices_and_unique_groups():
     assert payload["one_x_two"]["draw"] == 3.60
     assert payload["one_x_two"]["away"] == 4.50
     assert payload["surface_consensus_eligibility"]["over_under_2_5"] is True
+    assert payload["over_under_2_5"]["line"] == 2.5
     assert payload["promotion_evidence_eligible"] is True
+
+
+def test_main_ou275_can_coexist_with_fixed_ou25_research_consensus():
+    payload = build([
+        _snapshot("book_a", "Book A", 1.80, 3.70, 4.60, 0, main_ou_line=2.75, ou25_reference=(1.72, 2.15)),
+        _snapshot("book_b", "Book B", 1.90, 3.50, 4.40, 1, main_ou_line=2.75, ou25_reference=(1.76, 2.08)),
+    ])
+    assert validate_consensus(payload)["passed"] is True
+    assert payload["over_under"]["line"] == 2.75
+    assert payload["over_under_2_5"]["line"] == 2.5
+    assert payload["over_under_2_5"]["over"] == 1.74
+    assert payload["over_under_2_5"]["under"] == 2.115
+    assert payload["surface_consensus_eligibility"]["over_under_2_5"] is True
+
+
+def test_main_ou275_without_fixed_reference_is_not_ou25_eligible():
+    payload = build([
+        _snapshot("book_a", "Book A", 1.80, 3.70, 4.60, 0, main_ou_line=2.75),
+        _snapshot("book_b", "Book B", 1.90, 3.50, 4.40, 1, main_ou_line=2.75),
+    ])
+    assert validate_consensus(payload)["passed"] is True
+    assert payload["over_under_2_5"] is None
+    assert payload["surface_consensus_eligibility"]["over_under_2_5"] is False
 
 
 def test_duplicate_provider_group_fails_closed():
