@@ -1,0 +1,48 @@
+name: Football V5.0.1 AH-Constrained Blend Debug
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/football-v501-ah-constrained-dynamic-blend-debug.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run and capture blend validation
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/run_ah_constrained_dynamic_blend_v501.py > /tmp/blend.log 2>&1
+          rc=$?
+          mkdir -p football-data/manifests
+          {
+            echo "return_code=$rc"
+            echo "--- output ---"
+            cat /tmp/blend.log
+          } > football-data/manifests/ah_constrained_dynamic_blend_v501_debug.txt
+          exit 0
+      - name: Commit debug and any research receipts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/ah_constrained_dynamic_blend_v501_debug.txt
+          git add football-data/manifests/ah_constrained_dynamic_blend_v501_status.json || true
+          git add football-data/manifests/ah_constrained_dynamic_blend_v501 || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist AH-constrained blend debug log"
+          git pull --rebase origin main
+          git push origin HEAD:main
