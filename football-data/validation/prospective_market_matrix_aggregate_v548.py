@@ -11,6 +11,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = ROOT / "config" / "prospective_market_matrix_validation_v548.json"
+CONSENSUS_AUDIT = ROOT / "manifests" / "prospective_market_consensus_v554_status.json"
 EVIDENCE = ROOT / "evidence" / "market_matrix_prospective_outcomes"
 OUT = ROOT / "manifests" / "prospective_market_matrix_validation_v548_status.json"
 
@@ -63,13 +64,28 @@ def _constraint_residual(audit: dict[str, Any]) -> float:
     return 1.0
 
 
+def _load_consensus_audit() -> dict[str, Any]:
+    if not CONSENSUS_AUDIT.exists():
+        return {}
+    try:
+        return json.loads(CONSENSUS_AUDIT.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def main() -> int:
     cfg = json.loads(CFG.read_text(encoding="utf-8"))
     eligible = set(cfg["eligible_domains"])
     expected_profiles = dict(cfg["eligible_profiles"])
+    consensus_audit = _load_consensus_audit()
+    consensus_counts = dict(consensus_audit.get("competition_counts") or {})
+    ou25_counts = dict(consensus_audit.get("ou25_eligible_competition_counts") or {})
+    minimum_consensus = int(cfg["minimum_valid_consensus_snapshots_per_domain"])
     all_rows = []
     invalid_files = []
     excluded_profile_rows = []
+    excluded_market_input_rows = []
+
     for path in sorted(EVIDENCE.glob("*.json")) if EVIDENCE.exists() else []:
         try:
             row = json.loads(path.read_text(encoding="utf-8"))
@@ -78,6 +94,13 @@ def main() -> int:
             continue
         cid = str(row.get("competition_id") or "")
         if row.get("status") != "SCORED_SHADOW_ROW" or cid not in eligible:
+            continue
+        if row.get("market_input_kind") != "INDEPENDENT_PROVIDER_CONSENSUS" or not bool(row.get("promotion_evidence_eligible")):
+            excluded_market_input_rows.append({
+                "path": str(path.relative_to(ROOT)), "competition_id": cid,
+                "market_input_kind": row.get("market_input_kind"),
+                "promotion_evidence_eligible": bool(row.get("promotion_evidence_eligible")),
+            })
             continue
         expected_profile = expected_profiles.get(cid)
         if str(row.get("profile") or "") != str(expected_profile or ""):
@@ -112,7 +135,10 @@ def main() -> int:
         } if len(items) >= 20 else {}
         minimum_rows = int(cfg["minimum_evaluated_matches_after_formal_baseline_gate"])
         enough_rows = len(items) >= minimum_rows
+        raw_consensus_count = int(consensus_counts.get(cid, 0))
+        profile_consensus_count = int(ou25_counts.get(cid, 0)) if cid in {"GER_Bundesliga", "FRA_Ligue1"} else raw_consensus_count
         checks = {
+            "minimum_valid_consensus_snapshots": profile_consensus_count >= minimum_consensus,
             "minimum_evaluated_matches": enough_rows,
             "one_x_two_brier_point_nonworse": delta["one_x_two_brier"] <= 0.0,
             "one_x_two_rps_point_nonworse": delta["one_x_two_rps"] <= 0.0,
@@ -127,12 +153,14 @@ def main() -> int:
                 float(bootstrap["one_x_two_brier"]["ci95_upper"]) < 0.0 or float(bootstrap["one_x_two_rps"]["ci95_upper"]) < 0.0
             ),
         }
-        readiness = enough_rows and all(checks.values())
+        readiness = all(checks.values())
         key = f"{cid}|{profile_hash}|{profile_name}"
         reports[key] = {
             "competition_id": cid,
             "profile_hash": profile_hash,
             "profile": profile_name,
+            "valid_consensus_count": raw_consensus_count,
+            "profile_eligible_consensus_count": profile_consensus_count,
             "evaluated_match_count": len(items),
             "formal": formal, "candidate": candidate, "candidate_minus_formal": delta,
             "bootstrap": bootstrap, "readiness_checks": checks,
@@ -142,21 +170,26 @@ def main() -> int:
             ready_domains.append(cid)
 
     payload = {
-        "schema_version": "V5.4.9-prospective-market-matrix-validation-aggregate-r2",
+        "schema_version": "V5.5.5-prospective-market-matrix-validation-aggregate-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "consensus_audit_status": consensus_audit.get("status") if consensus_audit else "MISSING",
+        "consensus_competition_counts": consensus_counts,
+        "consensus_ou25_counts": ou25_counts,
+        "promotion_market_input_kind": "INDEPENDENT_PROVIDER_CONSENSUS",
         "evidence_file_count": len(all_rows),
         "unique_scored_match_count": len(rows),
         "duplicate_rows_excluded": sum(duplicates.values()),
         "duplicate_match_keys": duplicates,
         "invalid_files": invalid_files,
         "excluded_profile_rows": excluded_profile_rows,
+        "excluded_market_input_rows": excluded_market_input_rows,
         "reports": reports,
         "shadow_promotion_ready_domains": sorted(set(ready_domains)),
         "status": "NO_OUTCOME_EVIDENCE_YET" if not rows else "PASS",
         "formal_promotion": False,
         "formal_weight_change": False,
         "probability_change": False,
-        "governance": "Readiness is shadow evidence only. Rows from superseded or non-matching profiles are excluded. A later CURRENT-authorized promotion receipt is mandatory before any formal model change."
+        "governance": "Promotion readiness requires synchronized independent-provider consensus evidence. Single-provider rows remain diagnostic and are excluded. A later CURRENT-authorized promotion receipt is mandatory before any formal model change."
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
