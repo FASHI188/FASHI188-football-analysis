@@ -1,0 +1,79 @@
+name: football-direct-sportsinteraction-probe-v5515
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_sportsinteraction_probe_v5515.py"
+      - ".github/workflows/football-direct-sportsinteraction-probe-v5515.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-sportsinteraction-probe-v5515
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/direct_sportsinteraction_probe_v5515.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run first-party Sports Interaction probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_sportsinteraction_probe_v5515.py
+
+      - name: Validate fail-closed receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_sportsinteraction_probe_v5515_status.json')
+          if not p.exists():
+              raise SystemExit('Sports Interaction probe receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'entain_sportsinteraction':
+              raise SystemExit('provider_group must remain entain_sportsinteraction')
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change','consensus_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          print(json.dumps({
+              'status': data.get('status'),
+              'soccer_sport_id': (data.get('sports_probe') or {}).get('soccer_sport_id'),
+              'fixture_count': (data.get('fixture_probe') or {}).get('fixture_count', 0),
+              'balanced_market_count': (data.get('fixture_probe') or {}).get('balanced_market_count', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist probe evidence safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/sportsinteraction/ \
+            --message-prefix "audit(football): persist V5.5.15 direct Sports Interaction probe"
+
+      - name: Fail workflow only if probe execution failed
+        if: steps.probe.outcome != 'success'
+        run: exit 1
