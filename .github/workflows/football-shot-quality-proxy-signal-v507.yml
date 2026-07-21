@@ -1,0 +1,52 @@
+name: football-shot-quality-proxy-signal-v507
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/shot_quality_proxy_challenger_v507.json"
+      - "football-data/manifests/shot_event_data_readiness_v506_status.json"
+      - "football-data/validation/shot_quality_proxy_signal_oof_v507.py"
+      - ".github/workflows/football-shot-quality-proxy-signal-v507.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-shot-quality-proxy-signal-v507
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run frozen chronological discovery OOF
+        run: |
+          python -m py_compile football-data/validation/shot_quality_proxy_signal_oof_v507.py
+          python football-data/validation/shot_quality_proxy_signal_oof_v507.py \
+            --print-summary
+
+      - name: Commit discovery adjudication
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/shot_quality_proxy_signal_oof_v507_status.json \
+            football-data/manifests/shot_quality_proxy_signal_oof_v507
+          if git diff --cached --quiet; then
+            echo "No discovery receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist shot-quality proxy discovery OOF"
+          git pull --rebase origin main
+          git push
