@@ -84,13 +84,9 @@ def adjudicate_shot_proxy() -> dict[str, Any]:
 
 
 def adjudicate_transfermarkt_value() -> dict[str, Any]:
-    # Match-level starter valuation coverage is useful but complete fresh 22-player
-    # coverage is insufficient for a unified formal model.
     path = "manifests/lineup_valuation_readiness_v518_status.json"
     r = _read(path)
     if not r:
-        # Preserve the conclusion even if the historical manifest used a nearby
-        # versioned name; the layer remains auxiliary until a complete receipt exists.
         return _state(
             "TRANSFERMARKT_PLAYER_VALUE", path, "AUXILIARY_ONLY",
             "Historical valuation source is useful for player-importance context, but complete fresh 22-starter coverage is not established here.",
@@ -100,6 +96,58 @@ def adjudicate_transfermarkt_value() -> dict[str, Any]:
         "TRANSFERMARKT_PLAYER_VALUE", path, "AUXILIARY_ONLY",
         "Starter-slot valuation coverage is high, but complete fresh 22-player match coverage is insufficient for a five-league primary model.",
         next_action="Keep as conditional player-importance evidence; no direct probability override.",
+    )
+
+
+def adjudicate_market_ceiling() -> dict[str, Any]:
+    path = "manifests/retrospective_market_outcome_ceiling_v522_status.json"
+    r = _read(path)
+    if not r or r.get("status") != "PASS":
+        return _state("RETROSPECTIVE_MARKET_CEILING", path, "EVIDENCE_INCOMPLETE", "Five-league retrospective market ceiling receipt is missing or incomplete.")
+    reports = r.get("reports") or {}
+    improved = []
+    for cid, report in reports.items():
+        formal = report.get("formal") or {}
+        closing = report.get("market_closing") or {}
+        if (
+            float(closing.get("brier") or 1e9) < float(formal.get("brier") or -1e9)
+            and float(closing.get("rps") or 1e9) < float(formal.get("rps") or -1e9)
+        ):
+            improved.append(cid)
+    return _state(
+        "RETROSPECTIVE_MARKET_CEILING", path, "HIGHEST_RESEARCH_PRIORITY_REFERENCE_ONLY",
+        f"Retrospective synchronized-looking market surfaces improve both Brier and RPS over the formal baseline in {len(improved)}/5 audited leagues: {improved}. Historical quote timestamps are unavailable, so this is priority evidence only, not PIT evidence.",
+        next_action="Prioritize real question-time synchronized 1X2+AH+OU capture and prospective evidence accumulation; never relabel 2025/26 retrospective prices as PIT.",
+    )
+
+
+def adjudicate_prospective_market() -> dict[str, Any]:
+    contract_path = "config/prospective_market_snapshot_contract_v523.json"
+    audit_path = "manifests/prospective_market_snapshot_v523_status.json"
+    contract = _read(contract_path)
+    audit = _read(audit_path)
+    if not contract:
+        return _state("PROSPECTIVE_MARKET_EVIDENCE", contract_path, "EVIDENCE_INCOMPLETE", "Prospective market evidence contract missing.")
+    if not audit:
+        return _state("PROSPECTIVE_MARKET_EVIDENCE", audit_path, "ACTIVE_COLLECTION_AUDIT_PENDING", "Contract exists but repository audit has not run yet.")
+    status = str(audit.get("status") or "")
+    valid = int(audit.get("valid_snapshot_count") or 0)
+    if status == "FAIL":
+        return _state(
+            "PROSPECTIVE_MARKET_EVIDENCE", audit_path, "EVIDENCE_REPOSITORY_FAIL_CLOSED",
+            f"Prospective snapshot repository contains invalid/duplicate evidence; valid count={valid}.",
+            next_action="Repair or quarantine invalid snapshots before any future OOF use.",
+        )
+    if status == "NO_SNAPSHOTS_YET":
+        return _state(
+            "PROSPECTIVE_MARKET_EVIDENCE", audit_path, "ACTIVE_COLLECTION_NO_SNAPSHOTS_YET",
+            "The timestamp/hash/synchronization contract and validator are active, but no genuine future PIT market snapshots have been accumulated yet.",
+            next_action="For future pre-match analyses, persist validated question-time synchronized 1X2+AH+OU snapshots before kickoff.",
+        )
+    return _state(
+        "PROSPECTIVE_MARKET_EVIDENCE", audit_path, "ACTIVE_COLLECTION_WITH_VALID_PIT_EVIDENCE",
+        f"Prospective repository currently contains {valid} validated PIT market snapshots.",
+        next_action="Continue prospective accumulation; only later chronological OOF may determine whether a market residual configuration is promotable.",
     )
 
 
@@ -142,7 +190,7 @@ def adjudicate_gdelt() -> dict[str, Any]:
     if not r or r.get("schema_version") != "V5.1.7-gdelt-recent-context-coverage-aggregate-r2":
         return _state(
             "GDELT_PREMATCH_CONTEXT", path, "EVIDENCE_INCOMPLETE",
-            "Exact-kickoff, rate-limit-aware aggregate r2 has not completed; old 429-contaminated coverage is superseded.",
+            "Exact-kickoff, rate-limit-aware, non-truncated aggregate r2 has not completed; old 429/cap-contaminated coverage is superseded.",
             next_action="Complete r2 coverage before deciding whether historical news can support a model or only an exception layer.",
         )
     passed = list(r.get("passed_domains") or [])
@@ -166,17 +214,20 @@ def main() -> int:
         adjudicate_player_xi(),
         adjudicate_shot_proxy(),
         adjudicate_transfermarkt_value(),
+        adjudicate_market_ceiling(),
+        adjudicate_prospective_market(),
         adjudicate_clubelo(),
         adjudicate_gdelt(),
     ]
     formal_promotions = [x for x in layers if int(x.get("formal_weight") or 0) > 0]
     payload = {
-        "schema_version": "V5.2.1-external-signal-final-adjudication-r1",
+        "schema_version": "V5.2.1-external-signal-final-adjudication-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "layers": layers,
         "formal_promotion_count": len(formal_promotions),
         "formal_probability_change_authorized": False,
         "current_formal_rule_change": False,
+        "research_priority": "PROSPECTIVE_SYNCHRONIZED_MARKET_EVIDENCE_FIRST",
         "status": "COMPLETE" if all(x["adjudication"] != "EVIDENCE_INCOMPLETE" for x in layers) else "PARTIAL_WAITING_EVIDENCE",
         "governance": (
             "This is a read-only research adjudicator. It cannot grant nonzero formal weight or modify CURRENT. "
