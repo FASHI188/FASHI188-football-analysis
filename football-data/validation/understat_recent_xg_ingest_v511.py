@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import urllib.request
@@ -27,13 +28,16 @@ def _fetch_json(url: str):
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; FASHI188-football-analysis/1.0; research audit)",
             "Accept": "application/json,text/plain,*/*",
+            "Accept-Encoding": "gzip",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://understat.com/"
         },
     )
     with urllib.request.urlopen(req, timeout=60) as response:
         content = response.read()
-    return json.loads(content.decode("utf-8")), content
+        encoding = str(response.headers.get("Content-Encoding") or "").lower()
+    decoded_bytes = gzip.decompress(content) if encoding == "gzip" or content[:2] == b"\x1f\x8b" else content
+    return json.loads(decoded_bytes.decode("utf-8")), content, encoding
 
 
 def _as_float(value):
@@ -95,7 +99,7 @@ def main() -> int:
         league = spec["understat_league"]
         url = f"https://understat.com/getLeagueData/{league}/2025"
         try:
-            payload, content = _fetch_json(url)
+            payload, content, content_encoding = _fetch_json(url)
             data = payload.get("dates") or []
             rows = []
             for item in data:
@@ -109,7 +113,8 @@ def main() -> int:
             reports[competition_id] = {
                 "status": "PASS" if len(rows) >= min_rows else "FAIL_BELOW_MINIMUM_MATCH_COUNT",
                 "source_url": url,
-                "source_json_sha256": _sha256_bytes(content),
+                "source_payload_sha256": _sha256_bytes(content),
+                "content_encoding": content_encoding,
                 "date_record_count": len(data),
                 "result_xg_row_count": len(rows),
                 "minimum_required": min_rows,
@@ -123,7 +128,7 @@ def main() -> int:
 
     passed = [k for k, v in reports.items() if v["status"] == "PASS"]
     manifest = {
-        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r3",
+        "schema_version": "V5.1.1-understat-recent-xg-ingest-status-r4",
         "generated_at_utc": observed_at,
         "season": "2025/26",
         "endpoint_semantics": "Understat getLeagueData AJAX JSON; match rows from dates[]",
