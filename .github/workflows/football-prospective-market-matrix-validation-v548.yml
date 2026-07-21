@@ -1,0 +1,47 @@
+name: football-prospective-market-matrix-validation-v548
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/prospective_market_matrix_validation_v548.json"
+      - "football-data/config/market_matrix_projection_final_registry_v531.json"
+      - "football-data/evidence/market_matrix_prospective_outcomes/**"
+      - "football-data/validation/prospective_market_matrix_outcome_v548.py"
+      - "football-data/validation/prospective_market_matrix_aggregate_v548.py"
+      - ".github/workflows/football-prospective-market-matrix-validation-v548.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-prospective-market-matrix-validation-v548
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check prospective scorer and aggregate
+        run: |
+          python -m py_compile \
+            football-data/validation/prospective_market_matrix_outcome_v548.py \
+            football-data/validation/prospective_market_matrix_aggregate_v548.py
+      - name: Aggregate prospective outcome evidence
+        run: python football-data/validation/prospective_market_matrix_aggregate_v548.py
+      - name: Commit readiness receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/prospective_market_matrix_validation_v548_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "audit(football): persist prospective market matrix readiness"
+          git pull --rebase origin main
+          git push
