@@ -1,0 +1,55 @@
+name: football-lineup-latent-signal-v502
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/lineup_latent_signal_oof_v502.py"
+      - "football-data/manifests/lineup_match_identity_v502_status.json"
+      - "football-data/player_xi_links/ESP_LaLiga/**"
+      - "football-data/player_xi_links/GER_Bundesliga/**"
+      - ".github/workflows/football-lineup-latent-signal-v502.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-lineup-latent-signal-v502
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax gate
+        run: python -m py_compile football-data/validation/lineup_latent_signal_oof_v502.py
+
+      - name: Run chronological lineup-signal OOF
+        run: |
+          python football-data/validation/lineup_latent_signal_oof_v502.py \
+            --print-summary
+
+      - name: Commit research adjudication
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/lineup_latent_signal_oof_v502_status.json \
+            football-data/manifests/lineup_latent_signal_oof_v502
+          if git diff --cached --quiet; then
+            echo "No research receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist V5.0.2 lineup latent-signal OOF"
+          git pull --rebase origin main
+          git push
