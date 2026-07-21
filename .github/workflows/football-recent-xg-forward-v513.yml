@@ -7,6 +7,8 @@ on:
       - "football-data/config/recent_xg_forward_shadow_v513.json"
       - "football-data/evidence/xg/understat_2025_26_linked/**"
       - "football-data/validation/recent_xg_forward_shadow_v513.py"
+      - "football-data/validation/recent_xg_forward_domain_v513.py"
+      - "football-data/validation/recent_xg_forward_aggregate_v513.py"
       - ".github/workflows/football-recent-xg-forward-v513.yml"
 
 permissions:
@@ -17,9 +19,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  domain:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            football-data/validation/recent_xg_forward_shadow_v513.py \
+            football-data/validation/recent_xg_forward_domain_v513.py
+      - name: Run domain shadow
+        run: |
+          mkdir -p tmp-xg-v513
+          python football-data/validation/recent_xg_forward_domain_v513.py \
+            --competition "${{ matrix.competition }}" \
+            --out "tmp-xg-v513/${{ matrix.competition }}.json"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: xg-v513-${{ matrix.competition }}
+          path: tmp-xg-v513/${{ matrix.competition }}.json
+          if-no-files-found: error
+
+  aggregate:
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,12 +65,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Syntax check
-        run: python -m py_compile football-data/validation/recent_xg_forward_shadow_v513.py
-      - name: Run five-domain recent xG chronological shadow
-        run: python football-data/validation/recent_xg_forward_shadow_v513.py
+      - name: Download domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: xg-v513-*
+          merge-multiple: true
+          path: football-data/manifests/recent_xg_forward_shadow_v513
+      - name: Aggregate
+        run: |
+          python -m py_compile football-data/validation/recent_xg_forward_aggregate_v513.py
+          python football-data/validation/recent_xg_forward_aggregate_v513.py
       - name: Commit xG forward receipts
-        if: always()
         run: |
           find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
           git config user.name "github-actions[bot]"
