@@ -1,0 +1,72 @@
+name: football-kambi-four-league-discovery-v5523
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/kambi_four_league_discovery_v5523.py"
+      - ".github/workflows/football-kambi-four-league-discovery-v5523.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kambi-four-league-discovery-v5523
+  cancel-in-progress: false
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile discovery
+        run: |
+          python -m py_compile football-data/validation/kambi_four_league_discovery_v5523.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run discovery
+        run: python football-data/validation/kambi_four_league_discovery_v5523.py
+
+      - name: Validate read-only receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/kambi_four_league_discovery_v5523_status.json')
+          if not p.exists():
+              raise SystemExit('V5.5.23 receipt missing')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          if d.get('provider_group') != 'kambi':
+              raise SystemExit('provider_group must remain kambi')
+          if d.get('formal_snapshot_written') is not False:
+              raise SystemExit('discovery may not write formal snapshots')
+          if int(d.get('promotion_sample_count_change', -1)) != 0:
+              raise SystemExit('discovery may not create promotion samples')
+          if d.get('formal_weight_change') is not False or d.get('probability_change') is not False:
+              raise SystemExit('discovery may not mutate formal weights/probabilities')
+          print(json.dumps({
+              'status': d.get('status'),
+              'event_count': d.get('event_count', 0),
+              'four_league_matched_event_count': d.get('four_league_matched_event_count', 0),
+              'target_counts': {k: v.get('matched_event_count', 0) for k, v in (d.get('target_leagues') or {}).items()},
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.23 Kambi four-league discovery"
