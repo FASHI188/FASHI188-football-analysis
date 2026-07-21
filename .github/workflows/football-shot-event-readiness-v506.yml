@@ -1,0 +1,49 @@
+name: football-shot-event-readiness-v506
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/processed/**"
+      - "football-data/config/platform_registry.json"
+      - "football-data/validation/shot_event_data_readiness_v506.py"
+      - ".github/workflows/football-shot-event-readiness-v506.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-shot-event-readiness-v506
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run 17-domain shot/event readiness audit
+        run: |
+          python -m py_compile football-data/validation/shot_event_data_readiness_v506.py
+          python football-data/validation/shot_event_data_readiness_v506.py \
+            --print-summary
+
+      - name: Commit readiness receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/shot_event_data_readiness_v506_status.json
+          if git diff --cached --quiet; then
+            echo "No readiness receipt changed."
+            exit 0
+          fi
+          git commit -m "audit(football): persist V5.0.6 shot-event readiness"
+          git pull --rebase origin main
+          git push
