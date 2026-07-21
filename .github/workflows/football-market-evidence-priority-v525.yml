@@ -1,0 +1,44 @@
+name: football-market-evidence-priority-v525
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/manifests/retrospective_market_all17_ceiling_v524_status.json"
+      - "football-data/validation/market_evidence_priority_v525.py"
+      - ".github/workflows/football-market-evidence-priority-v525.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-market-evidence-priority-v525
+  cancel-in-progress: true
+
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Rank evidence acquisition priorities
+        run: |
+          python -m py_compile football-data/validation/market_evidence_priority_v525.py
+          python football-data/validation/market_evidence_priority_v525.py
+      - name: Commit priority receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/market_evidence_priority_v525_status.json
+          if git diff --cached --quiet; then
+            echo "No market priority result changed."
+            exit 0
+          fi
+          git commit -m "governance(football): persist market evidence priority"
+          git pull --rebase origin main
+          git push
