@@ -1,0 +1,57 @@
+name: football-player-xi-replication-v503
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/manifests/lineup_match_identity_v502_status.json"
+      - "football-data/player_xi_links/ENG_PremierLeague/**"
+      - "football-data/player_xi_links/ITA_SerieA/**"
+      - "football-data/player_xi_links/FRA_Ligue1/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-player-xi-replication-v503
+  cancel-in-progress: true
+
+jobs:
+  replicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax gate
+        run: |
+          python -m py_compile \
+            football-data/validation/player_xi_residual_signal_oof_v502.py \
+            football-data/validation/player_xi_residual_replication_v503.py
+
+      - name: Run frozen independent replication
+        run: |
+          python football-data/validation/player_xi_residual_replication_v503.py \
+            --print-summary
+
+      - name: Commit replication adjudication
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/player_xi_residual_replication_v503_status.json \
+            football-data/manifests/player_xi_residual_replication_v503
+          if git diff --cached --quiet; then
+            echo "No replication receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist V5.0.3 independent player-XI replication"
+          git pull --rebase origin main
+          git push
