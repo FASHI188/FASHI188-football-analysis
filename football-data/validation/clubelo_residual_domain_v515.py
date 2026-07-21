@@ -15,16 +15,31 @@ if str(VALIDATION) not in sys.path:
 import clubelo_residual_oof_v515 as core
 
 
+def _identity_receipt_guard(competition_id: str) -> None:
+    ingest = core.load_json(core.INGEST_STATUS)
+    if ingest.get("schema_version") != "V5.1.5-clubelo-history-ingest-r2":
+        raise RuntimeError(
+            f"superseded ClubElo identity receipt: {ingest.get('schema_version')}; "
+            "require V5.1.5-clubelo-history-ingest-r2"
+        )
+    if competition_id == "ESP_LaLiga":
+        mapping = core.load_json(core.EVIDENCE_ROOT / "ESP_LaLiga_team_map.json")
+        ath = (mapping.get("mappings") or {}).get("Ath Madrid") or {}
+        if ath.get("clubelo_name") != "Atletico" or ath.get("status") != "PASS":
+            raise RuntimeError(f"ClubElo identity invariant failed for Ath Madrid: {ath}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--competition", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     try:
+        _identity_receipt_guard(args.competition)
         report = core.validate_domain(args.competition)
     except Exception as exc:
         report = {
-            "schema_version": "V5.1.5-clubelo-residual-oof-domain-execution-r1",
+            "schema_version": "V5.1.5-clubelo-residual-oof-domain-execution-r2",
             "competition_id": args.competition,
             "status": "EXECUTION_FAILURE_KEEP_FORMAL_WEIGHT_0",
             "error": f"{type(exc).__name__}: {exc}",
