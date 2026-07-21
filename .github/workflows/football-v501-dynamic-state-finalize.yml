@@ -1,0 +1,69 @@
+name: Football V5.0.1 Dynamic State Evidence Finalize
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/football-v501-dynamic-state-finalize.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v501-dynamic-state-finalize
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile evidence chain
+        run: |
+          python -m py_compile football-data/validation/adjudicate_bayesian_dynamic_state_v500.py
+          python -m py_compile football-data/validation/adjudicate_bayesian_dynamic_state_v501.py
+          python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v501_same_day_safe.py
+          python -m py_compile football-data/validation/validate_bayesian_dynamic_state_second_stage_v500.py
+          python -m py_compile football-data/validation/validate_bayesian_dynamic_state_second_stage_v501.py
+          python -m py_compile football-data/validation/retrospective_ah_dynamic_state_v501.py
+      - name: Adjudicate same-day-safe replay
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/adjudicate_bayesian_dynamic_state_v501.py
+      - name: Run same-day-safe fixed-profile second stage
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/validate_bayesian_dynamic_state_second_stage_v501.py
+      - name: Run retrospective AH comparison
+        id: ah
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/retrospective_ah_dynamic_state_v501.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit finalized evidence chain
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/bayesian_dynamic_state_adjudication_v501_status.json
+          git add football-data/config/bayesian_dynamic_state_shadow_registry_v501.json
+          git add football-data/manifests/bayesian_dynamic_state_second_stage_v501_status.json
+          git add football-data/manifests/bayesian_dynamic_state_second_stage_v501 || true
+          git add football-data/manifests/retrospective_ah_dynamic_state_v501_status.json || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): finalize same-day-safe dynamic-state evidence chain"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve AH failure after core evidence persistence
+        if: steps.ah.outputs.rc != '0'
+        run: exit 1
