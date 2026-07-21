@@ -1,0 +1,86 @@
+name: football-clubelo-history-fast-v539
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/clubelo_history_domain_fast_v539.py"
+      - ".github/workflows/football-clubelo-history-fast-v539.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-clubelo-history-fast-v539
+  cancel-in-progress: true
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        competition:
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - GER_Bundesliga
+          - ITA_SerieA
+          - FRA_Ligue1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run one r2 ClubElo domain
+        run: |
+          mkdir -p tmp-clubelo-v539
+          python -m py_compile \
+            football-data/validation/clubelo_history_ingest_v515.py \
+            football-data/validation/clubelo_history_domain_fast_v539.py
+          python football-data/validation/clubelo_history_domain_fast_v539.py \
+            --competition "${{ matrix.competition }}" \
+            --report "tmp-clubelo-v539/${{ matrix.competition }}.json" \
+            --history "tmp-clubelo-v539/${{ matrix.competition }}.jsonl"
+      - name: Upload domain receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clubelo-v539-${{ matrix.competition }}
+          path: tmp-clubelo-v539/*
+          if-no-files-found: warn
+
+  aggregate:
+    if: always()
+    needs: domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: clubelo-v539-*
+          merge-multiple: true
+          path: tmp-clubelo-v539-all
+      - name: Aggregate r2 evidence
+        run: |
+          python football-data/validation/clubelo_history_aggregate_v515.py --input tmp-clubelo-v539-all
+      - name: Commit r2 evidence or partial diagnostic
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/evidence/clubelo_v515 \
+            football-data/manifests/clubelo_history_ingest_v515_status.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist ClubElo fast r2 history evidence"
+          git pull --rebase origin main
+          git push
