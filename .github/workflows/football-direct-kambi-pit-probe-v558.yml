@@ -1,0 +1,81 @@
+name: football-direct-kambi-pit-probe-v558
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_kambi_pit_probe_v558.py"
+      - ".github/workflows/football-direct-kambi-pit-probe-v558.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-kambi-pit-probe-v558
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/direct_kambi_pit_probe_v558.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run Kambi direct-provider probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_kambi_pit_probe_v558.py
+
+      - name: Validate fail-closed contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_kambi_pit_probe_v558_status.json')
+          if not p.exists():
+              raise SystemExit('Kambi probe manifest missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          required_false = ['formal_snapshot_written', 'promotion_consensus_written', 'formal_weight_change', 'probability_change']
+          bad = [key for key in required_false if data.get(key) is not False]
+          if bad:
+              raise SystemExit(f'fail-closed contract violated: {bad}')
+          if data.get('provider_group') != 'kambi':
+              raise SystemExit('provider_group must remain kambi')
+          if data.get('governance', {}).get('different_kambi_operator_frontends_count_as_independent_providers') is not False:
+              raise SystemExit('Kambi operator independence guard violated')
+          print(json.dumps({
+              'status': data.get('status'),
+              'reachable_candidate_count': data.get('reachable_candidate_count', 0),
+              'matched_target_count_across_candidates': data.get('matched_target_count_across_candidates', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist generated probe evidence safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/ \
+            --message-prefix "audit(football): persist V5.5.8 direct Kambi PIT probe"
+
+      - name: Fail workflow only on execution failure
+        if: steps.probe.outcome != 'success'
+        run: exit 1
