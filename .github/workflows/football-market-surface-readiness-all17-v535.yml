@@ -1,0 +1,43 @@
+name: football-market-surface-readiness-all17-v535
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/market_surface_readiness_all17_v535.py"
+      - ".github/workflows/football-market-surface-readiness-all17-v535.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-market-surface-readiness-all17-v535
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Scan latest-complete-season closing market surfaces
+        run: |
+          python -m py_compile football-data/validation/market_surface_readiness_all17_v535.py
+          python football-data/validation/market_surface_readiness_all17_v535.py
+      - name: Commit readiness receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/market_surface_readiness_all17_v535_status.json
+          if git diff --cached --quiet; then
+            echo "No market surface readiness changed."
+            exit 0
+          fi
+          git commit -m "audit(football): persist 17-domain market surface readiness"
+          git pull --rebase origin main
+          git push
