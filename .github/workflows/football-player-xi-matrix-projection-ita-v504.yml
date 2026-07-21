@@ -1,0 +1,59 @@
+name: football-player-xi-matrix-projection-ita-v504
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/manifests/player_xi_gate_adjudication_v503_status.json"
+      - "football-data/manifests/player_xi_residual_replication_v503/ITA_SerieA.json"
+      - "football-data/validation/player_xi_matrix_projection_ita_v504.py"
+      - "football-data/tests/test_player_xi_matrix_projection_v504.py"
+      - ".github/workflows/football-player-xi-matrix-projection-ita-v504.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-player-xi-matrix-projection-ita-v504
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax and projection invariants
+        run: |
+          python -m py_compile \
+            football-data/validation/player_xi_matrix_projection_ita_v504.py \
+            football-data/tests/test_player_xi_matrix_projection_v504.py
+          python football-data/tests/test_player_xi_matrix_projection_v504.py
+
+      - name: Run ITA unified-matrix chronological OOF
+        run: |
+          python football-data/validation/player_xi_matrix_projection_ita_v504.py \
+            --print-summary
+
+      - name: Commit matrix projection adjudication
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/manifests/player_xi_matrix_projection_ita_v504_status.json \
+            football-data/manifests/player_xi_matrix_projection_ita_v504
+          if git diff --cached --quiet; then
+            echo "No matrix projection receipt changed."
+            exit 0
+          fi
+          git commit -m "research(football): persist ITA player-XI matrix projection OOF"
+          git pull --rebase origin main
+          git push
