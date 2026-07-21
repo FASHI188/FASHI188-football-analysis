@@ -17,7 +17,8 @@ for path in (VALIDATION, ENGINE):
         sys.path.insert(0, str(path))
 
 from platform_core import canonical_json_bytes, sha256_bytes, score_matrix_rows
-from prospective_market_matrix_shadow_v531 import evaluate as evaluate_shadow
+from prospective_market_matrix_shadow_v531 import evaluate as evaluate_dual_surface_shadow
+from prospective_market_matrix_por_v543 import evaluate as evaluate_por_1x2_shadow
 from prospective_market_snapshot_v523 import validate as validate_snapshot
 
 REGISTRY = ROOT / "config" / "market_matrix_projection_final_registry_v531.json"
@@ -71,7 +72,6 @@ def _metrics(matrix: list[dict[str, Any]], hg: int, ag: int) -> dict[str, float]
         total_rps += (running - observed_cdf) ** 2
     total_rps /= 7.0
     actual_over = 1.0 if hg + ag >= 3 else 0.0
-    p_over = min(1.0 - EPS, max(EPS, p_over25))
     return {
         "one_x_two_accuracy": 1.0 if pick == actual else 0.0,
         "one_x_two_brier": brier,
@@ -86,6 +86,13 @@ def _metrics(matrix: list[dict[str, Any]], hg: int, ag: int) -> dict[str, float]
     }
 
 
+def _evaluate_registered_shadow(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]]) -> dict[str, Any]:
+    cid = str(snapshot.get("competition_id") or "")
+    if cid == "POR_PrimeiraLiga":
+        return evaluate_por_1x2_shadow(snapshot, formal_matrix)
+    return evaluate_dual_surface_shadow(snapshot, formal_matrix)
+
+
 def score(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]], home_goals: int, away_goals: int) -> dict[str, Any]:
     snap_validation = validate_snapshot(snapshot)
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
@@ -93,9 +100,9 @@ def score(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]], home_go
     registry_sha = _sha(registry)
     cfg_sha = _sha(cfg)
     formal_sha = _sha(formal_matrix)
-    shadow = evaluate_shadow(snapshot, formal_matrix)
+    shadow = _evaluate_registered_shadow(snapshot, formal_matrix)
     result = {
-        "schema_version": "V5.4.8-prospective-market-matrix-outcome-r1",
+        "schema_version": "V5.4.9-prospective-market-matrix-outcome-r2",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "competition_id": str(snapshot.get("competition_id") or ""),
         "season": str(snapshot.get("season") or ""),
