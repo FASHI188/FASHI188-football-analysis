@@ -20,17 +20,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Compile probe
-        run: python -m py_compile football-data/validation/direct_1xbet_pit_probe_v557.py
+        run: |
+          python -m py_compile football-data/validation/direct_1xbet_pit_probe_v557.py
+          rm -rf football-data/validation/__pycache__
 
       - name: Run direct-provider probe
         id: probe
@@ -59,18 +61,16 @@ jobs:
           }, ensure_ascii=False, indent=2))
           PY
 
-      - name: Commit probe evidence and status
+      - name: Persist probe evidence and status safely
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A -- \
-            football-data/manifests/direct_1xbet_pit_probe_v557_status.json \
-            football-data/evidence/direct_provider_probes/1xbet
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "audit(football): persist V5.5.7 direct 1xBet PIT probe"
-          git pull --rebase origin main
-          git push
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/1xbet/ \
+            --message-prefix "audit(football): persist V5.5.7 direct 1xBet PIT probe"
 
       - name: Fail workflow only on execution failure
         if: steps.probe.outcome != 'success'
