@@ -22,7 +22,7 @@ def _matrix():
     return [{"home_goals": h, "away_goals": a, "probability": p} for (h, a), p in raw.items()]
 
 
-def _snapshot(cid: str, group: str, minute: int, *, ou_line: float = 2.5):
+def _snapshot(cid: str, group: str, minute: int, *, ou_line: float = 2.5, ou25_reference: tuple[float, float] | None = None):
     ts = f"2026-08-15T15:0{minute}:00+00:00"
     row = {
         "competition_id": cid,
@@ -42,18 +42,28 @@ def _snapshot(cid: str, group: str, minute: int, *, ou_line: float = 2.5):
         "asian_handicap": {"line": -1.0, "home": 1.95, "away": 1.95},
         "over_under": {"line": ou_line, "over": 1.91, "under": 1.99},
     }
+    if ou25_reference is not None:
+        row["research_reference_surfaces"] = {
+            "over_under_2_5": {
+                "line": 2.5,
+                "over": ou25_reference[0],
+                "under": ou25_reference[1],
+                "observed_at_utc": ts,
+                "role": "fixed_research_reference_surface",
+            }
+        }
     row["raw_snapshot_sha256"] = canonical_sha256(row)
     return row
 
 
-def _consensus(cid: str, *, ou_lines=(2.5, 2.5)):
+def _consensus(cid: str, *, ou_lines=(2.5, 2.5), ou25_refs=(None, None)):
     return build([
-        _snapshot(cid, "book_a", 0, ou_line=ou_lines[0]),
-        _snapshot(cid, "book_b", 1, ou_line=ou_lines[1]),
+        _snapshot(cid, "book_a", 0, ou_line=ou_lines[0], ou25_reference=ou25_refs[0]),
+        _snapshot(cid, "book_b", 1, ou_line=ou_lines[1], ou25_reference=ou25_refs[1]),
     ])
 
 
-def test_ger_consensus_dual_surface_matrix_is_ready():
+def test_ger_consensus_dual_surface_matrix_is_ready_when_main_ou_is_25():
     result = evaluate_matrix(_consensus("GER_Bundesliga"), _matrix())
     assert result["shadow_status"] == "SHADOW_MARKET_MATRIX_READY"
     assert result["market_input_kind"] == "INDEPENDENT_PROVIDER_CONSENSUS"
@@ -62,15 +72,28 @@ def test_ger_consensus_dual_surface_matrix_is_ready():
     assert result["audit"]["max_constraint_residual"] <= 1e-10
 
 
+def test_ger_main_ou275_is_allowed_when_fixed_ou25_references_exist():
+    result = evaluate_matrix(
+        _consensus("GER_Bundesliga", ou_lines=(2.75, 2.75), ou25_refs=((1.72, 2.15), (1.76, 2.08))),
+        _matrix(),
+    )
+    assert result["shadow_status"] == "SHADOW_MARKET_MATRIX_READY"
+    assert result["main_ou_consensus"]["line"] == 2.75
+    assert result["fixed_ou25_consensus"]["line"] == 2.5
+    assert result["de_vigged_ou25_target"]
+
+
 def test_por_consensus_routes_to_1x2_only_even_when_ou_is_not_25():
     result = evaluate_matrix(_consensus("POR_PrimeiraLiga", ou_lines=(2.75, 2.75)), _matrix())
     assert result["shadow_status"] == "SHADOW_MARKET_MATRIX_READY"
     assert result["audit"]["method"] == "minimum_KL_partition_projection_1X2"
 
 
-def test_ger_requires_consensus_ou25_for_frozen_profile():
-    result = evaluate_matrix(_consensus("GER_Bundesliga", ou_lines=(2.5, 2.75)), _matrix())
+def test_ger_requires_fixed_ou25_consensus_if_main_line_is_not_25():
+    result = evaluate_matrix(_consensus("GER_Bundesliga", ou_lines=(2.75, 2.75)), _matrix())
     assert result["shadow_status"] == "OU25_CONSENSUS_REQUIRED_FOR_FROZEN_PROFILE"
+    assert result["observed_main_ou_consensus"]["line"] == 2.75
+    assert result["observed_ou25_consensus"] is None
 
 
 def test_timing_robust_selective_domain_uses_consensus_gap():
