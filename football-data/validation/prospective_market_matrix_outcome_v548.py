@@ -17,6 +17,8 @@ for path in (VALIDATION, ENGINE):
         sys.path.insert(0, str(path))
 
 from platform_core import canonical_json_bytes, sha256_bytes, score_matrix_rows
+from prospective_market_consensus_v554 import validate_consensus
+from prospective_market_consensus_shadow_v555 import evaluate_matrix as evaluate_consensus_matrix
 from prospective_market_matrix_shadow_v531 import evaluate as evaluate_dual_surface_shadow
 from prospective_market_matrix_por_v543 import evaluate as evaluate_por_1x2_shadow
 from prospective_market_snapshot_v523 import validate as validate_snapshot
@@ -86,45 +88,65 @@ def _metrics(matrix: list[dict[str, Any]], hg: int, ag: int) -> dict[str, float]
     }
 
 
-def _evaluate_registered_shadow(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]]) -> dict[str, Any]:
+def _evaluate_single_snapshot(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]]) -> dict[str, Any]:
     cid = str(snapshot.get("competition_id") or "")
     if cid == "POR_PrimeiraLiga":
         return evaluate_por_1x2_shadow(snapshot, formal_matrix)
     return evaluate_dual_surface_shadow(snapshot, formal_matrix)
 
 
-def score(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]], home_goals: int, away_goals: int) -> dict[str, Any]:
-    snap_validation = validate_snapshot(snapshot)
+def score(market_input: dict[str, Any], formal_matrix: list[dict[str, Any]], home_goals: int, away_goals: int) -> dict[str, Any]:
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     cfg = json.loads(VALIDATION_CFG.read_text(encoding="utf-8"))
     registry_sha = _sha(registry)
     cfg_sha = _sha(cfg)
     formal_sha = _sha(formal_matrix)
-    shadow = _evaluate_registered_shadow(snapshot, formal_matrix)
+    is_consensus = market_input.get("schema_version") == "V5.5.4-prospective-market-consensus-r1"
+    if is_consensus:
+        validation = validate_consensus(market_input)
+        shadow = evaluate_consensus_matrix(market_input, formal_matrix)
+        market_input_kind = "INDEPENDENT_PROVIDER_CONSENSUS"
+        promotion_eligible = bool(validation.get("passed")) and bool(market_input.get("promotion_evidence_eligible"))
+        freeze_utc = market_input.get("consensus_observed_at_utc")
+        market_hash = market_input.get("consensus_sha256")
+        provider_count = market_input.get("provider_count")
+    else:
+        validation = validate_snapshot(market_input)
+        shadow = _evaluate_single_snapshot(market_input, formal_matrix)
+        market_input_kind = "SINGLE_PROVIDER_SNAPSHOT_DIAGNOSTIC"
+        promotion_eligible = False
+        freeze_utc = market_input.get("freeze_utc")
+        market_hash = market_input.get("raw_snapshot_sha256")
+        provider_count = 1
+
+    cid = str(market_input.get("competition_id") or "")
     result = {
-        "schema_version": "V5.4.9-prospective-market-matrix-outcome-r2",
+        "schema_version": "V5.5.5-prospective-market-matrix-outcome-r3",
         "evaluated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "competition_id": str(snapshot.get("competition_id") or ""),
-        "season": str(snapshot.get("season") or ""),
-        "home_team": str(snapshot.get("home_team") or ""),
-        "away_team": str(snapshot.get("away_team") or ""),
-        "kickoff_utc": snapshot.get("kickoff_utc"),
-        "freeze_utc": snapshot.get("freeze_utc"),
-        "match_key": f"{snapshot.get('competition_id')}|{snapshot.get('season')}|{snapshot.get('kickoff_utc')}|{snapshot.get('home_team')}|{snapshot.get('away_team')}",
-        "snapshot_sha256": snapshot.get("raw_snapshot_sha256"),
+        "competition_id": cid,
+        "season": str(market_input.get("season") or ""),
+        "home_team": str(market_input.get("home_team") or ""),
+        "away_team": str(market_input.get("away_team") or ""),
+        "kickoff_utc": market_input.get("kickoff_utc"),
+        "freeze_utc": freeze_utc,
+        "match_key": f"{cid}|{market_input.get('season')}|{market_input.get('kickoff_utc')}|{market_input.get('home_team')}|{market_input.get('away_team')}",
+        "market_input_kind": market_input_kind,
+        "market_input_sha256": market_hash,
+        "provider_count": provider_count,
+        "promotion_evidence_eligible": promotion_eligible,
         "formal_matrix_sha256": formal_sha,
         "registry_sha256": registry_sha,
         "validation_config_sha256": cfg_sha,
-        "snapshot_contract_passed": bool(snap_validation.get("passed")),
-        "snapshot_errors": snap_validation.get("errors") or [],
+        "market_input_validation_passed": bool(validation.get("passed")),
+        "market_input_errors": validation.get("errors") or [],
         "shadow_status": shadow.get("shadow_status"),
         "formal_weight_change": False,
         "probability_change": False,
         "formal_promotion": False,
         "actual_score": {"home_goals": int(home_goals), "away_goals": int(away_goals)},
     }
-    if not snap_validation.get("passed"):
-        result["status"] = "INVALID_SNAPSHOT_FAIL_CLOSED"
+    if not validation.get("passed"):
+        result["status"] = "INVALID_MARKET_INPUT_FAIL_CLOSED"
         return result
     if shadow.get("shadow_status") != "SHADOW_MARKET_MATRIX_READY":
         result["status"] = "NO_ELIGIBLE_SHADOW_MATRIX"
@@ -147,14 +169,14 @@ def score(snapshot: dict[str, Any], formal_matrix: list[dict[str, Any]], home_go
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("snapshot")
+    parser.add_argument("market_input")
     parser.add_argument("formal_matrix")
     parser.add_argument("home_goals", type=int)
     parser.add_argument("away_goals", type=int)
     parser.add_argument("--out")
     args = parser.parse_args()
     payload = score(
-        json.loads(Path(args.snapshot).read_text(encoding="utf-8")),
+        json.loads(Path(args.market_input).read_text(encoding="utf-8")),
         json.loads(Path(args.formal_matrix).read_text(encoding="utf-8")),
         args.home_goals,
         args.away_goals,
