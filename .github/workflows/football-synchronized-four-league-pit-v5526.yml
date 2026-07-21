@@ -1,0 +1,138 @@
+name: football-synchronized-four-league-pit-v5526
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    paths:
+      - "football-data/config/current_season_team_identity_v5524.json"
+      - "football-data/validation/kambi_four_league_discovery_v5523.py"
+      - "football-data/validation/kambi_v523_adapter_v5511.py"
+      - "football-data/validation/kambi_four_league_capture_v5525.py"
+      - "football-data/validation/marathonbet_four_league_capture_v5522.py"
+      - "football-data/validation/prospective_market_consensus_strict_v5519.py"
+      - "football-data/validation/synchronized_four_league_consensus_v5526.py"
+      - ".github/workflows/football-synchronized-four-league-pit-v5526.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-synchronized-four-league-pit-v5526
+  cancel-in-progress: false
+
+jobs:
+  synchronized-four-league:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Freeze batch start
+        run: echo "BATCH_STARTED_AT_UTC=$(date -u +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
+
+      - name: Compile full four-league chain
+        run: |
+          python -m py_compile football-data/validation/kambi_four_league_discovery_v5523.py
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/validation/kambi_four_league_capture_v5525.py
+          python -m py_compile football-data/validation/marathonbet_four_league_capture_v5522.py
+          python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
+          python -m py_compile football-data/validation/synchronized_four_league_consensus_v5526.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Discover current Kambi league metadata
+        run: python football-data/validation/kambi_four_league_discovery_v5523.py
+
+      - name: Capture fresh Marathonbet four-league PIT
+        run: python football-data/validation/marathonbet_four_league_capture_v5522.py
+
+      - name: Capture fresh Kambi four-league PIT with independent identity/time crosscheck
+        run: |
+          python football-data/validation/kambi_four_league_capture_v5525.py \
+            --batch-start-utc "$BATCH_STARTED_AT_UTC"
+
+      - name: Build strict synchronized four-league consensus
+        run: |
+          python football-data/validation/synchronized_four_league_consensus_v5526.py \
+            --batch-start-utc "$BATCH_STARTED_AT_UTC"
+
+      - name: Validate four-league batch receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def load(path):
+              p = Path(path)
+              if not p.exists():
+                  raise SystemExit(f'missing receipt: {path}')
+              return json.loads(p.read_text(encoding='utf-8'))
+
+          m = load('football-data/manifests/marathonbet_four_league_capture_v5522_status.json')
+          k = load('football-data/manifests/kambi_four_league_capture_v5525_status.json')
+          c = load('football-data/manifests/synchronized_four_league_consensus_v5526_status.json')
+          d = load('football-data/manifests/kambi_four_league_discovery_v5523_status.json')
+
+          for label, row in [('marathon', m), ('kambi', k), ('consensus', c), ('discovery', d)]:
+              if row.get('formal_weight_change') is not False or row.get('probability_change') is not False:
+                  raise SystemExit(f'{label} unexpectedly changed weights/probabilities')
+
+          if int(m.get('unresolved_identity_count', -1)) != 0:
+              raise SystemExit(f"Marathon current-season identity unresolved: {m.get('unresolved_identity_count')}")
+
+          if k.get('identity_crosscheck_only_no_market_splicing') is not True:
+              raise SystemExit('Kambi identity crosscheck must explicitly prohibit market splicing')
+          if int(k.get('promotion_sample_count_change', -1)) != 0:
+              raise SystemExit('Kambi single-provider capture cannot create promotion samples')
+
+          if sorted(c.get('required_provider_groups') or []) != ['kambi', 'marathonbet']:
+              raise SystemExit('strict consensus provider groups changed unexpectedly')
+          if float(c.get('max_cross_provider_skew_seconds') or 0) != 300.0:
+              raise SystemExit('strict consensus synchronization gate must remain 300 seconds')
+          if c.get('formal_model_promotion') is not False:
+              raise SystemExit('evidence workflow may never self-promote a model')
+          for row in c.get('fixtures', []):
+              if row.get('promotion_evidence_eligible'):
+                  required = row.get('required_surface_consensus_eligibility') or {}
+                  if not all(required.get(key) is True for key in ('one_x_two','asian_handicap','over_under')):
+                      raise SystemExit('promotion-eligible fixture lacks strict three-surface consensus')
+                  if float(row.get('cross_provider_timestamp_spread_seconds') or 1e9) > 300.0:
+                      raise SystemExit('promotion-eligible fixture exceeds 300-second synchronization gate')
+
+          print(json.dumps({
+              'marathon_snapshots_written': m.get('formal_snapshot_count_written', 0),
+              'marathon_complete_surface_fixtures': m.get('complete_surface_fixture_count', 0),
+              'kambi_target_group_events': k.get('target_group_event_count', 0),
+              'kambi_crosschecked_events': k.get('crosschecked_event_count', 0),
+              'kambi_snapshots_written': k.get('formal_snapshot_count_written', 0),
+              'dual_provider_fixture_count': c.get('fresh_dual_provider_fixture_count', 0),
+              'strict_consensus_written': c.get('strict_consensus_count_written', 0),
+              'promotion_evidence_eligible_count': c.get('promotion_evidence_eligible_count', 0),
+              'research_only_line_mismatch_count': c.get('research_only_line_mismatch_count', 0),
+              'kambi_discovered_four_league_events': d.get('four_league_matched_event_count', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist synchronized four-league artifacts safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/league_targets/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/league_pages/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/evidence/market_consensus_prospective/ \
+            --message-prefix "audit(football): persist V5.5.26 synchronized four-league PIT batch"
