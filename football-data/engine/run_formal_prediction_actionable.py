@@ -6,14 +6,15 @@ valid for the primary answer; publication of official lineups does not by itself
 make the already-frozen answer unavailable. Major confirmed changes remain an
 invalidation condition and may trigger a new run when requested.
 
-V4.7 competition-specific promoted challengers are receipt-gated. The validated
+Competition-specific promoted challengers are receipt-gated. The validated
 ESP/NED dynamic-strength route is ordered before OOF matrix calibration; the
 existing MLS conditional-allocation promotion remains ordered after OOF. A genuine
 market-coordination KL candidate is then evaluated on the final model matrix using
 a non-redundant three-market constraint basis. It may run with a complete
 synchronized market snapshot, but it cannot mutate the formal centre without a
-competition/season LOMO promotion receipt. The final total-goals peak diagnostic
-is read-only and runs last.
+competition/season LOMO promotion receipt. Read-only total-goals diagnostics run
+on the final matrix. The V5 selective-direction gate runs last and may only allow
+or abstain from the final 1X2 Top-1 direction; it never changes probabilities.
 
 For a new target season, this wrapper may inject separately validated, hash-bound
 next-season hyperparameters and an OOF calibrator while leaving the frozen formal
@@ -39,6 +40,7 @@ from oof_next_season_runtime_v470 import load_rollforward_calibrator
 from platform_core import PlatformError
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
+from selective_direction_gate_v500 import apply_selective_direction_gate
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 
@@ -166,7 +168,8 @@ def main() -> int:
         promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)
         coordinated = apply_market_coordination_runtime(context, promoted)
         diagnosed = apply_total_goals_peak_diagnostics(coordinated)
-        return apply_formal_governance_runtime(diagnosed)
+        governed = apply_formal_governance_runtime(diagnosed)
+        return apply_selective_direction_gate(context, governed)
 
     base_runner.prepare_match_context = actionable_prepare
     base_runner.calculation_from_context = champion_then_dynamic_strength
