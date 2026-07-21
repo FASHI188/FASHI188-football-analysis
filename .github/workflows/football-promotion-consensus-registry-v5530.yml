@@ -1,0 +1,55 @@
+name: football-promotion-consensus-registry-v5530
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "55 6 * * *"
+  push:
+    paths:
+      - "football-data/validation/promotion_consensus_registry_v5530.py"
+      - ".github/workflows/football-promotion-consensus-registry-v5530.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build deduplicated promotion evidence registry
+        run: python football-data/validation/promotion_consensus_registry_v5530.py
+      - name: Validate registry governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('football-data/manifests/promotion_consensus_registry_v5530_status.json').read_text(encoding='utf-8'))
+          if d.get('status')!='PASS': raise SystemExit('registry not PASS')
+          if d.get('formal_model_promotion') is not False: raise SystemExit('registry self-promoted model')
+          if d.get('formal_weight_change') is not False or d.get('probability_change') is not False: raise SystemExit('registry changed model')
+          for s in d.get('samples',[]):
+              if int(s.get('duplicate_candidate_count_for_same_observation_pair',0)) < 1: raise SystemExit('invalid duplicate count')
+              if s.get('selected_evidence_kind') not in ('PRIMARY_LINE_STRICT','EXACT_LINE_ALIGNED'): raise SystemExit('invalid evidence kind')
+          print(json.dumps({
+              'candidate_before_dedup': d.get('candidate_evidence_count_before_dedup',0),
+              'unique_observation_pairs': d.get('unique_observation_pair_count',0),
+              'duplicates_suppressed': d.get('duplicate_candidates_suppressed',0),
+              'rejected_candidates': d.get('rejected_candidate_count',0),
+              'model_mutation': False,
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Persist registry safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.30 deduplicated promotion evidence registry"
