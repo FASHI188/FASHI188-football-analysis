@@ -1,0 +1,84 @@
+name: football-kambi-v523-adapter-v5511
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/kambi_v523_adapter_v5511.py"
+      - "football-data/tests/test_kambi_v523_adapter_v5511.py"
+      - ".github/workflows/football-kambi-v523-adapter-v5511.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kambi-v523-adapter-v5511
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile adapter and regression
+        run: |
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/tests/test_kambi_v523_adapter_v5511.py
+          rm -rf football-data/validation/__pycache__ football-data/tests/__pycache__
+
+      - name: Run frozen-sample adapter regression
+        id: regression
+        continue-on-error: true
+        run: python football-data/tests/test_kambi_v523_adapter_v5511.py
+
+      - name: Validate acceptance receipt fail-closed contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/kambi_v523_adapter_v5511_status.json')
+          if not p.exists():
+              raise SystemExit('Kambi V5.2.3 adapter receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('status') != 'PASS':
+              raise SystemExit(f"adapter acceptance not PASS: {data.get('status')}")
+          if data.get('formal_snapshot_written') is not False:
+              raise SystemExit('research regression must not write formal snapshot')
+          if data.get('formal_weight_change') is not False or data.get('probability_change') is not False:
+              raise SystemExit('research adapter acceptance cannot change formal weights/probabilities')
+          validation = data.get('v523_validation') or {}
+          if validation.get('passed') is not True or validation.get('formal_pit_eligible') is not True:
+              raise SystemExit('embedded V5.2.3 validator did not pass')
+          print(json.dumps({
+              'status': data.get('status'),
+              'asian_handicap': data.get('extracted', {}).get('asian_handicap'),
+              'over_under': data.get('extracted', {}).get('over_under'),
+              'v523_passed': validation.get('passed'),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist acceptance receipt safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --message-prefix "audit(football): persist V5.5.11 Kambi V5.2.3 adapter acceptance"
+
+      - name: Fail workflow only if regression failed
+        if: steps.regression.outcome != 'success'
+        run: exit 1
