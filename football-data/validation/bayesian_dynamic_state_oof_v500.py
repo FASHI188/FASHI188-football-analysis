@@ -555,7 +555,7 @@ def _validate_domain(competition_id: str) -> dict[str, Any]:
         "total_top1_nonworse": pooled["total_top1"]["candidate"] + 1e-12 >= pooled["total_top1"]["baseline"],
         "probability_conservation": max_prob_residual <= 1e-10,
         "total_projection_conservation": max_total_residual <= 1e-10,
-        "handicap_fourth_target_available": false
+        "handicap_fourth_target_available": False
     }
     probability_checks = {key: value for key, value in checks.items() if key != "handicap_fourth_target_available"}
     review_candidate = all(probability_checks.values())
@@ -566,8 +566,8 @@ def _validate_domain(competition_id: str) -> dict[str, Any]:
         "competition_id": competition_id,
         "status": status,
         "formal_weight": 0,
-        "automatic_promotion": false,
-        "probability_change": false,
+        "automatic_promotion": False,
+        "probability_change": False,
         "completed_outer_seasons": seasons,
         "candidate_profiles": PROFILES,
         "profile_selection_objective": "mean_1x2_rps + 0.25*mean_1x2_brier + 3*mean_total_rps + 0.02*mean_joint_log",
@@ -619,9 +619,9 @@ def main() -> int:
             "handicap_target_status": report["handicap_target_status"]
         } for competition_id, report in reports.items()},
         "failures": failures,
-        "formal_weight_change": false,
-        "probability_change": false,
-        "automatic_promotion": false,
+        "formal_weight_change": False,
+        "probability_change": False,
+        "automatic_promotion": False,
         "policy": "17-domain strict chronological research screen. Profiles are frozen from earlier completed seasons. No result alters V5 formal probabilities without competition-specific promotion and fourth-target handicap evidence."
     }
     atomic_write_json(OUT, payload)
