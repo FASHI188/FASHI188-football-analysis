@@ -1,0 +1,80 @@
+name: football-exact-line-consensus-v5529
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "42 6 * * *"
+  push:
+    paths:
+      - "football-data/validation/kambi_multiline_bundle_v5528.py"
+      - "football-data/validation/exact_line_aligned_consensus_v5529.py"
+      - ".github/workflows/football-exact-line-consensus-v5529.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-exact-line-consensus-v5529
+  cancel-in-progress: false
+
+jobs:
+  exact-line-postprocess:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Freeze postprocess window
+        run: echo "SINCE_UTC=$(date -u -d '45 minutes ago' +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/kambi_multiline_bundle_v5528.py
+          python -m py_compile football-data/validation/exact_line_aligned_consensus_v5529.py
+          rm -rf football-data/validation/__pycache__
+      - name: Build Kambi multiline bundles
+        run: python football-data/validation/kambi_multiline_bundle_v5528.py --since-utc "$SINCE_UTC"
+      - name: Build exact-line aligned independent consensus
+        run: python football-data/validation/exact_line_aligned_consensus_v5529.py --since-utc "$SINCE_UTC"
+      - name: Validate no synthesis or model mutation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          b = json.loads(Path('football-data/manifests/kambi_multiline_bundle_v5528_status.json').read_text(encoding='utf-8'))
+          c = json.loads(Path('football-data/manifests/exact_line_aligned_consensus_v5529_status.json').read_text(encoding='utf-8'))
+          for label, row in [('bundle', b), ('consensus', c)]:
+              if row.get('formal_weight_change') is not False or row.get('probability_change') is not False:
+                  raise SystemExit(f'{label} changed formal model')
+          if int(b.get('promotion_sample_count_change', -1)) != 0:
+              raise SystemExit('standalone multiline bundle changed promotion samples')
+          if c.get('formal_model_promotion') is not False:
+              raise SystemExit('exact-line evidence self-promoted model')
+          for row in c.get('results', []):
+              if row.get('promotion_evidence_eligible'):
+                  if row.get('status') not in ('EXACT_LINE_STRICT_CONSENSUS_WRITTEN','EXACT_LINE_STRICT_CONSENSUS_ALREADY_PRESENT'):
+                      raise SystemExit('promotion-eligible exact-line row has invalid status')
+          print(json.dumps({
+              'bundle_count_available': b.get('bundle_count_available',0),
+              'bundle_failed_count': b.get('failed_count',0),
+              'shared_fixture_count': c.get('shared_fixture_count',0),
+              'exact_line_match_count': c.get('exact_line_match_count',0),
+              'no_exact_line_match_count': c.get('no_exact_line_match_count',0),
+              'promotion_evidence_eligible_count': c.get('promotion_evidence_eligible_count',0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+      - name: Persist exact-line artifacts safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/market_line_bundles_prospective/ \
+            --allow-prefix football-data/evidence/market_aligned_observations_prospective/ \
+            --allow-prefix football-data/evidence/market_consensus_prospective/ \
+            --message-prefix "audit(football): persist V5.5.29 exact-line consensus postprocess"
