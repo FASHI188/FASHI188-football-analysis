@@ -27,6 +27,8 @@ END = "20260615235959"
 LOOKBACK_DAYS = 7
 MAXRECORDS = 250
 INTER_QUERY_SECONDS = 3.0
+MIN_SPLIT_WINDOW = timedelta(hours=6)
+_LAST_REQUEST_AT = 0.0
 
 LEAGUE_TERMS = {
     "ENG_PremierLeague": '"Premier League"',
@@ -79,13 +81,29 @@ def parse_seen(value: str) -> datetime | None:
     return None
 
 
-def request_json(query: str, retries: int = 6) -> dict[str, Any]:
+def _parse_window(value: str) -> datetime:
+    return datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+
+
+def _format_window(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _respect_global_spacing() -> None:
+    global _LAST_REQUEST_AT
+    elapsed = time.monotonic() - _LAST_REQUEST_AT
+    if _LAST_REQUEST_AT > 0 and elapsed < INTER_QUERY_SECONDS:
+        time.sleep(INTER_QUERY_SECONDS - elapsed)
+    _LAST_REQUEST_AT = time.monotonic()
+
+
+def request_json(query: str, start: str, end: str, retries: int = 6) -> dict[str, Any]:
     params = {
         "query": query,
         "mode": "artlist",
         "maxrecords": str(MAXRECORDS),
-        "startdatetime": START,
-        "enddatetime": END,
+        "startdatetime": start,
+        "enddatetime": end,
         "sort": "datedesc",
         "format": "json",
     }
@@ -93,6 +111,7 @@ def request_json(query: str, retries: int = 6) -> dict[str, Any]:
     last = None
     for attempt in range(retries):
         try:
+            _respect_global_spacing()
             req = urllib.request.Request(url, headers={"User-Agent": "football-analysis-research/1.0"})
             with urllib.request.urlopen(req, timeout=45) as response:
                 payload = response.read().decode("utf-8", errors="replace")
@@ -112,6 +131,39 @@ def request_json(query: str, retries: int = 6) -> dict[str, Any]:
             last = exc
             time.sleep(4.0 * (attempt + 1))
     raise RuntimeError(f"GDELT request failed after rate-limit-aware retries: {last}")
+
+
+def request_complete_window(query: str, start: str, end: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Exhaust an article window without silently accepting the 250-row API cap.
+
+    Any window returning exactly MAXRECORDS is recursively split in half. A still-
+    saturated leaf smaller than MIN_SPLIT_WINDOW is returned but explicitly marked
+    as unresolved saturation so the domain cannot pass the discovery gate.
+    """
+    payload = request_json(query, start, end)
+    articles = list(payload.get("articles") or [])
+    start_dt = _parse_window(start)
+    end_dt = _parse_window(end)
+    span = end_dt - start_dt
+    audit = [{
+        "start": start,
+        "end": end,
+        "record_count": len(articles),
+        "hit_maxrecords": len(articles) >= MAXRECORDS,
+        "leaf_saturation_unresolved": False,
+    }]
+    if len(articles) < MAXRECORDS:
+        return articles, audit
+    if span <= MIN_SPLIT_WINDOW:
+        audit[0]["leaf_saturation_unresolved"] = True
+        return articles, audit
+
+    midpoint = start_dt + span / 2
+    left_end = midpoint
+    right_start = midpoint + timedelta(seconds=1)
+    left, left_audit = request_complete_window(query, start, _format_window(left_end))
+    right, right_audit = request_complete_window(query, _format_window(right_start), end)
+    return left + right, audit + left_audit + right_audit
 
 
 def evidence_id(team: str, article: dict[str, Any]) -> str:
@@ -135,15 +187,23 @@ def main() -> int:
     teams = sorted({m.home_team for m in matches} | {m.away_team for m in matches})
 
     team_articles: dict[str, list[dict[str, Any]]] = {}
-    query_failures = {}
+    query_failures: dict[str, str] = {}
+    query_window_audit: dict[str, list[dict[str, Any]]] = {}
+    saturation_failures: dict[str, int] = {}
+
     for team in teams:
         search_name = TEAM_QUERY_ALIASES.get(team, team)
         query = f'"{search_name}" {LEAGUE_TERMS[cid]} {CONTEXT_TERMS}'
         try:
-            payload = request_json(query)
+            raw_articles, window_audit = request_complete_window(query, START, END)
+            query_window_audit[team] = window_audit
+            unresolved = sum(1 for row in window_audit if row.get("leaf_saturation_unresolved"))
+            if unresolved:
+                saturation_failures[team] = unresolved
+
             articles = []
             seen_urls = set()
-            for article in payload.get("articles") or []:
+            for article in raw_articles:
                 url = str(article.get("url") or "").strip()
                 seen_dt = parse_seen(str(article.get("seendate") or ""))
                 if not url or seen_dt is None or url in seen_urls:
@@ -171,7 +231,7 @@ def main() -> int:
         except Exception as exc:
             query_failures[team] = f"{type(exc).__name__}: {exc}"
             team_articles[team] = []
-        time.sleep(INTER_QUERY_SECONDS)
+            query_window_audit[team] = []
 
     fixture_rows = []
     both_covered = either_covered = 0
@@ -179,6 +239,7 @@ def main() -> int:
     for match in matches:
         freeze = match.date
         window_start = freeze - timedelta(days=LOOKBACK_DAYS)
+
         def eligible(team: str):
             output = []
             for article in team_articles.get(team, []):
@@ -186,6 +247,7 @@ def main() -> int:
                 if window_start <= seen < freeze:
                     output.append(article)
             return output
+
         home = eligible(match.home_team)
         away = eligible(match.away_team)
         total_home_articles += len(home)
@@ -222,8 +284,9 @@ def main() -> int:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
     all_articles = [article for team in teams for article in team_articles[team]]
+    unresolved_leaf_count = sum(saturation_failures.values())
     report = {
-        "schema_version": "V5.1.7-gdelt-recent-context-coverage-domain-r2",
+        "schema_version": "V5.1.7-gdelt-recent-context-coverage-domain-r3",
         "generated_at_utc": utc_now(),
         "competition_id": cid,
         "season": SEASON,
@@ -235,6 +298,10 @@ def main() -> int:
         "queried_team_count": len(teams),
         "query_failure_count": len(query_failures),
         "query_failures": query_failures,
+        "query_window_request_count": sum(len(rows) for rows in query_window_audit.values()),
+        "unresolved_saturated_leaf_count": unresolved_leaf_count,
+        "saturation_failures": saturation_failures,
+        "query_window_audit": query_window_audit,
         "unique_article_count": len({a["source_url"] for a in all_articles}),
         "article_record_count": len(all_articles),
         "teams_with_any_article": sum(1 for team in teams if team_articles[team]),
@@ -244,13 +311,18 @@ def main() -> int:
         "both_team_fixture_coverage_rate": both_covered / len(matches),
         "mean_home_context_articles_per_fixture": total_home_articles / len(matches),
         "mean_away_context_articles_per_fixture": total_away_articles / len(matches),
-        "status": "PASS" if len(query_failures) <= 2 and either_covered / len(matches) >= 0.50 else "PARTIAL",
+        "status": "PASS" if (
+            len(query_failures) <= 2
+            and unresolved_leaf_count == 0
+            and either_covered / len(matches) >= 0.50
+        ) else "PARTIAL",
         "formal_weight": 0,
         "probability_change": False,
         "automatic_promotion": False,
         "timestamp_semantics": "GDELT seendate is stored as source_observed_at_utc, not publisher publication time.",
         "formal_use": "DISCOVERY_METADATA_ONLY_UNTIL_SOURCE_CONTENT_AND_TIMESTAMP_PROVEN",
-        "rate_limit_policy": "Sequential league execution, three-second inter-query spacing, explicit HTTP 429 Retry-After/exponential backoff.",
+        "rate_limit_policy": "Sequential league execution, globally spaced requests, explicit HTTP 429 Retry-After/exponential backoff.",
+        "pagination_policy": "GDELT artlist has a 250-record cap. Any saturated window is recursively split until below the cap; unresolved saturation in a <=6h leaf forces PARTIAL.",
         "article_output": str(evidence_path.relative_to(ROOT)),
         "fixture_output": str(fixture_path.relative_to(ROOT)),
     }
@@ -263,7 +335,9 @@ def main() -> int:
         "article_record_count": report["article_record_count"],
         "either_team_fixture_coverage_rate": report["either_team_fixture_coverage_rate"],
         "both_team_fixture_coverage_rate": report["both_team_fixture_coverage_rate"],
-        "query_failure_count": report["query_failure_count"]
+        "query_failure_count": report["query_failure_count"],
+        "query_window_request_count": report["query_window_request_count"],
+        "unresolved_saturated_leaf_count": unresolved_leaf_count,
     }, ensure_ascii=False, indent=2))
     return 0
 
