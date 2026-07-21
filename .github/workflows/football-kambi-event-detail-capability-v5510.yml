@@ -1,0 +1,79 @@
+name: football-kambi-event-detail-capability-v5510
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/kambi_event_detail_capability_v5510.py"
+      - ".github/workflows/football-kambi-event-detail-capability-v5510.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-kambi-event-detail-capability-v5510
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/kambi_event_detail_capability_v5510.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run event-detail capability probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/kambi_event_detail_capability_v5510.py
+
+      - name: Validate fail-closed contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/kambi_event_detail_capability_v5510_status.json')
+          if not p.exists():
+              raise SystemExit('Kambi event-detail manifest missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          if data.get('provider_group') != 'kambi':
+              raise SystemExit('provider_group must remain kambi')
+          print(json.dumps({
+              'status': data.get('status'),
+              'successful_event_detail_count': data.get('successful_event_detail_count', 0),
+              'events_with_recognized_asian_handicap': data.get('events_with_recognized_asian_handicap', 0),
+              'events_with_all_three_recognized': data.get('events_with_all_three_recognized', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist generated diagnostics safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/event_detail_samples/ \
+            --message-prefix "audit(football): persist V5.5.10 Kambi event-detail capability"
+
+      - name: Fail workflow only on execution failure
+        if: steps.probe.outcome != 'success'
+        run: exit 1
