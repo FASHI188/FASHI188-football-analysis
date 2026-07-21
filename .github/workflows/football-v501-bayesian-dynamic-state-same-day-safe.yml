@@ -1,0 +1,111 @@
+name: Football V5.0.1 Bayesian Dynamic State Same-Day-Safe Replay
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/manifests/bayesian_dynamic_state_v500_invalidation_status.json"
+      - "football-data/validation/bayesian_dynamic_state_oof_v501_same_day_safe.py"
+      - "football-data/validation/run_bayesian_dynamic_state_domain_v501.py"
+      - "football-data/validation/aggregate_bayesian_dynamic_state_oof_v501.py"
+      - ".github/workflows/football-v501-bayesian-dynamic-state-same-day-safe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v501-bayesian-dynamic-state-same-day-safe
+  cancel-in-progress: true
+
+jobs:
+  validate-domain:
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix:
+        competition:
+          - ARG_Primera
+          - BRA_SerieA
+          - ENG_PremierLeague
+          - ESP_LaLiga
+          - FRA_Ligue1
+          - GER_Bundesliga
+          - ITA_SerieA
+          - JPN_J1
+          - KOR_KLeague1
+          - NED_Eredivisie
+          - NOR_Eliteserien
+          - POR_PrimeiraLiga
+          - SCO_Premiership
+          - SUI_SuperLeague
+          - SWE_Allsvenskan
+          - UEFA_ChampionsLeague
+          - USA_MLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v500.py
+          python -m py_compile football-data/validation/bayesian_dynamic_state_oof_v501_same_day_safe.py
+          python -m py_compile football-data/validation/run_bayesian_dynamic_state_domain_v501.py
+      - name: Run same-day-safe competition-local replay
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/run_bayesian_dynamic_state_domain_v501.py --competition "${{ matrix.competition }}"
+      - name: Upload domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayesian-v501-${{ matrix.competition }}
+          path: football-data/manifests/bayesian_dynamic_state_oof_v501/${{ matrix.competition }}.json
+          if-no-files-found: error
+          retention-days: 3
+
+  aggregate:
+    if: always()
+    needs: validate-domain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download domain receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bayesian-v501-*
+          path: football-data/manifests/bayesian_dynamic_state_oof_v501
+          merge-multiple: true
+      - name: Aggregate same-day-safe receipts
+        id: aggregate
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/aggregate_bayesian_dynamic_state_oof_v501.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit replacement receipts
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/bayesian_dynamic_state_oof_v501_status.json
+          git add football-data/manifests/bayesian_dynamic_state_oof_v501 || true
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "research(football): persist same-day-safe V5.0.1 dynamic-state replay"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Preserve aggregate failure after receipt persistence
+        if: steps.aggregate.outputs.rc != '0'
+        run: exit 1
