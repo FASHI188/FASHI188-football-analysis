@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,47 @@ def make_lineup(match_number: int, *, label_type: str = "actual_starting_xi") ->
         "source_observed_at_utc": observed.isoformat(),
         "ingested_at_utc": observed.isoformat(),
     }
+
+
+def make_identity_schedule(*, source_names: tuple[str, str], processed_names: tuple[str, str], matches: int = 20):
+    fixtures = []
+    processed = []
+    base = datetime(2024, 8, 1, tzinfo=timezone.utc)
+    for index in range(matches):
+        date = base + timedelta(days=7 * index)
+        if index % 2 == 0:
+            source_home, source_away = ("tm:1", "tm:2")
+            source_home_name, source_away_name = source_names
+            processed_home, processed_away = processed_names
+        else:
+            source_home, source_away = ("tm:2", "tm:1")
+            source_home_name, source_away_name = source_names[1], source_names[0]
+            processed_home, processed_away = processed_names[1], processed_names[0]
+        fixtures.append({
+            "competition_id": "TEST_LEAGUE",
+            "season": "2024/25",
+            "date": date.date().isoformat(),
+            "fixture_id": f"tm:{index}",
+            "game_id": str(index),
+            "home_source_team_id": source_home,
+            "away_source_team_id": source_away,
+            "home_source_name": source_home_name,
+            "away_source_name": source_away_name,
+            "home_starters": [f"h:{player}" for player in range(11)],
+            "away_starters": [f"a:{player}" for player in range(11)],
+            "home_source_observed_at_utc": (date + timedelta(days=2)).isoformat(),
+            "away_source_observed_at_utc": (date + timedelta(days=2)).isoformat(),
+        })
+        processed.append(SimpleNamespace(
+            season="2024/25",
+            date=date,
+            home_team=processed_home,
+            away_team=processed_away,
+            home_goals=1,
+            away_goals=0,
+            source_path="processed/test.csv",
+        ))
+    return fixtures, processed
 
 
 class PlayerXIV502Tests(unittest.TestCase):
@@ -110,6 +152,53 @@ class PlayerXIV502Tests(unittest.TestCase):
             report = route.validate_competition("TEST_LEAGUE", write=False)
             self.assertEqual(report["prediction_count"], 0)
             self.assertGreaterEqual(report["prior_rows_blocked_by_source_observation_time"], 3)
+
+    def test_identity_exact_normalized_unique_mapping(self) -> None:
+        identity = load_module(
+            ROOT / "validation" / "lineup_match_identity_audit_v502.py",
+            "lineup_match_identity_exact",
+        )
+        fixtures, processed = make_identity_schedule(
+            source_names=("Alpha FC", "Beta CF"),
+            processed_names=("Alpha", "Beta"),
+        )
+        crosswalk, audit = identity.build_team_crosswalk("TEST_LEAGUE", fixtures, processed)
+        self.assertEqual(crosswalk["tm:1"]["processed_team"], "Alpha")
+        self.assertEqual(crosswalk["tm:2"]["processed_team"], "Beta")
+        self.assertEqual(audit["exact_mapping_count"], 2)
+        self.assertEqual(audit["unmapped_source_team_ids"], [])
+
+    def test_identity_mutual_schedule_fingerprint_mapping(self) -> None:
+        identity = load_module(
+            ROOT / "validation" / "lineup_match_identity_audit_v502.py",
+            "lineup_match_identity_fingerprint",
+        )
+        fixtures, processed = make_identity_schedule(
+            source_names=("Completely Different One", "Completely Different Two"),
+            processed_names=("Alpha", "Beta"),
+        )
+        crosswalk, audit = identity.build_team_crosswalk("TEST_LEAGUE", fixtures, processed)
+        self.assertEqual(crosswalk["tm:1"]["method"], "mutual_schedule_fingerprint")
+        self.assertEqual(crosswalk["tm:2"]["method"], "mutual_schedule_fingerprint")
+        self.assertEqual(audit["fingerprint_mapping_count"], 2)
+        self.assertEqual(audit["unmapped_source_team_ids"], [])
+
+    def test_identity_low_overlap_is_rejected(self) -> None:
+        identity = load_module(
+            ROOT / "validation" / "lineup_match_identity_audit_v502.py",
+            "lineup_match_identity_reject",
+        )
+        fixtures, processed = make_identity_schedule(
+            source_names=("Different One", "Different Two"),
+            processed_names=("Alpha", "Beta"),
+        )
+        for fixture in fixtures:
+            shifted = datetime.fromisoformat(fixture["date"] + "T00:00:00+00:00") + timedelta(days=3)
+            fixture["date"] = shifted.date().isoformat()
+        crosswalk, audit = identity.build_team_crosswalk("TEST_LEAGUE", fixtures, processed)
+        self.assertEqual(crosswalk, {})
+        self.assertEqual(sorted(audit["unmapped_source_team_ids"]), ["tm:1", "tm:2"])
+        self.assertEqual(len(audit["fingerprint_rejections"]), 2)
 
 
 if __name__ == "__main__":
