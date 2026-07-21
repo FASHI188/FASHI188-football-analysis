@@ -1,0 +1,79 @@
+name: football-direct-bwin-sportsapi-probe-v5513
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/direct_bwin_sportsapi_probe_v5513.py"
+      - ".github/workflows/football-direct-bwin-sportsapi-probe-v5513.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-direct-bwin-sportsapi-probe-v5513
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile probe
+        run: |
+          python -m py_compile football-data/validation/direct_bwin_sportsapi_probe_v5513.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Run official bwin Sports API probe
+        id: probe
+        continue-on-error: true
+        run: python football-data/validation/direct_bwin_sportsapi_probe_v5513.py
+
+      - name: Validate fail-closed receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/direct_bwin_sportsapi_probe_v5513_status.json')
+          if not p.exists():
+              raise SystemExit('bwin probe receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if data.get('provider_group') != 'entain_bwin':
+              raise SystemExit('provider_group must remain entain_bwin')
+          for key in ('formal_snapshot_written','promotion_consensus_written','formal_weight_change','probability_change'):
+              if data.get(key) is not False:
+                  raise SystemExit(f'fail-closed contract violated: {key}')
+          print(json.dumps({
+              'status': data.get('status'),
+              'reachable_attempt_count': data.get('reachable_attempt_count', 0),
+              'fixture_count': data.get('fixture_count_across_reachable_attempts', 0),
+              'balanced_market_count': data.get('balanced_market_count_across_reachable_attempts', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist probe evidence safely
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/bwin/ \
+            --message-prefix "audit(football): persist V5.5.13 direct bwin Sports API probe"
+
+      - name: Fail workflow only if probe execution failed
+        if: steps.probe.outcome != 'success'
+        run: exit 1
