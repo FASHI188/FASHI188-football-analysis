@@ -5,6 +5,7 @@ import json
 import math
 import sys
 import traceback
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,8 +72,57 @@ def _patched_pair_processed_match(lookup, date: str, home: str, away: str):
     return _ORIGINAL_PAIR(lookup, date, home_name, away_name)
 
 
+def _patched_project(matrix, residual: float, scale: float):
+    """Conditional KL tilt that preserves zero-mass total-goal slices exactly.
+
+    A total-goal slice with original probability mass 0 carries no information and
+    must remain 0. Only positive-mass slices are normalized. A positive-mass slice
+    whose tilted denominator is non-positive remains a hard execution failure.
+    """
+    grouped = defaultdict(list)
+    original = defaultdict(float)
+    for h, a, p in core.score_matrix_rows(matrix):
+        grouped[h + a].append((h, a, p))
+        original[h + a] += p
+
+    out = []
+    zero_mass_slices = 0
+    for total, cells in grouped.items():
+        mass = sum(p for _, _, p in cells)
+        if mass <= 0.0:
+            zero_mass_slices += 1
+            for h, a, _ in cells:
+                out.append({"home_goals": h, "away_goals": a, "probability": 0.0})
+            continue
+
+        weighted = []
+        for h, a, p in cells:
+            exponent = max(-40.0, min(40.0, float(scale) * float(residual) * float(h - a)))
+            weighted.append((h, a, p * math.exp(exponent)))
+        denom = sum(item[2] for item in weighted)
+        if denom <= 0.0:
+            raise core.PlatformError(f"FPL conditional KL normalization failed positive_mass_total={total}")
+        for h, a, weight in weighted:
+            out.append({"home_goals": h, "away_goals": a, "probability": mass * weight / denom})
+
+    total_prob = sum(float(cell["probability"]) for cell in out)
+    if total_prob <= 0.0:
+        raise core.PlatformError("FPL conditional KL projection produced non-positive total probability")
+    out = [{**cell, "probability": float(cell["probability"]) / total_prob} for cell in out]
+
+    new = defaultdict(float)
+    for h, a, p in core.score_matrix_rows(out):
+        new[h + a] += p
+    return out, {
+        "probability_sum_residual": abs(sum(float(cell["probability"]) for cell in out) - 1.0),
+        "max_total_marginal_residual": max(abs(float(new[t]) - float(original[t])) for t in original),
+        "zero_mass_total_slice_count": zero_mass_slices,
+    }
+
+
 core._team_features = _patched_team_features
 core._pair_processed_match = _patched_pair_processed_match
+core._project = _patched_project
 
 
 def main() -> int:
@@ -80,7 +130,7 @@ def main() -> int:
         return int(core.main())
     except Exception as exc:
         payload = {
-            "schema_version": "V5.1.9-fpl-context-challenger-execution-r5",
+            "schema_version": "V5.1.9-fpl-context-challenger-execution-r6",
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "competition_id": "ENG_PremierLeague",
             "season": "2025/26",
