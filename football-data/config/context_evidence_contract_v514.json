@@ -1,5 +1,5 @@
 {
-  "schema_version": "V5.1.4-context-evidence-contract-r1",
+  "schema_version": "V5.1.4-context-evidence-contract-r2",
   "purpose": "Hard evidence contract for news, injury, suspension, manager, rotation, tactical and task-state context.",
   "formal_weight": 0,
   "probability_change": false,
@@ -12,6 +12,7 @@
     "source_domain",
     "title",
     "published_at_utc",
+    "source_observed_at_utc",
     "accessed_at_utc",
     "freeze_at_utc",
     "content_sha256",
@@ -20,6 +21,12 @@
     "provenance_class",
     "eligibility"
   ],
+  "timestamp_semantics": {
+    "published_at_utc": "Publisher/source original publication timestamp when independently available. Null when not available; never substitute a crawler observation timestamp.",
+    "source_observed_at_utc": "Timestamp at which an independent monitor/archive/index observed the source. For GDELT DOC JSON, seendate is stored here, not in published_at_utc.",
+    "accessed_at_utc": "Timestamp at which this project fetched the evidence.",
+    "freeze_at_utc": "Match prediction freeze timestamp."
+  },
   "evidence_types": [
     "injury",
     "suspension",
@@ -37,23 +44,31 @@
   ],
   "provenance_classes": {
     "PROSPECTIVE_QUERY_TIME": "Fetched and frozen before or at the active match freeze time.",
-    "HISTORICAL_ORIGINAL_TIMESTAMP_VERIFIED": "Retrieved later, but source provides an original publication timestamp and a reproducible immutable/archive version proving the content existed before freeze.",
-    "RETROSPECTIVE_REFERENCE_ONLY": "Publication timing/content state cannot be proven strongly enough for formal historical PIT use."
+    "HISTORICAL_ORIGINAL_TIMESTAMP_VERIFIED": "Retrieved later, but publisher/source original publication timestamp plus a reproducible immutable/archive version proves the content existed before freeze.",
+    "HISTORICAL_INDEPENDENT_OBSERVATION_VERIFIED": "Retrieved later, but an independent monitor/archive observed the exact URL/content before freeze. The monitor timestamp must be stored as source_observed_at_utc and must not be relabelled publisher publication time.",
+    "RETROSPECTIVE_REFERENCE_ONLY": "Neither publisher timestamp nor independent pre-freeze observation can prove the content state strongly enough for formal historical PIT use."
   },
   "eligibility_rules": {
     "formal_prospective": [
-      "published_at_utc <= freeze_at_utc",
       "accessed_at_utc <= freeze_at_utc",
       "content_sha256 is present",
       "source_url is present",
       "source_domain is present",
-      "fixture/team identity is unambiguous"
+      "fixture/team identity is unambiguous",
+      "if published_at_utc is present then published_at_utc <= freeze_at_utc"
     ],
-    "formal_historical_replay": [
-      "published_at_utc <= freeze_at_utc",
+    "formal_historical_original_timestamp": [
+      "published_at_utc is present and published_at_utc <= freeze_at_utc",
       "provenance_class == HISTORICAL_ORIGINAL_TIMESTAMP_VERIFIED",
       "immutable/archive evidence proves the pre-freeze version",
       "content_sha256 is present",
+      "fixture/team identity is unambiguous"
+    ],
+    "formal_historical_independent_observation": [
+      "source_observed_at_utc is present and source_observed_at_utc <= freeze_at_utc",
+      "provenance_class == HISTORICAL_INDEPENDENT_OBSERVATION_VERIFIED",
+      "independent monitor/archive record identifies the same source URL or immutable content",
+      "content_sha256 is present when article body/content was independently frozen; otherwise discovery metadata may be used only as a context-discovery feature until source content is verified",
       "fixture/team identity is unambiguous"
     ],
     "retrospective_reference": [
@@ -64,7 +79,8 @@
   },
   "hard_rejections": [
     "published_at_utc > freeze_at_utc",
-    "missing publication timestamp for a historical formal replay",
+    "source_observed_at_utc > freeze_at_utc when observation-time provenance is claimed",
+    "crawler/monitor seendate relabelled as publisher publication time",
     "post-match article presented as pre-match context",
     "content copied from another source and counted as an independent source",
     "target-match final result, goals, cards, VAR or other in-match outcomes in a pre-match feature",
