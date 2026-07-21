@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "manifests" / "transfermarkt_lineup_value_readiness_v521_status.json"
+EVIDENCE = ROOT / "evidence" / "transfermarkt_lineup_value_v521"
 VALUATIONS_URL = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/player_valuations.csv.gz"
 DOMAINS = ["ENG_PremierLeague", "ESP_LaLiga", "GER_Bundesliga", "ITA_SerieA", "FRA_Ligue1"]
 SEASON = "2025/26"
@@ -97,7 +98,7 @@ def read_fixture_lineups(domain: str) -> list[dict]:
     return fixtures
 
 
-def audit_domain(domain: str, histories: dict[str, list[tuple[datetime, float]]]) -> dict:
+def audit_domain(domain: str, histories: dict[str, list[tuple[datetime, float]]]) -> tuple[dict, list[dict]]:
     fixtures = read_fixture_lineups(domain)
     total_slots = covered_slots = 0
     full22 = full_home11 = full_away11 = 0
@@ -161,7 +162,7 @@ def audit_domain(domain: str, histories: dict[str, list[tuple[datetime, float]]]
     full22_rate = full22 / max(1, fixture_count)
     recency180 = recent180 / max(1, covered_slots)
     recency365 = recent365 / max(1, covered_slots)
-    return {
+    summary = {
         "competition_id": domain,
         "season": SEASON,
         "fixture_count": fixture_count,
@@ -182,22 +183,29 @@ def audit_domain(domain: str, histories: dict[str, list[tuple[datetime, float]]]
             key=lambda item: (-item["missing_fixture_count"], item["player_id"]),
         )[:20],
         "status": "PASS" if slot_coverage >= 0.95 and full22_rate >= 0.70 and recency365 >= 0.90 else "PARTIAL",
-        "fixture_audit": fixture_audit,
+        "fixture_audit_path": f"evidence/transfermarkt_lineup_value_v521/{domain}.jsonl",
     }
+    return summary, fixture_audit
 
 
 def main() -> int:
     histories, source = fetch_valuations()
     reports = {}
     failures = {}
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
     for domain in DOMAINS:
         try:
-            reports[domain] = audit_domain(domain, histories)
+            summary, fixture_audit = audit_domain(domain, histories)
+            reports[domain] = summary
+            detail_path = EVIDENCE / f"{domain}.jsonl"
+            with detail_path.open("w", encoding="utf-8") as handle:
+                for row in fixture_audit:
+                    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         except Exception as exc:
             failures[domain] = f"{type(exc).__name__}: {exc}"
     passed = [domain for domain, report in reports.items() if report["status"] == "PASS"]
     payload = {
-        "schema_version": "V5.2.1-transfermarkt-lineup-value-readiness-r1",
+        "schema_version": "V5.2.1-transfermarkt-lineup-value-readiness-r2",
         "generated_at_utc": utc_now(),
         "source": source,
         "season": SEASON,
@@ -210,7 +218,7 @@ def main() -> int:
         "probability_change": False,
         "automatic_promotion": False,
         "pit_policy": "Each starter value is the latest player_valuations record whose date is strictly earlier than the fixture calendar date. Same-day or later valuations are excluded.",
-        "lineup_policy": "Uses the already-audited observed Transfermarkt starting-lineup labels for retrospective research. It does not treat actual target-match XI as a pre-match feature; the purpose here is only to measure whether historical player-value data can support future expected-XI/value-loss modeling.",
+        "lineup_policy": "Uses the already-audited observed Transfermarkt starting-lineup labels for retrospective coverage measurement only. Target-match actual XI is never authorized as a pre-match predictor.",
         "next_step": "If coverage passes, build expected-lineup value features from only earlier observed lineups plus strictly-prior valuations; never use the target match actual XI as prediction input."
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
