@@ -7,6 +7,7 @@ on:
       - "football-data/manifests/player_xi_gate_adjudication_v503_status.json"
       - "football-data/manifests/player_xi_residual_replication_v503/ITA_SerieA.json"
       - "football-data/validation/player_xi_matrix_projection_ita_v504.py"
+      - "football-data/validation/run_player_xi_matrix_projection_ita_v504.py"
       - "football-data/tests/test_player_xi_matrix_projection_v504.py"
       - ".github/workflows/football-player-xi-matrix-projection-ita-v504.yml"
 
@@ -30,30 +31,39 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Syntax and projection invariants
-        run: |
-          python -m py_compile \
-            football-data/validation/player_xi_matrix_projection_ita_v504.py \
-            football-data/tests/test_player_xi_matrix_projection_v504.py
-          python football-data/tests/test_player_xi_matrix_projection_v504.py
+      - name: Execute audited ITA projection
+        run: python football-data/validation/run_player_xi_matrix_projection_ita_v504.py
 
-      - name: Run ITA unified-matrix chronological OOF
-        run: |
-          python football-data/validation/player_xi_matrix_projection_ita_v504.py \
-            --print-summary
-
-      - name: Commit matrix projection adjudication
+      - name: Commit result or failure diagnostics
         run: |
           find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A -- \
+            football-data/manifests/player_xi_matrix_projection_ita_v504_execution.json \
             football-data/manifests/player_xi_matrix_projection_ita_v504_status.json \
             football-data/manifests/player_xi_matrix_projection_ita_v504
           if git diff --cached --quiet; then
-            echo "No matrix projection receipt changed."
+            echo "No matrix projection evidence changed."
             exit 0
           fi
           git commit -m "research(football): persist ITA player-XI matrix projection OOF"
           git pull --rebase origin main
           git push
+
+      - name: Enforce execution success
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/player_xi_matrix_projection_ita_v504_execution.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          if report.get("status") != "PASS":
+              failed = [
+                  stage.get("name")
+                  for stage in report.get("stages", [])
+                  if stage.get("status") == "FAIL"
+              ]
+              raise SystemExit(f"ITA player-XI matrix projection failed stages: {failed}")
+          print(f"execution PASS; research result={report.get('result_receipt_status')}")
+          PY
