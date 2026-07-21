@@ -1,0 +1,48 @@
+name: football-recent-xg-identity-v512
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/evidence/xg/understat_2025_26/**"
+      - "football-data/validation/recent_xg_identity_bridge_v512.py"
+      - ".github/workflows/football-recent-xg-identity-v512.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-recent-xg-identity-v512
+  cancel-in-progress: true
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m py_compile football-data/validation/recent_xg_identity_bridge_v512.py
+      - name: Build identity bridge
+        run: python football-data/validation/recent_xg_identity_bridge_v512.py
+      - name: Commit linked evidence and receipt
+        if: always()
+        run: |
+          find football-data -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            football-data/evidence/xg/understat_2025_26_linked \
+            football-data/manifests/recent_xg_identity_bridge_v512_status.json
+          if git diff --cached --quiet; then
+            echo "No identity receipt changed."
+            exit 0
+          fi
+          git commit -m "audit(football): persist 2025-26 xG identity bridge"
+          git pull --rebase origin main
+          git push
