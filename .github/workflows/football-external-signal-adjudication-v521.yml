@@ -1,0 +1,51 @@
+name: football-external-signal-adjudication-v521
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/config/fpl_context_final_registry_v520.json"
+      - "football-data/manifests/recent_xg_v513_governance_freeze.json"
+      - "football-data/config/player_xi_layer_final_registry_v505.json"
+      - "football-data/config/shot_quality_proxy_final_registry_v508.json"
+      - "football-data/manifests/lineup_valuation_readiness_v518_status.json"
+      - "football-data/manifests/clubelo_history_ingest_v515_status.json"
+      - "football-data/manifests/clubelo_residual_oof_v515_status.json"
+      - "football-data/manifests/gdelt_recent_context_coverage_v517_status.json"
+      - "football-data/validation/external_signal_final_adjudication_v521.py"
+      - ".github/workflows/football-external-signal-adjudication-v521.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-external-signal-adjudication-v521
+  cancel-in-progress: true
+
+jobs:
+  adjudicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run read-only adjudicator
+        run: |
+          python -m py_compile football-data/validation/external_signal_final_adjudication_v521.py
+          python football-data/validation/external_signal_final_adjudication_v521.py
+      - name: Commit adjudication receipt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- football-data/manifests/external_signal_final_adjudication_v521_status.json
+          if git diff --cached --quiet; then
+            echo "No external-signal adjudication changed."
+            exit 0
+          fi
+          git commit -m "governance(football): persist external-signal adjudication"
+          git pull --rebase origin main
+          git push
