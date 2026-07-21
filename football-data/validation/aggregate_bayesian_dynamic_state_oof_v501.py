@@ -30,13 +30,15 @@ def main() -> int:
             if report.get("same_day_outcomes_withheld") is not True:
                 raise ValueError("same_day_outcomes_withheld is not true")
             reports[competition_id] = report
-            if report.get("status") == "RESEARCH_REVIEW_CANDIDATE_AH_PENDING":
+            if report.get("status") == "FAILED":
+                failures[competition_id] = str(report.get("reason") or "domain validation failed")
+            elif report.get("status") == "RESEARCH_REVIEW_CANDIDATE_AH_PENDING":
                 candidates.append(competition_id)
         except Exception as exc:
             failures[competition_id] = f"{type(exc).__name__}: {exc}"
 
     payload = {
-        "schema_version": "V5.0.1-bayesian-dynamic-state-oof-aggregate-r2",
+        "schema_version": "V5.0.1-bayesian-dynamic-state-oof-aggregate-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS" if len(reports) == len(competitions) and not failures else "PARTIAL",
         "competition_count_requested": len(competitions),
@@ -48,6 +50,7 @@ def main() -> int:
         "reports": {
             competition_id: {
                 "status": report.get("status"),
+                "reason": report.get("reason"),
                 "outer_prediction_count": report.get("outer_prediction_count"),
                 "evaluated_outer_season_count": report.get("evaluated_outer_season_count"),
                 "pooled_metrics": report.get("pooled_metrics"),
@@ -62,11 +65,11 @@ def main() -> int:
         "formal_weight_change": False,
         "probability_change": False,
         "automatic_promotion": False,
-        "policy": "Replacement 17-domain same-day-safe replay. No result changes formal probabilities without replacement adjudication, fourth-target handicap evidence and a CURRENT-compliant promotion receipt.",
+        "policy": "Replacement 17-domain same-day-safe replay. Failed domains remain explicit evidence-insufficient receipts. No result changes formal probabilities without replacement adjudication, fourth-target handicap evidence and a CURRENT-compliant promotion receipt.",
     }
     atomic_write_json(OUT, payload)
     print(json.dumps({"status": payload["status"], "completed": len(reports), "candidates": candidates, "failures": failures}, ensure_ascii=False, indent=2))
-    return 0 if payload["status"] == "PASS" else 2
+    return 0 if len(reports) == len(competitions) else 2
 
 
 if __name__ == "__main__":
