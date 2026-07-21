@@ -7,7 +7,7 @@ on:
   push:
     paths:
       - "football-data/validation/kambi_priority_target_capture_v5512.py"
-      - "football-data/validation/marathonbet_priority_target_capture_v5520.py"
+      - "football-data/validation/marathonbet_four_league_capture_v5522.py"
       - "football-data/validation/prospective_market_consensus_strict_v5519.py"
       - "football-data/validation/synchronized_dual_provider_consensus_v5521.py"
       - ".github/workflows/football-synchronized-dual-provider-pit-v5521.yml"
@@ -22,7 +22,7 @@ concurrency:
 jobs:
   synchronized-capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -41,8 +41,7 @@ jobs:
         run: |
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/kambi_priority_target_capture_v5512.py
-          python -m py_compile football-data/validation/marathonbet_v523_adapter_v5517.py
-          python -m py_compile football-data/validation/marathonbet_priority_target_capture_v5520.py
+          python -m py_compile football-data/validation/marathonbet_four_league_capture_v5522.py
           python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
           python -m py_compile football-data/validation/synchronized_dual_provider_consensus_v5521.py
           rm -rf football-data/validation/__pycache__
@@ -50,10 +49,10 @@ jobs:
       - name: Capture Kambi direct PIT
         run: python football-data/validation/kambi_priority_target_capture_v5512.py
 
-      - name: Capture Marathonbet direct PIT
-        run: python football-data/validation/marathonbet_priority_target_capture_v5520.py
+      - name: Capture Marathonbet four-league direct PIT
+        run: python football-data/validation/marathonbet_four_league_capture_v5522.py
 
-      - name: Build strict synchronized consensus
+      - name: Build strict synchronized consensus for bootstrap targets
         run: |
           python football-data/validation/synchronized_dual_provider_consensus_v5521.py \
             --batch-start-utc "$BATCH_STARTED_AT_UTC"
@@ -82,11 +81,19 @@ jobs:
                       raise SystemExit('promotion-eligible row lacks full three-surface consensus')
                   if float(row.get('cross_provider_timestamp_spread_seconds') or 1e9) > 300.0:
                       raise SystemExit('promotion-eligible row exceeds synchronization window')
+          marathon = Path('football-data/manifests/marathonbet_four_league_capture_v5522_status.json')
+          if not marathon.exists():
+              raise SystemExit('V5.5.22 four-league capture receipt missing')
+          m = json.loads(marathon.read_text(encoding='utf-8'))
+          if m.get('formal_weight_change') is not False or m.get('probability_change') is not False:
+              raise SystemExit('four-league capture cannot change formal weights/probabilities')
           print(json.dumps({
               'status': data.get('status'),
               'strict_consensus_count_written': data.get('strict_consensus_count_written', 0),
               'promotion_evidence_eligible_count': data.get('promotion_evidence_eligible_count', 0),
               'research_only_line_mismatch_count': data.get('research_only_line_mismatch_count', 0),
+              'marathon_four_league_snapshots_written': m.get('formal_snapshot_count_written', 0),
+              'marathon_complete_surface_fixtures': m.get('complete_surface_fixture_count', 0),
               'fail_closed': True,
           }, ensure_ascii=False, indent=2))
           PY
@@ -99,7 +106,7 @@ jobs:
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/ \
             --allow-prefix football-data/evidence/direct_provider_probes/kambi/priority_targets/ \
-            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/priority_targets/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/league_pages/ \
             --allow-prefix football-data/evidence/markets_prospective/ \
             --allow-prefix football-data/evidence/market_consensus_prospective/ \
             --message-prefix "audit(football): persist V5.5.21 synchronized dual-provider PIT batch"
