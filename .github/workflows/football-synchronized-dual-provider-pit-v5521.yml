@@ -1,0 +1,105 @@
+name: football-synchronized-dual-provider-pit-v5521
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    paths:
+      - "football-data/validation/kambi_priority_target_capture_v5512.py"
+      - "football-data/validation/marathonbet_priority_target_capture_v5520.py"
+      - "football-data/validation/prospective_market_consensus_strict_v5519.py"
+      - "football-data/validation/synchronized_dual_provider_consensus_v5521.py"
+      - ".github/workflows/football-synchronized-dual-provider-pit-v5521.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-synchronized-dual-provider-pit-v5521
+  cancel-in-progress: false
+
+jobs:
+  synchronized-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Freeze batch start
+        run: echo "BATCH_STARTED_AT_UTC=$(date -u +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
+
+      - name: Compile synchronized chain
+        run: |
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/validation/kambi_priority_target_capture_v5512.py
+          python -m py_compile football-data/validation/marathonbet_v523_adapter_v5517.py
+          python -m py_compile football-data/validation/marathonbet_priority_target_capture_v5520.py
+          python -m py_compile football-data/validation/prospective_market_consensus_strict_v5519.py
+          python -m py_compile football-data/validation/synchronized_dual_provider_consensus_v5521.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Capture Kambi direct PIT
+        run: python football-data/validation/kambi_priority_target_capture_v5512.py
+
+      - name: Capture Marathonbet direct PIT
+        run: python football-data/validation/marathonbet_priority_target_capture_v5520.py
+
+      - name: Build strict synchronized consensus
+        run: |
+          python football-data/validation/synchronized_dual_provider_consensus_v5521.py \
+            --batch-start-utc "$BATCH_STARTED_AT_UTC"
+
+      - name: Validate batch receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/synchronized_dual_provider_consensus_v5521_status.json')
+          if not p.exists():
+              raise SystemExit('V5.5.21 synchronized consensus receipt missing')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if sorted(data.get('required_provider_groups') or []) != ['kambi', 'marathonbet']:
+              raise SystemExit('required provider groups changed unexpectedly')
+          if float(data.get('max_cross_provider_skew_seconds') or 0) != 300.0:
+              raise SystemExit('synchronization hard gate must remain 300 seconds')
+          if data.get('formal_weight_change') is not False or data.get('probability_change') is not False:
+              raise SystemExit('evidence batch cannot change formal weights/probabilities')
+          if data.get('formal_model_promotion') is not False:
+              raise SystemExit('evidence batch cannot self-promote model')
+          for row in data.get('targets', []):
+              if row.get('promotion_evidence_eligible'):
+                  required = row.get('required_surface_consensus_eligibility') or {}
+                  if not all(required.get(k) is True for k in ('one_x_two','asian_handicap','over_under')):
+                      raise SystemExit('promotion-eligible row lacks full three-surface consensus')
+                  if float(row.get('cross_provider_timestamp_spread_seconds') or 1e9) > 300.0:
+                      raise SystemExit('promotion-eligible row exceeds synchronization window')
+          print(json.dumps({
+              'status': data.get('status'),
+              'strict_consensus_count_written': data.get('strict_consensus_count_written', 0),
+              'promotion_evidence_eligible_count': data.get('promotion_evidence_eligible_count', 0),
+              'research_only_line_mismatch_count': data.get('research_only_line_mismatch_count', 0),
+              'fail_closed': True,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist synchronized artifacts safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/priority_targets/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/priority_targets/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/evidence/market_consensus_prospective/ \
+            --message-prefix "audit(football): persist V5.5.21 synchronized dual-provider PIT batch"
