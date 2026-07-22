@@ -1,4 +1,4 @@
-name: Football V4.7.4 Workflow Stability
+name: Football V5.5.31 Workflow Stability
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: football-workflow-stability-v474-${{ github.ref }}
+  group: football-workflow-stability-v5531-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,8 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout full history for frozen baseline verification
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -38,22 +40,22 @@ jobs:
           python -m py_compile football-data/validation/persist_files_v474.py
           python -m py_compile football-data/validation/persist_generated_worktree_v474.py
 
-      - name: Scan all workflows and write local receipt
-        run: python football-data/validation/workflow_stability_audit_v474.py --write-receipt --print-summary
+      - name: Enforce fail-closed gate and write local receipt
+        run: |
+          python football-data/validation/workflow_stability_audit_v474.py \
+            --write-receipt \
+            --strict-exit \
+            --print-summary
 
-      - name: Persist stability receipt safely
+      - name: Persist passing stability receipt safely
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           python football-data/validation/persist_files_v474.py \
             football-data/manifests/workflow_stability_v474_status.json \
-            --message-prefix "audit(football): persist workflow-stability receipt"
+            --message-prefix "audit(football): persist V5.5.31 workflow-stability receipt"
 
-      - name: Enforce fail-closed workflow hygiene gate
-        run: python football-data/validation/workflow_stability_audit_v474.py --strict-exit --print-summary
-
-# V4.7.4 baseline is now clean. This gate remains fail-closed so direct git
-# writeback, global write permission, deprecated action runtimes, missing timeouts,
-# or direct per-workflow Contents API implementations cannot silently return.
-# Public-runner verification trigger: 2026-07-20.
+# The exact V5.5.30 legacy finding set is frozen by Git blob SHA inside the
+# scanner. Existing findings are quarantined, remain fully visible, and may only
+# decrease. Any new unsafe finding or baseline-integrity failure exits non-zero.
