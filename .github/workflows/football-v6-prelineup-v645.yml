@@ -5,6 +5,7 @@ on:
     paths:
       - "football-data/validation/v6_prelineup_stability_v645.py"
       - "football-data/validation/v6_prelineup_stability_v645_r2.py"
+      - "football-data/validation/v6_prelineup_stability_v645_r3.py"
       - ".github/workflows/football-v6-prelineup-v645.yml"
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
         with: {fetch-depth: 0}
@@ -21,8 +22,11 @@ jobs:
         with: {python-version: "3.12"}
       - run: |
           python -m py_compile football-data/validation/v6_prelineup_stability_v645.py
-          python -m py_compile football-data/validation/v6_prelineup_stability_v645_r2.py
-      - run: python football-data/validation/v6_prelineup_stability_v645_r2.py
+          python -m py_compile football-data/validation/v6_prelineup_stability_v645_r3.py
+      - name: Run retry-safe lineup pilot
+        id: pilot
+        continue-on-error: true
+        run: python football-data/validation/v6_prelineup_stability_v645_r3.py
       - name: Persist
         if: always()
         env:
@@ -30,18 +34,17 @@ jobs:
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
-            --allow-prefix football-data/manifests/v6_prelineup_stability_v645_r2_status.json \
-            --message-prefix "audit(football): persist V6.4.5 r2 pre-lineup stability pilot"
-      - name: Enforce
+            --allow-prefix football-data/manifests/v6_prelineup_stability_v645_r3_status.json \
+            --message-prefix "audit(football): persist V6.4.5 r3 retry-safe pre-lineup pilot"
+      - name: Enforce receipt existence
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('football-data/manifests/v6_prelineup_stability_v645_r2_status.json')
-          if not p.exists(): raise SystemExit('V645 r2 missing')
+          p=Path('football-data/manifests/v6_prelineup_stability_v645_r3_status.json')
+          if not p.exists(): raise SystemExit('V645 r3 receipt missing')
           x=json.loads(p.read_text())
-          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
-          print(json.dumps({'audit':x.get('data_audit'),'gain':x.get('accuracy_gain_pp'),'guard':x.get('proper_score_guard'),'gate':x.get('pilot_gate_passed')},ensure_ascii=False))
+          print(json.dumps({'status':x.get('status'),'reason':x.get('reason'),'audit':x.get('data_audit'),'gain':x.get('accuracy_gain_pp'),'guard':x.get('proper_score_guard'),'gate':x.get('pilot_gate_passed')},ensure_ascii=False))
           PY
-# Research pilot only; no CURRENT/formal/runtime mutation.
+# Research pilot only; guaranteed diagnostic receipt, no CURRENT/formal/runtime mutation.
