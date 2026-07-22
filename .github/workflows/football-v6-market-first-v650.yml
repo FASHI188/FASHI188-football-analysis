@@ -1,0 +1,43 @@
+name: football-v6-market-first-v650
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_selector_v650.py"
+      - ".github/workflows/football-v6-market-first-v650.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_market_first_selector_v650.py
+      - run: python football-data/validation/v6_market_first_selector_v650.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_first_selector_v650_status.json \
+            --message-prefix "audit(football): persist V6.5.0 market-first selector"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_market_first_selector_v650_status.json')
+          if not p.exists(): raise SystemExit('V650 missing')
+          x=json.loads(p.read_text())
+          print(json.dumps({'status':x.get('status'),'primary':x.get('primary_arm_selected_on_older_only'),'test':x.get('primary_newer_test')},ensure_ascii=False))
+          PY
+# Research only; no CURRENT/formal/runtime mutation.
