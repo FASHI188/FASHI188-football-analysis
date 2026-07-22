@@ -1,0 +1,74 @@
+name: Football V5.5.33 Nested Selective Accuracy
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/nested_selective_accuracy_v5533.py"
+      - ".github/workflows/football-v5533-nested-selective-accuracy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v5533-nested-selective-accuracy
+  cancel-in-progress: true
+
+jobs:
+  nested-selective-accuracy:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile experiment
+        run: python -m py_compile football-data/validation/nested_selective_accuracy_v5533.py
+
+      - name: Run strict nested selective accuracy experiment
+        run: python football-data/validation/nested_selective_accuracy_v5533.py
+
+      - name: Verify challenge-only governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/nested_selective_accuracy_v5533_status.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          g=d.get('governance') or {}
+          if g.get('automatic_runtime_activation') is not False:
+              raise SystemExit('automatic runtime activation detected')
+          if g.get('formal_model_promotion') is not False:
+              raise SystemExit('formal model promotion detected')
+          if g.get('formal_weight_change') is not False or g.get('probability_change') is not False:
+              raise SystemExit('formal model mutation detected')
+          if (d.get('method') or {}).get('target_holdout_used_for_threshold_selection') is not False:
+              raise SystemExit('target holdout leakage detected')
+          print(json.dumps({
+              'status': d.get('status'),
+              'training_rows': (d.get('row_counts') or {}).get('training_outer_fold_predictions'),
+              'holdout_rows': (d.get('row_counts') or {}).get('untouched_holdout_predictions'),
+              'recommended_candidate': d.get('recommended_challenge_candidate'),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist one-time experiment receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/nested_selective_accuracy_v5533_status.json \
+            --message-prefix "audit(football): persist V5.5.33 nested selective accuracy"
+
+# No schedule. This workflow runs only when manually dispatched or when its own
+# experiment code/workflow changes. It is not a continuing data-collection job.
