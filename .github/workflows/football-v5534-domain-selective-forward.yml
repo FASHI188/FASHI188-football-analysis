@@ -1,0 +1,71 @@
+name: Football V5.5.34 Domain Selective Forward Validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/domain_selective_forward_v5534.py"
+      - ".github/workflows/football-v5534-domain-selective-forward.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v5534-domain-selective-forward
+  cancel-in-progress: true
+
+jobs:
+  validate-domain-gates:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile validator
+        run: python -m py_compile football-data/validation/domain_selective_forward_v5534.py
+
+      - name: Run all-domain forward-frozen validation
+        run: python football-data/validation/domain_selective_forward_v5534.py
+
+      - name: Verify challenge-only governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('football-data/manifests/domain_selective_forward_v5534_status.json').read_text(encoding='utf-8'))
+          g=d.get('governance') or {}
+          if g.get('strictly_prior_season_rule_selection') is not True:
+              raise SystemExit('prior-season selection audit failed')
+          if g.get('target_fold_outcomes_used_for_rule_selection') is not False:
+              raise SystemExit('forward target leakage detected')
+          if g.get('automatic_runtime_activation') is not False:
+              raise SystemExit('automatic activation detected')
+          if g.get('formal_weight_change') is not False or g.get('probability_change') is not False:
+              raise SystemExit('formal model mutation detected')
+          print(json.dumps({
+              'status': d.get('status'),
+              'candidates': d.get('forward_stable_candidates'),
+              'failures': d.get('failures'),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Persist one-time forward validation receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_files_v474.py \
+            football-data/manifests/domain_selective_forward_v5534_status.json \
+            --message-prefix "audit(football): persist V5.5.34 domain selective forward validation"
+
+# No schedule. This is a one-time/review-triggered accuracy validation, not a data collector.
