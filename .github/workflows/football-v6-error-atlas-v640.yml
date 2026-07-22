@@ -1,0 +1,44 @@
+name: football-v6-error-atlas-v640
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_error_atlas_v640.py"
+      - ".github/workflows/football-v6-error-atlas-v640.yml"
+permissions:
+  contents: read
+jobs:
+  atlas:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_error_atlas_v640.py
+      - run: python football-data/validation/v6_error_atlas_v640.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_error_atlas_v640_status.json \
+            --message-prefix "audit(football): persist V6.4.0 error atlas"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_error_atlas_v640_status.json')
+          if not p.exists(): raise SystemExit('V640 receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({'overall':x['overall'],'confusion':x['newer_confusion'],'agreement':x['newer_agreement']},ensure_ascii=False))
+          PY
+# Research diagnostics only; no CURRENT/formal/runtime mutation.
