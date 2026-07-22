@@ -8,6 +8,7 @@ splits, gates and leakage controls.
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import sys
@@ -31,14 +32,17 @@ def _fetch_understat_teams_ajax(league: str, year: int) -> tuple[dict[str, Any],
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "football-v6.2-xg-research/2.0",
+            "User-Agent": "football-v6.2-xg-research/2.1",
             "X-Requested-With": "XMLHttpRequest",
             "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Encoding": "gzip, identity",
             "Referer": f"https://understat.com/league/{league}/{year}",
         },
     )
     with urllib.request.urlopen(request, timeout=45) as response:
-        raw = response.read()
+        wire = response.read()
+        content_encoding = str(response.headers.get("Content-Encoding") or "").lower()
+    raw = gzip.decompress(wire) if ("gzip" in content_encoding or wire.startswith(b"\x1f\x8b")) else wire
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception as exc:
@@ -49,7 +53,9 @@ def _fetch_understat_teams_ajax(league: str, year: int) -> tuple[dict[str, Any],
     return teams, {
         "url": url,
         "transport": "ajax_json",
-        "response_sha256": hashlib.sha256(raw).hexdigest(),
+        "content_encoding": content_encoding or None,
+        "wire_sha256": hashlib.sha256(wire).hexdigest(),
+        "decoded_sha256": hashlib.sha256(raw).hexdigest(),
         "team_count": len(teams),
         "payload_keys": sorted(payload.keys()),
     }
@@ -59,7 +65,6 @@ def main() -> int:
     r1.OUT = OUT
     r1._fetch_understat_teams = _fetch_understat_teams_ajax
     code = r1.main()
-    # Rewrite schema marker so downstream readers can distinguish fixed transport from r1.
     if OUT.exists():
         data = json.loads(OUT.read_text(encoding="utf-8"))
         data["schema_version"] = "V6.2.4-understat-xg-residual-r2-ajax"
