@@ -1,0 +1,56 @@
+name: football-v6-risk-controlled-forward-v632
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "56 */3 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_risk_controlled_forward_v632.py"
+      - ".github/workflows/football-v6-risk-controlled-forward-v632.yml"
+      - "football-data/forward/v6_pristine_forward_events_v612.json"
+      - "football-data/manifests/v6_pristine_forward_audit_v613_status.json"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-risk-controlled-forward-v632
+  cancel-in-progress: true
+jobs:
+  evaluate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_risk_controlled_forward_v632.py
+      - name: Run V6.3.2 forward epoch
+        id: eval
+        continue-on-error: true
+        run: python football-data/validation/v6_risk_controlled_forward_v632.py
+      - name: Persist freeze and evaluation
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_risk_controlled_forward_freeze_v632.json \
+            --allow-prefix football-data/manifests/v6_risk_controlled_forward_evaluation_v632_status.json \
+            --message-prefix "audit(football): persist V6.3.2 risk-controlled forward epoch"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          f=Path('football-data/manifests/v6_risk_controlled_forward_freeze_v632.json')
+          p=Path('football-data/manifests/v6_risk_controlled_forward_evaluation_v632_status.json')
+          if not f.exists() or not p.exists(): raise SystemExit('V632 receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'arms':x.get('arms')},ensure_ascii=False))
+          PY
+# New research epoch only. Does not modify V6.1 frozen predictions or CURRENT.
