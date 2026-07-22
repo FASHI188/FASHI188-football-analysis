@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "football-data/validation/v6_pristine_forward_evaluate_v611_r2.py"
+      - "football-data/validation/v6_pristine_forward_evaluate_v611_r3.py"
       - "football-data/forward/v6_pristine_forward_events_v612.json"
+      - "football-data/manifests/v6_pristine_forward_audit_v613_status.json"
       - ".github/workflows/football-v6-pristine-forward-evaluate-v611.yml"
 
 permissions:
@@ -28,14 +29,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Compile ledger-native V6.1.1 evaluator
+      - name: Compile audit-aware V6.1.1 evaluator
         run: |
           python -m py_compile football-data/validation/v6_pristine_forward_ledger_v612.py
           python -m py_compile football-data/validation/v6_pristine_forward_evaluate_v611_r2.py
-      - name: Run ledger-native pristine forward evaluator
+          python -m py_compile football-data/validation/v6_pristine_forward_evaluate_v611_r3.py
+      - name: Run audit-aware pristine forward evaluator
         id: evaluate
         continue-on-error: true
-        run: python football-data/validation/v6_pristine_forward_evaluate_v611_r2.py
+        run: python football-data/validation/v6_pristine_forward_evaluate_v611_r3.py
       - name: Persist V6.1.1 evaluation receipt safely
         if: always()
         env:
@@ -44,7 +46,7 @@ jobs:
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_pristine_forward_evaluation_v611_status.json \
-            --message-prefix "audit(football): persist ledger-native V6.1.1 evaluation"
+            --message-prefix "audit(football): persist audit-aware V6.1.1 evaluation"
       - name: Enforce V6.1.1 integrity status
         if: always()
         run: |
@@ -57,7 +59,12 @@ jobs:
           receipt = json.loads(path.read_text(encoding="utf-8"))
           if receipt.get("status") != "PASS":
               raise SystemExit(f"V6.1.1 integrity gate failed: {receipt.get('status')}")
-          print(json.dumps({"status": "PASS", "evaluation_status": receipt.get("evaluation_status")}, ensure_ascii=False))
+          print(json.dumps({
+              "status": "PASS",
+              "evaluation_status": receipt.get("evaluation_status"),
+              "completed_forward_match_count": receipt.get("completed_forward_match_count"),
+              "excluded_invalidated_settled_count": receipt.get("excluded_invalidated_settled_count"),
+          }, ensure_ascii=False))
           PY
 
-# Ledger-native forward evaluation only. No automatic promotion or runtime mutation.
+# Audit-aware ledger-native forward evaluation only. No automatic promotion or runtime mutation.
