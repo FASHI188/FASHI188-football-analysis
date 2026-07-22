@@ -1,0 +1,65 @@
+name: football-v6-understat-xg-residual-v624-r2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_understat_xg_residual_v624_r2.py"
+      - ".github/workflows/football-v6-understat-xg-residual-v624-r2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-understat-xg-residual-v624-r2
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/v6_understat_xg_residual_v624.py
+          python -m py_compile football-data/validation/v6_understat_xg_residual_v624_r2.py
+      - name: Run V6.2.4 r2
+        id: challenge
+        continue-on-error: true
+        run: python football-data/validation/v6_understat_xg_residual_v624_r2.py
+      - name: Persist receipt
+        if: always()
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_understat_xg_residual_v624_r2_status.json \
+            --message-prefix "audit(football): persist V6.2.4 r2 Understat AJAX xG residual"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("football-data/manifests/v6_understat_xg_residual_v624_r2_status.json")
+          if not p.exists():
+              raise SystemExit("V6.2.4 r2 receipt missing")
+          r = json.loads(p.read_text(encoding="utf-8"))
+          if r.get("status") != "PASS":
+              raise SystemExit(f"V6.2.4 r2 failed: {r.get('status')}")
+          result = r.get("result") or {}
+          print(json.dumps({
+              "result_status": result.get("status"),
+              "market_holdout": (result.get("market_holdout") or {}).get("accuracy"),
+              "xg_holdout": (result.get("xg_holdout") or {}).get("accuracy"),
+              "gain_pp": result.get("accuracy_gain_pp_vs_market"),
+          }, ensure_ascii=False))
+          PY
+
+# Research-only. Data-transport fix; no CURRENT/formal/runtime/V6.1 pristine-forward mutation.
