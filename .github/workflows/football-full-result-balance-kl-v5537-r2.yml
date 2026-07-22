@@ -1,0 +1,46 @@
+name: football-full-result-balance-kl-v5537-r2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/full_result_balance_kl_v5537.py"
+      - "football-data/validation/full_result_balance_kl_v5537_r2.py"
+      - ".github/workflows/football-full-result-balance-kl-v5537-r2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-full-result-balance-kl-v5537-r2
+  cancel-in-progress: true
+
+jobs:
+  reduced-experiment:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile reduced experiment
+        run: |
+          python -m py_compile football-data/validation/full_result_balance_kl_v5537.py
+          python -m py_compile football-data/validation/full_result_balance_kl_v5537_r2.py
+      - name: Run global-only cross-class calibration
+        run: python football-data/validation/full_result_balance_kl_v5537_r2.py
+      - name: Persist reduced receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/full_result_balance_kl_v5537_r2_status.json \
+            --message-prefix "audit(football): persist V5.5.37-r2 global result balance KL"
+
+# One-time reduced challenge experiment. No schedule or formal/runtime mutation.
