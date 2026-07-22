@@ -1,0 +1,92 @@
+name: football-active-domain-pit-v5532
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */2 * * *"
+  push:
+    paths:
+      - "football-data/validation/active_domain_identity_registry_v5532.py"
+      - "football-data/validation/marathonbet_active_domain_capture_v5532.py"
+      - "football-data/validation/kambi_active_domain_capture_v5532.py"
+      - "football-data/validation/active_domain_market_postprocess_v5532.py"
+      - "football-data/validation/active_domain_pit_audit_v5532.py"
+      - ".github/workflows/football-active-domain-pit-v5532.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-active-domain-pit-v5532
+  cancel-in-progress: true
+
+jobs:
+  synchronized-active-domain-pit:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Freeze batch start
+        run: echo "BATCH_START_UTC=$(date -u +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
+
+      - name: Compile V5.5.32 chain
+        run: |
+          python -m py_compile football-data/validation/active_domain_identity_registry_v5532.py
+          python -m py_compile football-data/validation/marathonbet_active_domain_capture_v5532.py
+          python -m py_compile football-data/validation/kambi_active_domain_capture_v5532.py
+          python -m py_compile football-data/validation/active_domain_market_postprocess_v5532.py
+          python -m py_compile football-data/validation/active_domain_pit_audit_v5532.py
+          python -m py_compile football-data/validation/kambi_multiline_bundle_v5528.py
+          python -m py_compile football-data/validation/exact_line_aligned_consensus_v5529.py
+          python -m py_compile football-data/validation/promotion_consensus_registry_v5530.py
+          rm -rf football-data/validation/__pycache__
+
+      - name: Build current-season observed identity registry
+        run: python football-data/validation/active_domain_identity_registry_v5532.py
+
+      - name: Capture Marathonbet active domains
+        run: python football-data/validation/marathonbet_active_domain_capture_v5532.py
+
+      - name: Capture Kambi active domains with exact crosscheck
+        run: |
+          python football-data/validation/kambi_active_domain_capture_v5532.py \
+            --batch-start-utc "$BATCH_START_UTC"
+
+      - name: Run multiline exact-line and dedup postprocess
+        run: |
+          python football-data/validation/active_domain_market_postprocess_v5532.py \
+            --since-utc "$BATCH_START_UTC"
+
+      - name: Audit active-domain PIT chain
+        run: python football-data/validation/active_domain_pit_audit_v5532.py
+
+      - name: Persist validated V5.5.32 artifacts safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/config/active_domain_identity_registry_v5532.json \
+            --allow-prefix football-data/manifests/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/marathonbet/active_domains/ \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/active_domains/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/evidence/market_line_bundles_prospective/ \
+            --allow-prefix football-data/evidence/market_aligned_observations_prospective/ \
+            --allow-prefix football-data/evidence/market_consensus_prospective/ \
+            --message-prefix "audit(football): persist V5.5.32 active-domain PIT"
+
+# V5.5.32 is evidence acquisition only. It may not change CURRENT, model files,
+# formal weights or probabilities. Empty provider overlap is a truthful data state,
+# not a synthetic success sample.
