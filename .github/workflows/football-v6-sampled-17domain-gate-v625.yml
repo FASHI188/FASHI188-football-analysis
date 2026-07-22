@@ -1,0 +1,68 @@
+name: football-v6-sampled-17domain-gate-v625
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_17domain_gate_v625.py"
+      - ".github/workflows/football-v6-sampled-17domain-gate-v625.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-sampled-17domain-gate-v625
+  cancel-in-progress: true
+
+jobs:
+  sampled-gate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.2.5 sampled gate
+        run: python -m py_compile football-data/validation/v6_sampled_17domain_gate_v625.py
+      - name: Run fixed 17-domain sampled gate
+        id: gate
+        continue-on-error: true
+        run: python football-data/validation/v6_sampled_17domain_gate_v625.py
+      - name: Persist sampled panel and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_panel_v625.json \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_gate_v625_status.json \
+            --message-prefix "audit(football): persist V6.2.5 sampled 17-domain gate"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("football-data/manifests/v6_sampled_17domain_gate_v625_status.json")
+          if not p.exists():
+              raise SystemExit("V6.2.5 receipt missing")
+          x = json.loads(p.read_text(encoding="utf-8"))
+          if x.get("status") != "PASS":
+              raise SystemExit(f"V6.2.5 failed: {x.get('status')} {x.get('failures')}")
+          m = x["full_direction_metrics"]
+          t = x["target_65_diagnostic"]
+          print(json.dumps({
+              "combined_1700_accuracy": m["combined_1700"]["accuracy"],
+              "newer_850_accuracy": m["newer_season_sample_850"]["accuracy"],
+              "65pct_all_test": t["all_predictions"]["newer_season_test"],
+              "65pct_prior_selective_test": t["prior_selective_eligibility_non_draw_formal_agreement"]["newer_season_test"],
+          }, ensure_ascii=False))
+          PY
+
+# Fast development sampling gate only; no formal promotion and no CURRENT mutation.
