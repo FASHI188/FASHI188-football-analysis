@@ -7,7 +7,7 @@ import math
 import re
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,6 +26,7 @@ FORMAL_ROOT = ROOT / "evidence" / "markets_prospective"
 MANIFEST = ROOT / "manifests" / "marathonbet_active_domain_capture_v5532_status.json"
 BROAD_URL = "https://www.marathonbet.com/en/betting/Football"
 LONDON = ZoneInfo("Europe/London")
+TRANSLATE = str.maketrans({"ø": "o", "Ø": "o", "ł": "l", "Ł": "l", "đ": "d", "Đ": "d", "ð": "d", "Ð": "d", "þ": "th", "Þ": "th", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe"})
 
 TARGETS = {
     "USA_MLS": {
@@ -60,9 +61,13 @@ def now_utc() -> str:
 
 
 def norm(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    text = unicodedata.normalize("NFKD", str(value or "").translate(TRANSLATE)).casefold()
+    parts: list[str] = []
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        parts.append(ch if ch.isalnum() else " ")
+    return " ".join("".join(parts).split())
 
 
 def safe(value: object) -> str:
@@ -89,11 +94,10 @@ def displayed_to_utc(token: str, observed_utc: str) -> str:
     candidates = []
     for year in (observed.year - 1, observed.year, observed.year + 1):
         local = probe.replace(year=year, tzinfo=LONDON)
-        utc = local.astimezone(timezone.utc)
-        candidates.append(utc)
+        candidates.append(local.astimezone(timezone.utc))
     future = [value for value in candidates if value >= observed.replace(microsecond=0)]
     selected = min(future, key=lambda value: value - observed) if future else min(candidates, key=lambda value: abs(value - observed))
-    if selected - observed > __import__("datetime").timedelta(days=370):
+    if selected - observed > timedelta(days=370):
         raise ValueError(f"displayed kickoff too far from observation: {token}")
     return selected.replace(microsecond=0).isoformat()
 
@@ -104,7 +108,7 @@ def load_registry() -> tuple[dict[str, Any], str, dict[str, dict[str, str]]]:
     if data.get("schema_version") != "V5.5.32-active-domain-observed-identity-r1":
         raise ValueError("unexpected active-domain identity schema")
     maps: dict[str, dict[str, str]] = {}
-    for cid, cfg in TARGETS.items():
+    for cid in TARGETS:
         comp = (data.get("competitions") or {}).get(cid) or {}
         aliases: dict[str, str] = {}
         if str(comp.get("status") or "").startswith("PASS_"):
@@ -112,8 +116,11 @@ def load_registry() -> tuple[dict[str, Any], str, dict[str, dict[str, str]]]:
                 canonical = str(team.get("canonical_name") or "").strip()
                 if not canonical:
                     continue
-                for value in [canonical, *(team.get("observed_variants") or [])]:
+                values = [canonical, *(team.get("observed_variants") or []), *(team.get("provider_aliases") or [])]
+                for value in values:
                     token = norm(value)
+                    if not token:
+                        continue
                     previous = aliases.get(token)
                     if previous is not None and previous != canonical:
                         raise ValueError(f"identity collision {cid}:{value}:{previous}/{canonical}")
@@ -126,9 +133,32 @@ def clean_lines(raw: bytes) -> list[str]:
     return [line.strip() for line in extract_text(raw).splitlines() if line.strip()]
 
 
-def find_section(lines: list[str], categories: list[str]) -> tuple[str, int, int] | None:
-    category_set = set(categories)
-    start = next((i for i, line in enumerate(lines) if line in category_set), None)
+def category_matches(cid: str, line: str, exact_categories: list[str]) -> bool:
+    if line in exact_categories:
+        return True
+    if " — " in line or len(line) > 120:
+        return False
+    token = norm(line)
+    words = set(token.split())
+    if cid == "USA_MLS":
+        return "mls" in words and "next" not in words and "women" not in words
+    if cid == "BRA_SerieA":
+        geography = "brazil" in words or "brasil" in words or "brasileirao" in words or "brasileiro" in words
+        tier = "serie a" in token or "series a" in token or "brasileirao" in token or "brasileiro" in token
+        return geography and tier and "serie b" not in token and "series b" not in token
+    if cid == "ARG_Primera":
+        return "argentina" in words and ("liga profesional" in token or "primera division" in token or "primera nacional" not in token and "primera" in words)
+    if cid == "SWE_Allsvenskan":
+        return "allsvenskan" in words and "damallsvenskan" not in words and "women" not in words
+    if cid == "NOR_Eliteserien":
+        return "eliteserien" in words and "women" not in words
+    if cid == "KOR_KLeague1":
+        return ("k league 1" in token or "kleague 1" in token) and "k league 2" not in token and "kleague 2" not in token
+    return False
+
+
+def find_section(lines: list[str], cid: str, categories: list[str]) -> tuple[str, int, int] | None:
+    start = next((i for i, line in enumerate(lines) if category_matches(cid, line, categories)), None)
     if start is None:
         return None
     category = lines[start]
@@ -138,6 +168,13 @@ def find_section(lines: list[str], categories: list[str]) -> tuple[str, int, int
             end = j
             break
     return category, start, end
+
+
+def category_probe(lines: list[str]) -> dict[str, list[str]]:
+    return {
+        cid: [line for line in lines if category_matches(cid, line, cfg["categories"])][:20]
+        for cid, cfg in TARGETS.items()
+    }
 
 
 def parse_fixture(lines: list[str], index: int, observed: str) -> tuple[dict[str, Any] | None, int]:
@@ -183,7 +220,7 @@ def formal_path(snapshot: dict[str, Any]) -> Path:
 def main() -> int:
     registry, registry_sha, alias_maps = load_registry()
     receipt: dict[str, Any] = {
-        "schema_version": "V5.5.32-marathonbet-active-domain-capture-r1",
+        "schema_version": "V5.5.32-marathonbet-active-domain-capture-r2",
         "generated_at_utc": now_utc(),
         "provider_name": "Marathonbet",
         "provider_group": "marathonbet",
@@ -218,6 +255,7 @@ def main() -> int:
             "raw_html_sha256": digest,
             "raw_html_path": str(raw_path.relative_to(ROOT)),
             "extracted_line_count": len(lines),
+            "category_probe_matches": category_probe(lines),
         }
     except Exception as exc:
         receipt["status"] = "BROAD_PAGE_FAIL_CLOSED"
@@ -240,7 +278,7 @@ def main() -> int:
             league["status"] = "IDENTITY_DOMAIN_UNAVAILABLE_FAIL_CLOSED"
             receipt["leagues"].append(league)
             continue
-        section = find_section(lines, cfg["categories"])
+        section = find_section(lines, cid, cfg["categories"])
         if section is None:
             receipt["leagues"].append(league)
             continue
@@ -263,8 +301,8 @@ def main() -> int:
             home = aliases.get(norm(fixture["source_home"]))
             away = aliases.get(norm(fixture["source_away"]))
             fixture["identity_resolution"] = {
-                "home": {"canonical": home, "source": "CURRENT_SEASON_OBSERVED_EXACT" if home else "UNRESOLVED"},
-                "away": {"canonical": away, "source": "CURRENT_SEASON_OBSERVED_EXACT" if away else "UNRESOLVED"},
+                "home": {"canonical": home, "source": "CURRENT_SEASON_EXACT_ALIAS" if home else "UNRESOLVED"},
+                "away": {"canonical": away, "source": "CURRENT_SEASON_EXACT_ALIAS" if away else "UNRESOLVED"},
                 "fuzzy_matching_used": False,
                 "registry_sha256": registry_sha,
             }
@@ -291,7 +329,7 @@ def main() -> int:
                 "asian_handicap": {k: fixture["asian_handicap"][k] for k in ("line", "home", "away")},
                 "over_under": {k: fixture["over_under"][k] for k in ("line", "over", "under")},
                 "source_adapter": {
-                    "schema_version": "V5.5.32-marathonbet-active-domain-capture-r1",
+                    "schema_version": "V5.5.32-marathonbet-active-domain-capture-r2",
                     "parent_raw_html_path": str(raw_path.relative_to(ROOT)),
                     "parent_raw_html_sha256": digest,
                     "source_display_names": {"home": fixture["source_home"], "away": fixture["source_away"]},
@@ -349,9 +387,9 @@ def main() -> int:
     if receipt["formal_snapshot_count_available"]:
         receipt["status"] = "PASS_ACTIVE_DOMAIN_MARATHONBET_PIT"
     receipt["policy"] = (
-        "Only exact identities observed in frozen current-season registered competition data are accepted. "
-        "Fuzzy matching and historical fallback are prohibited. Every market surface must come from one fresh direct Marathonbet HTML response; "
-        "single-provider evidence cannot change weights, probabilities or promotion samples."
+        "Only exact identities observed in frozen current-season registered competition data or hash-bound provider aliases are accepted. "
+        "Competition-label normalization may identify a league section but may never resolve a team. Fuzzy team matching and historical fallback are prohibited. "
+        "Every market surface must come from one fresh direct Marathonbet HTML response; single-provider evidence cannot change weights, probabilities or promotion samples."
     )
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -360,6 +398,7 @@ def main() -> int:
         "formal_snapshot_count_available": receipt["formal_snapshot_count_available"],
         "unresolved_identity_count": receipt["unresolved_identity_count"],
         "league_statuses": {row["competition_id"]: row["status"] for row in receipt["leagues"]},
+        "category_probe_matches": receipt.get("broad_page", {}).get("category_probe_matches", {}),
     }, ensure_ascii=False, indent=2))
     return 0
 
