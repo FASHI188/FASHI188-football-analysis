@@ -1,0 +1,46 @@
+name: football-v6-market-first-registry-v652
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_architecture_registry_v652.py"
+      - ".github/workflows/football-v6-market-first-registry-v652.yml"
+      - "football-data/manifests/v6_market_first_selector_v650_status.json"
+      - "football-data/manifests/v6_market_first_forward_evaluation_v651_status.json"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_market_first_architecture_registry_v652.py
+      - run: python football-data/validation/v6_market_first_architecture_registry_v652.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_first_architecture_registry_v652_status.json \
+            --message-prefix "audit(football): persist V6.5.2 market-first registry"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_market_first_architecture_registry_v652_status.json')
+          if not p.exists(): raise SystemExit('V652 missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(json.dumps(x.get('evidence_checks'),ensure_ascii=False))
+          print(json.dumps({'status':x['status'],'architecture':x['research_architecture'],'promotion':x['promotion_policy']},ensure_ascii=False))
+          PY
+# Research governance only. CURRENT remains untouched.
