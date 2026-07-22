@@ -1,0 +1,76 @@
+name: football-v6-pristine-forward-audit-v613
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "42 */3 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_pristine_forward_audit_v613.py"
+      - "football-data/forward/v6_pristine_forward_events_v612.json"
+      - "football-data/forward/inbox/fixtures_v612.json"
+      - "football-data/evidence/markets_prospective/**"
+      - ".github/workflows/football-v6-pristine-forward-audit-v613.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-pristine-forward-audit-v613
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.1.3 audit
+        run: |
+          python -m py_compile football-data/validation/v6_pristine_forward_audit_v613.py
+          python -m py_compile football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Verify V6.1.3 audit-chain tamper detection
+        run: python football-data/validation/v6_pristine_forward_audit_v613.py --self-test
+      - name: Run V6.1.3 integrity and drift audit
+        id: audit
+        continue-on-error: true
+        run: python football-data/validation/v6_pristine_forward_audit_v613.py
+      - name: Persist V6.1.3 baseline, audit chain and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_pristine_forward_audit_baseline_v613.json \
+            --allow-prefix football-data/forward/v6_pristine_forward_audit_events_v613.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_audit_v613_status.json \
+            --message-prefix "audit(football): persist V6.1.3 forward integrity audit"
+      - name: Enforce V6.1.3 global gates
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/v6_pristine_forward_audit_v613_status.json")
+          if not path.exists():
+              raise SystemExit("missing V6.1.3 audit receipt")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          status = str(receipt.get("status") or "")
+          if status.startswith("FAIL_"):
+              raise SystemExit(f"V6.1.3 global gate failed: {status}")
+          print(json.dumps({
+              "status": status,
+              "invalidated_match_count": receipt.get("invalidated_match_count"),
+              "evaluation_blocked": receipt.get("evaluation_blocked"),
+          }, ensure_ascii=False))
+          PY
+
+# Research-forward audit only. It never mutates CURRENT or formal runtime weights.
