@@ -1,0 +1,52 @@
+name: football-v6-sampled-direction-survival-v627
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_direction_survival_v627.py"
+      - ".github/workflows/football-v6-sampled-direction-survival-v627.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_sampled_direction_survival_v627.py
+      - name: Run V6.2.7
+        run: python football-data/validation/v6_sampled_direction_survival_v627.py
+      - name: Persist receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_direction_survival_v627_status.json \
+            --message-prefix "audit(football): persist V6.2.7 direction survival gate"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_direction_survival_v627_status.json')
+          if not p.exists(): raise SystemExit('receipt missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps(x['newer_850_combined'],ensure_ascii=False))
+          PY
+
+# Research-only fast gate; no formal/runtime mutation.
