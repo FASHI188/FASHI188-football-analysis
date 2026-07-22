@@ -1,0 +1,63 @@
+name: football-v6-sampled-pooled-gate-v625-r4
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_17domain_pooled_gate_v625_r4.py"
+      - ".github/workflows/football-v6-sampled-pooled-gate-v625-r4.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-sampled-pooled-gate-v625-r4
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_sampled_17domain_pooled_gate_v625_r4.py
+      - name: Run corrected pooled sampled gate
+        id: gate
+        continue-on-error: true
+        run: python football-data/validation/v6_sampled_17domain_pooled_gate_v625_r4.py
+      - name: Persist cache and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_pooled_scored_cache_v625_r4.json \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_pooled_gate_v625_r4_status.json \
+            --message-prefix "audit(football): persist corrected V6.2.5 r4 pooled sampled gate"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_17domain_pooled_gate_v625_r4_status.json')
+          if not p.exists(): raise SystemExit('r4 receipt missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({
+            'combined': x['full_direction_metrics']['combined_1700'],
+            'newer': x['full_direction_metrics']['newer_850'],
+            'target65': x['target_65_diagnostic'],
+          },ensure_ascii=False))
+          PY
+
+# Research correction only. Restores exact pooled V6.0.1 architecture on the same fixed sample.
