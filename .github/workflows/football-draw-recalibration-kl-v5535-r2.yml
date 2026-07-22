@@ -1,0 +1,42 @@
+name: football-draw-recalibration-kl-v5535-r2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/draw_recalibration_kl_v5535.py"
+      - "football-data/validation/draw_recalibration_kl_v5535_r2.py"
+      - ".github/workflows/football-draw-recalibration-kl-v5535-r2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  corrected-experiment:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile corrected experiment
+        run: |
+          python -m py_compile football-data/validation/draw_recalibration_kl_v5535.py
+          python -m py_compile football-data/validation/draw_recalibration_kl_v5535_r2.py
+      - name: Run corrected last-complete-season experiment
+        run: python football-data/validation/draw_recalibration_kl_v5535_r2.py
+      - name: Persist corrected receipt safely
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/draw_recalibration_kl_v5535_r2_status.json \
+            --message-prefix "audit(football): persist corrected V5.5.35 draw recalibration KL"
+
+# One-time corrected experiment. No schedule and no formal/runtime mutation.
