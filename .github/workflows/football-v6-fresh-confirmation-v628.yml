@@ -1,0 +1,59 @@
+name: football-v6-fresh-confirmation-v628
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_fresh_confirmation_v628.py"
+      - ".github/workflows/football-v6-fresh-confirmation-v628.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-fresh-confirmation-v628
+  cancel-in-progress: true
+
+jobs:
+  confirm:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_sampled_fresh_confirmation_v628.py
+      - name: Run V6.2.8 fresh confirmation
+        id: confirm
+        continue-on-error: true
+        run: python football-data/validation/v6_sampled_fresh_confirmation_v628.py
+      - name: Persist panel and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_fresh_confirmation_v628_panel.json \
+            --allow-prefix football-data/manifests/v6_sampled_fresh_confirmation_v628_status.json \
+            --message-prefix "audit(football): persist V6.2.8 fresh disjoint confirmation"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_fresh_confirmation_v628_status.json')
+          if not p.exists(): raise SystemExit('V6.2.8 receipt missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps(x['fresh_newer_850_primary'],ensure_ascii=False))
+          PY
+
+# Fresh confirmation only. Frozen V6.2.7 rule; no tuning on confirmation sample.
