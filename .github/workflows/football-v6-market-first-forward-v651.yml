@@ -1,0 +1,55 @@
+name: football-v6-market-first-forward-v651
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 */3 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_forward_v651.py"
+      - ".github/workflows/football-v6-market-first-forward-v651.yml"
+      - "football-data/evidence/markets_prospective/**"
+      - "football-data/processed/**"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-market-first-forward-v651
+  cancel-in-progress: true
+jobs:
+  evaluate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+      - run: python football-data/validation/v6_market_first_forward_v651.py
+      - name: Persist immutable forward sidecar
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_first_forward_freeze_v651.json \
+            --allow-prefix football-data/forward/v6_market_first_events_v651.json \
+            --allow-prefix football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
+            --message-prefix "audit(football): persist V6.5.1 market-first forward epoch"
+      - name: Enforce integrity
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          f=Path('football-data/manifests/v6_market_first_forward_freeze_v651.json')
+          l=Path('football-data/forward/v6_market_first_events_v651.json')
+          p=Path('football-data/manifests/v6_market_first_forward_evaluation_v651_status.json')
+          if not f.exists() or not l.exists() or not p.exists(): raise SystemExit('V651 outputs missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(str(x))
+          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'selected':x.get('selective_arm_a')},ensure_ascii=False))
+          PY
+# Research-only pristine market epoch. Does not mutate CURRENT or existing V6.1 ledger.
