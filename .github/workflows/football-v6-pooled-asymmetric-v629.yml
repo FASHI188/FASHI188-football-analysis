@@ -1,0 +1,43 @@
+name: football-v6-pooled-asymmetric-v629
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_pooled_asymmetric_gate_v629.py"
+      - ".github/workflows/football-v6-pooled-asymmetric-v629.yml"
+permissions:
+  contents: read
+jobs:
+  gate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_sampled_pooled_asymmetric_gate_v629.py
+      - run: python football-data/validation/v6_sampled_pooled_asymmetric_gate_v629.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_pooled_asymmetric_gate_v629_status.json \
+            --message-prefix "audit(football): persist V6.2.9 pooled asymmetric gate"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_pooled_asymmetric_gate_v629_status.json')
+          if not p.exists(): raise SystemExit('receipt missing')
+          x=json.loads(p.read_text())
+          print(json.dumps(x,ensure_ascii=False))
+          PY
+# Research fast gate only.
