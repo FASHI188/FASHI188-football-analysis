@@ -1,0 +1,65 @@
+name: football-v6-pristine-forward-ledger-v612
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_pristine_forward_ledger_v612.py"
+      - "football-data/forward/inbox/fixtures_v612.json"
+      - "football-data/forward/inbox/results_v612.json"
+      - ".github/workflows/football-v6-pristine-forward-ledger-v612.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-pristine-forward-ledger-v612
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.1.2 ledger
+        run: python -m py_compile football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Run V6.1.2 tamper self-test
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py --self-test
+      - name: Apply fixture and result inboxes
+        id: apply
+        continue-on-error: true
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Persist ledger and audit receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/v6_pristine_forward_events_v612.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_ledger_v612_status.json \
+            --message-prefix "audit(football): persist V6.1.2 pristine forward ledger"
+      - name: Enforce V6.1.2 receipt status
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/v6_pristine_forward_ledger_v612_status.json")
+          if not path.exists():
+              raise SystemExit("V6.1.2 receipt was not generated")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          if receipt.get("status") != "PASS":
+              raise SystemExit(f"V6.1.2 gate failed: {receipt.get('status')} {receipt.get('rejections')}")
+          print(json.dumps({"status": "PASS", "ledger_after": receipt.get("ledger_after")}, ensure_ascii=False))
+          PY
+
+# Research forward ledger only. No CURRENT, formal-weight or runtime-probability mutation.
