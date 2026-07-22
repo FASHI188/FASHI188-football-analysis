@@ -31,6 +31,7 @@ DETAIL_PREFIX = "https://eu-offering-api.kambicdn.com/offering/v2018/betcitynl/b
 PARAMS = {"lang": "nl_NL", "market": "NL", "client_id": 2, "channel_id": 1, "useCombined": "true"}
 USER_AGENT = "Mozilla/5.0 (compatible; football-pit-research/5.5.32; +https://github.com/FASHI188/FASHI188-football-analysis)"
 KICKOFF_TOLERANCE_SECONDS = 60
+TRANSLATE = str.maketrans({"ø": "o", "Ø": "o", "ł": "l", "Ł": "l", "đ": "d", "Đ": "d", "ð": "d", "Ð": "d", "þ": "th", "Þ": "th", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe"})
 
 GROUP_MAP = {
     "MLS": ("USA_MLS", "2026"),
@@ -54,9 +55,13 @@ def dt(value: str) -> datetime:
 
 
 def norm(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    text = unicodedata.normalize("NFKD", str(value or "").translate(TRANSLATE)).casefold()
+    parts: list[str] = []
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        parts.append(ch if ch.isalnum() else " ")
+    return " ".join("".join(parts).split())
 
 
 def safe(value: object) -> str:
@@ -105,13 +110,15 @@ def load_registry() -> tuple[dict[str, dict[str, str]], str]:
         if str(comp.get("status") or "").startswith("PASS_"):
             for team in comp.get("teams") or []:
                 canonical = str(team.get("canonical_name") or "").strip()
-                for value in [canonical, *(team.get("observed_variants") or [])]:
+                values = [canonical, *(team.get("observed_variants") or []), *(team.get("provider_aliases") or [])]
+                for value in values:
                     token = norm(value)
-                    if token:
-                        previous = aliases.get(token)
-                        if previous is not None and previous != canonical:
-                            raise ValueError(f"identity collision {cid}:{value}:{previous}/{canonical}")
-                        aliases[token] = canonical
+                    if not token:
+                        continue
+                    previous = aliases.get(token)
+                    if previous is not None and previous != canonical:
+                        raise ValueError(f"identity collision {cid}:{value}:{previous}/{canonical}")
+                    aliases[token] = canonical
         maps[cid] = aliases
     return maps, hashlib.sha256(raw).hexdigest()
 
@@ -181,7 +188,7 @@ def write_raw(cid: str, home: str, away: str, event_id: int, event: dict[str, An
     token = observed.replace(":", "").replace("+00:00", "Z")
     path = RAW_ROOT / f"{safe(cid)}__{safe(home)}__{safe(away)}__{event_id}__{token}.json"
     envelope = {
-        "schema_version": "V5.5.32-kambi-active-domain-raw-envelope-r1",
+        "schema_version": "V5.5.32-kambi-active-domain-raw-envelope-r2",
         "provider_name": "BetCity NL",
         "provider_group": "kambi",
         "observed_at_utc": observed,
@@ -224,7 +231,7 @@ def main() -> int:
     marathon = fresh_marathon_index(batch_start)
 
     receipt: dict[str, Any] = {
-        "schema_version": "V5.5.32-kambi-active-domain-capture-r1",
+        "schema_version": "V5.5.32-kambi-active-domain-capture-r2",
         "generated_at_utc": now_utc(),
         "batch_start_utc": batch_start.replace(microsecond=0).isoformat(),
         "provider_name": "BetCity NL",
@@ -329,7 +336,7 @@ def main() -> int:
             "snapshot_sha256": cross.get("raw_snapshot_sha256"),
             "kickoff_utc": cross.get("kickoff_utc"),
             "freeze_utc": cross.get("freeze_utc"),
-            "exact_source_or_registry_pair_match": True,
+            "exact_source_or_hash_bound_alias_pair_match": True,
             "fuzzy_matching_used": False,
             "market_values_copied": False,
         }
@@ -366,7 +373,7 @@ def main() -> int:
                 "asian_handicap": {"line": ah["line"], "home": ah["home"], "away": ah["away"]},
                 "over_under": {"line": ou["line"], "over": ou["over"], "under": ou["under"]},
                 "source_adapter": {
-                    "schema_version": "V5.5.32-kambi-active-domain-capture-r1",
+                    "schema_version": "V5.5.32-kambi-active-domain-capture-r2",
                     "accepted_market_adapter": "V5.5.11-kambi-v523-adapter-r1",
                     "parent_raw_evidence_path": str(raw_path.relative_to(ROOT)),
                     "parent_raw_response_sha256": raw_digest,
@@ -431,7 +438,8 @@ def main() -> int:
         receipt["status"] = "CROSSCHECKED_EVENTS_BUT_NO_VALID_KAMBI_PIT"
     receipt["policy"] = (
         "Kambi market surfaces come only from the same immutable Kambi event-detail response. "
-        "Marathonbet is used solely for exact fixture identity and kickoff crosscheck. No fuzzy matching, line copying, probability reconstruction or market splicing is allowed."
+        "Marathonbet is used solely for exact fixture identity and kickoff crosscheck. Hash-bound provider aliases may bridge exact display-name differences only. "
+        "No fuzzy matching, line copying, probability reconstruction or market splicing is allowed."
     )
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -442,6 +450,7 @@ def main() -> int:
         "formal_snapshot_count_available": receipt["formal_snapshot_count_available"],
         "identity_unresolved_count": receipt["identity_unresolved_count"],
         "crosscheck_missing_count": receipt["crosscheck_missing_count"],
+        "detail_or_market_fail_count": receipt["detail_or_market_fail_count"],
     }, ensure_ascii=False, indent=2))
     return 0
 
