@@ -1,0 +1,45 @@
+name: football-v6-market-confirmed-v655
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_confirmation_registry_v655.py"
+      - ".github/workflows/football-v6-market-confirmed-v655.yml"
+      - "football-data/manifests/v6_market_first_fresh_confirmation_v654_status.json"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_market_first_confirmation_registry_v655.py
+      - run: python football-data/validation/v6_market_first_confirmation_registry_v655.py
+      - name: Persist registry
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_first_confirmation_registry_v655_status.json \
+            --message-prefix "audit(football): persist V6.5.5 confirmed market champion"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_market_first_confirmation_registry_v655_status.json')
+          if not p.exists(): raise SystemExit('V655 missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(json.dumps(x.get('evidence_checks'),ensure_ascii=False))
+          print(json.dumps({'status':x['status'],'champion':x['locked_research_champion'],'next':x['frozen_next_stage']},ensure_ascii=False))
+          PY
+# Research registry only. CURRENT remains V5.0.0.
