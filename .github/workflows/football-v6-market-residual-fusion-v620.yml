@@ -1,0 +1,68 @@
+name: football-v6-market-residual-fusion-v620
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_market_residual_fusion_v620.py"
+      - ".github/workflows/football-v6-market-residual-fusion-v620.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-market-residual-fusion-v620
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.2.0 challenge
+        run: python -m py_compile football-data/validation/v6_market_residual_fusion_v620.py
+      - name: Run V6.2.0 market residual fusion
+        id: challenge
+        continue-on-error: true
+        run: python football-data/validation/v6_market_residual_fusion_v620.py
+      - name: Persist V6.2.0 challenge receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_residual_fusion_v620_status.json \
+            --message-prefix "audit(football): persist V6.2.0 market residual fusion"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("football-data/manifests/v6_market_residual_fusion_v620_status.json")
+          if not path.exists():
+              raise SystemExit("V6.2.0 receipt missing")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          if receipt.get("status") != "PASS":
+              raise SystemExit(f"V6.2.0 failed: {receipt.get('status')}")
+          result = receipt.get("result") or {}
+          print(json.dumps({
+              "status": receipt.get("status"),
+              "matched_counts": receipt.get("matched_counts"),
+              "market_holdout_accuracy": ((result.get("market_holdout") or {}).get("accuracy")),
+              "v601_holdout_accuracy": ((result.get("v601_holdout") or {}).get("accuracy")),
+              "fusion_holdout_accuracy": ((result.get("fusion_holdout") or {}).get("accuracy")),
+              "fusion_gain_pp_vs_v601": result.get("fusion_accuracy_gain_pp_vs_v601"),
+          }, ensure_ascii=False))
+          PY
+
+# Research challenge only. Never mutates CURRENT, formal weights, or V6.1 pristine forward state.
