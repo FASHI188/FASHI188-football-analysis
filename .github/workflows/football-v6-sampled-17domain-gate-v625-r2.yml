@@ -1,0 +1,62 @@
+name: football-v6-sampled-17domain-gate-v625-r2
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_17domain_gate_v625_r2.py"
+      - ".github/workflows/football-v6-sampled-17domain-gate-v625-r2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-sampled-17domain-gate-v625-r2
+  cancel-in-progress: true
+
+jobs:
+  sampled-gate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_sampled_17domain_gate_v625_r2.py
+      - name: Run identity-safe sampled gate
+        continue-on-error: true
+        run: python football-data/validation/v6_sampled_17domain_gate_v625_r2.py
+      - name: Persist panel and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_panel_v625.json \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_gate_v625_status.json \
+            --message-prefix "audit(football): persist V6.2.5 r2 sampled 17-domain gate"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_17domain_gate_v625_status.json')
+          if not p.exists(): raise SystemExit('receipt missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status')!='PASS': raise SystemExit(str(x.get('failures') or x.get('status')))
+          print(json.dumps({
+            'combined_1700': x['full_direction_metrics']['combined_1700'],
+            'newer_850': x['full_direction_metrics']['newer_season_sample_850'],
+            'target65': x['target_65_diagnostic'],
+          },ensure_ascii=False))
+          PY
+
+# Research-only fast gate. No CURRENT/formal/runtime mutation.
