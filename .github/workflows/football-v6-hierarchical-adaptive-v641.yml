@@ -1,0 +1,44 @@
+name: football-v6-hierarchical-adaptive-v641
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_hierarchical_adaptive_outcome_v641.py"
+      - ".github/workflows/football-v6-hierarchical-adaptive-v641.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_hierarchical_adaptive_outcome_v641.py
+      - run: python football-data/validation/v6_hierarchical_adaptive_outcome_v641.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_hierarchical_adaptive_outcome_v641_status.json \
+            --message-prefix "audit(football): persist V6.4.1 hierarchical adaptive outcome"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_hierarchical_adaptive_outcome_v641_status.json')
+          if not p.exists(): raise SystemExit('V641 receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({'gain_pp':x.get('newer_accuracy_gain_pp'),'draw_gain_pp':x.get('newer_draw_recall_gain_pp'),'proper':x.get('newer_proper_score_guard'),'gate':x.get('research_gate_passed')},ensure_ascii=False))
+          PY
+# Research challenger only; no CURRENT/formal/runtime mutation.
