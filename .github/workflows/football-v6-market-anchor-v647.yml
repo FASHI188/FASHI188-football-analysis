@@ -1,0 +1,44 @@
+name: football-v6-market-anchor-v647
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_15domain_market_anchor_v647.py"
+      - ".github/workflows/football-v6-market-anchor-v647.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_sampled_15domain_market_anchor_v647.py
+      - run: python football-data/validation/v6_sampled_15domain_market_anchor_v647.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_15domain_market_anchor_v647_status.json \
+            --message-prefix "audit(football): persist V6.4.7 15-domain market anchor"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_sampled_15domain_market_anchor_v647_status.json')
+          if not p.exists(): raise SystemExit('V647 missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({'coverage':x.get('coverage'),'overall':x.get('overall')},ensure_ascii=False))
+          PY
+# Research/source audit only; no CURRENT/formal/runtime mutation.
