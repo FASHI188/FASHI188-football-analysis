@@ -1,0 +1,76 @@
+name: football-v6-pristine-forward-autofeed-v612
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */3 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_pristine_forward_autofeed_v612.py"
+      - ".github/workflows/football-v6-pristine-forward-autofeed-v612.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-pristine-forward-ledger-v612
+  cancel-in-progress: false
+
+jobs:
+  autofeed:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.1.2 autofeed and ledger
+        run: |
+          python -m py_compile football-data/validation/v6_pristine_forward_autofeed_v612.py
+          python -m py_compile football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Verify V6.1.2 ledger tamper detection
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py --self-test
+      - name: Build fixture and result candidates
+        run: python football-data/validation/v6_pristine_forward_autofeed_v612.py
+      - name: Apply candidates to immutable ledger
+        id: apply
+        continue-on-error: true
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Persist V6.1.2 autofeed, ledger and receipts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/inbox/fixtures_v612.json \
+            --allow-prefix football-data/forward/inbox/results_v612.json \
+            --allow-prefix football-data/forward/v6_pristine_forward_events_v612.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_autofeed_v612_status.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_ledger_v612_status.json \
+            --message-prefix "audit(football): persist V6.1.2 forward autofeed"
+      - name: Enforce V6.1.2 receipts
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          paths = [
+              Path("football-data/manifests/v6_pristine_forward_autofeed_v612_status.json"),
+              Path("football-data/manifests/v6_pristine_forward_ledger_v612_status.json"),
+          ]
+          for path in paths:
+              if not path.exists():
+                  raise SystemExit(f"missing V6.1.2 receipt: {path}")
+              receipt = json.loads(path.read_text(encoding="utf-8"))
+              if receipt.get("status") != "PASS":
+                  raise SystemExit(f"V6.1.2 gate failed for {path}: {receipt.get('status')}")
+          print(json.dumps({"status": "PASS", "receipts": [str(path) for path in paths]}))
+          PY
+
+# Prospective research collection only. No CURRENT or formal-weight mutation.
