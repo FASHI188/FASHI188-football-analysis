@@ -1,0 +1,51 @@
+name: football-v6-market-first-confirm-v654
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_fresh_confirmation_v654.py"
+      - ".github/workflows/football-v6-market-first-confirm-v654.yml"
+permissions:
+  contents: read
+jobs:
+  confirm:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_market_first_fresh_confirmation_v654.py
+      - run: python football-data/validation/v6_market_first_fresh_confirmation_v654.py
+      - name: Persist fresh panel and confirmation receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_market_first_fresh_confirmation_v654_panel.json \
+            --allow-prefix football-data/manifests/v6_market_first_fresh_confirmation_v654_status.json \
+            --message-prefix "audit(football): persist V6.5.4 fresh market confirmation"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_market_first_fresh_confirmation_v654_status.json')
+          q=Path('football-data/manifests/v6_market_first_fresh_confirmation_v654_panel.json')
+          if not p.exists() or not q.exists(): raise SystemExit('V654 outputs missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(x.get('status'))
+          print(json.dumps({
+            'primary':x.get('fresh_newer_750_primary'),
+            'raw65':x.get('primary_raw65_met'),
+            'wilson65':x.get('primary_wilson65_met'),
+            'combined':x.get('combined_1500')
+          },ensure_ascii=False))
+          PY
+# Fresh disjoint historical confirmation only. Frozen V6.5.0 rule; no tuning on confirmation panel.
