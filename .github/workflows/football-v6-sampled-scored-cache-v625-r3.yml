@@ -1,0 +1,58 @@
+name: football-v6-sampled-scored-cache-v625-r3
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_sampled_scored_cache_v625_r3.py"
+      - ".github/workflows/football-v6-sampled-scored-cache-v625-r3.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-sampled-scored-cache-v625-r3
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_sampled_scored_cache_v625_r3.py
+      - name: Build frozen scored cache
+        id: cache
+        continue-on-error: true
+        run: python football-data/validation/v6_sampled_scored_cache_v625_r3.py
+      - name: Persist cache and receipt
+        if: always()
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_scored_cache_v625_r3.json \
+            --allow-prefix football-data/manifests/v6_sampled_17domain_scored_cache_v625_r3_status.json \
+            --message-prefix "audit(football): persist V6.2.5 r3 scored sample cache"
+      - name: Enforce receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("football-data/manifests/v6_sampled_17domain_scored_cache_v625_r3_status.json")
+          if not p.exists():
+              raise SystemExit("scored-cache receipt missing")
+          r = json.loads(p.read_text(encoding="utf-8"))
+          if r.get("status") != "PASS" or r.get("count") != 1700:
+              raise SystemExit(str(r))
+          print(json.dumps({"status": r["status"], "count": r["count"], "panel_sha256": r["panel_sha256"]}, ensure_ascii=False))
+          PY
+
+# Research cache only. No CURRENT/formal/runtime/V6.1 pristine-forward mutation.
