@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "config" / "active_domain_identity_registry_v5532.json"
+ALIASES = ROOT / "config" / "active_domain_provider_aliases_v5532.json"
 
 TARGETS = {
     "USA_MLS": "2026",
@@ -33,6 +34,7 @@ AWAY_KEYS = (
 )
 SEASON_KEYS = ("season", "campaign", "competition_season", "season_id", "year")
 DATE_KEYS = ("date", "match_date", "kickoff", "kickoff_utc", "datetime", "utc_date", "start")
+TRANSLATE = str.maketrans({"ø": "o", "Ø": "o", "ł": "l", "Ł": "l", "đ": "d", "Đ": "d", "ð": "d", "Ð": "d", "þ": "th", "Þ": "th", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe"})
 
 
 def now_utc() -> str:
@@ -40,9 +42,13 @@ def now_utc() -> str:
 
 
 def norm(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+    text = unicodedata.normalize("NFKD", str(value or "").translate(TRANSLATE)).casefold()
+    parts: list[str] = []
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        parts.append(ch if ch.isalnum() else " ")
+    return " ".join("".join(parts).split())
 
 
 def canonical_key_map(row: dict[str, Any]) -> dict[str, str]:
@@ -163,7 +169,20 @@ def source_files(cid: str) -> list[Path]:
     return sorted(set(result))
 
 
-def build_competition(cid: str, season: str) -> dict[str, Any]:
+def load_aliases() -> tuple[dict[str, dict[str, str]], str]:
+    raw = ALIASES.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
+    if payload.get("schema_version") != "V5.5.32-active-domain-provider-aliases-r1":
+        raise ValueError("unexpected provider alias schema")
+    if payload.get("fuzzy_matching") is not False:
+        raise ValueError("provider alias registry authorizes fuzzy matching")
+    aliases = payload.get("aliases")
+    if not isinstance(aliases, dict):
+        raise ValueError("provider alias map missing")
+    return {str(cid): {str(k): str(v) for k, v in rows.items()} for cid, rows in aliases.items()}, hashlib.sha256(raw).hexdigest()
+
+
+def build_competition(cid: str, season: str, provider_aliases: dict[str, str], alias_sha: str) -> dict[str, Any]:
     variants_by_norm: dict[str, Counter[str]] = defaultdict(Counter)
     files = []
     accepted_rows = 0
@@ -193,18 +212,42 @@ def build_competition(cid: str, season: str) -> dict[str, Any]:
             })
 
     teams = []
+    canonical_names: set[str] = set()
     for token in sorted(variants_by_norm):
         counts = variants_by_norm[token]
         canonical = sorted(counts, key=lambda value: (-counts[value], len(value), value))[0]
+        canonical_names.add(canonical)
         teams.append({
             "canonical_name": canonical,
             "normalized_identity": token,
             "observed_variants": sorted(counts),
+            "provider_aliases": [],
             "observation_count": sum(counts.values()),
         })
 
+    alias_errors = []
+    aliases_by_canonical: dict[str, list[str]] = defaultdict(list)
+    seen_alias_tokens: dict[str, str] = {}
+    for source, canonical in provider_aliases.items():
+        if canonical not in canonical_names:
+            alias_errors.append(f"ALIAS_CANONICAL_NOT_CURRENT:{source}->{canonical}")
+            continue
+        token = norm(source)
+        if not token:
+            alias_errors.append(f"ALIAS_NORMALIZES_EMPTY:{source}")
+            continue
+        previous = seen_alias_tokens.get(token)
+        if previous is not None and previous != canonical:
+            alias_errors.append(f"ALIAS_COLLISION:{source}:{previous}/{canonical}")
+            continue
+        seen_alias_tokens[token] = canonical
+        aliases_by_canonical[canonical].append(source)
+
+    for team in teams:
+        team["provider_aliases"] = sorted(set(aliases_by_canonical.get(team["canonical_name"], [])))
+
     team_count = len(teams)
-    status = "PASS_CURRENT_SEASON_OBSERVED_IDENTITY" if team_count >= 8 and accepted_rows >= 4 else "FAIL_CLOSED_INSUFFICIENT_CURRENT_SEASON_IDENTITY"
+    status = "PASS_CURRENT_SEASON_OBSERVED_IDENTITY" if team_count >= 8 and accepted_rows >= 4 and not alias_errors else "FAIL_CLOSED_INSUFFICIENT_CURRENT_SEASON_IDENTITY"
     return {
         "competition_id": cid,
         "season": season,
@@ -214,13 +257,21 @@ def build_competition(cid: str, season: str) -> dict[str, Any]:
         "teams": teams,
         "source_files": files,
         "read_errors": read_errors,
+        "provider_alias_registry_path": str(ALIASES.relative_to(ROOT)),
+        "provider_alias_registry_sha256": alias_sha,
+        "provider_alias_count": sum(len(row["provider_aliases"]) for row in teams),
+        "provider_alias_errors": alias_errors,
         "historical_season_rows_accepted": False,
         "fuzzy_matching_authorized": False,
     }
 
 
 def main() -> int:
-    competitions = {cid: build_competition(cid, season) for cid, season in TARGETS.items()}
+    aliases, alias_sha = load_aliases()
+    competitions = {
+        cid: build_competition(cid, season, aliases.get(cid, {}), alias_sha)
+        for cid, season in TARGETS.items()
+    }
     available = sum(1 for row in competitions.values() if row["status"].startswith("PASS_"))
     receipt = {
         "schema_version": "V5.5.32-active-domain-observed-identity-r1",
@@ -228,14 +279,16 @@ def main() -> int:
         "status": "PASS_ALL_TARGETS" if available == len(TARGETS) else ("PASS_PARTIAL_TARGETS" if available else "FAIL_NO_TARGET_IDENTITY"),
         "target_competition_count": len(TARGETS),
         "available_competition_count": available,
+        "provider_alias_registry_path": str(ALIASES.relative_to(ROOT)),
+        "provider_alias_registry_sha256": alias_sha,
         "competitions": competitions,
         "formal_weight_change": False,
         "probability_change": False,
         "promotion_sample_count_change": 0,
         "policy": (
             "Identity is derived only from current-season rows already frozen in registered processed competition domains. "
-            "It does not create team strength or probability mass. Exact normalized identities and observed variants are allowed; "
-            "fuzzy substitution, historical-season fallback and cross-club guessing are prohibited. Missing clubs fail closed per fixture."
+            "Unicode team names are preserved. Provider-specific aliases are exact, hash-bound and must map to a current-season canonical club. "
+            "Fuzzy substitution, historical-season fallback and cross-club guessing are prohibited. Missing clubs fail closed per fixture."
         ),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +297,7 @@ def main() -> int:
         "status": receipt["status"],
         "available_competition_count": available,
         "team_counts": {cid: row["team_count"] for cid, row in competitions.items()},
+        "alias_errors": {cid: row["provider_alias_errors"] for cid, row in competitions.items() if row["provider_alias_errors"]},
     }, ensure_ascii=False, indent=2))
     return 0 if available else 2
 
