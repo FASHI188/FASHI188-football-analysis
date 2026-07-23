@@ -1,0 +1,58 @@
+name: football-v501-formal-prediction-queue
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/evidence/formal_prediction_requests_v501/**"
+      - "football-data/validation/formal_prediction_queue_v501.py"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - "football-data/manifests/v501_upgrade_status.json"
+      - ".github/workflows/football-v501-formal-prediction-queue.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v501-formal-prediction-queue
+  cancel-in-progress: false
+jobs:
+  run-queue:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile formal queue and actionable runner
+        run: |
+          python -m py_compile football-data/validation/formal_prediction_queue_v501.py
+          python -m py_compile football-data/engine/run_formal_prediction_actionable.py
+      - name: Execute queued formal requests fail-closed
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/formal_prediction_queue_v501.py
+      - name: Persist formal outputs and immutable prediction freezes
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/formal_prediction_runs_v501/ \
+            --allow-prefix football-data/prediction_freezes/ \
+            --allow-prefix football-data/manifests/formal_prediction_queue_v501_status.json \
+            --message-prefix "audit(football): persist V5.0.1 formal prediction queue"
+      - name: Enforce queue receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/formal_prediction_queue_v501_status.json')
+          if not p.exists(): raise SystemExit('formal queue receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS' or x.get('current_rule_version')!='V5.0.1': raise SystemExit(str(x))
+          print(json.dumps({'status':x['status'],'request_count':x['request_count'],'results':x['results']},ensure_ascii=False))
+          PY
+# Successful queued runs are ordinary V5.0.1 formal calculations. V6.8.5 only reads their immutable freezes as weight-zero research evidence.
