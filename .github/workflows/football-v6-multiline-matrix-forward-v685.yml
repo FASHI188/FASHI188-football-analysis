@@ -1,0 +1,88 @@
+name: football-v6-multiline-matrix-forward-v685
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 */3 * * *"
+  push:
+    paths:
+      - "football-data/config/v6_multiline_matrix_forward_v685.json"
+      - "football-data/validation/v6_multiline_matrix_forward_freeze_v685.py"
+      - "football-data/validation/v6_multiline_matrix_forward_settle_v685.py"
+      - "football-data/validation/v6_multiline_market_matrix_projection_v682.py"
+      - "football-data/prediction_freezes/**"
+      - "football-data/evidence/markets_prospective/**"
+      - "football-data/evidence/market_ladders_v680/**"
+      - "football-data/evidence/market_consensus_prospective/**"
+      - "football-data/processed/**"
+      - ".github/workflows/football-v6-multiline-matrix-forward-v685.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-multiline-matrix-forward-v685
+  cancel-in-progress: true
+jobs:
+  forward:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile frozen-forward chain
+        run: |
+          python -m py_compile football-data/validation/v6_multiline_matrix_forward_freeze_v685.py
+          python -m py_compile football-data/validation/v6_multiline_matrix_forward_settle_v685.py
+          python -m py_compile football-data/validation/v6_multiline_market_matrix_projection_v682.py
+      - name: Freeze new eligible multiline shadow matrices
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_multiline_matrix_forward_freeze_v685.py
+      - name: Settle only stored frozen matrices
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_multiline_matrix_forward_settle_v685.py
+      - name: Persist immutable forward evidence and receipts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/v6_multiline_matrix_freezes_v685/ \
+            --allow-prefix football-data/evidence/market_matrix_forward_outcomes_v685/ \
+            --allow-prefix football-data/manifests/v6_multiline_matrix_forward_freeze_v685_status.json \
+            --allow-prefix football-data/manifests/v6_multiline_matrix_forward_v685_status.json \
+            --message-prefix "audit(football): persist V6.8.5 immutable matrix forward evidence"
+      - name: Enforce integrity receipts
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          f=Path('football-data/manifests/v6_multiline_matrix_forward_freeze_v685_status.json')
+          e=Path('football-data/manifests/v6_multiline_matrix_forward_v685_status.json')
+          if not f.exists() or not e.exists():
+              raise SystemExit('V6.8.5 forward receipts missing')
+          a=json.loads(f.read_text()); b=json.loads(e.read_text())
+          if a.get('status') not in {'PASS','WARN'}:
+              raise SystemExit(str(a))
+          if b.get('status') not in {'PASS','WARN_INVALID_OUTCOME_FILES'}:
+              raise SystemExit(str(b))
+          if b.get('governance',{}).get('postmatch_reprojection_forbidden') is not True:
+              raise SystemExit('postmatch reprojection governance missing')
+          print(json.dumps({
+              'freeze_status':a.get('status'),
+              'freeze_counts':a.get('status_counts'),
+              'sidecar_count':a.get('sidecar_count'),
+              'evaluation_status':b.get('evaluation_status'),
+              'settled_count':b.get('settled_count'),
+              'promotion_eligible_settled_count':b.get('promotion_eligible_settled_count'),
+              'promotion_gate_passed':b.get('promotion_gate_passed')
+          },ensure_ascii=False))
+          PY
+# V6.8.5 is research-only. No CURRENT V5.0.1, formal weight, or runtime probability mutation.
