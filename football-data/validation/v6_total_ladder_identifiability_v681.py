@@ -6,6 +6,9 @@ CDF points: Under(k+0.5) = P(T<=k) after de-vigging. Exact 0..7+ is declared mar
 only when every half-goal line 0.5..6.5 is present and the de-vigged CDF is monotone.
 Otherwise only observed cumulative constraints are exposed; missing integer buckets are never
 fabricated. This audit never smooths a non-monotone ladder into artificial probabilities.
+
+The receipt also binds itself to the exact V6.8.0 source bundle count and generation timestamp.
+That makes stale downstream receipts directly auditable instead of silently looking current.
 """
 from __future__ import annotations
 
@@ -34,7 +37,11 @@ def half_line(value: float) -> bool:
 
 def cdf_from_bundle(bundle: dict[str, Any]) -> dict[float, float]:
     points: dict[float, float] = {}
-    offers = [row for row in bundle.get("total_goal_ladder") or [] if row.get("market_kind") == "total_goals" and half_line(float(row.get("line")))]
+    offers = [
+        row
+        for row in bundle.get("total_goal_ladder") or []
+        if row.get("market_kind") == "total_goals" and half_line(float(row.get("line")))
+    ]
     for row in offers:
         line = float(row["line"])
         _p_over, p_under = devig_two(float(row["over"]), float(row["under"]))
@@ -78,20 +85,44 @@ def analyze(bundle: dict[str, Any]) -> dict[str, Any]:
         "missing_required_lines": [line for line in REQUIRED if line not in points],
         "exact_0_7plus_market_identifiable": distribution is not None,
         "exact_0_7plus_distribution": distribution,
-        "operational_output": "EXACT_0_7PLUS_AVAILABLE" if distribution is not None else ("PARTIAL_CDF_ONLY" if points and monotone else "LADDER_UNUSABLE"),
+        "operational_output": "EXACT_0_7PLUS_AVAILABLE"
+        if distribution is not None
+        else ("PARTIAL_CDF_ONLY" if points and monotone else "LADDER_UNUSABLE"),
     }
 
 
 def main() -> int:
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     if not LADDERS.exists():
-        payload = {"schema_version": "V6.8.1-total-ladder-identifiability-r1", "status": "WAITING_FOR_V680_LADDERS", "generated_at_utc": now}
+        payload = {
+            "schema_version": "V6.8.1-total-ladder-identifiability-r2",
+            "status": "WAITING_FOR_V680_LADDERS",
+            "generated_at_utc": now,
+        }
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
+
     source = json.loads(LADDERS.read_text(encoding="utf-8"))
-    results = [analyze(bundle) for bundle in source.get("bundles") or []]
+    source_bundles = source.get("bundles") or []
+    declared_source_bundle_count = int(source.get("bundle_count") or 0)
+    actual_source_bundle_count = len(source_bundles)
+    if declared_source_bundle_count != actual_source_bundle_count:
+        payload = {
+            "schema_version": "V6.8.1-total-ladder-identifiability-r2",
+            "generated_at_utc": now,
+            "status": "FAIL_SOURCE_BUNDLE_COUNT_MISMATCH",
+            "source_ladder_generated_at_utc": source.get("generated_at_utc"),
+            "source_declared_bundle_count": declared_source_bundle_count,
+            "source_actual_bundle_count": actual_source_bundle_count,
+        }
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 2
+
+    results = [analyze(bundle) for bundle in source_bundles]
     counts = Counter(row["operational_output"] for row in results)
     line_counts = Counter()
     monotone_failures = 0
@@ -99,10 +130,15 @@ def main() -> int:
         monotone_failures += int(not row["monotone"])
         for line in row["half_goal_cdf_points"]:
             line_counts[line] += 1
+
     payload = {
-        "schema_version": "V6.8.1-total-ladder-identifiability-r1",
+        "schema_version": "V6.8.1-total-ladder-identifiability-r2",
         "generated_at_utc": now,
         "status": "PASS",
+        "source_ladder_generated_at_utc": source.get("generated_at_utc"),
+        "source_declared_bundle_count": declared_source_bundle_count,
+        "source_actual_bundle_count": actual_source_bundle_count,
+        "source_bundle_count_matches": declared_source_bundle_count == actual_source_bundle_count,
         "bundle_count": len(results),
         "operational_counts": dict(counts),
         "required_exact_lines": REQUIRED,
@@ -114,14 +150,32 @@ def main() -> int:
             "missing_buckets_never_fabricated": True,
             "exact_total_distribution_requires_all_half_lines_0_5_to_6_5": True,
             "asian_quarter_lines_not_treated_as_binary_probabilities": True,
+            "source_bundle_count_is_hard_bound": True,
             "research_only": True,
             "no_current_rule_change": True,
-            "no_formal_probability_change": True
-        }
+            "no_formal_probability_change": True,
+        },
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({key: payload[key] for key in ("status", "bundle_count", "operational_counts", "line_coverage_counts", "monotonicity_failure_count")}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                key: payload[key]
+                for key in (
+                    "status",
+                    "source_ladder_generated_at_utc",
+                    "source_bundle_count_matches",
+                    "bundle_count",
+                    "operational_counts",
+                    "line_coverage_counts",
+                    "monotonicity_failure_count",
+                )
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
