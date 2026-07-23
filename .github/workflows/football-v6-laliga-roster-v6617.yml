@@ -1,0 +1,62 @@
+name: football-v6-laliga-roster-v6617
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 5 * * 2"
+  push:
+    paths:
+      - "football-data/validation/v6_laliga_official_roster_v6617.py"
+      - ".github/workflows/football-v6-laliga-roster-v6617.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-laliga-roster-v6617
+  cancel-in-progress: true
+jobs:
+  fetch:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_laliga_official_roster_v6617.py
+      - name: Fetch LaLiga current squads from official web surfaces
+        run: python football-data/validation/v6_laliga_official_roster_v6617.py
+      - name: Persist only evidence and non-secret receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/team_current_roster_weekly/laliga_current_rosters__ \
+            --allow-prefix football-data/manifests/v6_laliga_official_roster_v6617_status.json \
+            --message-prefix "data(football): persist V6.6.17 official LaLiga current rosters"
+      - name: Enforce public-client and fail-closed governance
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_laliga_official_roster_v6617_status.json')
+          if not p.exists(): raise SystemExit('V6.6.17 status missing')
+          x=json.loads(p.read_text())
+          g=x.get('governance') or {}
+          if g.get('subscription_value_persisted') is not False or g.get('subscription_value_logged') is not False:
+              raise SystemExit('public runtime subscription value must never be persisted/logged')
+          if g.get('login_or_private_credentials_used') is not False or g.get('access_control_bypass') is not False:
+              raise SystemExit('credential/access-control governance violation')
+          if g.get('http_401_403_fail_closed') is not True or g.get('no_cross_source_union') is not True:
+              raise SystemExit('fail-closed roster governance missing')
+          if x.get('status') not in {'PASS_COMPLETE','WARN_PARTIAL','FAIL_CLOSED','FAIL_NO_VALID_ROSTERS'}:
+              raise SystemExit(str(x))
+          # Access denial / changed public site contract is an acceptable fail-closed data outcome;
+          # it must not be converted into retries with alternative/private credentials.
+          print(json.dumps({'status':x.get('status'),'target_gap_count':x.get('target_gap_count'),'valid_current_roster_count':x.get('valid_current_roster_count'),'subscription_slug':x.get('subscription_slug')},ensure_ascii=False))
+          PY
+# Evidence commit retriggers the serialized team-context derived validator. V5.0.1 remains unchanged.
