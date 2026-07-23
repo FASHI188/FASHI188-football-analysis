@@ -8,6 +8,7 @@ not a registered/current first-team roster and never satisfies the strict roster
 
 The latest sufficiently fresh official match sheet can also seed a V6.6.3 manager record because
 it explicitly identifies the coach at that match. No post-observation or future match is used.
+The run is a named no-formal-mutation evidence epoch under CURRENT V5.0.1.
 """
 from __future__ import annotations
 
@@ -102,17 +103,6 @@ def fetch(game_id: int) -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def canonical_team_from_label(label: str) -> str | None:
-    compact = re.sub(r"\s+", "", label).lower()
-    matches = []
-    for canonical, aliases in TEAM_ALIASES.items():
-        for alias in aliases:
-            token = re.sub(r"\s+", "", alias).lower()
-            if compact == token:
-                matches.append(canonical); break
-    return matches[0] if len(set(matches)) == 1 else None
-
-
 def find_teams_and_managers(text: str) -> list[tuple[str, str, str]]:
     found = []
     for canonical, aliases in TEAM_ALIASES.items():
@@ -124,14 +114,12 @@ def find_teams_and_managers(text: str) -> list[tuple[str, str, str]]:
                 manager = " ".join(m.group(1).split()).strip()
                 best = (canonical, manager, alias); break
         if best: found.append(best)
-    # keep document order when aliases are found in the text
     return sorted(found, key=lambda item: min((text.find(a) for a in TEAM_ALIASES[item[0]] if text.find(a) >= 0), default=10**9))[:2]
 
 
 def parse_date(text: str) -> datetime | None:
     m = re.search(r"(2026)/(\d{2})/(\d{2})\([^)]*\)\s+(\d{2}):(\d{2})", text)
     if not m: return None
-    # K League match-sheet times are Korea Standard Time.
     kst = timezone(timedelta(hours=9))
     return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), tzinfo=kst).astimezone(timezone.utc)
 
@@ -159,7 +147,6 @@ def player_segments(rows: list[list[str]]) -> list[list[dict[str, str]]]:
             current.append({"shirt_number": number, "position": pos, "player_name": name})
     if current:
         segments.append(current)
-    # HTML variants can duplicate header segments; retain the first two segments with match-squad size.
     viable = [s for s in segments if len({p['player_name'] for p in s}) >= 15]
     return viable[:2]
 
@@ -171,8 +158,7 @@ def parse_match(game_id: int, raw: str, observed: datetime) -> dict[str, Any] | 
     kickoff = parse_date(text)
     if kickoff is None or kickoff >= observed:
         return None
-    tm = find_teams_and_managers(text)
-    segments = player_segments(parser.rows)
+    tm = find_teams_and_managers(text); segments = player_segments(parser.rows)
     if len(tm) != 2 or len(segments) != 2:
         return None
     teams = []
@@ -180,18 +166,11 @@ def parse_match(game_id: int, raw: str, observed: datetime) -> dict[str, Any] | 
         dedup = {}
         for p in segment: dedup.setdefault(p["player_name"], p)
         teams.append({"team_name": canonical, "source_label": source_label, "manager_name": manager, "players": list(dedup.values())})
-    return {
-        "game_id": game_id,
-        "kickoff_utc": kickoff.replace(microsecond=0).isoformat(),
-        "source_url": BASE.format(game_id=game_id),
-        "teams": teams,
-    }
+    return {"game_id": game_id, "kickoff_utc": kickoff.replace(microsecond=0).isoformat(), "source_url": BASE.format(game_id=game_id), "teams": teams}
 
 
 def main() -> int:
-    cfg = json.loads(CFG.read_text(encoding="utf-8")); observed = utcnow(); matches = []
-    scan_errors = []
-    # K League 1 had ~100 matches by mid-July. Scan a bounded 2026 range with headroom.
+    cfg = json.loads(CFG.read_text(encoding="utf-8")); observed = utcnow(); matches = []; scan_errors = []
     for game_id in range(1, 181):
         raw, error = fetch(game_id)
         if raw:
@@ -200,63 +179,34 @@ def main() -> int:
         elif error and game_id <= 130:
             scan_errors.append({"game_id": game_id, "error": error})
         time.sleep(0.03)
-
     by_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for match in matches:
         for team in match["teams"]:
             by_team[team["team_name"]].append({"game_id": match["game_id"], "kickoff_utc": match["kickoff_utc"], "source_url": match["source_url"], **team})
-
     lookback = int(cfg["lookback_matches_per_team"]); max_age = timedelta(days=int(cfg["maximum_latest_match_age_days"])); min_players = int(cfg["minimum_unique_active_players"])
     records = []; manager_records = []; team_audit = []
     for canonical in TEAM_ALIASES:
-        appearances = sorted(by_team.get(canonical, []), key=lambda x: x["kickoff_utc"], reverse=True)
-        recent = appearances[:lookback]
-        if not recent:
-            team_audit.append({"team_name": canonical, "status": "NO_OFFICIAL_MATCH_SHEET"}); continue
+        appearances = sorted(by_team.get(canonical, []), key=lambda x: x["kickoff_utc"], reverse=True); recent = appearances[:lookback]
+        if not recent: team_audit.append({"team_name": canonical, "status": "NO_OFFICIAL_MATCH_SHEET"}); continue
         latest_time = datetime.fromisoformat(recent[0]["kickoff_utc"])
-        if observed - latest_time > max_age:
-            team_audit.append({"team_name": canonical, "status": "LATEST_MATCH_TOO_OLD", "latest_match_utc": recent[0]["kickoff_utc"]}); continue
+        if observed - latest_time > max_age: team_audit.append({"team_name": canonical, "status": "LATEST_MATCH_TOO_OLD", "latest_match_utc": recent[0]["kickoff_utc"]}); continue
         pool = {}; sources = []
         for item in recent:
             for p in item["players"]: pool.setdefault(p["player_name"], p)
             sources.append({"source_name": "K League official 2026 match squad", "source_url": item["source_url"], "source_tier": "tier_1_official", "provider_group": "kleague_official", "source_observed_at_utc": observed.isoformat(), "match_kickoff_utc": item["kickoff_utc"], "game_id": item["game_id"]})
         status = "ACTIVE_MATCH_POOL_AVAILABLE" if len(pool) >= min_players else "ACTIVE_POOL_BELOW_MIN"
-        record = {
-            "schema_version": "V6.6.12-kleague-active-match-pool-r1",
-            "observed_at_utc": observed.isoformat(), "competition_id": "KOR_KLeague1", "team_name": canonical,
-            "status": status, "source_semantics": "OFFICIAL_RECENT_MATCH_SQUAD", "lookback_match_count": len(recent),
-            "latest_match_utc": recent[0]["kickoff_utc"], "active_players": list(pool.values()), "active_player_count": len(pool), "sources": sources,
-            "governance": {"research_context_only": True, "active_match_pool_is_not_registered_roster": True, "strict_current_roster_eligible": False, "formal_probability_use": False},
-        }
-        records.append(record)
+        records.append({"schema_version": "V6.6.12-kleague-active-match-pool-r1", "observed_at_utc": observed.isoformat(), "competition_id": "KOR_KLeague1", "team_name": canonical, "status": status, "source_semantics": "OFFICIAL_RECENT_MATCH_SQUAD", "lookback_match_count": len(recent), "latest_match_utc": recent[0]["kickoff_utc"], "active_players": list(pool.values()), "active_player_count": len(pool), "sources": sources, "governance": {"research_context_only": True, "active_match_pool_is_not_registered_roster": True, "strict_current_roster_eligible": False, "formal_probability_use": False}})
         team_audit.append({"team_name": canonical, "status": status, "active_player_count": len(pool), "latest_match_utc": recent[0]["kickoff_utc"], "matches_used": [x["game_id"] for x in recent]})
-        # Manager freshness uses the stricter V6.6.3 weekly horizon.
         latest_manager = recent[0].get("manager_name")
         if latest_manager and observed - latest_time <= timedelta(days=8):
-            manager_records.append({
-                "schema_version": "V6.6.3-team-manager-context-r1", "competition_id": "KOR_KLeague1", "team_name": canonical,
-                "observed_at_utc": observed.isoformat(), "head_coach": {"name": latest_manager},
-                "manager_change": {"status": "UNKNOWN", "previous_manager": None, "changed_at_utc": None, "note": "Current manager verified from latest official K League match sheet; change status not inferred."},
-                "sources": [{"source_name": "K League official latest match squad", "source_url": recent[0]["source_url"], "source_tier": "tier_1_official", "provider_group": "kleague_official", "source_observed_at_utc": observed.isoformat()}],
-                "governance": {"pit_current": True, "research_context_only": True, "formal_probability_use": False},
-            })
-
+            manager_records.append({"schema_version": "V6.6.3-team-manager-context-r1", "competition_id": "KOR_KLeague1", "team_name": canonical, "observed_at_utc": observed.isoformat(), "head_coach": {"name": latest_manager}, "manager_change": {"status": "UNKNOWN", "previous_manager": None, "changed_at_utc": None, "note": "Current manager verified from latest official K League match sheet; change status not inferred."}, "sources": [{"source_name": "K League official latest match squad", "source_url": recent[0]["source_url"], "source_tier": "tier_1_official", "provider_group": "kleague_official", "source_observed_at_utc": observed.isoformat()}], "governance": {"pit_current": True, "research_context_only": True, "formal_probability_use": False}})
     OUTROOT.mkdir(parents=True, exist_ok=True); MANAGER_ROOT.mkdir(parents=True, exist_ok=True); stamp = observed.strftime("%Y%m%dT%H%M%SZ")
-    evidence_path = OUTROOT / f"kleague_active_pool__{stamp}.json"
-    evidence_path.write_text(json.dumps({"schema_version": "V6.6.12-kleague-active-match-pool-weekly-r1", "observed_at_utc": observed.isoformat(), "record_count": len(records), "records": records, "governance": cfg["hard_rules"]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    evidence_path = OUTROOT / f"kleague_active_pool__{stamp}.json"; evidence_path.write_text(json.dumps({"schema_version": "V6.6.12-kleague-active-match-pool-weekly-r1", "observed_at_utc": observed.isoformat(), "record_count": len(records), "records": records, "governance": cfg["hard_rules"]}, ensure_ascii=False, indent=2), encoding="utf-8")
     manager_path = None
     if manager_records:
-        manager_path = MANAGER_ROOT / f"weekly_managers_kleague__{stamp}.json"
-        manager_path.write_text(json.dumps({"schema_version": "V6.6.3-team-manager-weekly-aggregate-r1", "observed_at_utc": observed.isoformat(), "records": manager_records, "governance": {"official_kleague_match_sheet_seed": True, "formal_probability_use": False}}, ensure_ascii=False, indent=2), encoding="utf-8")
+        manager_path = MANAGER_ROOT / f"weekly_managers_kleague__{stamp}.json"; manager_path.write_text(json.dumps({"schema_version": "V6.6.3-team-manager-weekly-aggregate-r1", "observed_at_utc": observed.isoformat(), "records": manager_records, "governance": {"official_kleague_match_sheet_seed": True, "formal_probability_use": False}}, ensure_ascii=False, indent=2), encoding="utf-8")
     available = sum(1 for x in records if x["status"] == "ACTIVE_MATCH_POOL_AVAILABLE")
-    payload = {
-        "schema_version": "V6.6.12-kleague-active-match-pool-status-r1", "generated_at_utc": observed.isoformat(),
-        "status": "PASS" if available >= 8 else "WARN_LOW_COVERAGE", "official_matches_parsed": len(matches), "teams_with_any_match_sheet": len(by_team),
-        "active_match_pool_available_count": available, "manager_records_generated": len(manager_records),
-        "evidence_path": str(evidence_path.relative_to(ROOT)), "manager_evidence_path": str(manager_path.relative_to(ROOT)) if manager_path else None,
-        "team_audit": team_audit, "scan_error_count": len(scan_errors), "scan_errors_sample": scan_errors[:20],
-        "governance": {"strict_current_roster_gate_unchanged": True, "same_official_provider_recent_match_union_only": True, "formal_probability_change": False, "formal_weight_change": False},
-    }
+    payload = {"schema_version": "V6.6.12-kleague-active-match-pool-status-r1", "generated_at_utc": observed.isoformat(), "status": "PASS" if available >= 8 else "WARN_LOW_COVERAGE", "official_matches_parsed": len(matches), "teams_with_any_match_sheet": len(by_team), "active_match_pool_available_count": available, "manager_records_generated": len(manager_records), "evidence_path": str(evidence_path.relative_to(ROOT)), "manager_evidence_path": str(manager_path.relative_to(ROOT)) if manager_path else None, "team_audit": team_audit, "scan_error_count": len(scan_errors), "scan_errors_sample": scan_errors[:20], "governance": {"strict_current_roster_gate_unchanged": True, "same_official_provider_recent_match_union_only": True, "formal_probability_change": False, "formal_weight_change": False}}
     STATUS.parent.mkdir(parents=True, exist_ok=True); STATUS.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"); print(json.dumps(payload, ensure_ascii=False, indent=2)); return 0
 
 if __name__ == "__main__": raise SystemExit(main())
