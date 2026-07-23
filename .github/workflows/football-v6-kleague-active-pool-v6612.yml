@@ -1,0 +1,53 @@
+name: football-v6-kleague-active-pool-v6612
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "50 1 * * 1"
+  push:
+    paths:
+      - "football-data/config/v6_kleague_active_pool_v6612.json"
+      - "football-data/validation/v6_kleague_active_pool_v6612.py"
+      - ".github/workflows/football-v6-kleague-active-pool-v6612.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-kleague-active-pool-v6612
+  cancel-in-progress: true
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_kleague_active_pool_v6612.py
+      - name: Build official recent-match active pools
+        run: python football-data/validation/v6_kleague_active_pool_v6612.py
+      - name: Persist K League active pool and manager evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/team_active_match_pool_weekly/ \
+            --allow-prefix football-data/evidence/team_manager_context_weekly/ \
+            --allow-prefix football-data/manifests/v6_kleague_active_pool_v6612_status.json \
+            --message-prefix "audit(football): persist V6.6.12 K League active pools"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_kleague_active_pool_v6612_status.json')
+          if not p.exists(): raise SystemExit('V6.6.12 receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status') not in {'PASS','WARN_LOW_COVERAGE'}: raise SystemExit(str(x))
+          print(json.dumps({'status':x.get('status'),'official_matches_parsed':x.get('official_matches_parsed'),'active_pool_count':x.get('active_match_pool_available_count'),'manager_records_generated':x.get('manager_records_generated')},ensure_ascii=False))
+          PY
+# Official recent match squads are active-pool context only; never strict current registered rosters.
