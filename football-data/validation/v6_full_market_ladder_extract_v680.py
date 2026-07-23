@@ -8,6 +8,7 @@ This extractor preserves them without changing any formal probability or promoti
 
 Only full-time prematch markets are accepted.  Team totals and half markets are excluded.
 Every derived ladder row remains hash/filename linked to its immutable raw envelope.
+The extractor is deterministic except for its receipt-generation timestamp.
 """
 from __future__ import annotations
 
@@ -191,7 +192,6 @@ def extract_file(path: Path) -> dict[str, Any] | None:
             one_x_two.append(one)
     if not totals and not handicaps and not one_x_two:
         return None
-    # Stable order makes derived evidence deterministic and auditable.
     totals.sort(key=lambda row: (row["line"], row["market_kind"], int(row["offer_id"] or 0)))
     handicaps.sort(key=lambda row: (row["outcomes"][0]["line"], int(row["offer_id"] or 0)))
     one_x_two.sort(key=lambda row: (not row["main_line"], int(row["offer_id"] or 0)))
