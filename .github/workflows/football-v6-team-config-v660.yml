@@ -18,6 +18,7 @@ jobs:
   scan-and-repair:
     permissions:
       contents: write
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -55,12 +56,14 @@ jobs:
           if not f.exists() or not r.exists(): raise SystemExit('team source receipts missing')
           a=json.loads(f.read_text()); b=json.loads(r.read_text())
           ok=lambda s: str(s).startswith('PASS') or str(s).startswith('WARN')
-          if not ok(a.get('status')) or b.get('status') not in {'PASS','WARN'}:
-              raise SystemExit(str({'fetch':a.get('status'),'repair':b.get('status')}))
+          if not ok(a.get('status')) or b.get('status') not in {'PASS','WARN'}: raise SystemExit(str({'fetch':a.get('status'),'repair':b.get('status')}))
           g=b.get('governance') or {}
-          if g.get('no_cross_source_player_list_merge') is not True or g.get('no_cross_endpoint_player_list_merge') is not True:
-              raise SystemExit('roster repair merge governance missing')
+          if g.get('no_cross_source_player_list_merge') is not True or g.get('no_cross_endpoint_player_list_merge') is not True: raise SystemExit('roster repair merge governance missing')
           print(json.dumps({'fetch':a.get('status'),'repair':b.get('status'),'team_snapshots':a.get('snapshot_count') or a.get('team_snapshot_count'),'strict_repairs':b.get('strict_repairs_created')},ensure_ascii=False))
           PY
-# This workflow is deliberately evidence-only. It MUST NOT write current-roster, manager, effective-context, or gap ledgers.
-# The overlay validator is the single authoritative writer for all derived team-context receipts.
+      - name: Dispatch authoritative derived team-context refresh
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-team-context-overlay-validate-v668.yml --ref main
+# This workflow is evidence-only; workflow_dispatch explicitly refreshes the single authoritative derived ledger after GITHUB_TOKEN persistence.
