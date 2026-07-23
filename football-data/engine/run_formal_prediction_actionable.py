@@ -20,6 +20,13 @@ For a new target season, this wrapper may inject separately validated, hash-boun
 next-season hyperparameters and an OOF calibrator while leaving the frozen formal
 engine and calibration-module files unchanged. These bridges never roll forward
 team strength and cannot bypass the same-season competition/team sample gates.
+
+V5.0.1 maintenance hardening: after the final calculation passes the ordinary
+formal validator, the exact validated context/calculation/validation triplet is
+written through match_pipeline.freeze_prediction. The freeze is evidence only;
+it never changes the returned calculation. Research forward challengers may read
+that immutable freeze later, but may not reconstruct the pre-match formal prior
+from post-match state.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ from formal_next_season_parameter_runtime_v470 import (
     select_rollforward_parameters,
 )
 from market_coordination_runtime_basis_v470 import apply_market_coordination_runtime
+from match_pipeline import freeze_prediction
 from oof_next_season_runtime_v470 import load_rollforward_calibrator
 from platform_core import PlatformError
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
@@ -44,10 +52,29 @@ from selective_direction_gate_v500 import apply_selective_direction_gate
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 
+def _freeze_validated_prediction_fail_soft(context, calculation, validation) -> None:
+    """Persist an immutable formal freeze without ever changing formal prediction behavior."""
+    if validation.get("status") != "通过":
+        return
+    try:
+        freeze_prediction(context, calculation, validation)
+    except PlatformError as exc:
+        # Re-running the exact same question-time context is expected to hit the
+        # immutable file. Any other evidence-write failure must not rewrite or
+        # suppress the already-validated formal probability output.
+        if "immutable prediction freeze already exists" in str(exc):
+            return
+    except Exception:
+        # Evidence persistence is deliberately fail-soft with respect to the
+        # formal answer. The scheduled V6.8.5 audit exposes missing freezes.
+        return
+
+
 def main() -> int:
     original_prepare = base_runner.prepare_match_context
     original_calculation = base_runner.calculation_from_context
     original_calibration = base_runner.apply_oof_matrix_calibration
+    original_validation = base_runner.validate_calculation_output
     original_parameter_selector = engine_module._select_point_in_time_parameters
     original_calibrator_loader = calibration_module.load_oof_matrix_calibrator
 
@@ -171,9 +198,15 @@ def main() -> int:
         governed = apply_formal_governance_runtime(diagnosed)
         return apply_selective_direction_gate(context, governed)
 
+    def validate_then_freeze(context, calculation):
+        validation = original_validation(context, calculation)
+        _freeze_validated_prediction_fail_soft(context, calculation, validation)
+        return validation
+
     base_runner.prepare_match_context = actionable_prepare
     base_runner.calculation_from_context = champion_then_dynamic_strength
     base_runner.apply_oof_matrix_calibration = calibrated_then_promoted
+    base_runner.validate_calculation_output = validate_then_freeze
     engine_module._select_point_in_time_parameters = parameter_selector_with_rollforward
     try:
         return live_runner.main()
@@ -181,6 +214,7 @@ def main() -> int:
         base_runner.prepare_match_context = original_prepare
         base_runner.calculation_from_context = original_calculation
         base_runner.apply_oof_matrix_calibration = original_calibration
+        base_runner.validate_calculation_output = original_validation
         engine_module._select_point_in_time_parameters = original_parameter_selector
         calibration_module.load_oof_matrix_calibrator = original_calibrator_loader
 
