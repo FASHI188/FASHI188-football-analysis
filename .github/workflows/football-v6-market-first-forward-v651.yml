@@ -6,10 +6,10 @@ on:
   push:
     paths:
       - "football-data/validation/v6_market_first_forward_v651.py"
+      - "football-data/validation/v6_market_first_forward_v652.py"
       - "football-data/validation/v6_market_first_forward_readiness_v651.py"
       - ".github/workflows/football-v6-market-first-forward-v651.yml"
       - "football-data/evidence/markets_prospective/**"
-      - "football-data/processed/**"
 permissions:
   contents: read
 concurrency:
@@ -19,6 +19,7 @@ jobs:
   evaluate:
     permissions:
       contents: write
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -26,15 +27,16 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile market-first epoch and readiness diagnostic
+      - name: Compile market-first prediction-only epoch and readiness diagnostic
         run: |
           python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+          python -m py_compile football-data/validation/v6_market_first_forward_v652.py
           python -m py_compile football-data/validation/v6_market_first_forward_readiness_v651.py
-      - name: Run immutable market-first epoch
-        run: python football-data/validation/v6_market_first_forward_v651.py
+      - name: Freeze new market-first predictions with legacy settlement disabled
+        run: python football-data/validation/v6_market_first_forward_v652.py
       - name: Explain post-freeze evidence readiness without changing the epoch
         run: python football-data/validation/v6_market_first_forward_readiness_v651.py
-      - name: Persist immutable forward sidecar and readiness receipt
+      - name: Persist immutable prediction sidecar and readiness receipt
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,8 +47,8 @@ jobs:
             --allow-prefix football-data/forward/v6_market_first_events_v651.json \
             --allow-prefix football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
             --allow-prefix football-data/manifests/v6_market_first_forward_readiness_v651_status.json \
-            --message-prefix "audit(football): persist V6.5.1 market-first forward epoch"
-      - name: Enforce integrity and frozen-window diagnostic semantics
+            --message-prefix "audit(football): persist V6.5.1 prediction-only market-first epoch"
+      - name: Enforce integrity, frozen-window and single-settlement-writer semantics
         if: always()
         run: |
           python - <<'PY'
@@ -60,8 +62,15 @@ jobs:
           x=json.loads(p.read_text()); y=json.loads(r.read_text())
           if x.get('status')!='PASS': raise SystemExit(str(x))
           if y.get('status') not in {'PASS','WARN_NO_ELIGIBLE_POST_FREEZE_MARKET_MATCHES'}: raise SystemExit(str(y))
-          g=y.get('governance') or {}
-          if g.get('read_only_diagnostic') is not True or g.get('historical_backfill') is not False or g.get('frozen_lead_window_changed') is not False: raise SystemExit('V651 readiness governance missing')
-          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'selected':x.get('selective_arm_a'),'readiness':{'status':y.get('status'),'post_freeze_files':y.get('post_freeze_files'),'lead_buckets':y.get('post_freeze_file_lead_buckets'),'competition_buckets':y.get('post_freeze_competition_buckets'),'eligible_unique_matches':y.get('eligible_unique_matches')}},ensure_ascii=False))
+          rg=y.get('governance') or {}; xg=x.get('governance') or {}
+          if rg.get('read_only_diagnostic') is not True or rg.get('historical_backfill') is not False or rg.get('frozen_lead_window_changed') is not False: raise SystemExit('V651 readiness governance missing')
+          if xg.get('legacy_processed_training_settlement_disabled') is not True or xg.get('official_result_resolver_only_settlement_writer') is not True or xg.get('prediction_rule_unchanged_by_v652_wrapper') is not True: raise SystemExit('single official settlement-writer governance missing')
+          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'open':x.get('open_prediction_count'),'selected':x.get('selective_arm_a'),'settlement_scan':x.get('settlement_scan'),'readiness':{'status':y.get('status'),'post_freeze_files':y.get('post_freeze_files'),'lead_buckets':y.get('post_freeze_file_lead_buckets'),'competition_buckets':y.get('post_freeze_competition_buckets'),'eligible_unique_matches':y.get('eligible_unique_matches')}},ensure_ascii=False))
           PY
-# Research-only pristine market epoch. Readiness audit explains the frozen 1-72h window; it cannot alter it or backfill history.
+      - name: Refresh V6.9 system registry after market-first epoch
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-system-issue-registry-v690.yml --ref main
+# Research-only market-first epoch. Prediction rule/window remain frozen; official result resolver is the only settlement writer.
+# No processed-training result path can append RESULT_SETTLED here, and no automatic promotion is possible.
