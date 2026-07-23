@@ -8,6 +8,7 @@ on:
       - "football-data/validation/v6_team_provisional_roster_v667.py"
       - "football-data/validation/v6_current_roster_overlay_v669.py"
       - "football-data/validation/v6_team_configuration_weekly_v660.py"
+      - "football-data/validation/v6_team_context_effective_v6610.py"
       - "football-data/config/v6_team_manager_enrichment_v663.json"
       - "football-data/config/v6_current_roster_overlay_v669.json"
       - ".github/workflows/football-v6-team-context-overlay-validate-v668.yml"
@@ -31,12 +32,15 @@ jobs:
           python -m py_compile football-data/validation/v6_team_provisional_roster_v667.py
           python -m py_compile football-data/validation/v6_current_roster_overlay_v669.py
           python -m py_compile football-data/validation/v6_team_configuration_weekly_v660.py
+          python -m py_compile football-data/validation/v6_team_context_effective_v6610.py
       - name: Build provisional continuity evidence
         run: python football-data/validation/v6_team_provisional_roster_v667.py
       - name: Validate strict current-roster overlays
         run: python football-data/validation/v6_current_roster_overlay_v669.py
       - name: Validate strict team and manager evidence
         run: python football-data/validation/v6_team_configuration_weekly_v660.py
+      - name: Consolidate mutually exclusive effective coverage
+        run: python football-data/validation/v6_team_context_effective_v6610.py
       - name: Persist overlay evidence and validation
         if: always()
         env:
@@ -48,27 +52,29 @@ jobs:
             --allow-prefix football-data/manifests/v6_team_provisional_roster_v667_status.json \
             --allow-prefix football-data/manifests/v6_current_roster_overlay_v669_status.json \
             --allow-prefix football-data/manifests/v6_team_configuration_weekly_v660_status.json \
-            --message-prefix "audit(football): persist V6.6.9 team context overlays"
+            --allow-prefix football-data/manifests/v6_team_context_effective_v6610_status.json \
+            --message-prefix "audit(football): persist V6.6.10 team context overlays"
       - name: Enforce
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('football-data/manifests/v6_team_provisional_roster_v667_status.json')
-          r=Path('football-data/manifests/v6_current_roster_overlay_v669_status.json')
-          q=Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json')
-          if not p.exists() or not r.exists() or not q.exists(): raise SystemExit('V6.6.9 receipts missing')
-          a=json.loads(p.read_text()); c=json.loads(r.read_text()); b=json.loads(q.read_text())
-          if a.get('status')!='PASS' or c.get('status') not in {'PASS','WARN_INVALID_RECORDS'} or not str(b.get('status')).startswith(('PASS','WARN')):
-              raise SystemExit(str({'provisional':a.get('status'),'current_roster':c.get('status'),'audit_status':b.get('status')}))
+          paths=[
+            Path('football-data/manifests/v6_team_provisional_roster_v667_status.json'),
+            Path('football-data/manifests/v6_current_roster_overlay_v669_status.json'),
+            Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json'),
+            Path('football-data/manifests/v6_team_context_effective_v6610_status.json')]
+          if not all(p.exists() for p in paths): raise SystemExit('V6.6.10 receipts missing')
+          a,c,b,d=[json.loads(p.read_text()) for p in paths]
+          if a.get('status')!='PASS' or c.get('status') not in {'PASS','WARN_INVALID_RECORDS'} or not str(b.get('status')).startswith(('PASS','WARN')) or d.get('status')!='PASS':
+              raise SystemExit(str({'provisional':a.get('status'),'current_roster':c.get('status'),'audit_status':b.get('status'),'effective':d.get('status')}))
           print(json.dumps({
-            'provisional_continuity_count':a.get('provisional_continuity_count'),
-            'base_strict_roster_count':c.get('base_strict_current_roster_count'),
-            'strict_roster_additions':c.get('strict_roster_additions'),
-            'effective_strict_roster_count':c.get('effective_strict_current_roster_count'),
+            'roster_context_states':d.get('roster_context_states'),
+            'strict_breakdown':d.get('strict_breakdown'),
+            'provisional_breakdown':d.get('provisional_breakdown'),
             'verified_manager_records':b.get('verified_manager_records'),
             'resolved_manager_records':b.get('resolved_manager_records'),
-            'feature_eligibility':b.get('feature_eligibility')},ensure_ascii=False))
+            'other_feature_eligibility':d.get('other_feature_eligibility')},ensure_ascii=False))
           PY
-# Overlay evidence remains research-only. Provisional rosters never satisfy the strict current-roster gate.
+# Strict current roster, provisional continuity, and manager evidence remain distinct research features.
