@@ -6,6 +6,11 @@ It reads `git status --porcelain -z`, restricts writes to explicit generated-dat
 prefixes, and persists additions/modifications/deletions with optimistic SHA
 concurrency and bounded retries. Source code, workflows, CURRENT files, and any
 path outside the allowlist are never written by this helper.
+
+V6.8.0 has one deliberately narrow synchronized-receipt exception: when the caller
+explicitly allows the V6.8.0 market-ladder outputs, the V6.8.1 identifiability receipt
+and V6.9 system-registry receipt may also be persisted. This closes the GitHub
+GITHUB_TOKEN non-recursive workflow-trigger gap without broadening other workflows.
 """
 from __future__ import annotations
 
@@ -27,6 +32,10 @@ DEFAULT_ALLOWED_PREFIXES = (
     "football-data/models/",
     "football-data/calibration/",
 )
+V680_SYNC_DEPENDENT_PATHS = {
+    "football-data/manifests/v6_total_ladder_identifiability_v681_status.json",
+    "football-data/manifests/v6_system_issue_registry_v690_status.json",
+}
 MAX_ATTEMPTS = 4
 
 
@@ -74,10 +83,20 @@ def _status_entries() -> list[tuple[str, str]]:
     return out
 
 
+def _v680_sync_requested(prefixes: tuple[str, ...]) -> bool:
+    return any(
+        prefix.startswith("football-data/evidence/market_ladders_v680/")
+        or prefix.startswith("football-data/manifests/v6_full_market_ladder_v680_status.json")
+        for prefix in prefixes
+    )
+
+
 def _allowed(path: str, prefixes: tuple[str, ...]) -> bool:
     if "CURRENT_唯一正式规则" in Path(path).name:
         return False
-    return any(path.startswith(prefix) for prefix in prefixes)
+    if any(path.startswith(prefix) for prefix in prefixes):
+        return True
+    return _v680_sync_requested(prefixes) and path in V680_SYNC_DEPENDENT_PATHS
 
 
 def main() -> int:
