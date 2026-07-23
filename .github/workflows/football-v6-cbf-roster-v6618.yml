@@ -1,0 +1,58 @@
+name: football-v6-cbf-roster-v6618
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "25 5 * * 2"
+  push:
+    paths:
+      - "football-data/validation/v6_cbf_current_roster_v6618.py"
+      - ".github/workflows/football-v6-cbf-roster-v6618.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-cbf-roster-v6618
+  cancel-in-progress: true
+jobs:
+  fetch:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile
+        run: python -m py_compile football-data/validation/v6_cbf_current_roster_v6618.py
+      - name: Fetch CBF current-club filtered rosters
+        run: python football-data/validation/v6_cbf_current_roster_v6618.py
+      - name: Persist evidence and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/team_current_roster_weekly/cbf_current_rosters__ \
+            --allow-prefix football-data/manifests/v6_cbf_current_roster_v6618_status.json \
+            --message-prefix "data(football): persist V6.6.18 CBF current rosters"
+      - name: Enforce CBF current-club semantics
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_cbf_current_roster_v6618_status.json')
+          if not p.exists(): raise SystemExit('V6.6.18 status missing')
+          x=json.loads(p.read_text())
+          if x.get('status') not in {'PASS_COMPLETE','WARN_PARTIAL','FAIL_NO_VALID_ROSTERS'}:
+              raise SystemExit(str(x))
+          g=x.get('governance') or {}
+          if g.get('cbf_registration_history_not_assumed_current') is not True or g.get('clube_atual_filter_required') is not True:
+              raise SystemExit('CBF current-club filter governance missing')
+          if g.get('no_cross_source_union') is not True:
+              raise SystemExit('cross-source union must remain forbidden')
+          print(json.dumps({'status':x.get('status'),'target_count':x.get('target_count'),'valid_current_roster_count':x.get('valid_current_roster_count')},ensure_ascii=False))
+          PY
+# Persisting current-roster evidence retriggers the single authoritative team-context derived writer.
