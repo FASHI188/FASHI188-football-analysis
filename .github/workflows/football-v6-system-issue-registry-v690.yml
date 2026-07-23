@@ -7,6 +7,11 @@ on:
       - ".github/workflows/football-v6-system-issue-registry-v690.yml"
       - "football-data/manifests/v501_upgrade_status.json"
       - "football-data/manifests/v6_market_first_forward_evaluation_v651_status.json"
+      - "football-data/manifests/v6_market_first_forward_readiness_v651_status.json"
+      - "football-data/manifests/v6_market_first_result_resolver_v651_status.json"
+      - "football-data/manifests/v6_active_kambi_market_capture_v652_status.json"
+      - "football-data/manifests/v6_pristine_forward_probability_audit_v614_status.json"
+      - "football-data/manifests/v6_pristine_forward_audit_v613_status.json"
       - "football-data/manifests/v6_draw_resolution_registry_v674_status.json"
       - "football-data/manifests/v6_team_configuration_fetch_v660_status.json"
       - "football-data/manifests/v6_team_roster_repair_v664_status.json"
@@ -44,7 +49,7 @@ jobs:
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_system_issue_registry_v690_status.json \
-            --message-prefix "audit(football): persist V6.9.4 full-system issue registry"
+            --message-prefix "audit(football): persist V6.9.5 full-system issue registry"
       - name: Enforce
         if: always()
         run: |
@@ -56,15 +61,17 @@ jobs:
           x=json.loads(p.read_text())
           if x.get('status')!='PASS_NO_KNOWN_OPEN_CODE_DEFECTS': raise SystemExit(str(x))
           if x.get('formal_current_version')!='V5.0.1': raise SystemExit(str({'formal_current_version':x.get('formal_current_version')}))
-          g=x.get('governance') or {}; summary=x.get('team_context_summary') or {}; states=summary.get('states') or {}
+          if not str(x.get('schema_version') or '').startswith('V6.9.5-'): raise SystemExit(str({'schema_version':x.get('schema_version')}))
+          g=x.get('governance') or {};summary=x.get('team_context_summary') or {};states=summary.get('states') or {};forward=x.get('forward_summary') or {}
           if g.get('postmatch_reprojection_is_a_closed_engineering_defect') is not True: raise SystemExit('V6.8.5 closure missing')
-          if g.get('four_state_roster_context_is_authoritative') is not True: raise SystemExit('four-state roster authority missing')
-          if g.get('only_strict_current_satisfies_roster_gate') is not True: raise SystemExit('strict-current gate missing')
-          if g.get('active_match_pool_never_promoted_to_registered_roster') is not True: raise SystemExit('active pool separation missing')
-          if g.get('machine_coach_bypass_closed') is not True: raise SystemExit('manager gate closure missing')
+          if g.get('market_first_and_pristine_reference_not_conflated') is not True: raise SystemExit('forward-track separation missing')
+          if g.get('readiness_does_not_widen_frozen_window') is not True: raise SystemExit('frozen-window governance missing')
+          if g.get('pristine_proper_scores_are_reference_only') is not True: raise SystemExit('pristine reference governance missing')
+          if g.get('four_state_roster_context_is_authoritative') is not True or g.get('only_strict_current_satisfies_roster_gate') is not True: raise SystemExit('roster authority missing')
+          if g.get('active_match_pool_never_promoted_to_registered_roster') is not True or g.get('machine_coach_bypass_closed') is not True: raise SystemExit('team-context separation missing')
           if summary.get('effective_ledger_valid') is True:
               total=sum(int(states.get(k) or 0) for k in ('STRICT_CURRENT','ACTIVE_MATCH_POOL','PROVISIONAL_ONLY','NO_ROSTER_CONTEXT'))
               if summary.get('state_conservation') is not True or total<=0: raise SystemExit(str({'team_context_summary':summary}))
-          print(json.dumps({'status':x['status'],'formal_current_version':x['formal_current_version'],'issue_counts':x['issue_counts'],'blockers':x['formal_upgrade_blockers'],'team_context_summary':summary},ensure_ascii=False))
+          print(json.dumps({'status':x['status'],'formal_current_version':x['formal_current_version'],'issue_counts':x['issue_counts'],'blockers':x['formal_upgrade_blockers'],'team_context_summary':summary,'forward_summary':forward},ensure_ascii=False))
           PY
-# V5.0.1 remains active CURRENT. V6.9.4 consumes the four-state team-context ledger and keeps all research promotion gates fail-closed.
+# V5.0.1 remains active CURRENT. V6.9.5 reports market-first forward readiness and separate pristine proper-score reference evidence without granting either automatic promotion.
