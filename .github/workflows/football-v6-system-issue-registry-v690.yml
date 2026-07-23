@@ -9,7 +9,9 @@ on:
       - "football-data/manifests/v6_market_first_forward_evaluation_v651_status.json"
       - "football-data/manifests/v6_draw_resolution_registry_v674_status.json"
       - "football-data/manifests/v6_team_configuration_fetch_v660_status.json"
+      - "football-data/manifests/v6_team_roster_repair_v664_status.json"
       - "football-data/manifests/v6_team_configuration_weekly_v660_status.json"
+      - "football-data/manifests/v6_current_roster_overlay_v669_status.json"
       - "football-data/manifests/v6_full_market_ladder_v680_status.json"
       - "football-data/manifests/v6_total_ladder_identifiability_v681_status.json"
       - "football-data/manifests/v6_multiline_market_matrix_projection_v682_status.json"
@@ -40,7 +42,7 @@ jobs:
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_system_issue_registry_v690_status.json \
-            --message-prefix "audit(football): persist V6.9.1 full-system issue registry"
+            --message-prefix "audit(football): persist V6.9.3 full-system issue registry"
       - name: Enforce
         if: always()
         run: |
@@ -52,7 +54,10 @@ jobs:
           x=json.loads(p.read_text())
           if x.get('status')!='PASS_NO_KNOWN_OPEN_CODE_DEFECTS': raise SystemExit(str(x))
           if x.get('formal_current_version')!='V5.0.1': raise SystemExit(str({'formal_current_version':x.get('formal_current_version')}))
-          if x.get('governance',{}).get('postmatch_reprojection_is_a_closed_engineering_defect') is not True: raise SystemExit('V6.8.5 closure missing')
+          g=x.get('governance') or {}
+          if g.get('postmatch_reprojection_is_a_closed_engineering_defect') is not True: raise SystemExit('V6.8.5 closure missing')
+          if g.get('effective_roster_count_uses_validated_current_overlay') is not True: raise SystemExit('strict roster overlay integration missing')
+          if g.get('machine_coach_bypass_closed') is not True: raise SystemExit('manager gate closure missing')
           print(json.dumps({'status':x['status'],'formal_current_version':x['formal_current_version'],'issue_counts':x['issue_counts'],'blockers':x['formal_upgrade_blockers']},ensure_ascii=False))
           PY
-# V5.0.1 is active CURRENT. V6.8.5 closes post-match reprojection as an engineering defect; predictive promotion stays forward-gated.
+# V5.0.1 remains active CURRENT. V6.9.3 consumes validated current-roster overlays and keeps all research promotion gates fail-closed.
