@@ -1,0 +1,45 @@
+name: football-v6-multiline-market-matrix-v682
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_multiline_market_matrix_projection_v682.py"
+      - "football-data/validation/v6_multiline_market_matrix_selftest_v682.py"
+      - ".github/workflows/football-v6-multiline-market-matrix-v682.yml"
+      - "football-data/evidence/market_ladders_v680/kambi_full_time_ladders.json"
+permissions:
+  contents: read
+jobs:
+  test:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_multiline_market_matrix_projection_v682.py football-data/validation/v6_multiline_market_matrix_selftest_v682.py
+      - run: python football-data/validation/v6_multiline_market_matrix_selftest_v682.py
+      - name: Persist receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_multiline_market_matrix_projection_v682_status.json \
+            --message-prefix "audit(football): persist V6.8.2 multiline matrix solver"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_multiline_market_matrix_projection_v682_status.json')
+          if not p.exists(): raise SystemExit('V682 receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(str(x))
+          print(json.dumps(x,ensure_ascii=False))
+          PY
