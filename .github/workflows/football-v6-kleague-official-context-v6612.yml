@@ -16,6 +16,7 @@ jobs:
   fetch:
     permissions:
       contents: write
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,8 +52,12 @@ jobs:
           if int(x.get('valid_current_roster_count') or 0)==0: raise SystemExit('no strict current K League roster evidence produced')
           if int(x.get('valid_manager_count') or 0)==0: raise SystemExit('no verified K League manager evidence produced')
           g=x.get('governance') or {}
-          if g.get('official_source_only') is not True or g.get('no_cross_source_union') is not True or g.get('record_timestamp_after_all_sources') is not True:
-              raise SystemExit('V6.6.14 K League governance missing')
+          if g.get('official_source_only') is not True or g.get('no_cross_source_union') is not True or g.get('record_timestamp_after_all_sources') is not True: raise SystemExit('V6.6.14 K League governance missing')
           print(json.dumps({'schema':x.get('schema_version'),'status':x['status'],'target':x['team_target_count'],'rosters':x['valid_current_roster_count'],'managers':x['valid_manager_count']},ensure_ascii=False))
           PY
-# V6.6.14 record timestamps are always at/after every source observation. V5.0.1 formal probabilities remain unchanged.
+      - name: Dispatch authoritative derived team-context refresh
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-team-context-overlay-validate-v668.yml --ref main
+# workflow_dispatch is intentionally used because GITHUB_TOKEN-authored evidence pushes do not recursively trigger push workflows.
