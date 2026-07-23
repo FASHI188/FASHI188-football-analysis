@@ -8,6 +8,7 @@ on:
       - "football-data/validation/v6_active_kambi_market_capture_v652.py"
       - "football-data/validation/v6_active_kambi_market_capture_v653.py"
       - "football-data/validation/v6_active_kambi_identity_audit_v652.py"
+      - "football-data/validation/persist_generated_worktree_batch_v652.py"
       - "football-data/config/v6_active_kambi_team_aliases_v652.json"
       - "football-data/config/team_aliases.json"
       - ".github/workflows/football-v6-active-kambi-market-v652.yml"
@@ -28,29 +29,30 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile active-league market capture and identity audit
+      - name: Compile active-league market capture, identity audit and batch persistence
         run: |
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v652.py
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v653.py
           python -m py_compile football-data/validation/v6_active_kambi_identity_audit_v652.py
+          python -m py_compile football-data/validation/persist_generated_worktree_batch_v652.py
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/prospective_market_snapshot_v523.py
       - name: Capture current Kambi events within 96 hours using audited provider aliases
         run: python football-data/validation/v6_active_kambi_market_capture_v653.py
       - name: Build read-only current-team identity diagnostic
         run: python football-data/validation/v6_active_kambi_identity_audit_v652.py
-      - name: Persist raw provider evidence, PIT snapshots and receipts
+      - name: Persist all generated Active-Kambi artifacts in one atomic commit
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
-          python football-data/validation/persist_generated_worktree_v474.py \
+          python football-data/validation/persist_generated_worktree_batch_v652.py \
             --allow-prefix football-data/evidence/direct_provider_probes/kambi/active_leagues/ \
             --allow-prefix football-data/evidence/markets_prospective/ \
             --allow-prefix football-data/manifests/v6_active_kambi_market_capture_v652_status.json \
             --allow-prefix football-data/manifests/v6_active_kambi_identity_audit_v652_status.json \
-            --message-prefix "data(football): persist V6.5.3 audited-alias active Kambi PIT"
+            --message "data(football): persist V6.5.3 Active-Kambi PIT batch"
       - name: Enforce active-market and identity-alias contracts
         if: always()
         run: |
@@ -80,5 +82,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-market-first-forward-v651.yml --ref main
-# Single-provider PIT acquisition only. V6.5.1 retains its frozen 1-72h prediction gate and cannot auto-promote.
-# Similarity suggestions remain diagnostic-only; executable aliases are explicit, provider-scoped and hash-bound.
+# High-cardinality evidence is persisted as one Git commit per capture run; force push is forbidden.
+# V6.5.1 retains its frozen 1-72h prediction gate and cannot auto-promote. Similarity suggestions remain diagnostic-only.
