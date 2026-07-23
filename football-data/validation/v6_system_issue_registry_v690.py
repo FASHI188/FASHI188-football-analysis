@@ -2,7 +2,7 @@
 """V6.9.0 full-system issue registry.
 
 This registry separates actual engineering defects from research gates, external-data gaps and
-irreducible uncertainty.  It prevents the project from declaring a model 'fixed' merely because
+irreducible uncertainty. It prevents the project from declaring a model 'fixed' merely because
 code runs, and prevents already-fixed defects from being repeatedly reopened without new evidence.
 It never changes CURRENT or any formal probability.
 """
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 M = ROOT / "manifests"
 OUT = M / "v6_system_issue_registry_v690_status.json"
 SOURCES = {
-    "formal": "v500_upgrade_status.json",
+    "formal": "v501_upgrade_status.json",
     "market_forward": "v6_market_first_forward_evaluation_v651_status.json",
     "draw": "v6_draw_resolution_registry_v674_status.json",
     "team_fetch": "v6_team_configuration_fetch_v660_status.json",
@@ -122,11 +122,11 @@ def main() -> int:
     open_code_defects = [row for row in issues if row["status"] == "OPEN_CODE_DEFECT"]
     formal_blockers = [row["issue_id"] for row in issues if row["blocks_formal_upgrade"]]
     payload = {
-        "schema_version": "V6.9.0-full-system-issue-registry-r1",
+        "schema_version": "V6.9.0-full-system-issue-registry-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS_NO_KNOWN_OPEN_CODE_DEFECTS" if not open_code_defects else "FAIL_OPEN_CODE_DEFECTS",
         "formal_current_version": x["formal"].get("formal_rule_version"),
-        "formal_current_unchanged": True,
+        "formal_current_unchanged_by_this_registry": True,
         "issue_counts": {
             "total": len(issues),
             "fixed_or_fail_closed": sum(row["status"].startswith("FIXED") for row in issues),
@@ -139,7 +139,7 @@ def main() -> int:
         "source_receipts": {key: {"path": value, "sha256": sha(value)} for key, value in SOURCES.items()},
         "governance": {
             "research_only": True,
-            "no_current_rule_change": True,
+            "no_current_rule_change_by_registry": True,
             "no_formal_weight_change": True,
             "no_runtime_probability_change": True,
             "a_forward_gate_is_not_a_code_defect": True,
