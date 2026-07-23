@@ -9,8 +9,10 @@ on:
       - "football-data/config/v6_team_manager_enrichment_v663.json"
       - "football-data/validation/v6_team_configuration_fetch_v660.py"
       - "football-data/validation/v6_team_roster_repair_v664.py"
+      - "football-data/validation/v6_team_provisional_roster_v667.py"
       - "football-data/validation/v6_team_configuration_weekly_v660.py"
       - "football-data/evidence/team_configuration_weekly/**"
+      - "football-data/evidence/team_provisional_roster_weekly/**"
       - "football-data/evidence/team_manager_context_weekly/**"
       - ".github/workflows/football-v6-team-config-v660.yml"
 permissions:
@@ -23,7 +25,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
         with: {fetch-depth: 0}
@@ -32,14 +34,17 @@ jobs:
       - run: |
           python -m py_compile football-data/validation/v6_team_configuration_fetch_v660.py
           python -m py_compile football-data/validation/v6_team_roster_repair_v664.py
+          python -m py_compile football-data/validation/v6_team_provisional_roster_v667.py
           python -m py_compile football-data/validation/v6_team_configuration_weekly_v660.py
       - name: Fetch latest team configurations
         run: python football-data/validation/v6_team_configuration_fetch_v660.py
       - name: Repair sub-18 roster snapshots without cross-source merging
         run: python football-data/validation/v6_team_roster_repair_v664.py
-      - name: Validate snapshots and verified manager overlays
+      - name: Build separate prior-season provisional continuity evidence
+        run: python football-data/validation/v6_team_provisional_roster_v667.py
+      - name: Validate strict snapshots and verified manager overlays
         run: python football-data/validation/v6_team_configuration_weekly_v660.py
-      - name: Persist weekly configuration snapshot and audit
+      - name: Persist weekly configuration and continuity evidence
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,40 +52,33 @@ jobs:
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/evidence/team_configuration_weekly/ \
+            --allow-prefix football-data/evidence/team_provisional_roster_weekly/ \
             --allow-prefix football-data/manifests/v6_team_configuration_fetch_v660_status.json \
             --allow-prefix football-data/manifests/v6_team_roster_repair_v664_status.json \
+            --allow-prefix football-data/manifests/v6_team_provisional_roster_v667_status.json \
             --allow-prefix football-data/manifests/v6_team_configuration_weekly_v660_status.json \
-            --message-prefix "audit(football): persist V6.6.4 weekly team configurations"
-      - name: Enforce receipt
+            --message-prefix "audit(football): persist V6.6.7 weekly team context"
+      - name: Enforce receipts
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          f=Path('football-data/manifests/v6_team_configuration_fetch_v660_status.json')
-          r=Path('football-data/manifests/v6_team_roster_repair_v664_status.json')
-          p=Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json')
-          if not f.exists() or not r.exists() or not p.exists(): raise SystemExit('V6.6.4 receipts missing')
-          a=json.loads(f.read_text()); y=json.loads(r.read_text()); x=json.loads(p.read_text())
-          fetch_status=str(a.get('status') or '')
-          repair_status=str(y.get('status') or '')
-          audit_status=str(x.get('status') or '')
-          allowed=lambda value: value.startswith('PASS') or value.startswith('WARN')
-          if not allowed(fetch_status) or repair_status not in {'PASS','WARN'} or not allowed(audit_status):
-              raise SystemExit(str({'fetch':fetch_status,'repair':repair_status,'audit':audit_status,'fetch_missing_domains':a.get('missing_domains'),'repair_attempts':y.get('attempts'),'audit_errors':x.get('validation_errors'),'manager_errors':x.get('manager_validation_errors')}))
+          paths=[
+            Path('football-data/manifests/v6_team_configuration_fetch_v660_status.json'),
+            Path('football-data/manifests/v6_team_roster_repair_v664_status.json'),
+            Path('football-data/manifests/v6_team_provisional_roster_v667_status.json'),
+            Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json')]
+          if not all(p.exists() for p in paths): raise SystemExit('V6.6.7 receipts missing')
+          a,y,z,x=[json.loads(p.read_text()) for p in paths]
+          allowed=lambda value: str(value).startswith('PASS') or str(value).startswith('WARN')
+          if not allowed(a.get('status')) or y.get('status') not in {'PASS','WARN'} or z.get('status')!='PASS' or not allowed(x.get('status')):
+              raise SystemExit(str({'fetch':a.get('status'),'repair':y.get('status'),'provisional':z.get('status'),'audit':x.get('status')}))
           print(json.dumps({
-            'fetch_status':fetch_status,
-            'snapshots_written':a.get('snapshots_written'),
-            'fetch_domains':a.get('domains_with_snapshots'),
-            'aggregate_snapshot':a.get('aggregate_snapshot_path'),
-            'repair_status':repair_status,
-            'sub18_before_repair':y.get('sub18_before_repair'),
-            'strict_repairs_created':y.get('strict_repairs_created'),
-            'audit_status':audit_status,
-            'latest_teams':x.get('latest_team_snapshots'),
-            'verified_manager_records':x.get('verified_manager_records'),
-            'audit_domains':x.get('domains_with_snapshots'),
-            'feature_eligibility':x.get('feature_eligibility')
-          },ensure_ascii=False))
+            'fetch_status':a.get('status'),'latest_teams':x.get('latest_team_snapshots'),
+            'sub18_before_repair':y.get('sub18_before_repair'),'strict_repairs_created':y.get('strict_repairs_created'),
+            'strict_espn_retries':y.get('strict_espn_retries'),'provisional_continuity_count':z.get('provisional_continuity_count'),
+            'audit_status':x.get('status'),'feature_eligibility':x.get('feature_eligibility'),
+            'verified_manager_records':x.get('verified_manager_records')},ensure_ascii=False))
           PY
-# Weekly research context only. CURRENT V5.0.1/formal/runtime probabilities are never mutated.
+# Strict current rosters and provisional previous-season continuity remain separate. CURRENT V5.0.1/formal probabilities are never mutated.
