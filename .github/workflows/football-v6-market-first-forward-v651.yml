@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - "football-data/validation/v6_market_first_forward_v651.py"
+      - "football-data/validation/v6_market_first_forward_readiness_v651.py"
       - ".github/workflows/football-v6-market-first-forward-v651.yml"
       - "football-data/evidence/markets_prospective/**"
       - "football-data/processed/**"
@@ -25,9 +26,15 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - run: python -m py_compile football-data/validation/v6_market_first_forward_v651.py
-      - run: python football-data/validation/v6_market_first_forward_v651.py
-      - name: Persist immutable forward sidecar
+      - name: Compile market-first epoch and readiness diagnostic
+        run: |
+          python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+          python -m py_compile football-data/validation/v6_market_first_forward_readiness_v651.py
+      - name: Run immutable market-first epoch
+        run: python football-data/validation/v6_market_first_forward_v651.py
+      - name: Explain post-freeze evidence readiness without changing the epoch
+        run: python football-data/validation/v6_market_first_forward_readiness_v651.py
+      - name: Persist immutable forward sidecar and readiness receipt
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,8 +44,9 @@ jobs:
             --allow-prefix football-data/manifests/v6_market_first_forward_freeze_v651.json \
             --allow-prefix football-data/forward/v6_market_first_events_v651.json \
             --allow-prefix football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
+            --allow-prefix football-data/manifests/v6_market_first_forward_readiness_v651_status.json \
             --message-prefix "audit(football): persist V6.5.1 market-first forward epoch"
-      - name: Enforce integrity
+      - name: Enforce integrity and frozen-window diagnostic semantics
         if: always()
         run: |
           python - <<'PY'
@@ -47,9 +55,13 @@ jobs:
           f=Path('football-data/manifests/v6_market_first_forward_freeze_v651.json')
           l=Path('football-data/forward/v6_market_first_events_v651.json')
           p=Path('football-data/manifests/v6_market_first_forward_evaluation_v651_status.json')
-          if not f.exists() or not l.exists() or not p.exists(): raise SystemExit('V651 outputs missing')
-          x=json.loads(p.read_text())
+          r=Path('football-data/manifests/v6_market_first_forward_readiness_v651_status.json')
+          if not all(x.exists() for x in (f,l,p,r)): raise SystemExit('V651 outputs missing')
+          x=json.loads(p.read_text()); y=json.loads(r.read_text())
           if x.get('status')!='PASS': raise SystemExit(str(x))
-          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'selected':x.get('selective_arm_a')},ensure_ascii=False))
+          if y.get('status') not in {'PASS','WARN_NO_ELIGIBLE_POST_FREEZE_MARKET_MATCHES'}: raise SystemExit(str(y))
+          g=y.get('governance') or {}
+          if g.get('read_only_diagnostic') is not True or g.get('historical_backfill') is not False or g.get('frozen_lead_window_changed') is not False: raise SystemExit('V651 readiness governance missing')
+          print(json.dumps({'freeze':json.loads(f.read_text()).get('freeze_timestamp_utc'),'evaluation':x.get('evaluation_status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'selected':x.get('selective_arm_a'),'readiness':{'status':y.get('status'),'post_freeze_files':y.get('post_freeze_files'),'lead_buckets':y.get('post_freeze_file_lead_buckets'),'competition_buckets':y.get('post_freeze_competition_buckets'),'eligible_unique_matches':y.get('eligible_unique_matches')}},ensure_ascii=False))
           PY
-# Research-only pristine market epoch. Does not mutate CURRENT or existing V6.1 ledger. Retriggered on established workflow.
+# Research-only pristine market epoch. Readiness audit explains the frozen 1-72h window; it cannot alter it or backfill history.
