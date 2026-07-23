@@ -11,6 +11,13 @@ V6.8.0 has one deliberately narrow synchronized-receipt exception: when the call
 explicitly allows the V6.8.0 market-ladder outputs, the V6.8.1 identifiability receipt
 and V6.9 system-registry receipt may also be persisted. This closes the GitHub
 GITHUB_TOKEN non-recursive workflow-trigger gap without broadening other workflows.
+
+The A-grade evidence workflow also uses this helper as its final generated-artifact
+persistence boundary.  Immediately before that specific persistence call, the helper
+runs one weight-zero V6.10 ENG total-weight research smoke.  The smoke cannot block or
+alter formal validation: a non-zero research exit code is reported but is not promoted
+to a persistence failure.  Any successfully generated report remains subject to the
+same report-prefix allowlist and is persisted as research evidence only.
 """
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ import base64
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -36,6 +44,8 @@ V680_SYNC_DEPENDENT_PATHS = {
     "football-data/manifests/v6_total_ladder_identifiability_v681_status.json",
     "football-data/manifests/v6_system_issue_registry_v690_status.json",
 }
+A_GRADE_PERSIST_PREFIX = "model(football): persist validated A-grade evidence artifact"
+V610_ENG_SCRIPT = ROOT / "football-data" / "validation" / "total_weight_challenge_v610.py"
 MAX_ATTEMPTS = 4
 
 
@@ -99,6 +109,49 @@ def _allowed(path: str, prefixes: tuple[str, ...]) -> bool:
     return _v680_sync_requested(prefixes) and path in V680_SYNC_DEPENDENT_PATHS
 
 
+def _maybe_run_v610_eng_smoke(message_prefix: str) -> None:
+    """Run a non-blocking research-only ENG smoke inside the existing A-grade CI job."""
+    if not message_prefix.startswith(A_GRADE_PERSIST_PREFIX):
+        return
+    if not V610_ENG_SCRIPT.exists():
+        print(json.dumps({"v610_eng_smoke": "SKIPPED_SCRIPT_MISSING"}))
+        return
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    required = [
+        str(ROOT / "football-data" / "engine"),
+        str(ROOT / "football-data" / "validation"),
+    ]
+    env["PYTHONPATH"] = os.pathsep.join(required + ([existing] if existing else []))
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(V610_ENG_SCRIPT),
+            "--competition",
+            "ENG_PremierLeague",
+            "--print-summary",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    print(
+        json.dumps(
+            {
+                "v610_eng_smoke": "COMPLETED" if proc.returncode == 0 else "RESEARCH_FAILURE_NON_BLOCKING",
+                "returncode": proc.returncode,
+                "stdout_tail": proc.stdout[-4000:],
+                "stderr_tail": proc.stderr[-4000:],
+                "formal_effect": "NONE_WEIGHT_ZERO",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--branch", default="main")
@@ -111,6 +164,8 @@ def main() -> int:
     if not repo or not token:
         raise SystemExit("GH_REPOSITORY/GITHUB_REPOSITORY and GH_TOKEN/GITHUB_TOKEN are required")
     prefixes = tuple(args.prefixes or DEFAULT_ALLOWED_PREFIXES)
+
+    _maybe_run_v610_eng_smoke(args.message_prefix)
 
     entries = _status_entries()
     blocked = [(status, path) for status, path in entries if not _allowed(path, prefixes)]
