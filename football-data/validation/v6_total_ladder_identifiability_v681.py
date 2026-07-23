@@ -5,7 +5,7 @@ A single O/U line cannot identify P(T=0)..P(T=7+). Standard half-goal lines map 
 CDF points: Under(k+0.5) = P(T<=k) after de-vigging. Exact 0..7+ is declared market-identified
 only when every half-goal line 0.5..6.5 is present and the de-vigged CDF is monotone.
 Otherwise only observed cumulative constraints are exposed; missing integer buckets are never
-fabricated.
+fabricated. This audit never smooths a non-monotone ladder into artificial probabilities.
 """
 from __future__ import annotations
 
