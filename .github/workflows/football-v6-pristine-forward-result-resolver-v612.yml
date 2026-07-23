@@ -1,0 +1,80 @@
+name: football-v6-pristine-forward-result-resolver-v612
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 */2 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_pristine_forward_result_resolver_v612.py"
+      - ".github/workflows/football-v6-pristine-forward-result-resolver-v612.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6-pristine-forward-ledger-v612
+  cancel-in-progress: false
+
+jobs:
+  resolve-and-settle:
+    permissions:
+      contents: write
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile resolver and immutable ledger
+        run: |
+          python -m py_compile football-data/validation/v6_pristine_forward_result_resolver_v612.py
+          python -m py_compile football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Verify immutable ledger hash-chain logic
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py --self-test
+      - name: Resolve eligible frozen results from timezone-safe ESPN scoreboards
+        run: python football-data/validation/v6_pristine_forward_result_resolver_v612.py
+      - name: Append resolved results to immutable ledger
+        run: python football-data/validation/v6_pristine_forward_ledger_v612.py
+      - name: Persist resolver, result inbox, ledger and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/inbox/results_v612.json \
+            --allow-prefix football-data/forward/v6_pristine_forward_events_v612.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_result_resolver_v612_status.json \
+            --allow-prefix football-data/manifests/v6_pristine_forward_ledger_v612_status.json \
+            --message-prefix "audit(football): persist timezone-safe V6.1.2 settlements"
+      - name: Enforce resolver and immutable-ledger contracts
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          resolver=Path('football-data/manifests/v6_pristine_forward_result_resolver_v612_status.json')
+          ledger=Path('football-data/manifests/v6_pristine_forward_ledger_v612_status.json')
+          if not resolver.exists() or not ledger.exists(): raise SystemExit('V6.1.2 settlement receipts missing')
+          r=json.loads(resolver.read_text()); l=json.loads(ledger.read_text())
+          if r.get('status') not in {'PASS','WARN_UNRESOLVED_ELIGIBLE_RESULTS'}: raise SystemExit(str(r))
+          if l.get('status')!='PASS': raise SystemExit(str(l))
+          g=r.get('governance') or {}
+          if g.get('existing_predictions_only') is not True or g.get('no_prediction_generation') is not True or g.get('no_ledger_event_mutation') is not True: raise SystemExit('resolver immutable-prediction governance missing')
+          if g.get('scoreboard_calendar_search')!='UTC_KICKOFF_DAY_MINUS1_0_PLUS1': raise SystemExit('timezone-safe scoreboard search missing')
+          if g.get('extra_time_or_penalty_final_never_used_as_90m_without_regulation_linescores') is not True: raise SystemExit('90m settlement gate missing')
+          print(json.dumps({'resolver_status':r.get('status'),'generated_results':r.get('generated_result_count'),'result_inbox_count':r.get('result_inbox_count'),'ledger_after':l.get('ledger_after')},ensure_ascii=False))
+          PY
+      - name: Dispatch pristine forward evaluator
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-pristine-forward-evaluate-v611.yml --ref main
+
+# GITHUB_TOKEN-authored ledger commits do not recursively trigger downstream push workflows.
+# The evaluator is therefore refreshed explicitly via workflow_dispatch. No automatic promotion occurs.
