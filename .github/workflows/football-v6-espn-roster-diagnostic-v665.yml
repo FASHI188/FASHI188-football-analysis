@@ -1,0 +1,48 @@
+name: football-v6-espn-roster-diagnostic-v665
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_espn_roster_source_diagnostic_v665.py"
+      - "football-data/evidence/team_configuration_weekly/**"
+      - ".github/workflows/football-v6-espn-roster-diagnostic-v665.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-espn-roster-diagnostic-v665
+  cancel-in-progress: true
+jobs:
+  diagnostic:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_espn_roster_source_diagnostic_v665.py
+      - run: python football-data/validation/v6_espn_roster_source_diagnostic_v665.py
+      - name: Persist diagnostic
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_espn_roster_source_diagnostic_v665_status.json \
+            --message-prefix "audit(football): persist V6.6.5 ESPN roster diagnostic"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_espn_roster_source_diagnostic_v665_status.json')
+          if not p.exists(): raise SystemExit('V6.6.5 diagnostic missing')
+          x=json.loads(p.read_text())
+          if x.get('status')!='PASS': raise SystemExit(str(x))
+          print(json.dumps({'deficient':x.get('deficient_espn_team_count'),'diagnosis_counts':x.get('diagnosis_counts')},ensure_ascii=False))
+          PY
+# Read-only source diagnosis. No CURRENT/formal probability changes.
