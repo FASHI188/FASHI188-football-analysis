@@ -36,9 +36,10 @@ def main():
       'team_context_available_for_forward':int(x['team_config'].get('snapshots_written',0))>0,
     }
     h=x['calibration']['baseline_holdout']; ece=float(h['calibration']['ece'])
+    actual_draw_count=sum(int(round(float(b['observed'])*int(b['count']))) for b in h['calibration']['bins'])
     status='PASS' if all(checks.values()) else 'FAIL'
     out={
-      'schema_version':'V6.7.4-draw-resolution-registry-r1',
+      'schema_version':'V6.7.4-draw-resolution-registry-r2',
       'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
       'status':status,
       'evidence_checks':checks,
@@ -46,7 +47,8 @@ def main():
         'primary_problem':'Top-1 argmax rarely selects draw; held-out draw probability itself is already reasonably calibrated',
         'heldout_draw_probability_ece':ece,
         'heldout_market_draw_top1_count':h['draw_prediction_count'],
-        'heldout_actual_draw_count':h['calibration']['bins'] and sum(b['count'] for b in h['calibration']['bins']) or h['count'],
+        'heldout_actual_draw_count':actual_draw_count,
+        'heldout_match_count':h['count'],
         'forced_draw_overrides_supported':False,
       },
       'research_policy':{
