@@ -1,254 +1,109 @@
 #!/usr/bin/env python3
-"""V6.6.13 ingest current K League 1 roster and manager context from official league surfaces.
+"""V6.6.14 ingest current K League 1 roster and manager context from official league surfaces.
 
 Primary evidence is the dated official club page. If that dated page is fresh but its squad template
-returns no usable cards (currently Gimcheon K24), the player/manager list may come from the official
-K League active player/staff directory filtered to that same teamId. The dated club page is used only
-as same-provider currentness corroboration; the player list itself remains a single roster surface and
-is never unioned across pages, matches, providers, or dates.
+returns no usable cards, the player/manager list may come from the official K League active
+player/staff directory filtered to the same teamId. The dated club page is same-provider currentness
+corroboration only; the player list is still one endpoint and is never unioned across sources.
 
-Player cards require a shirt-number marker (No.X), excluding coaches/analysts/scouts. Duplicate aliases
-sharing a shirt number are collapsed fail-conservatively. Research context only; no probability or
-formal-weight changes.
+Every evidence record's observed_at_utc is set AFTER all source observations used by that record,
+closing the V6.6.9 source-after-record timestamp defect. Research context only.
 """
 from __future__ import annotations
-
-import html
-import json
-import re
-import time
-import unicodedata
-import urllib.request
-from datetime import date, datetime, timezone
+import html,json,re,time,unicodedata,urllib.request
+from datetime import date,datetime,timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-
-ROOT = Path(__file__).resolve().parents[1]
-ROSTER_DIR = ROOT / "evidence" / "team_current_roster_weekly"
-MANAGER_DIR = ROOT / "evidence" / "team_manager_context_weekly"
-STATUS = ROOT / "manifests" / "v6_kleague_official_context_v6612_status.json"
-CLUB_URL = "https://www.kleague.com/club/club.do?teamId={}"
-ACTIVE_URL = "https://www.kleague.com/player.do?leagueId=&teamId={}&type=active"
-UA = "football-v6.6.13-kleague-official-context/1.0"
-MIN_PLAYERS = 18
-MAX_PLAYERS = 60
-FRESH_DAYS = 8
-
-TEAMS: dict[str, dict[str, str]] = {
-    "FC Seoul": {"team_id": "K09", "short": "서울"},
-    "Jeonbuk Hyundai Motors": {"team_id": "K05", "short": "전북"},
-    "Pohang Steelers": {"team_id": "K03", "short": "포항"},
-    "Ulsan HD": {"team_id": "K01", "short": "울산"},
-    "Gangwon FC": {"team_id": "K21", "short": "강원"},
-    "Incheon United": {"team_id": "K18", "short": "인천"},
-    "FC Anyang": {"team_id": "K27", "short": "안양"},
-    "Jeju SK": {"team_id": "K04", "short": "제주"},
-    "Bucheon FC 1995": {"team_id": "K26", "short": "부천"},
-    "Daejeon Hana Citizen": {"team_id": "K10", "short": "대전"},
-    "Gimcheon Sangmu": {"team_id": "K24", "short": "김천"},
-    "Gwangju FC": {"team_id": "K22", "short": "광주"},
-}
-
-
+ROOT=Path(__file__).resolve().parents[1];ROSTER_DIR=ROOT/'evidence'/'team_current_roster_weekly';MANAGER_DIR=ROOT/'evidence'/'team_manager_context_weekly';STATUS=ROOT/'manifests'/'v6_kleague_official_context_v6612_status.json'
+CLUB_URL='https://www.kleague.com/club/club.do?teamId={}';ACTIVE_URL='https://www.kleague.com/player.do?leagueId=&teamId={}&type=active';UA='football-v6.6.14-kleague-official-context/1.0';MIN_PLAYERS=18;MAX_PLAYERS=60;FRESH_DAYS=8
+TEAMS={
+'FC Seoul':{'team_id':'K09','short':'서울'},'Jeonbuk Hyundai Motors':{'team_id':'K05','short':'전북'},'Pohang Steelers':{'team_id':'K03','short':'포항'},'Ulsan HD':{'team_id':'K01','short':'울산'},'Gangwon FC':{'team_id':'K21','short':'강원'},'Incheon United':{'team_id':'K18','short':'인천'},'FC Anyang':{'team_id':'K27','short':'안양'},'Jeju SK':{'team_id':'K04','short':'제주'},'Bucheon FC 1995':{'team_id':'K26','short':'부천'},'Daejeon Hana Citizen':{'team_id':'K10','short':'대전'},'Gimcheon Sangmu':{'team_id':'K24','short':'김천'},'Gwangju FC':{'team_id':'K22','short':'광주'}}
 class TextCollector(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        value = re.sub(r"\s+", " ", html.unescape(data)).strip()
-        if value:
-            self.parts.append(value)
-
-
-def norm(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value))).strip().casefold()
-
-
-def fetch(url: str) -> tuple[str, datetime, str | None]:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,application/xhtml+xml"})
-    with urllib.request.urlopen(req, timeout=30) as response:
-        raw = response.read()
-        charset = response.headers.get_content_charset() or "utf-8"
-    try:
-        text = raw.decode(charset, errors="strict")
-    except Exception:
-        try:
-            text = raw.decode("utf-8", errors="strict")
-        except Exception:
-            text = raw.decode("cp949", errors="replace")
-    observed = datetime.now(timezone.utc).replace(microsecond=0)
-    return text, observed, charset
-
-
-def page_tokens(markup: str) -> list[str]:
-    parser = TextCollector(); parser.feed(markup); parser.close(); return parser.parts
-
-
-def parse_as_of(joined: str) -> tuple[date | None, int | None]:
-    match = re.search(r"(20\d{2})\.(\d{2})\.(\d{2})\s*현재", joined)
-    if not match:
-        return None, None
-    try:
-        return date(int(match.group(1)), int(match.group(2)), int(match.group(3))), match.start()
-    except Exception:
-        return None, match.start()
-
-
-def parse_cards(markup: str, team_short: str, observed: datetime) -> dict[str, Any]:
-    tokens = page_tokens(markup)
-    joined = "\n".join(tokens)
-    as_of, cutoff = parse_as_of(joined)
-    # On club pages the current squad/staff cards precede the dated standings marker. Active-directory
-    # pages generally have no dated marker, so the whole filtered page is scanned.
-    scan = joined[:cutoff] if cutoff is not None else joined
-    short = re.escape(team_short)
-
-    player_pattern = re.compile(
-        rf"(?:^|\n)(?P<name>[^\n]{{1,80}}?)\s+(?:\n\s*)?{short}\s+(?:\n\s*)?No\.\s*(?P<number>\d{{1,3}})(?=\s|\n|$)",
-        re.MULTILINE,
-    )
-    raw_players=[]
-    for match in player_pattern.finditer(scan):
-        name=re.sub(r"\s+", " ", match.group("name")).strip(" -|\t")
-        number=match.group("number")
-        if name and 1 <= len(name) <= 80:
-            raw_players.append({"player_name": name, "shirt_number": number, "positions": [], "squad_status": "official-current-roster"})
-
-    by_number: dict[str, dict[str, Any]] = {}
-    seen_names=set(); duplicate_rows=[]
-    for player in raw_players:
-        nk=norm(player["player_name"]); num=str(player["shirt_number"])
-        if nk in seen_names or num in by_number:
-            duplicate_rows.append(player); continue
-        seen_names.add(nk); by_number[num]=player
-    players=list(by_number.values())
-    players.sort(key=lambda p: int(str(p["shirt_number"])))
-
-    coach_pattern = re.compile(
-        rf"(?:^|\n)(?P<name>[^\n]{{1,80}}?)\s+(?:\n\s*)?{short}\s+(?:\n\s*)?감독(?=\s|\n|$)",
-        re.MULTILINE,
-    )
-    coaches=[]
-    for match in coach_pattern.finditer(scan):
-        name=re.sub(r"\s+", " ", match.group("name")).strip(" -|\t")
-        if name and norm(name) not in {norm(v) for v in coaches}:
-            coaches.append(name)
-
-    fresh = as_of is not None and 0 <= (observed.date()-as_of).days <= FRESH_DAYS
-    return {
-        "tokens": len(tokens),
-        "official_as_of_date": as_of.isoformat() if as_of else None,
-        "as_of_fresh": fresh,
-        "players": players,
-        "raw_player_rows": len(raw_players),
-        "duplicate_player_rows_collapsed": len(duplicate_rows),
-        "coaches": coaches,
-    }
-
-
-def latest_prior_managers() -> dict[str, str]:
-    latest: dict[str, tuple[datetime,str]] = {}
-    if not MANAGER_DIR.exists(): return {}
-    for path in MANAGER_DIR.glob("*.json"):
-        try:
-            payload=json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        records=payload.get("records") if isinstance(payload,dict) else None
-        records=records if isinstance(records,list) else [payload] if isinstance(payload,dict) else []
-        for record in records:
-            if not isinstance(record,dict) or record.get("competition_id")!="KOR_KLeague1": continue
-            team=str(record.get("team_name") or ""); coach=((record.get("head_coach") or {}).get("name") if isinstance(record.get("head_coach"),dict) else None)
-            if team not in TEAMS or not coach: continue
-            try: ts=datetime.fromisoformat(str(record.get("observed_at_utc") or "").replace("Z","+00:00"))
-            except Exception: continue
-            prev=latest.get(team)
-            if prev is None or ts>prev[0]: latest[team]=(ts,str(coach))
-    return {team:value[1] for team,value in latest.items()}
-
-
-def main() -> int:
-    generated=datetime.now(timezone.utc).replace(microsecond=0); stamp=generated.strftime("%Y%m%dT%H%M%SZ")
-    ROSTER_DIR.mkdir(parents=True,exist_ok=True); MANAGER_DIR.mkdir(parents=True,exist_ok=True); STATUS.parent.mkdir(parents=True,exist_ok=True)
-    prior=latest_prior_managers(); roster_records=[]; manager_records=[]; audit=[]
-
-    for team_name,meta in TEAMS.items():
-        club_url=CLUB_URL.format(meta["team_id"]); active_url=ACTIVE_URL.format(meta["team_id"])
-        row={"team_name":team_name,"team_id":meta["team_id"],"club_source_url":club_url,"active_directory_url":active_url,"status":"FETCH_FAILED"}
-        try:
-            club_markup,club_observed,club_charset=fetch(club_url); club=parse_cards(club_markup,meta["short"],club_observed)
-            club_fresh=bool(club["as_of_fresh"])
-            selected=club; selected_url=club_url; selected_observed=club_observed; selected_surface="club_current_squad_page"; active=None; active_charset=None
-
-            # Fail-closed fallback: only when the dated club page is current but does not expose a
-            # complete roster. The active-directory list is not merged with the club list.
-            if club_fresh and not (MIN_PLAYERS<=len(club["players"])<=MAX_PLAYERS):
-                active_markup,active_observed,active_charset=fetch(active_url); active=parse_cards(active_markup,meta["short"],active_observed)
-                if len(active["players"])>len(club["players"]):
-                    selected=active; selected_url=active_url; selected_observed=active_observed; selected_surface="active_player_directory"
-
-            roster_ok=club_fresh and MIN_PLAYERS<=len(selected["players"])<=MAX_PLAYERS
-            coach_source=club; coach_url=club_url; coach_observed=club_observed; coach_surface="club_current_squad_page"
-            if club_fresh and len(club["coaches"])!=1 and active is not None and len(active["coaches"])==1:
-                coach_source=active; coach_url=active_url; coach_observed=selected_observed; coach_surface="active_player_directory"
-            coach_ok=club_fresh and len(coach_source["coaches"])==1
-
-            row.update({
-                "club_http_charset":club_charset,"active_http_charset":active_charset,
-                "official_as_of_date":club["official_as_of_date"],"as_of_fresh":club_fresh,
-                "club_player_count":len(club["players"]),"active_player_count":len(active["players"]) if active is not None else None,
-                "selected_roster_surface":selected_surface,"raw_player_rows":selected["raw_player_rows"],"player_count":len(selected["players"]),
-                "duplicate_player_rows_collapsed":selected["duplicate_player_rows_collapsed"],"coach_candidates":coach_source["coaches"],"selected_manager_surface":coach_surface,
-            })
-
-            if roster_ok:
-                roster_sources=[{"source_name":"K League official active player directory" if selected_surface=="active_player_directory" else "K League official club squad page","source_url":selected_url,"source_tier":"tier_1_official","provider_group":"kleague_official","source_observed_at_utc":selected_observed.isoformat(),"source_role":"current_registered_squad_player_list"}]
-                if selected_surface=="active_player_directory":
-                    roster_sources.append({"source_name":"K League official dated club page","source_url":club_url,"source_tier":"tier_1_official","provider_group":"kleague_official","source_observed_at_utc":club_observed.isoformat(),"source_role":"same_provider_currentness_corroboration_only"})
-                roster_records.append({
-                    "schema_version":"V6.6.9-current-roster-overlay-r1","competition_id":"KOR_KLeague1","team_name":team_name,"observed_at_utc":generated.isoformat(),"roster_semantics":"CURRENT_REGISTERED_SQUAD","players":selected["players"],"sources":roster_sources,
-                    "source_metadata":{"kleague_team_id":meta["team_id"],"official_page_as_of_date":club["official_as_of_date"],"player_list_surface":selected_surface,"duplicate_player_rows_collapsed":selected["duplicate_player_rows_collapsed"]},
-                    "governance":{"current_at_observation_time":True,"single_source_player_list":True,"single_endpoint_player_list":True,"cross_source_union":False,"cross_match_union":False,"dated_same_provider_currentness_corroboration":selected_surface=="active_player_directory","official_page_freshness_checked":True,"research_context_only":True,"formal_probability_use":False}
-                })
-
-            if coach_ok:
-                coach=coach_source["coaches"][0]; previous=prior.get(team_name)
-                if previous is None: change={"status":"BASELINE_ESTABLISHED","previous_manager":None,"changed_at_utc":None,"note":"First verified official K League manager baseline in this evidence stream."}
-                elif norm(previous)==norm(coach): change={"status":"UNCHANGED","previous_manager":previous,"changed_at_utc":None,"note":"Current official K League manager matches the previous verified weekly record."}
-                else: change={"status":"CHANGED_CONFIRMED","previous_manager":previous,"changed_at_utc":None,"note":"Current official K League manager differs from the previous verified weekly record; exact appointment time is not inferred."}
-                manager_sources=[{"source_name":"K League official active player/staff directory" if coach_surface=="active_player_directory" else "K League official club squad/staff page","source_url":coach_url,"source_tier":"tier_1_official","provider_group":"kleague_official","source_observed_at_utc":coach_observed.isoformat(),"source_role":"current_head_coach"}]
-                if coach_surface=="active_player_directory":
-                    manager_sources.append({"source_name":"K League official dated club page","source_url":club_url,"source_tier":"tier_1_official","provider_group":"kleague_official","source_observed_at_utc":club_observed.isoformat(),"source_role":"same_provider_currentness_corroboration_only"})
-                manager_records.append({
-                    "schema_version":"V6.6.3-team-manager-context-r1","competition_id":"KOR_KLeague1","team_name":team_name,"observed_at_utc":generated.isoformat(),"head_coach":{"name":coach},"manager_change":change,"sources":manager_sources,
-                    "source_metadata":{"kleague_team_id":meta["team_id"],"official_page_as_of_date":club["official_as_of_date"],"manager_surface":coach_surface},
-                    "governance":{"pit_current":True,"official_page_freshness_checked":True,"dated_same_provider_currentness_corroboration":coach_surface=="active_player_directory","research_context_only":True,"formal_probability_use":False}
-                })
-
-            row["roster_gate"]="PASS" if roster_ok else "FAIL"; row["manager_gate"]="PASS" if coach_ok else "FAIL"; row["status"]="PASS_BOTH" if roster_ok and coach_ok else "PARTIAL" if roster_ok or coach_ok else "FAIL_CLOSED"
-        except Exception as exc:
-            row["error"]=f"{type(exc).__name__}: {exc}"
-        audit.append(row); time.sleep(0.20)
-
-    roster_path=ROSTER_DIR/f"kleague_current_rosters__{stamp}.json"
-    manager_path=MANAGER_DIR/f"kleague_managers__{stamp}.json"
-    if roster_records:
-        roster_payload={"schema_version":"V6.6.13-kleague-current-roster-weekly-aggregate-r2","observed_at_utc":generated.isoformat(),"records":roster_records,"governance":{"official_kleague_source":True,"strict_overlay_evidence":True,"active_directory_fallback_is_single_surface":True,"formal_probability_use":False}}
-        roster_path.write_text(json.dumps(roster_payload,ensure_ascii=False,indent=2),encoding="utf-8")
-    if manager_records:
-        manager_payload={"schema_version":"V6.6.13-kleague-manager-weekly-aggregate-r2","observed_at_utc":generated.isoformat(),"records":manager_records,"governance":{"official_kleague_source":True,"formal_probability_use":False}}
-        manager_path.write_text(json.dumps(manager_payload,ensure_ascii=False,indent=2),encoding="utf-8")
-
-    roster_n=len(roster_records); manager_n=len(manager_records)
-    status="PASS_COMPLETE" if roster_n==len(TEAMS) and manager_n==len(TEAMS) else "WARN_PARTIAL" if roster_n or manager_n else "FAIL_NO_VALID_EVIDENCE"
-    payload={
-        "schema_version":"V6.6.13-kleague-official-context-status-r2","generated_at_utc":generated.isoformat(),"status":status,"formal_current_version":"V5.0.1","team_target_count":len(TEAMS),"valid_current_roster_count":roster_n,"valid_manager_count":manager_n,
-        "roster_evidence_path":str(roster_path.relative_to(ROOT)) if roster_records else None,"manager_evidence_path":str(manager_path.relative_to(ROOT)) if manager_records else None,"audit":audit,
-        "governance":{"official_source_only":True,"dated_club_page_currentness_required":True,"active_directory_fallback_requires_fresh_dated_club_page":True,"shirt_number_required_for_player_card":True,"duplicate_shirt_numbers_collapsed":True,"staff_excluded_from_roster":True,"single_endpoint_player_list":True,"no_cross_source_union":True,"no_cross_match_union":True,"research_context_only":True,"formal_probability_change":False,"formal_weight_change":False}
-    }
-    STATUS.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(payload,ensure_ascii=False,indent=2))
-    return 0 if status!="FAIL_NO_VALID_EVIDENCE" else 2
-
-if __name__=="__main__": raise SystemExit(main())
+ def __init__(self):super().__init__(convert_charrefs=True);self.parts=[]
+ def handle_data(self,data):
+  value=re.sub(r'\s+',' ',html.unescape(data)).strip()
+  if value:self.parts.append(value)
+def norm(value:str)->str:return re.sub(r'\s+',' ',unicodedata.normalize('NFKC',str(value))).strip().casefold()
+def fetch(url:str)->tuple[str,datetime,str|None]:
+ req=urllib.request.Request(url,headers={'User-Agent':UA,'Accept':'text/html,application/xhtml+xml'})
+ with urllib.request.urlopen(req,timeout=30) as response:raw=response.read();charset=response.headers.get_content_charset() or 'utf-8'
+ try:text=raw.decode(charset,errors='strict')
+ except Exception:
+  try:text=raw.decode('utf-8',errors='strict')
+  except Exception:text=raw.decode('cp949',errors='replace')
+ return text,datetime.now(timezone.utc).replace(microsecond=0),charset
+def page_tokens(markup:str)->list[str]:p=TextCollector();p.feed(markup);p.close();return p.parts
+def parse_as_of(joined:str):
+ m=re.search(r'(20\d{2})\.(\d{2})\.(\d{2})\s*현재',joined)
+ if not m:return None,None
+ try:return date(int(m.group(1)),int(m.group(2)),int(m.group(3))),m.start()
+ except Exception:return None,m.start()
+def parse_cards(markup:str,team_short:str,observed:datetime)->dict[str,Any]:
+ tokens=page_tokens(markup);joined='\n'.join(tokens);as_of,cutoff=parse_as_of(joined);scan=joined[:cutoff] if cutoff is not None else joined;short=re.escape(team_short)
+ pp=re.compile(rf'(?:^|\n)(?P<name>[^\n]{{1,80}}?)\s+(?:\n\s*)?{short}\s+(?:\n\s*)?No\.\s*(?P<number>\d{{1,3}})(?=\s|\n|$)',re.MULTILINE);raw=[]
+ for m in pp.finditer(scan):
+  name=re.sub(r'\s+',' ',m.group('name')).strip(' -|\t');number=m.group('number')
+  if name and 1<=len(name)<=80:raw.append({'player_name':name,'shirt_number':number,'positions':[],'squad_status':'official-current-roster'})
+ bynum={};seen=set();dups=[]
+ for p in raw:
+  nk=norm(p['player_name']);num=str(p['shirt_number'])
+  if nk in seen or num in bynum:dups.append(p);continue
+  seen.add(nk);bynum[num]=p
+ players=list(bynum.values());players.sort(key=lambda p:int(str(p['shirt_number'])))
+ cp=re.compile(rf'(?:^|\n)(?P<name>[^\n]{{1,80}}?)\s+(?:\n\s*)?{short}\s+(?:\n\s*)?감독(?=\s|\n|$)',re.MULTILINE);coaches=[]
+ for m in cp.finditer(scan):
+  name=re.sub(r'\s+',' ',m.group('name')).strip(' -|\t')
+  if name and norm(name) not in {norm(v) for v in coaches}:coaches.append(name)
+ fresh=as_of is not None and 0<=(observed.date()-as_of).days<=FRESH_DAYS
+ return {'official_as_of_date':as_of.isoformat() if as_of else None,'as_of_fresh':fresh,'players':players,'raw_player_rows':len(raw),'duplicate_player_rows_collapsed':len(dups),'coaches':coaches}
+def latest_prior_managers():
+ latest={}
+ if not MANAGER_DIR.exists():return {}
+ for path in MANAGER_DIR.glob('*.json'):
+  try:payload=json.loads(path.read_text(encoding='utf-8'))
+  except Exception:continue
+  records=payload.get('records') if isinstance(payload,dict) else None;records=records if isinstance(records,list) else [payload] if isinstance(payload,dict) else []
+  for record in records:
+   if not isinstance(record,dict) or record.get('competition_id')!='KOR_KLeague1':continue
+   team=str(record.get('team_name') or '');coach=((record.get('head_coach') or {}).get('name') if isinstance(record.get('head_coach'),dict) else None)
+   if team not in TEAMS or not coach:continue
+   try:t=datetime.fromisoformat(str(record.get('observed_at_utc') or '').replace('Z','+00:00'))
+   except Exception:continue
+   if team not in latest or t>latest[team][0]:latest[team]=(t,str(coach))
+ return {k:v[1] for k,v in latest.items()}
+def max_observed(*values:datetime)->datetime:return max(values).replace(microsecond=0)
+def main()->int:
+ started=datetime.now(timezone.utc).replace(microsecond=0);ROSTER_DIR.mkdir(parents=True,exist_ok=True);MANAGER_DIR.mkdir(parents=True,exist_ok=True);STATUS.parent.mkdir(parents=True,exist_ok=True);prior=latest_prior_managers();rosters=[];managers=[];audit=[]
+ for team_name,meta in TEAMS.items():
+  club_url=CLUB_URL.format(meta['team_id']);active_url=ACTIVE_URL.format(meta['team_id']);row={'team_name':team_name,'team_id':meta['team_id'],'club_source_url':club_url,'active_directory_url':active_url,'status':'FETCH_FAILED'}
+  try:
+   club_markup,club_obs,club_charset=fetch(club_url);club=parse_cards(club_markup,meta['short'],club_obs);club_fresh=bool(club['as_of_fresh']);selected=club;selected_url=club_url;selected_obs=club_obs;selected_surface='club_current_squad_page';active=None;active_charset=None;active_obs=None
+   if club_fresh and not (MIN_PLAYERS<=len(club['players'])<=MAX_PLAYERS):
+    active_markup,active_obs,active_charset=fetch(active_url);active=parse_cards(active_markup,meta['short'],active_obs)
+    if len(active['players'])>len(club['players']):selected=active;selected_url=active_url;selected_obs=active_obs;selected_surface='active_player_directory'
+   roster_ok=club_fresh and MIN_PLAYERS<=len(selected['players'])<=MAX_PLAYERS;coach_source=club;coach_url=club_url;coach_obs=club_obs;coach_surface='club_current_squad_page'
+   if club_fresh and len(club['coaches'])!=1 and active is not None and len(active['coaches'])==1:coach_source=active;coach_url=active_url;coach_obs=active_obs or selected_obs;coach_surface='active_player_directory'
+   coach_ok=club_fresh and len(coach_source['coaches'])==1
+   row.update({'club_http_charset':club_charset,'active_http_charset':active_charset,'official_as_of_date':club['official_as_of_date'],'as_of_fresh':club_fresh,'club_player_count':len(club['players']),'active_player_count':len(active['players']) if active is not None else None,'selected_roster_surface':selected_surface,'raw_player_rows':selected['raw_player_rows'],'player_count':len(selected['players']),'duplicate_player_rows_collapsed':selected['duplicate_player_rows_collapsed'],'coach_candidates':coach_source['coaches'],'selected_manager_surface':coach_surface})
+   if roster_ok:
+    sources=[{'source_name':'K League official active player directory' if selected_surface=='active_player_directory' else 'K League official club squad page','source_url':selected_url,'source_tier':'tier_1_official','provider_group':'kleague_official','source_observed_at_utc':selected_obs.isoformat(),'source_role':'current_registered_squad_player_list'}]
+    all_obs=[selected_obs]
+    if selected_surface=='active_player_directory':sources.append({'source_name':'K League official dated club page','source_url':club_url,'source_tier':'tier_1_official','provider_group':'kleague_official','source_observed_at_utc':club_obs.isoformat(),'source_role':'same_provider_currentness_corroboration_only'});all_obs.append(club_obs)
+    record_obs=max_observed(*all_obs)
+    rosters.append({'schema_version':'V6.6.9-current-roster-overlay-r1','competition_id':'KOR_KLeague1','team_name':team_name,'observed_at_utc':record_obs.isoformat(),'roster_semantics':'CURRENT_REGISTERED_SQUAD','players':selected['players'],'sources':sources,'source_metadata':{'kleague_team_id':meta['team_id'],'official_page_as_of_date':club['official_as_of_date'],'player_list_surface':selected_surface,'duplicate_player_rows_collapsed':selected['duplicate_player_rows_collapsed']},'governance':{'current_at_observation_time':True,'single_source_player_list':True,'single_endpoint_player_list':True,'cross_source_union':False,'cross_match_union':False,'dated_same_provider_currentness_corroboration':selected_surface=='active_player_directory','official_page_freshness_checked':True,'research_context_only':True,'formal_probability_use':False}})
+   if coach_ok:
+    coach=coach_source['coaches'][0];previous=prior.get(team_name);change={'status':'BASELINE_ESTABLISHED','previous_manager':None,'changed_at_utc':None,'note':'First verified official K League manager baseline in this evidence stream.'} if previous is None else {'status':'UNCHANGED','previous_manager':previous,'changed_at_utc':None,'note':'Current official K League manager matches the previous verified weekly record.'} if norm(previous)==norm(coach) else {'status':'CHANGED_CONFIRMED','previous_manager':previous,'changed_at_utc':None,'note':'Current official K League manager differs from the previous verified weekly record; exact appointment time is not inferred.'}
+    sources=[{'source_name':'K League official active player/staff directory' if coach_surface=='active_player_directory' else 'K League official club squad/staff page','source_url':coach_url,'source_tier':'tier_1_official','provider_group':'kleague_official','source_observed_at_utc':coach_obs.isoformat(),'source_role':'current_head_coach'}];all_obs=[coach_obs]
+    if coach_surface=='active_player_directory':sources.append({'source_name':'K League official dated club page','source_url':club_url,'source_tier':'tier_1_official','provider_group':'kleague_official','source_observed_at_utc':club_obs.isoformat(),'source_role':'same_provider_currentness_corroboration_only'});all_obs.append(club_obs)
+    record_obs=max_observed(*all_obs)
+    managers.append({'schema_version':'V6.6.3-team-manager-context-r1','competition_id':'KOR_KLeague1','team_name':team_name,'observed_at_utc':record_obs.isoformat(),'head_coach':{'name':coach},'manager_change':change,'sources':sources,'source_metadata':{'kleague_team_id':meta['team_id'],'official_page_as_of_date':club['official_as_of_date'],'manager_surface':coach_surface},'governance':{'pit_current':True,'official_page_freshness_checked':True,'dated_same_provider_currentness_corroboration':coach_surface=='active_player_directory','research_context_only':True,'formal_probability_use':False}})
+   row['roster_gate']='PASS' if roster_ok else 'FAIL';row['manager_gate']='PASS' if coach_ok else 'FAIL';row['status']='PASS_BOTH' if roster_ok and coach_ok else 'PARTIAL' if roster_ok or coach_ok else 'FAIL_CLOSED'
+  except Exception as exc:row['error']=f'{type(exc).__name__}: {exc}'
+  audit.append(row);time.sleep(.2)
+ completed=datetime.now(timezone.utc).replace(microsecond=0);stamp=completed.strftime('%Y%m%dT%H%M%SZ');rp=ROSTER_DIR/f'kleague_current_rosters__{stamp}.json';mp=MANAGER_DIR/f'kleague_managers__{stamp}.json'
+ if rosters:rp.write_text(json.dumps({'schema_version':'V6.6.14-kleague-current-roster-weekly-aggregate-r3','observed_at_utc':completed.isoformat(),'records':rosters,'governance':{'official_kleague_source':True,'strict_overlay_evidence':True,'active_directory_fallback_is_single_surface':True,'record_timestamp_after_all_sources':True,'formal_probability_use':False}},ensure_ascii=False,indent=2),encoding='utf-8')
+ if managers:mp.write_text(json.dumps({'schema_version':'V6.6.14-kleague-manager-weekly-aggregate-r3','observed_at_utc':completed.isoformat(),'records':managers,'governance':{'official_kleague_source':True,'record_timestamp_after_all_sources':True,'formal_probability_use':False}},ensure_ascii=False,indent=2),encoding='utf-8')
+ status='PASS_COMPLETE' if len(rosters)==12 and len(managers)==12 else 'WARN_PARTIAL' if rosters or managers else 'FAIL_NO_VALID_EVIDENCE';payload={'schema_version':'V6.6.14-kleague-official-context-status-r3','generated_at_utc':completed.isoformat(),'status':status,'formal_current_version':'V5.0.1','team_target_count':12,'valid_current_roster_count':len(rosters),'valid_manager_count':len(managers),'roster_evidence_path':str(rp.relative_to(ROOT)) if rosters else None,'manager_evidence_path':str(mp.relative_to(ROOT)) if managers else None,'audit':audit,'governance':{'official_source_only':True,'dated_club_page_currentness_required':True,'active_directory_fallback_requires_fresh_dated_club_page':True,'record_timestamp_after_all_sources':True,'single_endpoint_player_list':True,'no_cross_source_union':True,'no_cross_match_union':True,'research_context_only':True,'formal_probability_change':False,'formal_weight_change':False}}
+ STATUS.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(payload,ensure_ascii=False,indent=2));return 0 if status!='FAIL_NO_VALID_EVIDENCE' else 2
+if __name__=='__main__':raise SystemExit(main())
