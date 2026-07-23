@@ -10,6 +10,11 @@ Historical malformed evidence remains auditable, but it does not permanently poi
 once a strictly newer valid record for the same resolved team exists. Such records are moved to
 `superseded_invalid_records`; only unresolved, unresolvable, or same/newer invalid evidence remains
 `operational_invalid_records` and can make the current status WARN.
+
+Team-identity normalization and person-identity normalization are deliberately separate. Team
+matching keeps the legacy Latin-folded alias semantics, while player uniqueness uses Unicode-safe
+NFKC/casefold tokenization so Korean, Japanese, Chinese and other non-Latin names are never erased
+into the same empty ASCII key.
 """
 from __future__ import annotations
 
@@ -36,13 +41,21 @@ def ts(value: str):
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
-def norm(value: str) -> str:
+def team_norm(value: str) -> str:
+    """Latin-folded deterministic normalization for project team identity aliases."""
     text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode().lower()
     return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
+def person_norm(value: str) -> str:
+    """Unicode-safe deterministic normalization for player/person uniqueness checks."""
+    text = unicodedata.normalize("NFKC", str(value)).casefold()
+    # [^\W_] means Unicode alphanumeric characters while excluding underscore.
+    return " ".join(re.findall(r"[^\W_]+", text, flags=re.UNICODE))
+
+
 def variants(value: str) -> set[str]:
-    base = norm(value); tokens = base.split(); out = {base}
+    base = team_norm(value); tokens = base.split(); out = {base}
     while tokens and tokens[-1] in SUFFIXES:
         tokens = tokens[:-1]
         if tokens: out.add(" ".join(tokens))
@@ -99,7 +112,11 @@ def validate_record(row: dict[str, Any], cfg: dict[str, Any], now: datetime) -> 
     names=[]
     for player in players:
         if not isinstance(player,dict) or not str(player.get("player_name") or "").strip(): errors.append("unnamed_player"); continue
-        names.append(norm(player["player_name"]))
+        normalized=person_norm(player["player_name"])
+        if not normalized:
+            errors.append("player_name_normalized_empty")
+            continue
+        names.append(normalized)
     unique=set(names)
     if len(unique) < int(cfg.get("minimum_named_players",18)): errors.append(f"named_players_below_min:{len(unique)}")
     if len(unique) != len(names): errors.append("duplicate_player_names")
@@ -167,7 +184,7 @@ def main() -> int:
         else: additions+=1
         matched.append({"competition_id":key[0],"source_team_name":row.get("team_name"),"resolved_team_name":key[1],"identity_method":method,"base_player_count":base_count,"overlay_player_count":len(row.get("players") or []),"base_strict_current_roster":base_strict,"strict_roster_addition":not base_strict,"evidence_file":virtual,"roster_semantics":row.get("roster_semantics"),"observed_at_utc":observed.isoformat()})
     base_strict_count=sum(1 for row in base.values() if len(row.get("players") or [])>=18 and bool((row.get("source_health") or {}).get("roster_content_ok",True)))
-    payload={"schema_version":"V6.6.15-current-roster-overlay-status-r2","generated_at_utc":now.isoformat(),"status":"PASS" if not operational_invalid else "WARN_INVALID_CURRENT_EVIDENCE","team_baseline_count":len(base),"base_strict_current_roster_count":base_strict_count,"evidence_file_count":len(files),"valid_overlay_count":len(latest_overlay),"strict_roster_additions":additions,"valid_overlays_on_already_strict_teams":already_strict,"effective_strict_current_roster_count":base_strict_count+additions,"operational_invalid_record_count":len(operational_invalid),"superseded_invalid_record_count":len(superseded_invalid),"operational_invalid_records":operational_invalid,"superseded_invalid_records":superseded_invalid,"matched_overlays":matched,"governance":{"strict_current_only":True,"provisional_semantics_fail_closed":True,"no_cross_source_union":True,"raw_weekly_snapshot_not_overwritten":True,"historical_invalid_evidence_never_deleted":True,"superseded_invalid_evidence_does_not_poison_current_status":True,"only_strictly_newer_valid_same_team_evidence_can_supersede_invalid":True,"formal_probability_change":False,"formal_weight_change":False}}
+    payload={"schema_version":"V6.6.15-current-roster-overlay-status-r3","generated_at_utc":now.isoformat(),"status":"PASS" if not operational_invalid else "WARN_INVALID_CURRENT_EVIDENCE","team_baseline_count":len(base),"base_strict_current_roster_count":base_strict_count,"evidence_file_count":len(files),"valid_overlay_count":len(latest_overlay),"strict_roster_additions":additions,"valid_overlays_on_already_strict_teams":already_strict,"effective_strict_current_roster_count":base_strict_count+additions,"operational_invalid_record_count":len(operational_invalid),"superseded_invalid_record_count":len(superseded_invalid),"operational_invalid_records":operational_invalid,"superseded_invalid_records":superseded_invalid,"matched_overlays":matched,"normalization_audit":{"team_identity_normalization":"NFKD_ASCII_ALIAS_COMPATIBLE","person_identity_normalization":"NFKC_UNICODE_CASEFOLD","non_latin_person_names_preserved":True},"governance":{"strict_current_only":True,"provisional_semantics_fail_closed":True,"no_cross_source_union":True,"raw_weekly_snapshot_not_overwritten":True,"historical_invalid_evidence_never_deleted":True,"superseded_invalid_evidence_does_not_poison_current_status":True,"only_strictly_newer_valid_same_team_evidence_can_supersede_invalid":True,"unicode_safe_person_identity":True,"formal_probability_change":False,"formal_weight_change":False}}
     OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(payload,ensure_ascii=False,indent=2)); return 0
 
 if __name__=="__main__": raise SystemExit(main())
