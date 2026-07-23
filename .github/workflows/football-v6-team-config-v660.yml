@@ -1,52 +1,69 @@
 name: football-v6-team-config-v660
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "20 0 * * 1"
   push:
     paths:
       - "football-data/config/v6_team_configuration_weekly_v660.json"
+      - "football-data/validation/v6_team_configuration_fetch_v660.py"
       - "football-data/validation/v6_team_configuration_weekly_v660.py"
       - "football-data/evidence/team_configuration_weekly/**"
       - ".github/workflows/football-v6-team-config-v660.yml"
 permissions:
   contents: read
+concurrency:
+  group: football-v6-team-config-v660
+  cancel-in-progress: true
 jobs:
-  validate:
+  scan-and-validate:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - run: python -m py_compile football-data/validation/v6_team_configuration_weekly_v660.py
-      - run: python football-data/validation/v6_team_configuration_weekly_v660.py
-      - name: Persist weekly configuration audit
+      - run: |
+          python -m py_compile football-data/validation/v6_team_configuration_fetch_v660.py
+          python -m py_compile football-data/validation/v6_team_configuration_weekly_v660.py
+      - name: Fetch latest team configurations
+        run: python football-data/validation/v6_team_configuration_fetch_v660.py
+      - name: Validate snapshots
+        run: python football-data/validation/v6_team_configuration_weekly_v660.py
+      - name: Persist weekly configuration snapshots and audit
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/team_configuration_weekly/ \
+            --allow-prefix football-data/manifests/v6_team_configuration_fetch_v660_status.json \
             --allow-prefix football-data/manifests/v6_team_configuration_weekly_v660_status.json \
-            --message-prefix "audit(football): persist V6.6.0 team configuration coverage"
+            --message-prefix "audit(football): persist V6.6.0 weekly team configurations"
       - name: Enforce receipt
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
+          f=Path('football-data/manifests/v6_team_configuration_fetch_v660_status.json')
           p=Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json')
-          if not p.exists(): raise SystemExit('V660 receipt missing')
-          x=json.loads(p.read_text())
-          if x.get('status') not in {'PASS','WARN'}: raise SystemExit(str(x))
+          if not f.exists() or not p.exists(): raise SystemExit('V660 receipts missing')
+          a=json.loads(f.read_text()); x=json.loads(p.read_text())
+          if a.get('status') not in {'PASS','WARN'} or x.get('status') not in {'PASS','WARN'}: raise SystemExit(str({'fetch':a,'audit':x}))
           print(json.dumps({
-            'status':x.get('status'),
-            'teams':x.get('latest_team_snapshots'),
-            'domains':x.get('domains_with_snapshots'),
+            'fetch_status':a.get('status'),
+            'snapshots_written':a.get('snapshots_written'),
+            'fetch_domains':a.get('domains_with_snapshots'),
+            'audit_status':x.get('status'),
+            'latest_teams':x.get('latest_team_snapshots'),
+            'audit_domains':x.get('domains_with_snapshots'),
             'complete':x.get('complete_team_snapshots'),
             'residual_eligible':x.get('residual_research_eligible_team_snapshots')
           },ensure_ascii=False))
           PY
-# Scanner data is research context only. CURRENT/formal/runtime probabilities are not mutated.
+# Weekly research context only. CURRENT/formal/runtime probabilities are never mutated.
