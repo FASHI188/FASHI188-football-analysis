@@ -1,0 +1,43 @@
+name: football-v6-draw-calibration-v673
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "football-data/validation/v6_draw_probability_calibration_v673.py"
+      - ".github/workflows/football-v6-draw-calibration-v673.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_draw_probability_calibration_v673.py
+      - run: python football-data/validation/v6_draw_probability_calibration_v673.py
+      - name: Persist
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_draw_probability_calibration_v673_status.json \
+            --message-prefix "audit(football): persist V6.7.3 draw calibration"
+      - name: Enforce
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_draw_probability_calibration_v673_status.json')
+          if not p.exists(): raise SystemExit('V673 missing')
+          x=json.loads(p.read_text())
+          print(json.dumps({'selected':x.get('selected_candidate'),'holdout':x.get('calibrated_holdout'),'gate':x.get('research_gate_passed'),'interpretation':x.get('interpretation')},ensure_ascii=False))
+          PY
+# Research audit only.
