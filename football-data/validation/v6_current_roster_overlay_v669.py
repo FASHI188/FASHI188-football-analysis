@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""V6.6.9 validate current-roster overlays against the latest weekly team baseline.
+"""V6.6.15 validate current-roster overlays against the latest weekly team baseline.
 
 A passing overlay is current, >=18 unique named players, and supported by either one official
 current first-team/registered-squad source or two independent tier-2 sources. It may repair the
 research strict-roster availability gap without overwriting the raw weekly snapshot. Provisional,
 training-group and previous-season semantics are fail-closed.
+
+Historical malformed evidence remains auditable, but it does not permanently poison CURRENT status
+once a strictly newer valid record for the same resolved team exists. Such records are moved to
+`superseded_invalid_records`; only unresolved, unresolvable, or same/newer invalid evidence remains
+`operational_invalid_records` and can make the current status WARN.
 """
 from __future__ import annotations
 
@@ -118,28 +123,51 @@ def validate_record(row: dict[str, Any], cfg: dict[str, Any], now: datetime) -> 
     return errors
 
 
+def safe_observed(row: dict[str, Any]) -> datetime | None:
+    try:
+        value=ts(row.get("observed_at_utc"))
+        return value if value.tzinfo is not None else None
+    except Exception:
+        return None
+
+
 def main() -> int:
     cfg=load(CFG); now=datetime.now(timezone.utc).replace(microsecond=0); base=latest_team_baseline(); keys=list(base.keys())
-    files=sorted(EVIDENCE.glob("*.json")) if EVIDENCE.exists() else []; candidates=[]; invalid=[]
+    files=sorted(EVIDENCE.glob("*.json")) if EVIDENCE.exists() else []; candidates=[]; invalid_raw=[]
     for path in files:
         for row,virtual in iter_records(path):
+            cid=str(row.get("competition_id") or ""); team=str(row.get("team_name") or "").strip(); resolved,method=resolve(cid,team,keys) if cid and team else (None,"MISSING_IDENTITY")
             errs=validate_record(row,cfg,now)
-            if errs: invalid.append({"file":virtual,"competition_id":row.get("competition_id"),"team_name":row.get("team_name"),"errors":errs}); continue
-            cid=str(row["competition_id"]); team=str(row["team_name"]); resolved,method=resolve(cid,team,keys)
-            if resolved is None: invalid.append({"file":virtual,"competition_id":cid,"team_name":team,"errors":[f"identity_resolution:{method}"]}); continue
+            if resolved is None and cid and team:
+                errs=list(errs)+[f"identity_resolution:{method}"]
+            if errs:
+                invalid_raw.append({"file":virtual,"competition_id":row.get("competition_id"),"team_name":row.get("team_name"),"errors":errs,"resolved":resolved,"observed":safe_observed(row)}); continue
+            if resolved is None:
+                invalid_raw.append({"file":virtual,"competition_id":cid,"team_name":team,"errors":[f"identity_resolution:{method}"],"resolved":None,"observed":safe_observed(row)}); continue
             observed=ts(row["observed_at_utc"]); candidates.append((resolved,observed,row,virtual,method))
+
     latest_overlay={}
     for resolved,observed,row,virtual,method in candidates:
         prev=latest_overlay.get(resolved)
         if prev is None or observed>prev[0]: latest_overlay[resolved]=(observed,row,virtual,method)
+
+    operational_invalid=[]; superseded_invalid=[]
+    for item in invalid_raw:
+        resolved=item.pop("resolved",None); observed=item.pop("observed",None)
+        valid=latest_overlay.get(resolved) if resolved is not None else None
+        if valid is not None and observed is not None and valid[0] > observed:
+            entry=dict(item); entry["superseded_by_valid_evidence_file"]=valid[2]; entry["superseded_by_observed_at_utc"]=valid[0].isoformat(); superseded_invalid.append(entry)
+        else:
+            operational_invalid.append(item)
+
     matched=[]; additions=0; already_strict=0
     for key,(observed,row,virtual,method) in sorted(latest_overlay.items()):
         base_row=base[key]; base_count=len(base_row.get("players") or []); base_health=base_row.get("source_health") or {}; base_strict=base_count>=18 and bool(base_health.get("roster_content_ok",True))
         if base_strict: already_strict+=1
         else: additions+=1
-        matched.append({"competition_id":key[0],"source_team_name":row.get("team_name"),"resolved_team_name":key[1],"identity_method":method,"base_player_count":base_count,"overlay_player_count":len(row.get("players") or []),"base_strict_current_roster":base_strict,"strict_roster_addition":not base_strict,"evidence_file":virtual,"roster_semantics":row.get("roster_semantics")})
+        matched.append({"competition_id":key[0],"source_team_name":row.get("team_name"),"resolved_team_name":key[1],"identity_method":method,"base_player_count":base_count,"overlay_player_count":len(row.get("players") or []),"base_strict_current_roster":base_strict,"strict_roster_addition":not base_strict,"evidence_file":virtual,"roster_semantics":row.get("roster_semantics"),"observed_at_utc":observed.isoformat()})
     base_strict_count=sum(1 for row in base.values() if len(row.get("players") or [])>=18 and bool((row.get("source_health") or {}).get("roster_content_ok",True)))
-    payload={"schema_version":"V6.6.9-current-roster-overlay-status-r1","generated_at_utc":now.isoformat(),"status":"PASS" if not invalid else "WARN_INVALID_RECORDS","team_baseline_count":len(base),"base_strict_current_roster_count":base_strict_count,"evidence_file_count":len(files),"valid_overlay_count":len(latest_overlay),"strict_roster_additions":additions,"valid_overlays_on_already_strict_teams":already_strict,"effective_strict_current_roster_count":base_strict_count+additions,"invalid_records":invalid,"matched_overlays":matched,"governance":{"strict_current_only":True,"provisional_semantics_fail_closed":True,"no_cross_source_union":True,"raw_weekly_snapshot_not_overwritten":True,"formal_probability_change":False,"formal_weight_change":False}}
+    payload={"schema_version":"V6.6.15-current-roster-overlay-status-r2","generated_at_utc":now.isoformat(),"status":"PASS" if not operational_invalid else "WARN_INVALID_CURRENT_EVIDENCE","team_baseline_count":len(base),"base_strict_current_roster_count":base_strict_count,"evidence_file_count":len(files),"valid_overlay_count":len(latest_overlay),"strict_roster_additions":additions,"valid_overlays_on_already_strict_teams":already_strict,"effective_strict_current_roster_count":base_strict_count+additions,"operational_invalid_record_count":len(operational_invalid),"superseded_invalid_record_count":len(superseded_invalid),"operational_invalid_records":operational_invalid,"superseded_invalid_records":superseded_invalid,"matched_overlays":matched,"governance":{"strict_current_only":True,"provisional_semantics_fail_closed":True,"no_cross_source_union":True,"raw_weekly_snapshot_not_overwritten":True,"historical_invalid_evidence_never_deleted":True,"superseded_invalid_evidence_does_not_poison_current_status":True,"only_strictly_newer_valid_same_team_evidence_can_supersede_invalid":True,"formal_probability_change":False,"formal_weight_change":False}}
     OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8"); print(json.dumps(payload,ensure_ascii=False,indent=2)); return 0
 
 if __name__=="__main__": raise SystemExit(main())
