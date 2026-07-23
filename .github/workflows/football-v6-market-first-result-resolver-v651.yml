@@ -1,0 +1,70 @@
+name: football-v6-market-first-result-resolver-v651
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_market_first_result_resolver_v651.py"
+      - "football-data/config/team_aliases.json"
+      - ".github/workflows/football-v6-market-first-result-resolver-v651.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-market-first-forward-v651
+  cancel-in-progress: false
+jobs:
+  resolve:
+    permissions:
+      contents: write
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile market-first official result resolver
+        run: |
+          python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+          python -m py_compile football-data/validation/v6_pristine_forward_result_resolver_v612.py
+          python -m py_compile football-data/validation/v6_market_first_result_resolver_v651.py
+      - name: Resolve eligible market-first results
+        run: python football-data/validation/v6_market_first_result_resolver_v651.py
+      - name: Persist result receipts, immutable ledger and evaluation
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/inbox/market_first_results_v651.json \
+            --allow-prefix football-data/forward/v6_market_first_events_v651.json \
+            --allow-prefix football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
+            --allow-prefix football-data/manifests/v6_market_first_result_resolver_v651_status.json \
+            --message-prefix "audit(football): persist V6.5.1 official market-first settlements"
+      - name: Enforce official settlement contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_market_first_result_resolver_v651_status.json')
+          e=Path('football-data/manifests/v6_market_first_forward_evaluation_v651_status.json')
+          if not p.exists() or not e.exists(): raise SystemExit('V6.5.1 settlement receipts missing')
+          x=json.loads(p.read_text()); y=json.loads(e.read_text())
+          if x.get('status') not in {'PASS','WARN_UNRESOLVED_ELIGIBLE_RESULTS'}: raise SystemExit(str(x))
+          if y.get('status')!='PASS': raise SystemExit(str(y))
+          g=x.get('governance') or {}
+          if g.get('existing_market_predictions_only') is not True or g.get('prediction_generation') is not False: raise SystemExit('prediction immutability missing')
+          if g.get('processed_training_repository_used_for_settlement') is not False or g.get('espn_public_scoreboard_primary') is not True: raise SystemExit('official result-source contract missing')
+          if g.get('result_receipt_hash_frozen_into_settlement') is not True: raise SystemExit('result receipt hash contract missing')
+          print(json.dumps({'resolver':x.get('status'),'predictions':x.get('prediction_count'),'settled':x.get('settled_count'),'open':x.get('open_prediction_count'),'evaluation':y.get('evaluation_status'),'all_market':y.get('all_market_predictions'),'selected':y.get('selective_arm_a')},ensure_ascii=False))
+          PY
+      - name: Refresh system issue registry
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-system-issue-registry-v690.yml --ref main
+# Settlement-only research workflow. It cannot create or rewrite market predictions and cannot promote automatically.
