@@ -33,7 +33,7 @@ jobs:
         run: python football-data/validation/v6_team_configuration_fetch_v660.py
       - name: Validate snapshots
         run: python football-data/validation/v6_team_configuration_weekly_v660.py
-      - name: Persist weekly configuration snapshots and audit
+      - name: Persist weekly configuration snapshot and audit
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,7 +43,7 @@ jobs:
             --allow-prefix football-data/evidence/team_configuration_weekly/ \
             --allow-prefix football-data/manifests/v6_team_configuration_fetch_v660_status.json \
             --allow-prefix football-data/manifests/v6_team_configuration_weekly_v660_status.json \
-            --message-prefix "audit(football): persist V6.6.0 weekly team configurations"
+            --message-prefix "audit(football): persist V6.6.2 weekly team configurations"
       - name: Enforce receipt
         if: always()
         run: |
@@ -52,18 +52,22 @@ jobs:
           from pathlib import Path
           f=Path('football-data/manifests/v6_team_configuration_fetch_v660_status.json')
           p=Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json')
-          if not f.exists() or not p.exists(): raise SystemExit('V660 receipts missing')
+          if not f.exists() or not p.exists(): raise SystemExit('V6.6.2 receipts missing')
           a=json.loads(f.read_text()); x=json.loads(p.read_text())
-          if a.get('status') not in {'PASS','WARN'} or x.get('status') not in {'PASS','WARN'}: raise SystemExit(str({'fetch':a,'audit':x}))
+          fetch_status=str(a.get('status') or '')
+          audit_status=str(x.get('status') or '')
+          allowed=lambda value: value.startswith('PASS') or value.startswith('WARN')
+          if not allowed(fetch_status) or not allowed(audit_status):
+              raise SystemExit(str({'fetch':fetch_status,'audit':audit_status,'fetch_missing_domains':a.get('missing_domains'),'audit_errors':x.get('validation_errors')}))
           print(json.dumps({
-            'fetch_status':a.get('status'),
+            'fetch_status':fetch_status,
             'snapshots_written':a.get('snapshots_written'),
             'fetch_domains':a.get('domains_with_snapshots'),
-            'audit_status':x.get('status'),
+            'aggregate_snapshot':a.get('aggregate_snapshot_path'),
+            'audit_status':audit_status,
             'latest_teams':x.get('latest_team_snapshots'),
             'audit_domains':x.get('domains_with_snapshots'),
-            'complete':x.get('complete_team_snapshots'),
-            'residual_eligible':x.get('residual_research_eligible_team_snapshots')
+            'feature_eligibility':x.get('feature_eligibility')
           },ensure_ascii=False))
           PY
 # Weekly research context only. CURRENT/formal/runtime probabilities are never mutated.
