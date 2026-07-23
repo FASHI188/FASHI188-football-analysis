@@ -1,0 +1,68 @@
+name: football-v6-active-kambi-market-v652
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5 */2 * * *"
+  push:
+    paths:
+      - "football-data/validation/v6_active_kambi_market_capture_v652.py"
+      - "football-data/config/team_aliases.json"
+      - ".github/workflows/football-v6-active-kambi-market-v652.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-active-kambi-market-v652
+  cancel-in-progress: true
+jobs:
+  capture:
+    permissions:
+      contents: write
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile active-league market capture
+        run: |
+          python -m py_compile football-data/validation/v6_active_kambi_market_capture_v652.py
+          python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
+          python -m py_compile football-data/validation/prospective_market_snapshot_v523.py
+      - name: Capture current Kambi events within 96 hours
+        run: python football-data/validation/v6_active_kambi_market_capture_v652.py
+      - name: Persist raw provider evidence, PIT snapshots and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/direct_provider_probes/kambi/active_leagues/ \
+            --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/manifests/v6_active_kambi_market_capture_v652_status.json \
+            --message-prefix "data(football): persist V6.5.2 active Kambi PIT"
+      - name: Enforce active-market evidence contract
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_active_kambi_market_capture_v652_status.json')
+          if not p.exists(): raise SystemExit('V6.5.2 active Kambi receipt missing')
+          x=json.loads(p.read_text())
+          if x.get('status') not in {'PASS_ACTIVE_KAMBI_PIT','WARN_PARTIAL_IDENTITY','WARN_NO_VALID_ACTIVE_SNAPSHOTS'}: raise SystemExit(str(x))
+          g=x.get('governance') or {}
+          if g.get('current_weekly_team_identity_only') is not True or g.get('historical_strength_identity_used') is not False: raise SystemExit('active identity contract missing')
+          if g.get('fuzzy_cross_club_substitution') is not False: raise SystemExit('fuzzy cross-club identity prohibited')
+          if g.get('single_kambi_event_detail_for_all_market_surfaces') is not True or g.get('cross_source_market_splicing') is not False: raise SystemExit('market-surface source contract missing')
+          if g.get('capture_window_does_not_change_v651_prediction_window') is not True or g.get('v651_prediction_window_hours')!=[1,72]: raise SystemExit('V6.5.1 frozen window changed')
+          print(json.dumps({'status':x.get('status'),'groups':x.get('target_group_event_counts'),'lead_buckets':x.get('lead_bucket_counts'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'identity_unresolved':x.get('identity_unresolved_count'),'market_fail':x.get('detail_or_market_fail_count'),'unresolved_names':x.get('unresolved_source_names')},ensure_ascii=False))
+          PY
+      - name: Dispatch V6.5.1 market-first forward epoch
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run football-v6-market-first-forward-v651.yml --ref main
+# Single-provider PIT acquisition only. V6.5.1 retains its frozen 1-72h prediction gate and cannot auto-promote.
