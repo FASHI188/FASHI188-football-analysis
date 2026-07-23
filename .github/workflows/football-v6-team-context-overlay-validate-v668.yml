@@ -5,6 +5,7 @@ on:
     paths:
       - "football-data/evidence/team_manager_context_weekly/**"
       - "football-data/evidence/team_current_roster_weekly/**"
+      - "football-data/evidence/team_active_match_pool_weekly/**"
       - "football-data/validation/v6_team_provisional_roster_v667.py"
       - "football-data/validation/v6_current_roster_overlay_v669.py"
       - "football-data/validation/v6_team_configuration_weekly_v660.py"
@@ -41,9 +42,9 @@ jobs:
         run: python football-data/validation/v6_current_roster_overlay_v669.py
       - name: Validate strict team and manager evidence
         run: python football-data/validation/v6_team_configuration_weekly_v660.py
-      - name: Consolidate mutually exclusive effective coverage
+      - name: Consolidate four mutually exclusive effective coverage states
         run: python football-data/validation/v6_team_context_effective_v6610.py
-      - name: Build unresolved strict current-roster queue
+      - name: Build context-aware unresolved strict current-roster queue
         run: python football-data/validation/v6_roster_gap_inventory_v6611.py
       - name: Persist overlay evidence and validation
         if: always()
@@ -58,7 +59,7 @@ jobs:
             --allow-prefix football-data/manifests/v6_team_configuration_weekly_v660_status.json \
             --allow-prefix football-data/manifests/v6_team_context_effective_v6610_status.json \
             --allow-prefix football-data/manifests/v6_roster_gap_inventory_v6611_status.json \
-            --message-prefix "audit(football): persist V6.6.11 team context inventory"
+            --message-prefix "audit(football): persist V6.6.12 four-state team context"
       - name: Enforce
         if: always()
         run: |
@@ -71,26 +72,31 @@ jobs:
             Path('football-data/manifests/v6_team_configuration_weekly_v660_status.json'),
             Path('football-data/manifests/v6_team_context_effective_v6610_status.json'),
             Path('football-data/manifests/v6_roster_gap_inventory_v6611_status.json')]
-          if not all(p.exists() for p in paths): raise SystemExit('V6.6.11 receipts missing')
+          if not all(p.exists() for p in paths): raise SystemExit('V6.6.12 receipts missing')
           a,c,b,d,g=[json.loads(p.read_text()) for p in paths]
           if a.get('status')!='PASS' or c.get('status') not in {'PASS','WARN_INVALID_RECORDS'} or not str(b.get('status')).startswith(('PASS','WARN')) or d.get('status')!='PASS' or g.get('status')!='PASS':
               raise SystemExit(str({'provisional':a.get('status'),'current_roster':c.get('status'),'audit_status':b.get('status'),'effective':d.get('status'),'gap_inventory':g.get('status')}))
           states=d.get('roster_context_states') or {}
           priorities=g.get('priority_counts') or {}
-          if int(g.get('unresolved_strict_current_gap_count') or -1) != int(states.get('PROVISIONAL_ONLY') or 0)+int(states.get('NO_ROSTER_CONTEXT') or 0):
-              raise SystemExit('V6.6.11 gap total mismatch')
-          if int(priorities.get('A_NO_CURRENT_CONTEXT') or 0) != int(states.get('NO_ROSTER_CONTEXT') or 0):
-              raise SystemExit('V6.6.11 no-context mismatch')
-          if int(priorities.get('B_HAS_PROVISIONAL_ONLY') or 0) != int(states.get('PROVISIONAL_ONLY') or 0):
-              raise SystemExit('V6.6.11 provisional-only mismatch')
+          expected_gap=int(states.get('NO_ROSTER_CONTEXT') or 0)+int(states.get('PROVISIONAL_ONLY') or 0)+int(states.get('ACTIVE_MATCH_POOL') or 0)
+          if int(g.get('unresolved_strict_current_gap_count') or -1) != expected_gap:
+              raise SystemExit('V6.6.12 gap total mismatch')
+          checks={
+            'A_NO_CURRENT_CONTEXT':'NO_ROSTER_CONTEXT',
+            'B_HAS_PROVISIONAL_ONLY':'PROVISIONAL_ONLY',
+            'C_HAS_ACTIVE_MATCH_POOL':'ACTIVE_MATCH_POOL'}
+          for priority,state in checks.items():
+              if int(priorities.get(priority) or 0) != int(states.get(state) or 0):
+                  raise SystemExit(f'V6.6.12 state mismatch: {priority} vs {state}')
           print(json.dumps({
             'roster_context_states':states,
             'strict_breakdown':d.get('strict_breakdown'),
+            'active_match_pool_breakdown':d.get('active_match_pool_breakdown'),
+            'provisional_breakdown':d.get('provisional_breakdown'),
             'unresolved_strict_current_gap_count':g.get('unresolved_strict_current_gap_count'),
             'priority_counts':priorities,
             'competition_gap_counts':g.get('competition_gap_counts'),
             'verified_manager_records':b.get('verified_manager_records'),
             'resolved_manager_records':b.get('resolved_manager_records')},ensure_ascii=False))
           PY
-# Strict current roster, provisional continuity, and manager evidence remain distinct research features.
-# Shared concurrency group serializes this overlay writer with the baseline writer to prevent stale derived-state wins.
+# STRICT_CURRENT > ACTIVE_MATCH_POOL > PROVISIONAL_ONLY > NO_ROSTER_CONTEXT. Only STRICT_CURRENT satisfies the strict roster gate.
