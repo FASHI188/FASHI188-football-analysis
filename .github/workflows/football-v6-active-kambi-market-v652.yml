@@ -6,7 +6,9 @@ on:
   push:
     paths:
       - "football-data/validation/v6_active_kambi_market_capture_v652.py"
+      - "football-data/validation/v6_active_kambi_market_capture_v653.py"
       - "football-data/validation/v6_active_kambi_identity_audit_v652.py"
+      - "football-data/config/v6_active_kambi_team_aliases_v652.json"
       - "football-data/config/team_aliases.json"
       - ".github/workflows/football-v6-active-kambi-market-v652.yml"
 permissions:
@@ -29,11 +31,12 @@ jobs:
       - name: Compile active-league market capture and identity audit
         run: |
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v652.py
+          python -m py_compile football-data/validation/v6_active_kambi_market_capture_v653.py
           python -m py_compile football-data/validation/v6_active_kambi_identity_audit_v652.py
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/prospective_market_snapshot_v523.py
-      - name: Capture current Kambi events within 96 hours
-        run: python football-data/validation/v6_active_kambi_market_capture_v652.py
+      - name: Capture current Kambi events within 96 hours using audited provider aliases
+        run: python football-data/validation/v6_active_kambi_market_capture_v653.py
       - name: Build read-only current-team identity diagnostic
         run: python football-data/validation/v6_active_kambi_identity_audit_v652.py
       - name: Persist raw provider evidence, PIT snapshots and receipts
@@ -47,8 +50,8 @@ jobs:
             --allow-prefix football-data/evidence/markets_prospective/ \
             --allow-prefix football-data/manifests/v6_active_kambi_market_capture_v652_status.json \
             --allow-prefix football-data/manifests/v6_active_kambi_identity_audit_v652_status.json \
-            --message-prefix "data(football): persist V6.5.2 active Kambi PIT"
-      - name: Enforce active-market and diagnostic contracts
+            --message-prefix "data(football): persist V6.5.3 audited-alias active Kambi PIT"
+      - name: Enforce active-market and identity-alias contracts
         if: always()
         run: |
           python - <<'PY'
@@ -56,17 +59,21 @@ jobs:
           from pathlib import Path
           p=Path('football-data/manifests/v6_active_kambi_market_capture_v652_status.json')
           a=Path('football-data/manifests/v6_active_kambi_identity_audit_v652_status.json')
-          if not p.exists() or not a.exists(): raise SystemExit('V6.5.2 active Kambi receipts missing')
+          if not p.exists() or not a.exists(): raise SystemExit('V6.5.3 active Kambi receipts missing')
           x=json.loads(p.read_text()); y=json.loads(a.read_text())
           if x.get('status') not in {'PASS_ACTIVE_KAMBI_PIT','WARN_PARTIAL_IDENTITY','WARN_NO_VALID_ACTIVE_SNAPSHOTS'}: raise SystemExit(str(x))
+          if not str(x.get('schema_version') or '').startswith('V6.5.3-'): raise SystemExit(str({'schema_version':x.get('schema_version')}))
+          alias=x.get('identity_alias_contract') or {}
+          if not alias.get('sha256') or int(alias.get('mapping_count') or 0)<=0 or alias.get('fuzzy_runtime_matching') is not False: raise SystemExit('provider alias contract not hash-bound')
           g=x.get('governance') or {}
           if g.get('current_weekly_team_identity_only') is not True or g.get('historical_strength_identity_used') is not False: raise SystemExit('active identity contract missing')
-          if g.get('fuzzy_cross_club_substitution') is not False: raise SystemExit('fuzzy cross-club identity prohibited')
+          if g.get('fuzzy_cross_club_substitution') is not False or g.get('fuzzy_runtime_identity_matching') is not False: raise SystemExit('fuzzy identity prohibited')
+          if g.get('provider_specific_alias_contract') is not True or g.get('provider_alias_contract_hash_bound_into_new_snapshots') is not True or g.get('global_team_aliases_modified_by_active_kambi') is not False: raise SystemExit('provider alias governance missing')
           if g.get('single_kambi_event_detail_for_all_market_surfaces') is not True or g.get('cross_source_market_splicing') is not False: raise SystemExit('market-surface source contract missing')
           if g.get('capture_window_does_not_change_v651_prediction_window') is not True or g.get('v651_prediction_window_hours')!=[1,72]: raise SystemExit('V6.5.1 frozen window changed')
           yg=y.get('governance') or {}
           if y.get('status')!='PASS' or yg.get('read_only') is not True or yg.get('automatic_alias_application') is not False or yg.get('fuzzy_resolution_allowed') is not False: raise SystemExit('identity diagnostic governance missing')
-          print(json.dumps({'status':x.get('status'),'groups':x.get('target_group_event_counts'),'lead_buckets':x.get('lead_bucket_counts'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'identity_unresolved':x.get('identity_unresolved_count'),'market_fail':x.get('detail_or_market_fail_count'),'unresolved_names':x.get('unresolved_source_names'),'identity_audit_competitions':list((y.get('competitions') or {}).keys())},ensure_ascii=False))
+          print(json.dumps({'status':x.get('status'),'groups':x.get('target_group_event_counts'),'lead_buckets':x.get('lead_bucket_counts'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'identity_unresolved':x.get('identity_unresolved_count'),'market_fail':x.get('detail_or_market_fail_count'),'alias_bound_snapshots':x.get('alias_bound_snapshot_count'),'alias_contract':alias,'unresolved_names':x.get('unresolved_source_names')},ensure_ascii=False))
           PY
       - name: Dispatch V6.5.1 market-first forward epoch
         if: success()
@@ -74,4 +81,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-market-first-forward-v651.yml --ref main
 # Single-provider PIT acquisition only. V6.5.1 retains its frozen 1-72h prediction gate and cannot auto-promote.
-# Similarity suggestions exist only in the read-only identity audit and are forbidden from automatic resolution.
+# Similarity suggestions remain diagnostic-only; executable aliases are explicit, provider-scoped and hash-bound.
