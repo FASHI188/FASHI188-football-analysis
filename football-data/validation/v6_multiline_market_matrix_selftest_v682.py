@@ -2,7 +2,8 @@
 """Engineering self-test for the V6.8.2 multiline I-projection solver.
 
 Uses a strictly synthetic full-support prior only to verify optimization mechanics against a
-real frozen market ladder. It is NOT a football prediction or promotion result.
+real frozen market ladder. It is NOT a football prediction or promotion result. The test is
+specifically intended to catch constraint, convergence and probability-conservation bugs.
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ def synthetic_prior():
     rows = []
     for h in range(11):
         for a in range(11):
-            # full positive support, mild home asymmetry; mechanics only
             weight = math.exp(-0.72 * (h + a)) * (1.06 if h > a else 1.0)
             rows.append({"home_goals": h, "away_goals": a, "probability": weight})
     total = sum(row["probability"] for row in rows)
