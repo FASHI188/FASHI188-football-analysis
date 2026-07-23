@@ -3,16 +3,17 @@
 
 CBF's team page is registration history with columns Nome | Apelido | Clube Atual. Only rows whose
 Clube Atual still resolves to the target team count as current. Historical/transferred rows are
-excluded. HTTPS certificate verification is mandatory; an explicit certifi/pip CA bundle is used
-when available, never an unverified SSL context. Research context only; V5.0.1 is unchanged.
+excluded. TLS verification is mandatory. Python first uses an explicit trusted CA bundle; only when
+that verified handshake fails may the runner retry with its system `curl`, which also verifies TLS
+by default and is never invoked with -k/--insecure. Research context only; V5.0.1 is unchanged.
 """
 from __future__ import annotations
-import html,json,re,ssl,unicodedata,urllib.request
+import html,json,re,ssl,subprocess,unicodedata,urllib.error,urllib.request
 from datetime import datetime,timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-ROOT=Path(__file__).resolve().parents[1];EVIDENCE=ROOT/'evidence'/'team_current_roster_weekly';OUT=ROOT/'manifests'/'v6_cbf_current_roster_v6618_status.json';UA='football-v6.6.18-cbf-current-roster/2.0';MIN_PLAYERS=18;MAX_PLAYERS=60
+ROOT=Path(__file__).resolve().parents[1];EVIDENCE=ROOT/'evidence'/'team_current_roster_weekly';OUT=ROOT/'manifests'/'v6_cbf_current_roster_v6618_status.json';UA='football-v6.6.18-cbf-current-roster/3.0';MIN_PLAYERS=18;MAX_PLAYERS=60
 TARGETS={
  'Bahia':{'cbf_team_id':'61377','url':'https://www.cbf.com.br/futebol-brasileiro/times/campeonato-brasileiro/serie-a/2026/61377?tab=atletas','current_club_aliases':{'bahia','ec bahia','esporte clube bahia'}},
  'Flamengo':{'cbf_team_id':'20016','url':'https://www.cbf.com.br/futebol-brasileiro/times/campeonato-brasileiro/serie-a/2026/20016?tab=atletas','current_club_aliases':{'flamengo','cr flamengo','clube de regatas do flamengo'}}}
@@ -47,13 +48,20 @@ class TableParser(HTMLParser):
   elif tag=='tr' and self.in_tr:
    if self.row:self.rows.append(self.row)
    self.in_tr=False;self.row=[]
+def decode(raw:bytes,charset:str|None)->str:
+ try:return raw.decode(charset or 'utf-8',errors='strict')
+ except Exception:return raw.decode('utf-8',errors='replace')
 def fetch(url:str)->tuple[str,datetime,str|None,str]:
  context,ca_source=trusted_context();req=urllib.request.Request(url,headers={'User-Agent':UA,'Accept':'text/html,application/xhtml+xml'})
- with urllib.request.urlopen(req,timeout=30,context=context) as response:raw=response.read();charset=response.headers.get_content_charset() or 'utf-8'
- observed=datetime.now(timezone.utc).replace(microsecond=0)
- try:markup=raw.decode(charset,errors='strict')
- except Exception:markup=raw.decode('utf-8',errors='replace')
- return markup,observed,charset,ca_source
+ try:
+  with urllib.request.urlopen(req,timeout=30,context=context) as response:raw=response.read();charset=response.headers.get_content_charset() or 'utf-8'
+  return decode(raw,charset),datetime.now(timezone.utc).replace(microsecond=0),charset,f'python_{ca_source}_verified'
+ except urllib.error.URLError as exc:
+  if 'CERTIFICATE_VERIFY_FAILED' not in str(exc):raise
+  # curl verifies certificates by default; deliberately no -k/--insecure and no custom untrusted CA.
+  proc=subprocess.run(['curl','--fail','--location','--silent','--show-error','--max-time','30','--user-agent',UA,'--header','Accept: text/html,application/xhtml+xml',url],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
+  if proc.returncode!=0:raise RuntimeError(f'CBF_VERIFIED_TLS_FAILED_PYTHON_AND_CURL: {proc.stderr.decode("utf-8",errors="replace").strip()}') from exc
+  return decode(proc.stdout,'utf-8'),datetime.now(timezone.utc).replace(microsecond=0),'utf-8','system_curl_verified'
 def extract_rows(markup:str)->tuple[list[dict[str,str]],dict[str,Any]]:
  p=TableParser();p.feed(markup);p.close();idx=None;header=None
  for i,row in enumerate(p.rows):
@@ -80,16 +88,16 @@ def main()->int:
  for team,cfg in TARGETS.items():
   row={'team_name':team,'source_url':cfg['url'],'cbf_team_id':cfg['cbf_team_id'],'status':'FAIL_CLOSED'}
   try:
-   markup,observed,charset,ca_source=fetch(cfg['url']);times.append(observed);registrations,pa=extract_rows(markup);players,fa=current_players(registrations,set(cfg['current_club_aliases']));row.update({'source_observed_at_utc':observed.isoformat(),'http_charset':charset,'tls_ca_source':ca_source,'parse':pa,'filter':fa,'current_player_count':len(players)})
+   markup,observed,charset,transport=fetch(cfg['url']);times.append(observed);registrations,pa=extract_rows(markup);players,fa=current_players(registrations,set(cfg['current_club_aliases']));row.update({'source_observed_at_utc':observed.isoformat(),'http_charset':charset,'tls_transport':transport,'parse':pa,'filter':fa,'current_player_count':len(players)})
    valid=MIN_PLAYERS<=len(players)<=MAX_PLAYERS and len({person_norm(p['player_name']) for p in players})==len(players)
    if valid:
-    records.append({'schema_version':'V6.6.9-current-roster-overlay-r1','competition_id':'BRA_SerieA','team_name':team,'observed_at_utc':observed.isoformat(),'roster_semantics':'CURRENT_REGISTERED_SQUAD','players':players,'sources':[{'source_name':'CBF official 2026 Campeonato Brasileiro Série A team registration page','source_url':cfg['url'],'source_tier':'tier_1_official','provider_group':'cbf_official','source_observed_at_utc':observed.isoformat(),'source_role':'current_registered_players_filtered_by_clube_atual'}],'source_metadata':{'cbf_team_id':cfg['cbf_team_id'],'competition':'Campeonato Brasileiro - Série A','year':2026,'table_semantics':'registration_history_with_current_club_column','current_club_filter_required':True,'tls_certificate_verified':True,'tls_ca_source':ca_source,'parse':pa,'filter':fa},'governance':{'current_at_observation_time':True,'single_source_player_list':True,'single_endpoint_player_list':True,'cross_source_union':False,'historical_registration_rows_excluded_when_clube_atual_differs':True,'tls_verification_required':True,'tls_verification_disabled':False,'unicode_safe_person_identity':True,'research_context_only':True,'formal_probability_use':False}});row['status']='PASS_STRICT_CURRENT'
+    records.append({'schema_version':'V6.6.9-current-roster-overlay-r1','competition_id':'BRA_SerieA','team_name':team,'observed_at_utc':observed.isoformat(),'roster_semantics':'CURRENT_REGISTERED_SQUAD','players':players,'sources':[{'source_name':'CBF official 2026 Campeonato Brasileiro Série A team registration page','source_url':cfg['url'],'source_tier':'tier_1_official','provider_group':'cbf_official','source_observed_at_utc':observed.isoformat(),'source_role':'current_registered_players_filtered_by_clube_atual'}],'source_metadata':{'cbf_team_id':cfg['cbf_team_id'],'competition':'Campeonato Brasileiro - Série A','year':2026,'table_semantics':'registration_history_with_current_club_column','current_club_filter_required':True,'tls_certificate_verified':True,'verified_transport':transport,'parse':pa,'filter':fa},'governance':{'current_at_observation_time':True,'single_source_player_list':True,'single_endpoint_player_list':True,'cross_source_union':False,'historical_registration_rows_excluded_when_clube_atual_differs':True,'tls_verification_required':True,'tls_verification_disabled':False,'curl_insecure_forbidden':True,'unicode_safe_person_identity':True,'research_context_only':True,'formal_probability_use':False}});row['status']='PASS_STRICT_CURRENT'
    else:row['reason']='current_club_filtered_player_count_outside_strict_gate_or_duplicate_identity'
   except Exception as exc:row['error']=f'{type(exc).__name__}: {exc}'
   audit.append(row)
  completed=max(times) if times else datetime.now(timezone.utc).replace(microsecond=0);evidence_path=None
  if records:
-  evidence_path=EVIDENCE/f"cbf_current_rosters__{completed.strftime('%Y%m%dT%H%M%SZ')}.json";evidence_path.write_text(json.dumps({'schema_version':'V6.6.18-cbf-current-roster-weekly-aggregate-r2','observed_at_utc':completed.isoformat(),'records':records,'governance':{'official_cbf_source_only':True,'clube_atual_filter_mandatory':True,'historical_rows_not_counted_as_current':True,'tls_verification_required':True,'research_context_only':True,'formal_probability_use':False}},ensure_ascii=False,indent=2),encoding='utf-8')
- payload={'schema_version':'V6.6.18-cbf-current-roster-status-r2','generated_at_utc':completed.isoformat(),'formal_current_version':'V5.0.1','status':'PASS_COMPLETE' if len(records)==len(TARGETS) else 'WARN_PARTIAL' if records else 'FAIL_NO_VALID_ROSTERS','target_count':len(TARGETS),'valid_current_roster_count':len(records),'evidence_path':str(evidence_path.relative_to(ROOT)) if evidence_path else None,'audit':audit,'governance':{'official_source_only':True,'cbf_registration_history_not_assumed_current':True,'clube_atual_filter_required':True,'minimum_unique_current_players':MIN_PLAYERS,'tls_verification_required':True,'tls_verification_disabled':False,'explicit_trusted_ca_bundle_when_available':True,'no_cross_source_union':True,'research_context_only':True,'formal_probability_change':False,'formal_weight_change':False}}
+  evidence_path=EVIDENCE/f"cbf_current_rosters__{completed.strftime('%Y%m%dT%H%M%SZ')}.json";evidence_path.write_text(json.dumps({'schema_version':'V6.6.18-cbf-current-roster-weekly-aggregate-r3','observed_at_utc':completed.isoformat(),'records':records,'governance':{'official_cbf_source_only':True,'clube_atual_filter_mandatory':True,'historical_rows_not_counted_as_current':True,'tls_verification_required':True,'tls_insecure_forbidden':True,'research_context_only':True,'formal_probability_use':False}},ensure_ascii=False,indent=2),encoding='utf-8')
+ payload={'schema_version':'V6.6.18-cbf-current-roster-status-r3','generated_at_utc':completed.isoformat(),'formal_current_version':'V5.0.1','status':'PASS_COMPLETE' if len(records)==len(TARGETS) else 'WARN_PARTIAL' if records else 'FAIL_NO_VALID_ROSTERS','target_count':len(TARGETS),'valid_current_roster_count':len(records),'evidence_path':str(evidence_path.relative_to(ROOT)) if evidence_path else None,'audit':audit,'governance':{'official_source_only':True,'cbf_registration_history_not_assumed_current':True,'clube_atual_filter_required':True,'minimum_unique_current_players':MIN_PLAYERS,'tls_verification_required':True,'tls_verification_disabled':False,'curl_insecure_forbidden':True,'verified_transport_fallback_only':True,'no_cross_source_union':True,'research_context_only':True,'formal_probability_change':False,'formal_weight_change':False}}
  OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(payload,ensure_ascii=False,indent=2));return 0 if records else 2
 if __name__=='__main__':raise SystemExit(main())
