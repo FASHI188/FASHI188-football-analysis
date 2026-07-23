@@ -2,10 +2,10 @@
 """V6.8.3 rebuild the independent-provider market consensus inventory.
 
 The old V5.5.4 receipt could become stale because later exact-line consensus files were created
-without retriggering that audit.  This script scans the evidence directory itself every run,
+without retriggering that audit. This script scans the evidence directory itself every run,
 validates the invariant fields needed by downstream matrix research, de-duplicates identical
-consensus identities, and emits a fresh receipt.  It does not score outcomes or change any
-formal probability.
+consensus identities, and emits a fresh receipt. It does not score outcomes or change any
+formal probability. The scan is intentionally independent of legacy trigger ordering.
 """
 from __future__ import annotations
 
@@ -112,7 +112,6 @@ def main() -> int:
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    # Refresh the legacy path so every existing downstream consumer stops reading a stale zero-count receipt.
     legacy = dict(payload)
     legacy["schema_version"] = "V5.5.4-prospective-market-consensus-audit-r2-v683-refresh"
     LEGACY_OUT.write_text(json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8")
