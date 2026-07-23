@@ -1,0 +1,55 @@
+name: football-v6-bundesliga-manager-v6614
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 4 * * 2"
+  push:
+    paths:
+      - "football-data/validation/v6_bundesliga_official_manager_v6614.py"
+      - ".github/workflows/football-v6-bundesliga-manager-v6614.yml"
+permissions:
+  contents: read
+concurrency:
+  group: football-v6-bundesliga-manager-v6614
+  cancel-in-progress: true
+jobs:
+  fetch:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/v6_bundesliga_official_manager_v6614.py
+      - name: Fetch official Bundesliga managers
+        run: python football-data/validation/v6_bundesliga_official_manager_v6614.py
+      - name: Persist evidence and receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/team_manager_context_weekly/bundesliga_managers__ \
+            --allow-prefix football-data/manifests/v6_bundesliga_official_manager_v6614_status.json \
+            --message-prefix "data(football): persist V6.6.14 official Bundesliga managers"
+      - name: Enforce manager-only semantics
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_bundesliga_official_manager_v6614_status.json')
+          if not p.exists(): raise SystemExit('V6.6.14 status missing')
+          x=json.loads(p.read_text())
+          if x.get('status') not in {'PASS_COMPLETE','WARN_PARTIAL'}: raise SystemExit(str(x))
+          if int(x.get('valid_manager_count') or 0)==0: raise SystemExit('no Bundesliga managers produced')
+          g=x.get('governance') or {}
+          if g.get('manager_only') is not True or g.get('bundesliga_squad_not_complete_is_hard_exclusion_from_strict_roster') is not True:
+              raise SystemExit('manager-only governance missing')
+          print(json.dumps({'status':x['status'],'target':x['target_count'],'valid_managers':x['valid_manager_count']},ensure_ascii=False))
+          PY
+# Evidence commits retrigger the existing team-context overlay validator. V5.0.1 formal probabilities remain unchanged.
