@@ -35,9 +35,30 @@ jobs:
         shell: bash
         run: |
           set +e
-          python football-data/validation/validate_1x2_pit_lineup_increment_v6117.py
+          log=/tmp/v6117.log
+          python football-data/validation/validate_1x2_pit_lineup_increment_v6117.py >"$log" 2>&1
           code=$?
+          cat "$log"
           echo "validation_exit_code=$code" >> "$GITHUB_ENV"
+          if [ "$code" != "0" ]; then
+            python - "$code" "$log" <<'PY'
+          import json, pathlib, sys
+          code = int(sys.argv[1])
+          log = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8", errors="replace")
+          tail = log[-12000:]
+          out = pathlib.Path("football-data/manifests/v6_1x2_pit_lineup_increment_v6117_status.json")
+          out.write_text(json.dumps({
+              "schema_version":"V6.11.7-pit-lineup-increment-1x2-r1",
+              "status":"FAILED_EXECUTION",
+              "formal_current_version":"V5.0.1",
+              "validation_exit_code":code,
+              "error_log_tail":tail,
+              "formal_probability_change":False,
+              "formal_weight_change":False,
+              "current_rule_change":False
+          }, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+          PY
+          fi
           exit 0
       - name: Persist receipt
         shell: bash
