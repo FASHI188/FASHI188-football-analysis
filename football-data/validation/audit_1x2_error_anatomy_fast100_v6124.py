@@ -31,6 +31,6 @@ def main():
              "sample":{"first":test[0]["date"],"last":test[-1]["date"]},"overall":pack(test),
              "by_competition":group(test,lambda r:r["competition_id"]),"by_market_pick":group(test,favdir),"by_probability_band":group(test,lambda r:band(r["maxp"])),
              "by_market_pick_and_band":group(test,lambda r:f"{favdir(r)}|{band(r['maxp'])}"),
-             "stakes":{"safe_favourite":pack([r for r in test if r["fav_safe"]]),"urgent_favourite":pack([r for r in test if not r["fav_safe"] and r["fav_side"]!="draw"]),"safe_favourite_vs_urgent":pack([r for r in test if r["conflict"]])}}
+             "stakes":{"safe_favourite":pack([r for r in test if r["fav_safe"]]),"urgent_favourite":pack([r for r in test if not r["fav_safe"] and r["fav_side"]!="draw"]),"safe_favourite_vs_urgent":pack([r for r in test if r["conflict_safe_fav_vs_urgent_opp"]])}}
     OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8");print(json.dumps(payload,indent=2));return 0
 if __name__=="__main__":raise SystemExit(main())
