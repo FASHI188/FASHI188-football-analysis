@@ -139,7 +139,6 @@ def main() -> int:
 
     primary = fixed[f"{PRIMARY_THRESHOLD:.2f}"]
     primary_nonoverlap = primary["nonoverlap_summary"]
-    # A diagnostic stability screen only. It is deliberately stringent and cannot promote.
     stability_screen = {
         "threshold": PRIMARY_THRESHOLD,
         "pre_registered_source": "V6.10.3 validation-only target70 gate",
