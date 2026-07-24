@@ -1,0 +1,36 @@
+name: Football V6.16.9 Selective Total Score
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/generate_joint_ipf_selection_rows_v6169.py"
+      - "football-data/validation/evaluate_joint_ipf_selective_v6169.py"
+      - ".github/workflows/football-v6169-selective-total-score.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/generate_joint_ipf_selection_rows_v6169.py football-data/validation/evaluate_joint_ipf_selective_v6169.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/generate_joint_ipf_selection_rows_v6169.py
+          python football-data/validation/evaluate_joint_ipf_selective_v6169.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/validation/cache/v6169_joint_ipf_selection_rows.json football-data/manifests/v6_joint_ipf_selective_v6169_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.16.9 selective total-score walkforward"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
