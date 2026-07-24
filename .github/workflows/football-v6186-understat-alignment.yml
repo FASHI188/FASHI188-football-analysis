@@ -1,0 +1,40 @@
+name: football-v6186-understat-alignment
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_understat_fixture_alignment_audit_v6186.py"
+      - "football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py"
+      - ".github/workflows/football-v6186-understat-alignment.yml"
+permissions:
+  contents: write
+concurrency:
+  group: football-v6186-understat-alignment
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Compile audit
+        run: |
+          python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186.py
+          python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py
+      - name: Run fixture-alignment audit
+        run: python football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Persist audit receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_understat_fixture_alignment_audit_v6186_status.json \
+            --message-prefix "audit(football): persist V6.18.6 Understat fixture alignment"
