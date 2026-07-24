@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+REPO=ROOT.parent
 ENGINE=ROOT/'engine'; VALID=ROOT/'validation'
 for p in (ENGINE,VALID):
     if str(p) not in sys.path: sys.path.insert(0,str(p))
@@ -20,7 +21,7 @@ OUT=ROOT/'manifests'/'v6_kambi_git_history_inventory_v6174_status.json'
 PREFIX='football-data/evidence/direct_provider_probes/kambi/'
 
 def run(*args):
-    return subprocess.run(args,cwd=ROOT,text=True,capture_output=True,check=True).stdout
+    return subprocess.run(args,cwd=REPO,text=True,capture_output=True,check=True).stdout
 
 def main():
     now=datetime.now(timezone.utc).replace(microsecond=0); counts=Counter(); latest_path_commit={}
@@ -33,7 +34,7 @@ def main():
             latest_path_commit[p]=current
     counts['distinct_paths_in_history']=len(latest_path_commit)
     by_event={}; read_fail=0
-    for i,(path,sha) in enumerate(latest_path_commit.items(),1):
+    for path,sha in latest_path_commit.items():
         try:
             raw=run('git','show',f'{sha}:{path}'); env=json.loads(raw); ident=env.get('list_event_identity') or {}
             eid=str(env.get('event_id') or ident.get('id') or '').strip(); obs=parse_iso_datetime(str(env.get('observed_at_utc') or ''),'observed'); ko=parse_iso_datetime(str(ident.get('start') or ''),'kickoff')
@@ -51,6 +52,6 @@ def main():
     future=[r for r in by_event.values() if parse_iso_datetime(r['kickoff_utc'],'ko')+timedelta(hours=2)>now]
     counts['old_enough_for_result']=len(old); counts['not_old_enough']=len(future)
     by_comp=Counter(r['competition_id'] for r in old)
-    report={'schema_version':'V6.17.4-kambi-git-history-inventory-r1','generated_at_utc':now.isoformat(),'status':'PASS','counts':dict(counts),'old_enough_by_competition':dict(sorted(by_comp.items())),'old_enough_examples':sorted(old,key=lambda r:r['kickoff_utc'])[:20],'governance':{'research_only':True,'git_history_read_only':True,'formal_evidence_restored':False,'current_rule_change':False,'formal_weight_change':False}}
+    report={'schema_version':'V6.17.4-kambi-git-history-inventory-r2','generated_at_utc':now.isoformat(),'status':'PASS','counts':dict(counts),'old_enough_by_competition':dict(sorted(by_comp.items())),'old_enough_examples':sorted(old,key=lambda r:r['kickoff_utc'])[:20],'governance':{'research_only':True,'git_history_read_only':True,'formal_evidence_restored':False,'current_rule_change':False,'formal_weight_change':False}}
     OUT.parent.mkdir(parents=True,exist_ok=True);OUT.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(report,ensure_ascii=False,indent=2));return 0
 if __name__=='__main__':raise SystemExit(main())
