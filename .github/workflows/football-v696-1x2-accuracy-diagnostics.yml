@@ -1,0 +1,57 @@
+name: Football V6.9.6 Repeated 1X2 Accuracy Diagnostics
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/diagnose_1x2_accuracy_v696.py"
+      - ".github/workflows/football-v696-1x2-accuracy-diagnostics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v696-1x2-accuracy-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile diagnostic
+        run: python -m py_compile football-data/validation/diagnose_1x2_accuracy_v696.py
+      - name: Run repeated 1X2 diagnostics
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/diagnose_1x2_accuracy_v696.py
+          code=$?
+          echo "diagnostic_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist research receipt and row cache
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for path in \
+            football-data/manifests/v6_1x2_accuracy_diagnostic_v696_status.json \
+            football-data/validation/cache/v696_last_complete_season_1x2_rows.json; do
+            if [ -f "$path" ]; then git add "$path"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist repeated 1X2 accuracy diagnostic"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce diagnostic pass
+        shell: bash
+        run: test "${diagnostic_exit_code:-2}" = "0"
