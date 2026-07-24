@@ -1,0 +1,34 @@
+name: Football V6.16.3 Joint Market IPF
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/validate_joint_market_ipf_v6163.py"
+      - ".github/workflows/football-v6163-joint-market-ipf.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/validate_joint_market_ipf_v6163.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/validate_joint_market_ipf_v6163.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=football-data/manifests/v6_joint_market_ipf_v6163_status.json
+          if [ -f "$p" ]; then git add "$p"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.16.3 joint market IPF challenger"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
