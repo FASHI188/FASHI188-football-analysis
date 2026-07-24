@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - "football-data/validation/v6_understat_xg_residual_v624_r2.py"
+      - "football-data/validation/v6_understat_fixture_alignment_audit_v6186.py"
+      - "football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py"
       - ".github/workflows/football-v6-understat-xg-residual-v624-r2.yml"
 
 permissions:
@@ -65,4 +67,57 @@ jobs:
           }, ensure_ascii=False))
           PY
 
-# Research-only. Data-transport fix; no CURRENT/formal/runtime/V6.1 pristine-forward mutation.
+  alignment:
+    needs: validate
+    if: always()
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.18.6 alignment audit
+        run: |
+          python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186.py
+          python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py
+      - name: Run V6.18.6 alignment audit
+        id: alignment_audit
+        continue-on-error: true
+        run: python football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Persist V6.18.6 receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_understat_fixture_alignment_audit_v6186_status.json \
+            --message-prefix "audit(football): persist V6.18.6 Understat fixture alignment"
+      - name: Print V6.18.6 coverage summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("football-data/manifests/v6_understat_fixture_alignment_audit_v6186_status.json")
+          if not p.exists():
+              raise SystemExit("V6.18.6 receipt missing")
+          r = json.loads(p.read_text(encoding="utf-8"))
+          a = r.get("aggregate") or {}
+          print(json.dumps({
+              "status": r.get("status"),
+              "old_exact_state_attach_rate": a.get("old_exact_state_attach_rate"),
+              "fixture_aligned_state_attach_rate": a.get("fixture_aligned_state_attach_rate"),
+              "absolute_coverage_gain": a.get("absolute_coverage_gain"),
+              "failures": r.get("failures"),
+          }, ensure_ascii=False))
+          PY
+
+# V6.2.4 remains research-only. V6.18.6 is data-quality audit only; no CURRENT/formal/runtime mutation.
