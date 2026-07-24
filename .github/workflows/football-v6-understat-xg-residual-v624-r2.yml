@@ -8,6 +8,7 @@ on:
       - "football-data/validation/v6_understat_fixture_alignment_audit_v6186.py"
       - "football-data/validation/v6_understat_fixture_alignment_audit_v6186r2.py"
       - "football-data/validation/v6_understat_fixture_alignment_audit_v6186r3.py"
+      - "football-data/validation/v6_understat_alias_qualification_v6187.py"
       - ".github/workflows/football-v6-understat-xg-residual-v624-r2.yml"
 
 permissions:
@@ -87,7 +88,6 @@ jobs:
           python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186.py
           python -m py_compile football-data/validation/v6_understat_fixture_alignment_audit_v6186r3.py
       - name: Run V6.18.6 alignment audit
-        id: alignment_audit
         continue-on-error: true
         run: python football-data/validation/v6_understat_fixture_alignment_audit_v6186r3.py
         env:
@@ -122,5 +122,55 @@ jobs:
           }, ensure_ascii=False))
           PY
 
-# Clean retrigger after stale r2 receipt; research/data rules unchanged.
-# V6.2.4 remains research-only. V6.18.6 is data-quality audit only; no CURRENT/formal/runtime mutation.
+  alias_qualification:
+    needs: alignment
+    if: always()
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile V6.18.7 alias qualification
+        run: python -m py_compile football-data/validation/v6_understat_alias_qualification_v6187.py
+      - name: Run V6.18.7 alias qualification
+        continue-on-error: true
+        run: python football-data/validation/v6_understat_alias_qualification_v6187.py
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Persist V6.18.7 receipt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_understat_alias_qualification_v6187_status.json \
+            --message-prefix "audit(football): persist V6.18.7 deterministic Understat aliases"
+      - name: Print V6.18.7 qualification summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("football-data/manifests/v6_understat_alias_qualification_v6187_status.json")
+          if not p.exists():
+              raise SystemExit("V6.18.7 receipt missing")
+          r = json.loads(p.read_text(encoding="utf-8"))
+          print(json.dumps({
+              "status": r.get("status"),
+              "qualified_alias_count": r.get("qualified_alias_count"),
+              "aggregate": r.get("aggregate"),
+              "domain_rates": r.get("domain_rates"),
+              "coverage_gate": r.get("xg_research_coverage_gate"),
+              "failures": r.get("failures"),
+          }, ensure_ascii=False))
+          PY
+
+# V6.2.4 remains research-only. V6.18.6/V6.18.7 are data-quality audits only.
+# No CURRENT/formal/runtime probability mutation is allowed by this workflow.
