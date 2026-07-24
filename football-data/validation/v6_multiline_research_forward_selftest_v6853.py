@@ -28,8 +28,10 @@ OUT = ROOT / "manifests" / "v6_multiline_research_forward_selftest_v6853_status.
 def main() -> int:
     now = datetime.now(timezone.utc).replace(microsecond=0)
     src = load_json(chain.LADDERS)
-    rows = []
+    selected = None
+    scanned = 0
     for bundle in src.get("bundles") or []:
+        scanned += 1
         try:
             cid = chain.COMP_MAP.get(str(bundle.get("competition_source") or "").strip())
             if not cid:
@@ -48,29 +50,32 @@ def main() -> int:
             multi = chain.ipf.project(prior, bundle)
             if single.get("status") != "SINGLELINE_MARKET_MATRIX_READY" or multi.get("status") != "MULTILINE_MARKET_MATRIX_READY":
                 continue
-            rows.append((observed, bundle, cid, season, audit, single, multi))
+            selected = (observed, bundle, cid, season, audit, single, multi)
+            break
         except Exception:
             continue
-    if not rows:
+    if selected is None:
         payload = {
-            "schema_version": "V6.8.5.3-multiline-forward-selftest-r1",
+            "schema_version": "V6.8.5.3-multiline-forward-selftest-r2",
             "generated_at_utc": now.isoformat(),
             "status": "FAIL_NO_EXECUTABLE_PRE_EPOCH_CASE",
             "engineering_only": True,
             "fast100_eligible": False,
+            "bundles_scanned_until_failure": scanned,
         }
         atomic_write_json(OUT, payload)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 2
-    observed, bundle, cid, season, audit, single, multi = sorted(rows, key=lambda x: (x[0], str(x[1].get("event_id"))))[-1]
+    observed, bundle, cid, season, audit, single, multi = selected
     payload = {
-        "schema_version": "V6.8.5.3-multiline-forward-selftest-r1",
+        "schema_version": "V6.8.5.3-multiline-forward-selftest-r2",
         "generated_at_utc": now.isoformat(),
         "status": "PASS",
         "engineering_only": True,
         "fast100_eligible": False,
         "accuracy_claim": False,
         "formal_current_version": "V5.0.1",
+        "bundles_scanned_until_first_valid_case": scanned,
         "case": {
             "event_id": bundle.get("event_id"),
             "competition_id": cid,
