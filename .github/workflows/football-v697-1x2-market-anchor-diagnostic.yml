@@ -1,0 +1,53 @@
+name: Football V6.9.7 1X2 Market Anchor Diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/diagnose_1x2_market_anchor_v697.py"
+      - ".github/workflows/football-v697-1x2-market-anchor-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v697-1x2-market-anchor-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/diagnose_1x2_market_anchor_v697.py
+      - name: Run retrospective market-anchor diagnostic
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/diagnose_1x2_market_anchor_v697.py
+          code=$?
+          echo "diagnostic_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_1x2_market_anchor_diagnostic_v697_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist retrospective market-anchor 1X2 diagnostic"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce pass
+        run: test "${diagnostic_exit_code:-2}" = "0"
