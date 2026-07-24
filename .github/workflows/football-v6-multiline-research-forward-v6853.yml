@@ -7,6 +7,7 @@ on:
     paths:
       - "football-data/evidence/market_ladders_v680/kambi_full_time_ladders.json"
       - "football-data/validation/v6_multiline_research_forward_v6853.py"
+      - "football-data/validation/v6_multiline_research_forward_selftest_v6853.py"
       - "football-data/validation/v6_multiline_market_matrix_projection_v682.py"
       - "football-data/validation/v6_pristine_forward_result_resolver_v612.py"
       - ".github/workflows/football-v6-multiline-research-forward-v6853.yml"
@@ -31,13 +32,18 @@ jobs:
       - name: Compile pristine multiline research chain
         run: |
           python -m py_compile football-data/validation/v6_multiline_research_forward_v6853.py
+          python -m py_compile football-data/validation/v6_multiline_research_forward_selftest_v6853.py
           python -m py_compile football-data/validation/v6_multiline_market_matrix_projection_v682.py
           python -m py_compile football-data/validation/v6_pristine_forward_result_resolver_v612.py
+      - name: Prove prior single-line and multiline plumbing without counting evidence
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_multiline_research_forward_selftest_v6853.py
       - name: Freeze settle and evaluate prospective research only
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_multiline_research_forward_v6853.py
-      - name: Persist immutable research freezes results and receipt
+      - name: Persist immutable research freezes results and receipts
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,25 +53,31 @@ jobs:
             --allow-prefix football-data/forward/v6_multiline_research_freezes_v6853/ \
             --allow-prefix football-data/evidence/multiline_research_results_v6853/ \
             --allow-prefix football-data/manifests/v6_multiline_research_forward_epoch_v6853.json \
+            --allow-prefix football-data/manifests/v6_multiline_research_forward_selftest_v6853_status.json \
             --allow-prefix football-data/manifests/v6_multiline_research_forward_v6853_status.json \
             --message-prefix "audit(football): persist V6.8.5.3 pristine multiline Fast100 forward evidence"
-      - name: Enforce research-only receipt
+      - name: Enforce research-only receipts
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           e=Path('football-data/manifests/v6_multiline_research_forward_epoch_v6853.json')
+          t=Path('football-data/manifests/v6_multiline_research_forward_selftest_v6853_status.json')
           s=Path('football-data/manifests/v6_multiline_research_forward_v6853_status.json')
-          if not e.exists() or not s.exists(): raise SystemExit('V6.8.5.3 receipts missing')
-          epoch=json.loads(e.read_text()); status=json.loads(s.read_text())
+          if not e.exists() or not t.exists() or not s.exists(): raise SystemExit('V6.8.5.3 receipts missing')
+          epoch=json.loads(e.read_text()); test=json.loads(t.read_text()); status=json.loads(s.read_text())
           if epoch.get('status')!='FROZEN': raise SystemExit(str(epoch))
+          if test.get('status')!='PASS' or test.get('fast100_eligible') is not False: raise SystemExit(str(test))
           if status.get('status')!='PASS': raise SystemExit(str(status))
           g=status.get('governance') or {}
           if g.get('new_epoch_no_historical_backfill') is not True: raise SystemExit('historical-backfill guard missing')
           if g.get('formal_probability_change') is not False or g.get('current_rule_change') is not False: raise SystemExit('formal mutation guard failed')
           print(json.dumps({
             'epoch':status.get('research_epoch_timestamp_utc'),
+            'selftest_event':(test.get('case') or {}).get('event_id'),
+            'selftest_singleline':(test.get('singleline') or {}).get('status'),
+            'selftest_multiline':(test.get('multiline') or {}).get('status'),
             'freeze_count':status.get('freeze_count'),
             'settled_count':status.get('settled_count'),
             'open_count':status.get('open_count'),
