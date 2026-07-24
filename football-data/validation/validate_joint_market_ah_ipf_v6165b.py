@@ -22,6 +22,14 @@ from platform_core import canonical_team_name,derive_score_marginals,load_aliase
 OUT=ROOT/'manifests'/'v6_joint_market_ah_ipf_v6165b_status.json'
 SEASONS=('2022/23','2023/24','2024/25','2025/26');COMPS=joint.COMPS;TOTAL_KEYS=joint.TOTAL_KEYS
 
+
+def handicap_value(v):
+    """Parse a signed handicap line; unlike odds, zero/negative values are valid."""
+    try:x=float(str(v).strip())
+    except (TypeError,ValueError):return None
+    return x if math.isfinite(x) else None
+
+
 def market_lookup(cid,season):
     aliases=load_aliases();out={};d=ROOT/'processed'/cid
     if not d.exists():return out
@@ -33,7 +41,7 @@ def market_lookup(cid,season):
         for r0 in rd:
             r={str(k):'' if v is None else str(v) for k,v in r0.items() if k};s=str(r.get('season') or r.get('Season') or '').strip()
             if s!=season or not r.get('Date') or not r.get('HomeTeam') or not r.get('AwayTeam'):continue
-            line=ou.fv(r.get('AHCh'))
+            line=handicap_value(r.get('AHCh'))
             if line is None or abs(line)<1.49 or abs(abs(line-round(line))-.5)>.02:continue
             ah=None
             for cols in (("PCAHH","PCAHA"),("B365CAHH","B365CAHA"),("AvgCAHH","AvgCAHA")):
@@ -55,7 +63,9 @@ def market_lookup(cid,season):
             h=canonical_team_name(cid,r['HomeTeam'],aliases);a=canonical_team_name(cid,r['AwayTeam'],aliases);out[(di,h,a)]={'one_x_two':one,'p_over25':qover,'ah_line':line,'p_home_cover':ah}
     return out
 
+
 def cover(cell,line):return int(cell['home_goals'])-int(cell['away_goals'])+line>0
+
 
 def ah_ipf(matrix,one_target,over_target,line,cover_target,max_iter=500,tol=1e-12):
     m=[dict(c,probability=max(1e-18,float(c['probability']))) for c in matrix];s=sum(c['probability'] for c in m)
@@ -79,17 +89,20 @@ def ah_ipf(matrix,one_target,over_target,line,cover_target,max_iter=500,tol=1e-1
         if res<tol:return m,{'converged':True,'iterations':it,'max_residual':res,'probability_sum':sm}
     return m,{'converged':False,'iterations':max_iter,'max_residual':res,'probability_sum':joint.marginals(m)[2]}
 
+
 def one_vec(m):
     x=derive_score_marginals(m)['1x2'];return [float(x[k]) for k in ('home','draw','away')]
 def total_vec(m):
     x=derive_score_marginals(m)['total_goals'];return [float(x[k]) for k in TOTAL_KEYS]
 def rid(h,a):return 0 if h>a else 1 if h==a else 2
 
+
 def summarize(rows):
     n=len(rows)
     if not n:return {'count':0}
     def mean(k):return sum(r[k] for r in rows)/n
     return {'count':n,'baseline_total_rps':mean('base_total_rps'),'ah_total_rps':mean('ah_total_rps'),'total_rps_delta':mean('ah_total_rps')-mean('base_total_rps'),'baseline_total_top1':mean('base_total_top1'),'ah_total_top1':mean('ah_total_top1'),'total_top1_delta':mean('ah_total_top1')-mean('base_total_top1'),'baseline_score_top1':mean('base_score_top1'),'ah_score_top1':mean('ah_score_top1'),'score_top1_delta':mean('ah_score_top1')-mean('base_score_top1'),'baseline_score_top3':mean('base_score_top3'),'ah_score_top3':mean('ah_score_top3'),'score_top3_delta':mean('ah_score_top3')-mean('base_score_top3'),'baseline_1x2_brier':mean('base_1x2_brier'),'ah_1x2_brier':mean('ah_1x2_brier'),'one_x_two_brier_delta':mean('ah_1x2_brier')-mean('base_1x2_brier')}
+
 
 def eval_cs(cid,season,cfg):
     lookup=market_lookup(cid,season);params=ou.params_by_season(cid).get(season)
@@ -113,6 +126,7 @@ def eval_cs(cid,season,cfg):
         hist.append(m);hc[m.home_team]+=1;ac[m.away_team]+=1
     return rows,{'market_rows':len(lookup),'attempted':attempt,'converged':conv,'failed_or_infeasible':infeasible,'max_iterations':mi,'max_residual':mr}
 
+
 def main():
     cfg=load_config();allr=[];byseason={};meta={}
     for s in SEASONS:
@@ -120,6 +134,6 @@ def main():
         for cid in COMPS:
             r,m=eval_cs(cid,s,cfg);sr+=r;meta[s][cid]=m
         byseason[s]=summarize(sr);allr+=sr
-    payload={'schema_version':'V6.16.5b-joint-market-ah-ipf-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_MARKET_RESEARCH_NO_ORIGINAL_QUOTE_TIMESTAMP','design':{'baseline':'V6.16.3 1X2+OU IPF on identical matches','added_constraint':'de-vigged closing AH home-cover probability','eligible_lines':'nonredundant half-goal |h|>=1.5 only','no_push_or_quarter_handicap':True,'no_fitted_weight':True},'by_season':byseason,'aggregate':summarize(allr),'replication':{'seasons_score_top1_improved':sum(1 for s in SEASONS if byseason[s].get('score_top1_delta',0)>0),'seasons_score_top3_improved':sum(1 for s in SEASONS if byseason[s].get('score_top3_delta',0)>0),'seasons_total_rps_improved':sum(1 for s in SEASONS if byseason[s].get('total_rps_delta',0)<0)},'meta':meta,'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'automatic_promotion':False}}
+    payload={'schema_version':'V6.16.5b-joint-market-ah-ipf-r2','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_MARKET_RESEARCH_NO_ORIGINAL_QUOTE_TIMESTAMP','design':{'baseline':'V6.16.3 1X2+OU IPF on identical matches','added_constraint':'de-vigged closing AH home-cover probability','eligible_lines':'nonredundant half-goal |h|>=1.5 only','signed_handicap_parser':True,'home_cover_condition':'home_goals-away_goals+AHCh>0','no_push_or_quarter_handicap':True,'no_fitted_weight':True},'by_season':byseason,'aggregate':summarize(allr),'replication':{'seasons_score_top1_improved':sum(1 for s in SEASONS if byseason[s].get('score_top1_delta',0)>0),'seasons_score_top3_improved':sum(1 for s in SEASONS if byseason[s].get('score_top3_delta',0)>0),'seasons_total_rps_improved':sum(1 for s in SEASONS if byseason[s].get('total_rps_delta',0)<0)},'meta':meta,'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'automatic_promotion':False}}
     OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps({'by_season':byseason,'aggregate':payload['aggregate'],'replication':payload['replication']},ensure_ascii=False,indent=2));return 0
 if __name__=='__main__':raise SystemExit(main())
