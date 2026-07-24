@@ -1,0 +1,34 @@
+name: Football V6.17 Prior-Unavailable Audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/audit_v6170_prior_unavailable.py"
+      - ".github/workflows/football-v6170-prior-unavailable-audit.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/audit_v6170_prior_unavailable.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/audit_v6170_prior_unavailable.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=football-data/manifests/v6170_formalprior_unavailable_audit.json
+          git add "$p"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.17 prior-unavailable audit"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
