@@ -25,7 +25,7 @@ def main():
     rows,_=base.load()
     if len(rows)<200:raise RuntimeError(f'need >=200 triple-provider rows, found {len(rows)}')
     discovery=rows[-100:];test=rows[-200:-100]
-    def keyset(rs):return {(r['competition_id'],r['date']) for r in rs}
+    def keyset(rs):return {(r['competition_id'],r['date'],r.get('home'),r.get('away')) for r in rs}
     if keyset(discovery)&keyset(test):raise RuntimeError('replication overlap detected')
     def midgap(r):
         c=max(r['consensus'],1-r['consensus']);return 0.56<=c<0.60
