@@ -1,0 +1,49 @@
+name: Football V6.12.5 Stability Threshold Audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/validate_1x2_stability_thresholds_v6125.py"
+      - ".github/workflows/football-v6125-stability-thresholds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_1x2_stability_thresholds_v6125.py
+      - name: Run stability-optimized threshold audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/validate_1x2_stability_thresholds_v6125.py
+          code=$?
+          echo "validation_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_1x2_stability_thresholds_v6125_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist stability-optimized 1X2 gate"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce execution pass
+        run: test "${validation_exit_code:-2}" = "0"
