@@ -1,0 +1,36 @@
+name: football-v6183r2-prospective-freeze
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_total_shot_prospective_freeze_v6183r2.py"
+      - ".github/workflows/football-v6183r2-prospective-freeze.yml"
+permissions:
+  contents: write
+concurrency:
+  group: football-v6183r2-prospective-freeze
+  cancel-in-progress: false
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Install dependency
+        run: python -m pip install --disable-pip-version-check -q scikit-learn
+      - run: python -m py_compile football-data/validation/v6_total_shot_prospective_freeze_v6183r2.py
+      - run: python football-data/validation/v6_total_shot_prospective_freeze_v6183r2.py
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Persist immutable r2 freeze
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_total_shot_prospective_freeze_v6183r2_status.json \
+            --message-prefix "governance(football): persist V6.18.3 r2 controlled prospective freeze"
