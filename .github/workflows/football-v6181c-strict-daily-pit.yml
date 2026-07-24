@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "football-data/validation/v6_strict_daily_pit_rows_v6181c.py"
+      - "football-data/validation/v6_conditional_score_shot_challenge_v6184.py"
+      - "football-data/validation/v6_conditional_score_shot_fold2_shard_v6184q.py"
       - ".github/workflows/football-v6181c-strict-daily-pit.yml"
 permissions:
   contents: write
@@ -14,7 +16,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@v6
         with: {fetch-depth: 0}
@@ -22,11 +24,20 @@ jobs:
         with: {python-version: "3.12"}
       - name: Install dependency
         run: python -m pip install --disable-pip-version-check -q scikit-learn
-      - run: python -m py_compile football-data/validation/v6_strict_daily_pit_rows_v6181c.py
-      - run: python football-data/validation/v6_strict_daily_pit_rows_v6181c.py
+      - name: Compile strict-PIT and conditional-score shard
+        run: |
+          python -m py_compile football-data/validation/v6_strict_daily_pit_rows_v6181c.py
+          python -m py_compile football-data/validation/v6_conditional_score_shot_challenge_v6184.py
+          python -m py_compile football-data/validation/v6_conditional_score_shot_fold2_shard_v6184q.py
+      - name: Reconfirm strict daily PIT total receipt
+        run: python football-data/validation/v6_strict_daily_pit_rows_v6181c.py
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-      - name: Persist receipt
+      - name: Run preregistered V6.18.4 fold2 execution shard
+        run: python football-data/validation/v6_conditional_score_shot_fold2_shard_v6184q.py
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Persist strict-PIT and score-shard receipts
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,4 +45,5 @@ jobs:
         run: |
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_strict_daily_pit_total_v6181c_status.json \
-            --message-prefix "audit(football): persist V6.18.1c strict daily PIT total"
+            --allow-prefix football-data/manifests/v6_conditional_score_shot_fold2_shard_v6184q_status.json \
+            --message-prefix "audit(football): persist strict-PIT total and V6.18.4q score shard"
