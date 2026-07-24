@@ -1,0 +1,41 @@
+name: Football V6.17 Formal-Prior Multiline Forward
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6170_formalprior_multiline_forward.py"
+      - ".github/workflows/football-v6170-formalprior-multiline-forward.yml"
+      - "football-data/forward/v6_multiline_research_freezes_v6853/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "37 * * * *"
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/v6170_formalprior_multiline_forward.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6170_formalprior_multiline_forward.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6170_formalprior_multiline_forward_epoch.json || true
+          git add football-data/manifests/v6170_formalprior_multiline_forward_status.json || true
+          git add football-data/forward/v6170_formalprior_multiline_freezes || true
+          git add football-data/evidence/v6170_formalprior_multiline_results || true
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.17 formal-prior multiline forward sidecar"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
