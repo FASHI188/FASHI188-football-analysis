@@ -1,0 +1,34 @@
+name: Football V6.16.4 Joint IPF Cross-Season
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/validate_joint_market_ipf_crossseason_v6164.py"
+      - ".github/workflows/football-v6164-joint-ipf-crossseason.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/validate_joint_market_ipf_crossseason_v6164.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/validate_joint_market_ipf_crossseason_v6164.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=football-data/manifests/v6_joint_market_ipf_crossseason_v6164_status.json
+          if [ -f "$p" ]; then git add "$p"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.16.4 cross-season joint IPF replication"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
