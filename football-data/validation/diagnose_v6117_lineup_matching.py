@@ -5,7 +5,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-import validate_1x2_pit_lineup_increment_v6117 as v
+import validate_1x2_pit_lineup_increment_v6117b as fixed
+v = fixed.base
 
 OUT = Path(__file__).resolve().parents[1] / "manifests" / "v6_1x2_pit_lineup_matching_v6117_debug.json"
 
@@ -49,6 +50,7 @@ def main() -> int:
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
+        "join_version": "normalized_date_and_team_token",
         "match_count": len(matches),
         "match_by_season": dict(by_match_season),
         "match_by_competition_season": {f"{k[0]}|{k[1]}": n for k,n in by_match_comp_season.items()},
