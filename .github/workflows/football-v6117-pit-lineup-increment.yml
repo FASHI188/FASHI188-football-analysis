@@ -1,0 +1,55 @@
+name: Football V6.11.7 PIT Lineup Increment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/validate_1x2_pit_lineup_increment_v6117.py"
+      - ".github/workflows/football-v6117-pit-lineup-increment.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6117-pit-lineup-increment
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install research dependency
+        run: python -m pip install --disable-pip-version-check -q numpy scikit-learn
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_1x2_pit_lineup_increment_v6117.py
+      - name: Run PIT lineup increment validation
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/validate_1x2_pit_lineup_increment_v6117.py
+          code=$?
+          echo "validation_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_1x2_pit_lineup_increment_v6117_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist PIT lineup increment validation"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce pass
+        run: test "${validation_exit_code:-2}" = "0"
