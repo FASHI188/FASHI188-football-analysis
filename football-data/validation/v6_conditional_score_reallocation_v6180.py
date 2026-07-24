@@ -2,23 +2,29 @@
 """V6.18.0 conditional exact-score reallocation challenge.
 
 Research-only. Goal: improve exact-score structure without changing the formal
-0-7+ total-goals marginal or 1X2 marginal.
+1X2 marginal or the formal 0-7+ total-goals marginal.
+
+Pre-test static-audit revision (before any V6.18 scored receipt existed):
+1) total-goal invariance is audited as 0,1,...,6,7+ rather than exact 7/8/9...
+2) score-history counts are updated only after all matches on the same date,
+   preventing same-day outcome leakage into another match on that date;
+3) development selection first requires exact-score LogLoss non-inferiority to
+   the formal baseline, then maximizes exact-score Top-1 and Top-3.
 
 For every formal prior score matrix, cells are partitioned by
-(total bucket, 1X2 result). Historical score frequencies are learned strictly
-from matches that occurred before the target match. Within each partition only,
-we replace the prior conditional allocation with a Dirichlet posterior:
+(total bucket, 1X2 result). Within each partition only, historical score
+frequencies are blended with the prior conditional allocation:
 
     q_i = (count_i + kappa * p_i) / (N + kappa)
 
-The partition mass itself is unchanged, therefore total-goals (0..6,7+) and
-1X2 marginals are invariant by construction. No market price is used here.
+The partition mass itself is unchanged, therefore 1X2 and 0-7+ total marginals
+are invariant by construction. No market price is used.
 
 Design:
 - Development: 2022/23, 2023/24, 2024/25.
 - Frozen test: 2025/26.
 - Kappa candidates are pre-registered below and selected independently per
-  competition on development score log loss, then score Top-1 as tie-break.
+  competition using development only.
 - Formal engine parameters/calibrator remain season-specific and unchanged.
 - No formal weight/runtime/CURRENT change.
 """
@@ -52,6 +58,7 @@ KAPPAS = (5.0, 20.0, 80.0, 320.0)
 TOTAL_CAP = 7
 EPS = 1e-15
 MIN_DEV_ROWS = 80
+INVARIANT_TOL = 1e-10
 
 
 def rows(matrix: list[dict[str, Any]]):
@@ -59,7 +66,7 @@ def rows(matrix: list[dict[str, Any]]):
         yield int(c["home_goals"]), int(c["away_goals"]), float(c["probability"])
 
 
-def renorm(matrix: list[dict[str, Any]]):
+def renorm(matrix):
     s = sum(float(c["probability"]) for c in matrix)
     if not math.isfinite(s) or s <= 0:
         raise ValueError("invalid score-matrix mass")
@@ -77,17 +84,21 @@ def result_key(h: int, a: int) -> str:
     return "H" if h > a else "D" if h == a else "A"
 
 
+def total_bucket(h: int, a: int) -> int:
+    return min(TOTAL_CAP, h + a)
+
+
 def group_key(h: int, a: int) -> tuple[int, str]:
-    return min(TOTAL_CAP, h + a), result_key(h, a)
+    return total_bucket(h, a), result_key(h, a)
 
 
-def actual_cell_key(h: int, a: int) -> tuple[tuple[int, str], int, int]:
+def actual_cell_key(h: int, a: int):
     return group_key(h, a), h, a
 
 
 def adjusted_matrix(prior, hist_counts: Counter, kappa: float):
     prior = renorm(prior)
-    grouped: dict[tuple[int, str], list[tuple[int, int, float]]] = defaultdict(list)
+    grouped = defaultdict(list)
     for h, a, p in rows(prior):
         grouped[group_key(h, a)].append((h, a, p))
 
@@ -110,9 +121,7 @@ def adjusted_matrix(prior, hist_counts: Counter, kappa: float):
             p_cond = p / mass
             c = float(hist_counts[(g, h, a)])
             q_cond = (c + float(kappa) * p_cond) / denom
-            out.append(
-                {"home_goals": h, "away_goals": a, "probability": mass * q_cond}
-            )
+            out.append({"home_goals": h, "away_goals": a, "probability": mass * q_cond})
     return renorm(out), changed_groups
 
 
@@ -121,22 +130,22 @@ def score_metrics(matrix, hg: int, ag: int):
     top1 = int(bool(ranked) and (ranked[0][1], ranked[0][2]) == (hg, ag))
     top3 = int((hg, ag) in {(h, a) for _, h, a in ranked[:3]})
     p_actual = sum(p for h, a, p in rows(matrix) if h == hg and a == ag)
-    logloss = -math.log(max(EPS, p_actual))
-    return top1, top3, logloss, p_actual
+    return top1, top3, -math.log(max(EPS, p_actual)), p_actual
+
+
+def total_bucket_marginal(matrix):
+    out = {i: 0.0 for i in range(TOTAL_CAP + 1)}
+    for h, a, p in rows(matrix):
+        out[total_bucket(h, a)] += p
+    return out
 
 
 def marginal_residual(a, b):
-    ma = derive_score_marginals(a)
-    mb = derive_score_marginals(b)
-    r1 = max(
-        abs(float(ma["1x2"][k]) - float(mb["1x2"][k]))
-        for k in ("home", "draw", "away")
-    )
-    keys = set(ma["total_goals"]) | set(mb["total_goals"])
-    rt = max(
-        abs(float(ma["total_goals"].get(k, 0.0)) - float(mb["total_goals"].get(k, 0.0)))
-        for k in keys
-    ) if keys else 0.0
+    ma = derive_score_marginals(a)["1x2"]
+    mb = derive_score_marginals(b)["1x2"]
+    r1 = max(abs(float(ma[k]) - float(mb[k])) for k in ("home", "draw", "away"))
+    ta, tb = total_bucket_marginal(a), total_bucket_marginal(b)
+    rt = max(abs(ta[k] - tb[k]) for k in ta)
     return r1, rt
 
 
@@ -150,7 +159,7 @@ def fresh_acc():
         "changed_rows": 0,
         "changed_groups": 0,
         "max_1x2_residual": 0.0,
-        "max_total_residual": 0.0,
+        "max_total_0_7plus_residual": 0.0,
     }
 
 
@@ -165,13 +174,19 @@ def add_metric(acc, prior, adj, hg, ag, changed_groups):
     acc["changed_rows"] += int(changed_groups > 0)
     acc["changed_groups"] += int(changed_groups)
     acc["max_1x2_residual"] = max(acc["max_1x2_residual"], r1)
-    acc["max_total_residual"] = max(acc["max_total_residual"], rt)
+    acc["max_total_0_7plus_residual"] = max(acc["max_total_0_7plus_residual"], rt)
 
 
 def finish(acc):
     n = int(acc["n"])
     if n <= 0:
-        return {**acc, "top1_rate": None, "top3_rate": None, "mean_logloss": None, "mean_actual_probability": None}
+        return {
+            **acc,
+            "top1_rate": None,
+            "top3_rate": None,
+            "mean_logloss": None,
+            "mean_actual_probability": None,
+        }
     return {
         **acc,
         "top1_rate": acc["top1"] / n,
@@ -182,9 +197,14 @@ def finish(acc):
 
 
 def formal_rows(cid: str, season: str, config):
+    """Return formal prediction rows plus all actual matches for PIT count updates.
+
+    Prior generation is intentionally kept identical to the existing V6.16.4
+    baseline machinery so this challenge isolates only score reallocation.
+    """
     params = ou.params_by_season(cid).get(season)
     if not params:
-        return [], {"reason": "NO_FORMAL_PARAMS"}
+        return [], [], {"reason": "NO_FORMAL_PARAMS"}
     temp = ou.calibrator(cid, season)
     matches = [m for m in read_processed_matches(cid) if str(m.season) == season]
     bydate = defaultdict(list)
@@ -218,10 +238,21 @@ def formal_rows(cid: str, season: str, config):
             hist.append(m)
             hc[m.home_team] += 1
             ac[m.away_team] += 1
-    return out, {"matches": len(matches), "prediction_rows": len(out), "prediction_failures": failures}
+    return out, matches, {
+        "matches": len(matches),
+        "prediction_rows": len(out),
+        "prediction_failures": failures,
+    }
 
 
-def seed_counts_from_matches(counts: Counter, matches):
+def by_date(items, date_getter):
+    out = defaultdict(list)
+    for item in items:
+        out[date_getter(item)].append(item)
+    return out
+
+
+def update_counts_after_date(counts: Counter, matches):
     for m in matches:
         counts[actual_cell_key(int(m.home_goals), int(m.away_goals))] += 1
 
@@ -232,30 +263,40 @@ def evaluate_comp(cid: str, config):
     baseline_dev = fresh_acc()
     meta = {"development": {}, "test": {}}
 
-    # Development is processed chronologically; only prior actual scores are in counts.
+    # Development: predictions are scored with counts frozen at start of date;
+    # all actual matches from that date are added only after every prediction.
     for season in DEV_SEASONS:
-        fr, mta = formal_rows(cid, season, config)
+        fr, all_matches, mta = formal_rows(cid, season, config)
         meta["development"][season] = mta
-        for match, prior in fr:
-            hg, ag = int(match.home_goals), int(match.away_goals)
-            # Baseline is included for direct comparability.
-            add_metric(baseline_dev, prior, prior, hg, ag, 0)
-            for k in KAPPAS:
-                adj, cg = adjusted_matrix(prior, counts, k)
-                add_metric(dev_by_k[k], prior, adj, hg, ag, cg)
-            counts[actual_cell_key(hg, ag)] += 1
+        pred_by_date = by_date(fr, lambda x: x[0].date)
+        actual_by_date = by_date(all_matches, lambda x: x.date)
+        for dt in sorted(actual_by_date):
+            for match, prior in pred_by_date.get(dt, []):
+                hg, ag = int(match.home_goals), int(match.away_goals)
+                add_metric(baseline_dev, prior, prior, hg, ag, 0)
+                for k in KAPPAS:
+                    adj, cg = adjusted_matrix(prior, counts, k)
+                    add_metric(dev_by_k[k], prior, adj, hg, ag, cg)
+            update_counts_after_date(counts, actual_by_date[dt])
 
     dev_finished = {str(k): finish(v) for k, v in dev_by_k.items()}
     bdev = finish(baseline_dev)
-    eligible = [
-        k for k in KAPPAS
-        if dev_by_k[k]["n"] >= MIN_DEV_ROWS
-        and dev_by_k[k]["max_1x2_residual"] <= 1e-10
-        and dev_by_k[k]["max_total_residual"] <= 1e-10
-    ]
+    eligible = []
+    for k in KAPPAS:
+        c = dev_finished[str(k)]
+        if (
+            c["n"] >= MIN_DEV_ROWS
+            and c["max_1x2_residual"] <= INVARIANT_TOL
+            and c["max_total_0_7plus_residual"] <= INVARIANT_TOL
+            and c["mean_logloss"] is not None
+            and bdev["mean_logloss"] is not None
+            and c["mean_logloss"] <= bdev["mean_logloss"]
+        ):
+            eligible.append(k)
+
     if not eligible:
         return {
-            "status": "INSUFFICIENT_DEVELOPMENT",
+            "status": "NO_DEVELOPMENT_NONINFERIOR_CANDIDATE",
             "development_baseline": bdev,
             "development_candidates": dev_finished,
             "selected_kappa": None,
@@ -263,46 +304,48 @@ def evaluate_comp(cid: str, config):
             "meta": meta,
         }
 
-    # Proper score first; hit-rate is only a tie-breaker.
-    selected = min(
+    # User objective is accuracy, but proper-score quality is a hard gate.
+    selected = max(
         eligible,
         key=lambda k: (
-            dev_finished[str(k)]["mean_logloss"],
-            -dev_finished[str(k)]["top1_rate"],
-            -dev_finished[str(k)]["top3_rate"],
-            k,
+            dev_finished[str(k)]["top1_rate"],
+            dev_finished[str(k)]["top3_rate"],
+            -dev_finished[str(k)]["mean_logloss"],
+            -k,
         ),
     )
 
-    test_rows, test_meta = formal_rows(cid, TEST_SEASON, config)
+    test_rows, test_matches, test_meta = formal_rows(cid, TEST_SEASON, config)
     meta["test"][TEST_SEASON] = test_meta
+    pred_by_date = by_date(test_rows, lambda x: x[0].date)
+    actual_by_date = by_date(test_matches, lambda x: x.date)
     baseline_test = fresh_acc()
     challenge_test = fresh_acc()
-    for match, prior in test_rows:
-        hg, ag = int(match.home_goals), int(match.away_goals)
-        add_metric(baseline_test, prior, prior, hg, ag, 0)
-        adj, cg = adjusted_matrix(prior, counts, selected)
-        add_metric(challenge_test, prior, adj, hg, ag, cg)
-        counts[actual_cell_key(hg, ag)] += 1
+    for dt in sorted(actual_by_date):
+        for match, prior in pred_by_date.get(dt, []):
+            hg, ag = int(match.home_goals), int(match.away_goals)
+            add_metric(baseline_test, prior, prior, hg, ag, 0)
+            adj, cg = adjusted_matrix(prior, counts, selected)
+            add_metric(challenge_test, prior, adj, hg, ag, cg)
+        update_counts_after_date(counts, actual_by_date[dt])
 
     bt = finish(baseline_test)
     ct = finish(challenge_test)
-    test = {
-        "baseline": bt,
-        "challenge": ct,
-        "delta": {
-            "top1_rate": None if bt["top1_rate"] is None else ct["top1_rate"] - bt["top1_rate"],
-            "top3_rate": None if bt["top3_rate"] is None else ct["top3_rate"] - bt["top3_rate"],
-            "mean_logloss": None if bt["mean_logloss"] is None else ct["mean_logloss"] - bt["mean_logloss"],
-            "mean_actual_probability": None if bt["mean_actual_probability"] is None else ct["mean_actual_probability"] - bt["mean_actual_probability"],
-        },
-    }
     return {
         "status": "PASS",
         "development_baseline": bdev,
         "development_candidates": dev_finished,
         "selected_kappa": selected,
-        "test": test,
+        "test": {
+            "baseline": bt,
+            "challenge": ct,
+            "delta": {
+                "top1_rate": None if bt["top1_rate"] is None else ct["top1_rate"] - bt["top1_rate"],
+                "top3_rate": None if bt["top3_rate"] is None else ct["top3_rate"] - bt["top3_rate"],
+                "mean_logloss": None if bt["mean_logloss"] is None else ct["mean_logloss"] - bt["mean_logloss"],
+                "mean_actual_probability": None if bt["mean_actual_probability"] is None else ct["mean_actual_probability"] - bt["mean_actual_probability"],
+            },
+        },
         "meta": meta,
     }
 
@@ -311,7 +354,7 @@ def aggregate(results):
     b = fresh_acc()
     c = fresh_acc()
     comps = 0
-    for cid, r in results.items():
+    for r in results.values():
         if r.get("status") != "PASS" or not r.get("test"):
             continue
         comps += 1
@@ -321,7 +364,9 @@ def aggregate(results):
             dst["logloss_sum"] += src["logloss_sum"]
             dst["actual_prob_sum"] += src["actual_prob_sum"]
             dst["max_1x2_residual"] = max(dst["max_1x2_residual"], src["max_1x2_residual"])
-            dst["max_total_residual"] = max(dst["max_total_residual"], src["max_total_residual"])
+            dst["max_total_0_7plus_residual"] = max(
+                dst["max_total_0_7plus_residual"], src["max_total_0_7plus_residual"]
+            )
     bf, cf = finish(b), finish(c)
     return {
         "competitions_tested": comps,
@@ -338,23 +383,26 @@ def aggregate(results):
 
 def main():
     cfg = load_config()
-    results = {}
-    for cid in joint.COMPS:
-        results[cid] = evaluate_comp(cid, cfg)
+    results = {cid: evaluate_comp(cid, cfg) for cid in joint.COMPS}
     agg = aggregate(results)
     status = "PASS" if agg["competitions_tested"] > 0 else "NO_ELIGIBLE_TEST_DOMAINS"
     payload = {
-        "schema_version": "V6.18.0-conditional-score-reallocation-r1",
+        "schema_version": "V6.18.0-conditional-score-reallocation-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": status,
         "formal_current_version": "V5.0.1",
         "classification": "STRICT_PRIOR_SCORE_STRUCTURE_RESEARCH",
+        "pretest_static_audit_revision": [
+            "audit total-goal invariance as 0..6 plus 7+",
+            "batch score-history updates by date to prevent same-day leakage",
+            "require development score-LogLoss non-inferiority before maximizing Top-1",
+        ],
         "design": {
             "development_seasons": list(DEV_SEASONS),
             "frozen_test_season": TEST_SEASON,
             "kappa_candidates": list(KAPPAS),
             "min_development_rows": MIN_DEV_ROWS,
-            "selection_objective": "lowest development exact-score log loss; Top-1 then Top-3 tie-break",
+            "selection_objective": "development LogLoss non-inferiority hard gate; maximize score Top-1 then Top-3",
             "partition": "(0-7+ total bucket, 1X2 result)",
             "invariants": ["1X2 marginal", "0-7+ total-goals marginal"],
             "market_used": False,
@@ -368,12 +416,16 @@ def main():
             "runtime_probability_change": False,
             "current_rule_change": False,
             "no_test_parameter_selection": True,
-            "asian_handicap_not_preserved_by_partition_and_requires_separate_audit_before_any_promotion": True,
+            "asian_handicap_not_preserved_and_requires_separate_OOS_audit_before_any_promotion": True,
         },
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"status": status, "aggregate_test": agg, "selected": {k: v.get("selected_kappa") for k, v in results.items()}}, ensure_ascii=False, indent=2))
+    print(json.dumps({
+        "status": status,
+        "aggregate_test": agg,
+        "selected": {k: v.get("selected_kappa") for k, v in results.items()},
+    }, ensure_ascii=False, indent=2))
     return 0
 
 
