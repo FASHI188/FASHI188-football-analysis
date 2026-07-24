@@ -16,6 +16,7 @@ import json
 import math
 import statistics
 import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,13 +59,41 @@ def _wilson_lower(hits: int, n: int, z: float = Z90) -> float | None:
 
 
 def _eval(rows: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
-    selected = []
+    selected: list[tuple[dict[str, Any], str, float]] = []
     for r in rows:
         direction, pmax = _pick(r)
         if pmax >= threshold:
             selected.append((r, direction, pmax))
     hits = sum(1 for r, direction, _ in selected if direction == r["actual"])
     n = len(selected)
+
+    by_comp: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "hits": 0})
+    by_direction: dict[str, dict[str, int]] = {d: {"count": 0, "hits": 0} for d in DIRECTIONS}
+    for r, direction, _ in selected:
+        comp = str(r["competition_id"])
+        by_comp[comp]["count"] += 1
+        by_direction[direction]["count"] += 1
+        if direction == r["actual"]:
+            by_comp[comp]["hits"] += 1
+            by_direction[direction]["hits"] += 1
+
+    competition_breakdown = {
+        comp: {
+            "count": stats["count"],
+            "hits": stats["hits"],
+            "accuracy": stats["hits"] / stats["count"] if stats["count"] else None,
+        }
+        for comp, stats in sorted(by_comp.items())
+    }
+    direction_breakdown = {
+        d: {
+            "count": stats["count"],
+            "hits": stats["hits"],
+            "accuracy": stats["hits"] / stats["count"] if stats["count"] else None,
+        }
+        for d, stats in by_direction.items()
+    }
+
     return {
         "all_market_count": len(rows),
         "selected_count": n,
@@ -72,9 +101,9 @@ def _eval(rows: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
         "hits": hits,
         "accuracy": hits / n if n else None,
         "wilson90_lower": _wilson_lower(hits, n),
-        "direction_counts": {
-            d: sum(1 for _, direction, _ in selected if direction == d) for d in DIRECTIONS
-        },
+        "direction_counts": {d: by_direction[d]["count"] for d in DIRECTIONS},
+        "direction_breakdown": direction_breakdown,
+        "competition_breakdown": competition_breakdown,
     }
 
 
@@ -159,7 +188,7 @@ def main() -> int:
     )
 
     payload = {
-        "schema_version": "V6.12.2-selective-market-rolling100-stability-r1",
+        "schema_version": "V6.12.2-selective-market-rolling100-stability-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
