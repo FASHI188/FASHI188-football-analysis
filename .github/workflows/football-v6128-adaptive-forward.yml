@@ -1,0 +1,61 @@
+name: Football V6.12.8 Adaptive 1X2 Forward Sidecar
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/forward/v6_market_first_events_v651.json"
+      - "football-data/validation/evaluate_1x2_adaptive_forward_v6128.py"
+      - "football-data/validation/validate_1x2_nested_walkforward_v6127.py"
+      - "football-data/manifests/v6_1x2_nested_walkforward_v6127_status.json"
+      - ".github/workflows/football-v6128-adaptive-forward.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6128-adaptive-forward
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/evaluate_1x2_adaptive_forward_v6128.py
+      - name: Evaluate post-freeze V6.5.1 ledger
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/evaluate_1x2_adaptive_forward_v6128.py
+          code=$?
+          echo "evaluation_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist freeze and status
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for path in \
+            football-data/manifests/v6_1x2_adaptive_forward_freeze_v6128.json \
+            football-data/manifests/v6_1x2_adaptive_forward_v6128_status.json; do
+            if [ -f "$path" ]; then git add "$path"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.12.8 adaptive forward sidecar"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce execution pass
+        run: test "${evaluation_exit_code:-2}" = "0"
