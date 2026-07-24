@@ -1,0 +1,53 @@
+name: Football V6.11.5 Bookmaker Routing
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/validate_1x2_bookmaker_routing_v6115.py"
+      - ".github/workflows/football-v6115-bookmaker-routing.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6115-bookmaker-routing
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_1x2_bookmaker_routing_v6115.py
+      - name: Run bookmaker routing validation
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/validate_1x2_bookmaker_routing_v6115.py
+          code=$?
+          echo "validation_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_1x2_bookmaker_routing_v6115_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist bookmaker routing validation"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce pass
+        run: test "${validation_exit_code:-2}" = "0"
