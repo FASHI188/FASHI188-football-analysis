@@ -5,6 +5,10 @@ The original r1 failed only because the legacy HTML `teamsData` extraction no lo
 Understat's current delivery path. This wrapper replaces that fetcher with the documented
 `getLeagueData/<league>/<season>` AJAX JSON endpoint and then runs the unchanged r1 model,
 splits, gates and leakage controls.
+
+Retrigger note (2026-07-24): comment-only change to execute the established sequential
+Understat workflow through the newly appended V6.18.8 identity-closure audit. No V6.2.4
+model, split, feature, gate, fetch, or output logic is changed by this note.
 """
 from __future__ import annotations
 
