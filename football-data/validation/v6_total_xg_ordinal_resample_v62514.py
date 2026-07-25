@@ -9,8 +9,10 @@ strict-PIT 2025/26 holdout, fits the seven ordinal residual heads on the same
 2022/23+2023/24+2024/25 pre-holdout data, then evaluates 1,000 deterministic
 random samples of 100 holdout matches.
 
-The purpose is to answer one question: is the small exact-total Top-1 gain seen
-on the full untouched holdout stable to ordinary 100-match sampling variation?
+R2 execution optimization: per-match hit/RPS/log-loss/score-hit contributions
+are computed once before resampling. Each random100 then only sums frozen row
+contributions. Sampling seeds, model, predictions and metric definitions are
+unchanged from R1.
 """
 from __future__ import annotations
 
@@ -29,9 +31,10 @@ for p in (ROOT / "engine", ROOT / "validation"):
         sys.path.insert(0, str(p))
 
 import v6_total_xg_ordinal_residual_v62513 as core  # noqa: E402
+from platform_core import top_scores  # noqa: E402
+from v6_team_regime_state_runner_v6240 import TOTAL_BUCKETS, _total_distribution, _total_rps  # noqa: E402
 from v6_total_distribution_pit_calibration_v6244 import _score  # noqa: E402
 
-# Execution-only compatibility with the V6.25.13 receipt typo. Statistical code unchanged.
 core.true = True
 core.false = False
 
@@ -56,6 +59,24 @@ def _summary(rows: list[dict[str, Any]], matrix_key: str) -> dict[str, float]:
         "log_loss": float(_total_log_loss(rows, matrix_key)),
         "score_top1_accuracy": float(metric["score"]["top1_accuracy"]),
         "score_top3_accuracy": float(metric["score"]["top3_accuracy"]),
+    }
+
+
+def _per_match(row: dict[str, Any], matrix_key: str) -> dict[str, float]:
+    matrix = row[matrix_key]
+    hg = int(row["home_goals"])
+    ag = int(row["away_goals"])
+    actual_total_int = hg + ag
+    actual_total = str(actual_total_int) if actual_total_int <= 6 else "7+"
+    dist = _total_distribution(matrix)
+    pick = max(TOTAL_BUCKETS, key=lambda bucket: dist[bucket])
+    scores = top_scores(matrix, 1)
+    actual_score = f"{hg}-{ag}"
+    return {
+        "top1_hit": float(pick == actual_total),
+        "rps": float(_total_rps(dist, actual_total_int)),
+        "log_loss": float(-math.log(max(EPS, float(dist[actual_total])))),
+        "score_top1_hit": float(bool(scores) and scores[0]["score"] == actual_score),
     }
 
 
@@ -85,6 +106,19 @@ def _dist(values: list[float]) -> dict[str, float]:
     }
 
 
+def _sample_summary(indices: list[int], frozen: list[dict[str, dict[str, float]]]) -> tuple[dict[str, float], dict[str, float]]:
+    n = float(len(indices))
+    result: dict[str, dict[str, float]] = {}
+    for side in ("baseline", "candidate"):
+        result[side] = {
+            "top1_accuracy": sum(frozen[i][side]["top1_hit"] for i in indices) / n,
+            "mean_rps": sum(frozen[i][side]["rps"] for i in indices) / n,
+            "log_loss": sum(frozen[i][side]["log_loss"] for i in indices) / n,
+            "score_top1_accuracy": sum(frozen[i][side]["score_top1_hit"] for i in indices) / n,
+        }
+    return result["baseline"], result["candidate"]
+
+
 def main() -> int:
     rows, attach_audit = core._strict_rows_with_xg()
     train = [r for r in rows if r["season"] in core.TRAIN_SEASONS]
@@ -97,6 +131,13 @@ def main() -> int:
     paired = core._rows_with_candidate(holdout, models, FIXED_ALPHA)
     full_baseline = _summary(paired, "baseline_matrix")
     full_candidate = _summary(paired, "candidate_matrix")
+    frozen = [
+        {
+            "baseline": _per_match(row, "baseline_matrix"),
+            "candidate": _per_match(row, "candidate_matrix"),
+        }
+        for row in paired
+    ]
 
     base_top1: list[float] = []
     cand_top1: list[float] = []
@@ -107,12 +148,11 @@ def main() -> int:
     wins = ties = losses = 0
     sample_receipts: list[dict[str, Any]] = []
 
+    population = list(range(len(paired)))
     for i in range(RESAMPLES):
         seed = SEED_BASE + i
-        rng = random.Random(seed)
-        sample = rng.sample(paired, SAMPLE_N)
-        b = _summary(sample, "baseline_matrix")
-        c = _summary(sample, "candidate_matrix")
+        indices = random.Random(seed).sample(population, SAMPLE_N)
+        b, c = _sample_summary(indices, frozen)
         d_top1 = c["top1_accuracy"] - b["top1_accuracy"]
         d_rps = c["mean_rps"] - b["mean_rps"]
         d_log = c["log_loss"] - b["log_loss"]
@@ -140,7 +180,7 @@ def main() -> int:
             })
 
     payload = {
-        "schema_version": "V6.25.14-xg-ordinal-random100-stability-r1",
+        "schema_version": "V6.25.14-xg-ordinal-random100-stability-r2-precomputed-row-metrics",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
@@ -157,6 +197,12 @@ def main() -> int:
         "attachment_audit": {
             "panel_sha256": attach_audit["panel_sha256"],
             "attached_rows": attach_audit["attached_rows"],
+        },
+        "execution_optimization": {
+            "per_match_metrics_precomputed_once": True,
+            "resample_statistics_identical_to_r1_definitions": True,
+            "sampling_seeds_unchanged": True,
+            "model_predictions_unchanged": True,
         },
         "full_holdout": {
             "baseline": full_baseline,
