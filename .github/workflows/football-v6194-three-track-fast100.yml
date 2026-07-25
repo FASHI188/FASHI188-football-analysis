@@ -1,87 +1,39 @@
-name: Football V6.20.9 Ordinal Total Bayes Score Fast100
+name: Football V6.21.0 Kambi Special-Market Inventory
 on:
   push:
     branches: [main]
     paths:
-      - "football-data/validation/v6_ordinal_total_bayes_score_fast100_v6209.py"
+      - "football-data/validation/v6_kambi_special_market_inventory_v6210.py"
       - ".github/workflows/football-v6194-three-track-fast100.yml"
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: football-v6209-ordinal-bayes-fast100
+  group: football-v6210-special-market-inventory
   cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Persist STARTED heartbeat
+      - name: Run frozen raw-market inventory
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          from datetime import datetime, timezone
-          from pathlib import Path
-          p=Path('football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_heartbeat.json')
-          p.parent.mkdir(parents=True,exist_ok=True)
-          p.write_text(json.dumps({'schema_version':'V6.20.9-heartbeat-r1','status':'STARTED','started_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat()},indent=2)+'\n',encoding='utf-8')
-          PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_heartbeat.json
-          git commit -m "audit(football): V6.20.9 Fast100 started"
-          git pull --rebase origin main
-          git push origin HEAD:main
-      - name: Refresh after heartbeat push
-        run: git pull --rebase origin main
-      - name: Run and always write diagnostic
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
-        shell: bash
-        run: |
-          set +e
-          : > /tmp/v6209.log
-          python -m pip install --quiet scikit-learn >> /tmp/v6209.log 2>&1
-          code=$?
-          if [ "$code" = "0" ]; then
-            python -m py_compile football-data/validation/v6_ordinal_total_bayes_score_fast100_v6209.py >> /tmp/v6209.log 2>&1
-            code=$?
-          fi
-          if [ "$code" = "0" ]; then
-            python football-data/validation/v6_ordinal_total_bayes_score_fast100_v6209.py >> /tmp/v6209.log 2>&1
-            code=$?
-          fi
-          cat /tmp/v6209.log
-          echo "fast100_exit_code=$code" >> "$GITHUB_ENV"
-          FAST100_EXIT_CODE="$code" python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          from pathlib import Path
-          log=Path('/tmp/v6209.log').read_text(encoding='utf-8',errors='replace')
-          payload={'schema_version':'V6.20.9-execution-diagnostic-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'exit_code':int(os.environ.get('FAST100_EXIT_CODE','2')),'model_receipt_exists':Path('football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_status.json').exists(),'log_tail':log[-16000:]}
-          p=Path('football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_execution_status.json');p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-          PY
-          exit 0
-      - name: Persist V6.20.9 receipts and diagnostic
-        if: always()
+          python -m py_compile football-data/validation/v6_kambi_special_market_inventory_v6210.py
+          python football-data/validation/v6_kambi_special_market_inventory_v6210.py
+      - name: Persist inventory
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for p in \
-            football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_status.json \
-            football-data/manifests/v6_ordinal_total_bayes_score_fast100_v6209_execution_status.json; do
-            if [ -f "$p" ]; then git add "$p"; fi
-          done
+          p=football-data/manifests/v6_kambi_special_market_inventory_v6210_status.json
+          git add "$p"
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.20.9 execution result"
+            git commit -m "audit(football): persist V6.21.0 Kambi special-market inventory"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
-      - name: Enforce pass
-        run: test "${fast100_exit_code:-2}" = "0"
