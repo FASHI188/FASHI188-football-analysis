@@ -41,7 +41,6 @@ def prediction_and_results(ledger):
 
 def raw_for_prediction(pred):
  ms=pred['payload']['market_source'];norm=ROOT/str(ms['evidence_path']);snap=load(norm);sa=snap.get('source_adapter') or {};raw=ROOT/str(sa['parent_raw_evidence_path']);env=load(raw)
- # Exact time/hash bindings. No guessing another snapshot.
  if str(env.get('observed_at_utc'))!=str(ms.get('source_observed_at_utc')):raise ValueError('raw observation timestamp mismatch')
  if str(env.get('payload_sha256'))!=str(sa.get('parent_raw_response_sha256')):raise ValueError('raw parent hash mismatch')
  return snap,env
@@ -57,7 +56,6 @@ def correct_score_surface(env):
    parsed.append({'name':nm,'score':(int(m.group(1)),int(m.group(2))) if m else None,'odds':od,'status':str(o.get('status') or ''),'changedDate':o.get('changedDate')})
   if parsed:offers.append((off,parsed))
  if not offers:return None
- # Prefer greatest numeric score coverage, then greatest open coverage.
  off,rows=max(offers,key=lambda x:(sum(r['score'] is not None for r in x[1]),sum(r['status']=='OPEN' and r['odds'] for r in x[1]),len(x[1])))
  valid=[r for r in rows if r['status']=='OPEN' and r['odds']]
  numeric=[r for r in valid if r['score'] is not None]
@@ -71,7 +69,8 @@ def correct_score_surface(env):
  total_weights=defaultdict(float)
  for sc,p in numeric_probs.items():total_weights[min(7,sc[0]+sc[1])]+=p
  total_rank=sorted(total_weights,key=lambda t:(-total_weights[t],t))
- return {'offer_id':off.get('id'),'row_count':len(rows),'valid_open_count':len(valid),'numeric_count':len(numeric),'probability_complete':complete,'ranked_scores':[r['score'] for r in ranked],'numeric_probabilities':numeric_probs,'numeric_total_top':total_rank,'numeric_total_probs':dict(total_weights),'all_changed_dates_present':all(bool(r['changedDate']) for r in rows)}
+ json_numeric_probs={f'{sc[0]}-{sc[1]}':p for sc,p in numeric_probs.items()}
+ return {'offer_id':off.get('id'),'row_count':len(rows),'valid_open_count':len(valid),'numeric_count':len(numeric),'probability_complete':complete,'ranked_scores':[r['score'] for r in ranked],'numeric_probabilities':json_numeric_probs,'numeric_total_top':total_rank,'numeric_total_probs':dict(total_weights),'all_changed_dates_present':all(bool(r['changedDate']) for r in rows)}
 
 def total_ladder(env):
  byline={}
@@ -133,6 +132,6 @@ def main():
   rows.append(item)
  settled=[r for r in rows if r['settled']];score=[r for r in settled if r.get('score_top1_hit') is not None];score_total=[r for r in settled if r.get('score_numeric_total_top1_hit') is not None];ladder=[r for r in settled if r.get('ladder_total_top1_hit') is not None]
  summary={'prediction_count':len(preds),'settled_count':len(settled),'availability':dict(availability),'score_rank_settled_count':len(score),'score_top1_hits':sum(r['score_top1_hit'] for r in score),'score_top1_accuracy':sum(r['score_top1_hit'] for r in score)/len(score) if score else None,'score_top3_hits':sum(r['score_top3_hit'] for r in score),'score_top3_accuracy':sum(r['score_top3_hit'] for r in score)/len(score) if score else None,'score_market_total_settled_count':len(score_total),'score_market_total_top1_accuracy':sum(r['score_numeric_total_top1_hit'] for r in score_total)/len(score_total) if score_total else None,'complete_ladder_settled_count':len(ladder),'ladder_total_top1_accuracy':sum(r['ladder_total_top1_hit'] for r in ladder)/len(ladder) if ladder else None,'ladder_total_top2_accuracy':sum(r['ladder_total_top2_hit'] for r in ladder)/len(ladder) if ladder else None,'ladder_total_mean_rps':sum(r['ladder_total_rps'] for r in ladder)/len(ladder) if ladder else None}
- payload={'schema_version':'V6.21.1-special-market-forward-eval-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','classification':'DERIVED_ONLY_FROM_IMMUTABLE_PREMATCH_RAW_AT_FROZEN_PREDICTION_TIME','summary':summary,'rows':rows,'errors':errors,'governance':{'network_refetch':False,'postmatch_odds_used':False,'exact_prediction_snapshot_binding':True,'raw_hash_and_observation_time_verified':True,'formal_weight':0,'current_rule_change':False,'probability_promotion':False}}
- OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2,default=str)+'\n',encoding='utf-8');print(json.dumps(summary,ensure_ascii=False,indent=2));return 0
+ payload={'schema_version':'V6.21.1-special-market-forward-eval-r2','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','classification':'DERIVED_ONLY_FROM_IMMUTABLE_PREMATCH_RAW_AT_FROZEN_PREDICTION_TIME','summary':summary,'rows':rows,'errors':errors,'governance':{'network_refetch':False,'postmatch_odds_used':False,'exact_prediction_snapshot_binding':True,'raw_hash_and_observation_time_verified':True,'formal_weight':0,'current_rule_change':False,'probability_promotion':False}}
+ OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps(summary,ensure_ascii=False,indent=2));return 0
 if __name__=='__main__':raise SystemExit(main())
