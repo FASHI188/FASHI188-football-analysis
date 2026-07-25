@@ -75,6 +75,23 @@ def canonical_line(obj: dict[str, Any]) -> bytes:
     return (json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def platform_day(value: Any) -> str:
+    """Normalize processed MatchRow ISO datetimes to the date-only contract used by V6.18.7.
+
+    V6.18.1c stores ``m.date.isoformat()``. For timezone-aware processed rows that is
+    e.g. ``2025-08-16T00:00:00+00:00`` whereas the alias qualification matcher accepts
+    ``YYYY-MM-DD``. Failing to normalize caused all exact mapped pairs to be rejected.
+    """
+    text = str(value).strip()
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    elif " " in text:
+        text = text.split(" ", 1)[0]
+    # Fail closed through the same parser used by the frozen alias matcher.
+    q187.parse_day(text)
+    return text
+
+
 def load_freeze():
     if not FREEZE_STATUS.exists() or not ALIAS_ASSET.exists():
         raise SystemExit("V6.18.8f freeze status/asset missing")
@@ -148,7 +165,14 @@ def main() -> int:
         examples = []
         for r in by_domain.get(cid, []):
             c["input"] += 1
-            pdate = str(r["date"])
+            raw_date = str(r["date"])
+            try:
+                pdate = platform_day(raw_date)
+            except Exception:
+                c["PLATFORM_DATE_INVALID"] += 1
+                if len(examples) < 20:
+                    examples.append({"season": r["season"], "date": raw_date, "home": r["home_team"], "away": r["away_team"], "reason": "PLATFORM_DATE_INVALID"})
+                continue
             ph0 = xg._understat_team_token(cid, str(r["home_team"]))
             pa0 = xg._understat_team_token(cid, str(r["away_team"]))
             ph = amap.get(ph0, ph0)
@@ -157,7 +181,7 @@ def main() -> int:
             c[reason] += 1
             if fixture is None:
                 if len(examples) < 20:
-                    examples.append({"season": r["season"], "date": pdate, "home": r["home_team"], "away": r["away_team"], "mapped": [ph, pa], "reason": reason})
+                    examples.append({"season": r["season"], "date": pdate, "raw_date": raw_date, "home": r["home_team"], "away": r["away_team"], "mapped": [ph, pa], "reason": reason})
                 continue
             udate = fixture["date"]
             hs = state_map.get((udate, ph))
@@ -186,7 +210,7 @@ def main() -> int:
         coverage[cid] = {**dict(sorted(c.items())), "attach_rate": rate}
         unresolved_examples[cid] = examples
         if rate < MIN_RATE:
-            raise SystemExit(f"feature-panel coverage below gate {cid}: {rate}")
+            raise SystemExit(f"feature-panel coverage below gate {cid}: {rate}; counts={dict(c)}; examples={examples[:3]}")
 
     total_input = sum(int(v["input"]) for v in coverage.values())
     total_attached = sum(int(v["attached"]) for v in coverage.values())
@@ -202,7 +226,7 @@ def main() -> int:
     PANEL.write_bytes(panel_bytes)
 
     receipt = {
-        "schema_version": "V6.18.9-understat-xg-prematch-feature-panel-freeze-r1",
+        "schema_version": "V6.18.9-understat-xg-prematch-feature-panel-freeze-r2-date-normalized",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
@@ -220,6 +244,13 @@ def main() -> int:
         "unresolved_examples": unresolved_examples,
         "labels_in_panel": False,
         "xg_model_research_feature_gate": "PASS",
+        "repair": {
+            "issue": "V6.18.1c stores timezone-aware ISO datetime strings while V6.18.7 exact matcher requires YYYY-MM-DD",
+            "fix": "normalize strict-PIT platform dates to date-only before exact mapped fixture matching",
+            "identity_contract_changed": False,
+            "alias_asset_changed": False,
+            "xg_state_algorithm_changed": False,
+        },
         "governance": {
             "research_only": True,
             "formal_weight": 0,
