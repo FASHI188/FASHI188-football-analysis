@@ -1,37 +1,49 @@
-name: Football V6.22.0 Correct-Score Surface Inventory
+name: Football V6.22.1 Unified Special-Market Projection Selftest
 on:
   push:
     branches: [main]
     paths:
-      - "football-data/validation/v6_correct_score_surface_inventory_v6220.py"
+      - "football-data/validation/v6_unified_special_market_projection_v6221.py"
+      - "football-data/validation/v6_unified_special_market_projection_selftest_v6221.py"
       - ".github/workflows/football-v6194-three-track-fast100.yml"
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: football-v6220-correct-score-inventory
+  group: football-v6221-unified-special-market-selftest
   cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Inventory frozen Correct-Score surfaces
+      - name: Run V6.22.1 on one real frozen Kambi snapshot
+        env:
+          PYTHONPATH: football-data/validation
+        shell: bash
         run: |
-          python -m py_compile football-data/validation/v6_correct_score_surface_inventory_v6220.py
-          python football-data/validation/v6_correct_score_surface_inventory_v6220.py
-      - name: Persist V6.22.0 inventory
+          set +e
+          python -m py_compile football-data/validation/v6_unified_special_market_projection_v6221.py football-data/validation/v6_unified_special_market_projection_selftest_v6221.py > /tmp/v6221.log 2>&1
+          code=$?
+          if [ "$code" = "0" ]; then python football-data/validation/v6_unified_special_market_projection_selftest_v6221.py >> /tmp/v6221.log 2>&1; code=$?; fi
+          cat /tmp/v6221.log
+          echo "exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist V6.22.1 receipt
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          p=football-data/manifests/v6_correct_score_surface_inventory_v6220_status.json
-          git add "$p"
+          p=football-data/manifests/v6_unified_special_market_projection_v6221_status.json
+          if [ -f "$p" ]; then git add "$p"; fi
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.22.0 Correct-Score surface inventory"
+            git commit -m "audit(football): persist V6.22.1 unified special-market selftest"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - name: Enforce pass
+        run: test "${exit_code:-2}" = "0"
