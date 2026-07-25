@@ -3,9 +3,15 @@
 
 Fast path: no legacy score-matrix replay. 1X2, total goals and exact score are separate
 prediction tracks. Total and score may consume the same raw pre-match evidence, but they
-never share fitted model state or probabilities. Hyperparameters are selected with
-2022/23+2023/24 -> 2024/25; the final 2025/26 test models are each refit independently
-on the two most recent completed seasons only: 2023/24+2024/25.
+never share fitted model state, probabilities, or model-selection objectives.
+
+Model selection:
+- total track: validation Total RPS -> LogLoss -> Top1;
+- score T_score layer: validation Total LogLoss -> RPS -> Top1;
+- score H|T layer: validation exact-score LogLoss -> Top1 -> Top3.
+
+Selection uses 2022/23+2023/24 -> 2024/25. Final 2025/26 test models are each refit
+independently on only the two most recent completed seasons: 2023/24+2024/25.
 """
 from __future__ import annotations
 import json, math, random, sys
@@ -85,12 +91,16 @@ def total_metrics(rows,get):
     for r in rows:
         p=get(r);y=r['actual_total'];order=sorted(range(8),key=lambda i:(-p[i],i));h1+=order[0]==y;h2+=y in order[:2];rr+=rps(p,y);ll+=-math.log(max(EPS,p[y]));modes[str(order[0])]+=1
     return {'count':n,'top1':h1/n,'top2':h2/n,'rps':rr/n,'logloss':ll/n,'mode_counts':dict(modes)}
-def select_total(train,valid,shot_names,comps,process):
+def select_total(train,valid,shot_names,comps,process,objective='rps'):
     board=[]
     for C in CS:
         for a in ALPHAS:
             m=fit_total(train,C,a,shot_names,comps,process);q=total_metrics(valid,lambda r,m=m:total_p(m,r,shot_names,comps,process));q.update({'C':C,'alpha':a});board.append(q)
-    sel=min(board,key=lambda x:(x['rps'],x['logloss'],-x['top1']));return board,sel
+    if objective=='score_total_logloss':
+        sel=min(board,key=lambda x:(x['logloss'],x['rps'],-x['top1']))
+    else:
+        sel=min(board,key=lambda x:(x['rps'],x['logloss'],-x['top1']))
+    return board,sel
 
 def fit_cond(rows,C,a,shot_names,comps,process):
     models={}
@@ -124,11 +134,11 @@ def select_cond(train,valid,score_total_model,shot_names,comps,process):
             cm,q7=fit_cond(train,C,a,shot_names,comps,process);q=score_metrics(valid,lambda r,cm=cm,q7=q7:score_p(r,score_total_model,cm,q7,shot_names,comps,process));q.update({'C':C,'alpha':a});board.append(q)
     sel=min(board,key=lambda x:(x['logloss'],-x['top1'],-x['top3']));return board,sel
 
-def choose_track_total(select_train,valid,shot_names,comps):
-    market_board,market_sel=select_total(select_train,valid,shot_names,comps,False)
-    proc_board,proc_sel=select_total(select_train,valid,shot_names,comps,True)
+def choose_track_total(select_train,valid,shot_names,comps,objective):
+    market_board,market_sel=select_total(select_train,valid,shot_names,comps,False,objective)
+    proc_board,proc_sel=select_total(select_train,valid,shot_names,comps,True,objective)
     proc_ok=proc_sel['rps']<=market_sel['rps'] and proc_sel['logloss']<=market_sel['logloss']
-    return {'market_board':market_board,'market_selected':market_sel,'process_board':proc_board,'process_selected':proc_sel,'process_allowed':proc_ok,'selected':proc_sel if proc_ok else market_sel,'use_process':proc_ok}
+    return {'objective':objective,'market_board':market_board,'market_selected':market_sel,'process_board':proc_board,'process_selected':proc_sel,'process_allowed':proc_ok,'selected':proc_sel if proc_ok else market_sel,'use_process':proc_ok}
 
 def one_metrics(rows):
     n=len(rows);hits=0;bands={.58:[0,0],.60:[0,0]}
@@ -140,11 +150,11 @@ def one_metrics(rows):
 
 def main():
     rows,shot_names=rows_fast();comps=sorted({r['competition_id'] for r in rows});select_train=[r for r in rows if r['season'] in {'2022/23','2023/24'}];valid=[r for r in rows if r['season']=='2024/25'];final_train=[r for r in rows if r['season'] in {'2023/24','2024/25'}];test=[r for r in rows if r['season']=='2025/26']
-    # Independent total-goals track selection/model.
-    total_choice=choose_track_total(select_train,valid,shot_names,comps);tc=total_choice['selected'];total_process=total_choice['use_process']
+    # Total-goals track: its own selection objective and fitted model.
+    total_choice=choose_track_total(select_train,valid,shot_names,comps,'rps');tc=total_choice['selected'];total_process=total_choice['use_process']
     total_model=fit_total(final_train,tc['C'],tc['alpha'],shot_names,comps,total_process)
-    # Independent score track selects and fits its OWN T_score model; no shared fitted state.
-    score_total_choice=choose_track_total(select_train,valid,shot_names,comps);stc=score_total_choice['selected'];score_process=score_total_choice['use_process']
+    # Exact-score track: its OWN T_score layer, selected under a different LogLoss-first objective.
+    score_total_choice=choose_track_total(select_train,valid,shot_names,comps,'score_total_logloss');stc=score_total_choice['selected'];score_process=score_total_choice['use_process']
     score_total_select_model=fit_total(select_train,stc['C'],stc['alpha'],shot_names,comps,score_process)
     conditional_board,conditional_selected=select_cond(select_train,valid,score_total_select_model,shot_names,comps,score_process)
     score_total_model=fit_total(final_train,stc['C'],stc['alpha'],shot_names,comps,score_process)
@@ -160,6 +170,6 @@ def main():
         rank=sorted(sp,key=lambda c:(-sp[c],c[0],c[1]));sr=[{'home_goals':h,'away_goals':a,'probability':sp[(h,a)]} for h,a in rank]
         g=audit_three_tracks(r['one'],tp,sr,score_model_passed=True);reasons.update(g['reasons']);top=rank[0];op=max(range(3),key=lambda i:r['one'][i]);agree1+=int((0 if top[0]>top[1] else 1 if top[0]==top[1] else 2)==op);agreet+=int(min(7,sum(top))==max(range(8),key=lambda i:tp[i]))
         if g['score_exact_allowed']:allowed+=1;ahit+=int(top==(r['home_goals'],r['away_goals']))
-    payload={'schema_version':'V6.20.5-pure-independent-three-track-fast100-r3','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_FIXED_SEED_2025_26_FAST100_RESEARCH','design':{'legacy_score_matrix_replay':False,'selection_train':['2022/23','2023/24'],'validation':'2024/25','final_train':['2023/24','2024/25'],'test':'2025/26 fixed-seed random100','features':['de-vigged 1X2','O/U2.5','strictly lagged shots/SOT/corners','competition'],'cross_track_probability_feedback':False,'shared_model_state_across_tracks':False,'score_has_own_total_layer':True},'rows':{'all':len(rows),'selection_train':len(select_train),'validation':len(valid),'final_train':len(final_train),'test_pool':len(test),'sample':100},'validation':{'total_track':total_choice,'score_total_track':score_total_choice,'score_conditional_board':conditional_board,'score_conditional_selected':conditional_selected},'fast100':{'one_x_two':one,'total':tot,'score':scr,'score_1_1_modes':scr['mode_counts'].get('1-1',0),'total_4plus_modes':sum(v for k,v in tot['mode_counts'].items() if int(k)>=4)},'conflict_gate':{'score_allowed_count':allowed,'coverage':allowed/100,'allowed_top1_accuracy':ahit/allowed if allowed else None,'reason_counts':dict(reasons),'score_result_agreement_1x2':agree1/100,'score_total_agreement':agreet/100},'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'test_used_for_selection':False,'missing_context_never_fabricated':True,'final_training_uses_two_most_recent_completed_seasons_only':True,'all_three_tracks_independent':True}}
+    payload={'schema_version':'V6.20.5-pure-independent-three-track-fast100-r4','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_FIXED_SEED_2025_26_FAST100_RESEARCH','design':{'legacy_score_matrix_replay':False,'selection_train':['2022/23','2023/24'],'validation':'2024/25','final_train':['2023/24','2024/25'],'test':'2025/26 fixed-seed random100','features':['de-vigged 1X2','O/U2.5','strictly lagged shots/SOT/corners','competition'],'cross_track_probability_feedback':False,'shared_model_state_across_tracks':False,'shared_model_selection_objective_across_total_and_score':False,'score_has_own_total_layer':True},'rows':{'all':len(rows),'selection_train':len(select_train),'validation':len(valid),'final_train':len(final_train),'test_pool':len(test),'sample':100},'validation':{'total_track':total_choice,'score_total_track':score_total_choice,'score_conditional_board':conditional_board,'score_conditional_selected':conditional_selected},'fast100':{'one_x_two':one,'total':tot,'score':scr,'score_1_1_modes':scr['mode_counts'].get('1-1',0),'total_4plus_modes':sum(v for k,v in tot['mode_counts'].items() if int(k)>=4)},'conflict_gate':{'score_allowed_count':allowed,'coverage':allowed/100,'allowed_top1_accuracy':ahit/allowed if allowed else None,'reason_counts':dict(reasons),'score_result_agreement_1x2':agree1/100,'score_total_agreement':agreet/100},'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'test_used_for_selection':False,'missing_context_never_fabricated':True,'final_training_uses_two_most_recent_completed_seasons_only':True,'all_three_tracks_independent':True}}
     OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps({'validation':payload['validation'],'fast100':payload['fast100'],'conflict_gate':payload['conflict_gate']},ensure_ascii=False,indent=2));return 0
 if __name__=='__main__':raise SystemExit(main())
