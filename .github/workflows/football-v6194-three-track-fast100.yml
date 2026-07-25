@@ -1,38 +1,67 @@
-name: Football V6.22.5 OO-EPC De-Vig Screen
+name: Football V6.22.4 Coherent Forward Diagnostic
 on:
   push:
     branches: [main]
     paths:
-      - "football-data/validation/v6_oo_epc_devig_screen_v6225.py"
+      - "football-data/validation/v6_coherent_special_market_forward_v6224.py"
+      - "football-data/validation/v6_coherent_special_market_projection_v6223.py"
       - ".github/workflows/football-v6194-three-track-fast100.yml"
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: football-v6225-oo-epc-screen
+  group: football-v6224-coherent-forward-diagnostic
   cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run fixed historical OO-EPC screen
+      - name: Run V6.22.4 and always write diagnostic
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
         shell: bash
         run: |
-          python -m py_compile football-data/validation/v6_oo_epc_devig_screen_v6225.py
-          python football-data/validation/v6_oo_epc_devig_screen_v6225.py
-      - name: Persist V6.22.5 receipt
+          set +e
+          : > /tmp/v6224.log
+          python -m py_compile football-data/validation/v6_unified_special_market_projection_v6221.py football-data/validation/v6_coherent_special_market_projection_v6223.py football-data/validation/v6_coherent_special_market_forward_v6224.py >> /tmp/v6224.log 2>&1
+          code=$?
+          if [ "$code" = "0" ]; then
+            python football-data/validation/v6_coherent_special_market_forward_v6224.py >> /tmp/v6224.log 2>&1
+            code=$?
+          fi
+          cat /tmp/v6224.log
+          echo "v6224_exit_code=$code" >> "$GITHUB_ENV"
+          V6224_EXIT_CODE="$code" python - <<'PY'
+          import json,os
+          from datetime import datetime,timezone
+          from pathlib import Path
+          log=Path('/tmp/v6224.log').read_text(encoding='utf-8',errors='replace')
+          p=Path('football-data/manifests/v6_coherent_special_market_forward_v6224_execution_status.json')
+          p.write_text(json.dumps({'schema_version':'V6.22.4-execution-diagnostic-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'exit_code':int(os.environ.get('V6224_EXIT_CODE','2')),'status_receipt_exists':Path('football-data/manifests/v6_coherent_special_market_forward_v6224_status.json').exists(),'log_tail':log[-20000:]},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          exit 0
+      - name: Persist V6.22.4 artifacts and diagnostic
+        if: always()
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          p=football-data/manifests/v6_oo_epc_devig_screen_v6225_status.json
-          git add "$p"
+          git add football-data/manifests/v6_coherent_special_market_forward_epoch_v6224.json || true
+          git add football-data/manifests/v6_coherent_special_market_forward_v6224_status.json || true
+          git add football-data/manifests/v6_coherent_special_market_forward_v6224_execution_status.json || true
+          git add football-data/forward/v6_coherent_special_market_freezes_v6224 || true
+          git add football-data/evidence/v6_coherent_special_market_results_v6224 || true
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.22.5 OO-EPC de-vig screen"
+            git commit -m "audit(football): persist V6.22.4 coherent forward diagnostic"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - name: Enforce pass
+        run: test "${v6224_exit_code:-2}" = "0"
