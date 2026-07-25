@@ -1,0 +1,52 @@
+name: Football V6.25.8 Pooled Dynamic Shot 2v3 Head
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/v6_total_pooled_dynamic_shot_23split_v6258.py"
+      - ".github/workflows/football-v6258-pooled-dynamic-shot-23split.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile challenger
+        run: python -m py_compile football-data/validation/v6_total_pooled_dynamic_shot_23split_v6258.py
+      - name: Run pooled strict-PIT dynamic shot 2v3 screen
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/v6_total_pooled_dynamic_shot_23split_v6258.py
+          code=$?
+          echo "validation_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist audit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_total_pooled_dynamic_shot_23split_v6258_status.json
+          test -f "$path"
+          git add "$path"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.25.8 pooled dynamic shot 2v3"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce execution pass
+        run: test "${validation_exit_code:-2}" = "0"
+
+# Research-only challenger; no CURRENT/runtime mutation.
