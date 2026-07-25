@@ -1,0 +1,106 @@
+name: Football V6.25.14 xG Random100 Stability
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/v6_total_xg_ordinal_resample_v62514.py"
+      - ".github/workflows/football-v62514-xg-random100.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python -m py_compile football-data/validation/v6_total_xg_ordinal_resample_v62514.py > /tmp/v62514_compile.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62514_compile.log
+          exit 0
+
+      - name: Run fixed-model random100 stability audit
+        id: run
+        if: steps.compile.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/v6_total_xg_ordinal_resample_v62514.py > /tmp/v62514_run.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62514_run.log
+          exit 0
+
+      - name: Persist failure receipt if needed
+        if: always()
+        shell: bash
+        env:
+          COMPILE_RC: ${{ steps.compile.outputs.exit_code }}
+          RUN_RC: ${{ steps.run.outputs.exit_code }}
+        run: |
+          path=football-data/manifests/v6_total_xg_ordinal_resample_v62514_status.json
+          if [ "$COMPILE_RC" != "0" ] || [ -z "$RUN_RC" ] || [ "$RUN_RC" != "0" ]; then
+            python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          path = Path('football-data/manifests/v6_total_xg_ordinal_resample_v62514_status.json')
+          compile_log = Path('/tmp/v62514_compile.log').read_text(encoding='utf-8', errors='replace') if Path('/tmp/v62514_compile.log').exists() else ''
+          run_log = Path('/tmp/v62514_run.log').read_text(encoding='utf-8', errors='replace') if Path('/tmp/v62514_run.log').exists() else ''
+          payload = {
+              'schema_version': 'V6.25.14-xg-ordinal-random100-stability-failure-r1',
+              'generated_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'status': 'FAIL',
+              'formal_current_version': 'V5.0.1',
+              'compile_exit_code': os.environ.get('COMPILE_RC', ''),
+              'run_exit_code': os.environ.get('RUN_RC', ''),
+              'compile_log_tail': compile_log[-6000:],
+              'run_log_tail': run_log[-16000:],
+              'governance': {'research_only': True, 'formal_weight': 0, 'current_rule_change': False},
+          }
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          fi
+
+      - name: Persist audit receipt
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_total_xg_ordinal_resample_v62514_status.json
+          test -f "$path"
+          git add "$path"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.25.14 xG random100 stability"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce audit success
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.compile.outputs.exit_code }}' = '0'
+          test '${{ steps.run.outputs.exit_code }}' = '0'
+
+# Evaluation only. No tuning and no formal V5.0.1 changes.
