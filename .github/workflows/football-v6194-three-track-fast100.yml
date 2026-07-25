@@ -1,0 +1,48 @@
+name: Football V6.19.4 Three-Track Fast100
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_three_track_fast100_v6194.py"
+      - ".github/workflows/football-v6194-three-track-fast100.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: football-v6194-three-track-fast100
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Fast100
+        run: python -m py_compile football-data/validation/v6_three_track_fast100_v6194.py
+      - name: Run fixed-seed three-track Fast100
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/v6_three_track_fast100_v6194.py
+          code=$?
+          echo "fast100_exit_code=$code" >> "$GITHUB_ENV"
+          exit 0
+      - name: Persist V6.19.4 receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=football-data/manifests/v6_three_track_fast100_v6194_status.json
+          if [ -f "$p" ]; then git add "$p"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.19.4 three-track Fast100"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce pass
+        run: test "${fast100_exit_code:-2}" = "0"
