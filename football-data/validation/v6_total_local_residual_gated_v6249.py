@@ -4,9 +4,9 @@
 Research only; formal_weight=0.
 
 V6.24.8 showed that feature-conditioned local residuals diversify the exact
- total mode but can over-correct. V6.24.9 keeps the same pre-match feature and
- nearest-neighbor construction, but chooses a log-factor shrinkage alpha per
- competition using only nested prior-season OOS folds.
+total mode but can over-correct. V6.24.9 keeps the same pre-match feature and
+nearest-neighbor construction, but chooses a log-factor shrinkage alpha per
+competition using only nested prior-season OOS folds.
 
 Candidate alpha grid is fixed ex ante:
     0.00, 0.10, 0.20, 0.35, 0.50, 0.75, 1.00
@@ -64,34 +64,54 @@ def _attenuate(factors: dict[str, float], alpha: float) -> dict[str, float]:
     return {key: math.exp(a * math.log(max(1e-12, float(value)))) for key, value in factors.items()}
 
 
-def _build_local_rows(
+def _prepare_local_factors(
     training_rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
-    alpha: float,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
+    """Compute nearest neighbors once; alpha candidates reuse the raw factors."""
     if not training_rows:
         raise PlatformError("no local residual training rows")
     means, sds = _standardizer(training_rows)
-    train = []
+    train: list[dict[str, Any]] = []
     for row in training_rows:
         item = dict(row)
         item["z"] = _z(item["feature"], means, sds)
         train.append(item)
     k = max(1, int(round(math.sqrt(len(train)))))
-    output: list[dict[str, Any]] = []
+    prepared: list[dict[str, Any]] = []
     for row in validation_rows:
         z = _z(row["feature"], means, sds)
         nearest = sorted(train, key=lambda tr: _distance(z, tr["z"]))[:k]
-        raw_factors = _local_factors(nearest)
-        factors = _attenuate(raw_factors, alpha)
+        prepared.append({"row": row, "raw_factors": _local_factors(nearest)})
+    return prepared, k
+
+
+def _rows_from_prepared(
+    prepared: list[dict[str, Any]],
+    k: int,
+    alpha: float,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for item in prepared:
+        row = item["row"]
+        factors = _attenuate(item["raw_factors"], alpha)
         output.append({
             **row,
             "baseline_matrix": row["matrix"],
-            "candidate_matrix": _calibrate_matrix(row["matrix"], factors),
+            "candidate_matrix": row["matrix"] if float(alpha) == 0.0 else _calibrate_matrix(row["matrix"], factors),
             "local_k": k,
             "alpha": float(alpha),
         })
     return output
+
+
+def _build_local_rows(
+    training_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+    alpha: float,
+) -> list[dict[str, Any]]:
+    prepared, k = _prepare_local_factors(training_rows, validation_rows)
+    return _rows_from_prepared(prepared, k, alpha)
 
 
 def _load_season_rows(cid: str, season: str, report: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -123,8 +143,9 @@ def _select_alpha(cid: str, target_fold: dict[str, Any], report: dict[str, Any],
             continue
         if not training_rows or not validation_rows:
             continue
+        prepared, k = _prepare_local_factors(training_rows, validation_rows)
         for alpha in ALPHAS:
-            rows = _build_local_rows(training_rows, validation_rows, alpha)
+            rows = _rows_from_prepared(prepared, k, alpha)
             metric = _score(rows, "candidate_matrix")
             n = int(metric["count"])
             rps = float(metric["total_goals_0_7plus"]["mean_rps"])
@@ -134,6 +155,7 @@ def _select_alpha(cid: str, target_fold: dict[str, Any], report: dict[str, Any],
                 "validation_season": validation_season,
                 "training_seasons": list(training_seasons),
                 "count": n,
+                "local_k": k,
                 "mean_total_rps": rps,
             })
 
@@ -152,6 +174,7 @@ def _select_alpha(cid: str, target_fold: dict[str, Any], report: dict[str, Any],
         "selected_mean_rps": best_rps,
         "selection_rule": "minimum pooled nested-OOS total RPS; tie -> smaller alpha",
         "alpha_scores": scores,
+        "neighbor_search_reused_across_alpha_grid": True,
     }
 
 
@@ -233,7 +256,7 @@ def main() -> int:
     sample_cand = _score(sampled, "candidate_matrix")
 
     payload = {
-        "schema_version": "V6.24.9-total-local-residual-nested-oos-gated-r1",
+        "schema_version": "V6.24.9-total-local-residual-nested-oos-gated-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
@@ -264,6 +287,7 @@ def main() -> int:
             "alpha_zero_exact_baseline_fallback": True,
             "training_predictions_strict_pit": True,
             "feature_values_pre_match_only": True,
+            "neighbor_search_reused_across_alpha_grid": True,
             "one_joint_matrix_only": True,
             "conditional_score_given_total_preserved": True,
             "historical_odds_used": False,
