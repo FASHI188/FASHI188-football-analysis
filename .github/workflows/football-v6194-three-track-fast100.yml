@@ -33,19 +33,35 @@ jobs:
         shell: bash
         run: |
           set +e
-          python football-data/validation/v6_pure_independent_three_track_fast100_v6205.py
+          python football-data/validation/v6_pure_independent_three_track_fast100_v6205.py > /tmp/v6205.log 2>&1
           code=$?
+          cat /tmp/v6205.log
           echo "fast100_exit_code=$code" >> "$GITHUB_ENV"
+          FAST100_EXIT_CODE="$code" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          log = Path('/tmp/v6205.log').read_text(encoding='utf-8', errors='replace')
+          payload = {
+              'schema_version': 'V6.20.5-execution-diagnostic-r1',
+              'exit_code': int(os.environ.get('FAST100_EXIT_CODE','2')),
+              'model_receipt_exists': Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_status.json').exists(),
+              'log_tail': log[-12000:],
+          }
+          Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_execution_status.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+          PY
           exit 0
-      - name: Persist V6.20.5 receipt
+      - name: Persist V6.20.5 receipts and diagnostic
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          p=football-data/manifests/v6_pure_independent_three_track_fast100_v6205_status.json
-          if [ -f "$p" ]; then git add "$p"; fi
+          for p in \
+            football-data/manifests/v6_pure_independent_three_track_fast100_v6205_status.json \
+            football-data/manifests/v6_pure_independent_three_track_fast100_v6205_execution_status.json; do
+            if [ -f "$p" ]; then git add "$p"; fi
+          done
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.20.5 pure-independent Fast100"
+            git commit -m "audit(football): persist V6.20.5 execution result"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
