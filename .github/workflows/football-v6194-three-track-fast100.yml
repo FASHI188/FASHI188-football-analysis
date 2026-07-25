@@ -21,20 +21,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install sklearn
-        run: python -m pip install --quiet scikit-learn
-      - name: Compile Fast100
-        run: |
-          python -m py_compile football-data/engine/three_track_conflict_gate_v6202.py
-          python -m py_compile football-data/validation/v6_pure_independent_three_track_fast100_v6205.py
-      - name: Run pure-independent Fast100
+      - name: Run and always write diagnostic
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         shell: bash
         run: |
           set +e
-          python football-data/validation/v6_pure_independent_three_track_fast100_v6205.py > /tmp/v6205.log 2>&1
+          : > /tmp/v6205.log
+          python -m pip install --quiet scikit-learn >> /tmp/v6205.log 2>&1
           code=$?
+          if [ "$code" = "0" ]; then
+            python -m py_compile football-data/engine/three_track_conflict_gate_v6202.py >> /tmp/v6205.log 2>&1
+            code=$?
+          fi
+          if [ "$code" = "0" ]; then
+            python -m py_compile football-data/validation/v6_pure_independent_three_track_fast100_v6205.py >> /tmp/v6205.log 2>&1
+            code=$?
+          fi
+          if [ "$code" = "0" ]; then
+            python football-data/validation/v6_pure_independent_three_track_fast100_v6205.py >> /tmp/v6205.log 2>&1
+            code=$?
+          fi
           cat /tmp/v6205.log
           echo "fast100_exit_code=$code" >> "$GITHUB_ENV"
           FAST100_EXIT_CODE="$code" python - <<'PY'
@@ -42,15 +49,18 @@ jobs:
           from pathlib import Path
           log = Path('/tmp/v6205.log').read_text(encoding='utf-8', errors='replace')
           payload = {
-              'schema_version': 'V6.20.5-execution-diagnostic-r1',
+              'schema_version': 'V6.20.5-execution-diagnostic-r2',
               'exit_code': int(os.environ.get('FAST100_EXIT_CODE','2')),
               'model_receipt_exists': Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_status.json').exists(),
-              'log_tail': log[-12000:],
+              'log_tail': log[-16000:],
           }
-          Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_execution_status.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+          out = Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_execution_status.json')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(payload, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
           PY
           exit 0
       - name: Persist V6.20.5 receipts and diagnostic
+        if: always()
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
