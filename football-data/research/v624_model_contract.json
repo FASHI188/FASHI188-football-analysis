@@ -1,0 +1,86 @@
+{
+  "schema_version": "V6.24-research-architecture-contract-r1",
+  "classification": "RESEARCH_ONLY_FORMAL_WEIGHT_0_NOT_TESTED",
+  "formal_current_version": "V5.0.1",
+  "formal_weight": 0,
+  "testing_requested": false,
+  "workflow_attached": false,
+  "current_rule_change": false,
+  "runtime_probability_change": false,
+  "automatic_promotion": false,
+  "tracks": {
+    "team_state": {
+      "module": "football-data/research/v6242_commensurate_state.py",
+      "purpose": "replace fixed half-life/Hedge adaptation with stable-vs-break Bayesian borrowing",
+      "required_frozen_inputs": [
+        "previous state mean and variance",
+        "current PIT observation mean and variance",
+        "stable drift variance",
+        "break drift variance",
+        "prior stable probability"
+      ],
+      "forbidden_fallbacks": [
+        "global default regime probability",
+        "post-match state update before prediction",
+        "same-day result leakage",
+        "test-set parameter selection"
+      ]
+    },
+    "direct_total_goals": {
+      "module": "football-data/research/v6240_total_shot_quality.py",
+      "purpose": "predict P(T=0..7+) through shot quantity x shot quality rather than a single expected-goals mean",
+      "team_process": {
+        "shot_quantity": "Conway-Maxwell-Poisson",
+        "shot_quality": "Beta latent conversion distribution",
+        "goals_given_shots": "Beta-Binomial predictive distribution",
+        "match_total": "convolution of home and away goal marginals into 0..7+"
+      },
+      "required_frozen_inputs_per_team": [
+        "CMP shot intensity",
+        "CMP shot dispersion",
+        "shot-quality Beta alpha",
+        "shot-quality Beta beta"
+      ],
+      "forbidden_fallbacks": [
+        "manual expected-goals value",
+        "league-wide dispersion substituted for missing team dispersion",
+        "score-track-derived total distribution",
+        "fabricated 7+ tail split"
+      ]
+    },
+    "conditional_exact_score": {
+      "module": "football-data/research/v6241_score_sarmanov.py",
+      "purpose": "allocate score probability conditional on the independent total-goals track with flexible home-away dependence",
+      "structure": {
+        "prior": "Sarmanov joint from home and away goal marginals",
+        "dependence_parameter": "rho supplied by a PIT/OOS estimator",
+        "total_constraint": "exact diagonal projection to independent P(T=0..7+)",
+        "audit": "probability conservation, non-negativity, total-marginal residual"
+      },
+      "required_frozen_inputs": [
+        "home goal marginal",
+        "away goal marginal",
+        "direct total-goals 0..7+ distribution",
+        "Sarmanov rho"
+      ],
+      "forbidden_fallbacks": [
+        "hand-picked 1-1 correction",
+        "hand-picked 2-1 correction",
+        "unbounded dependence parameter",
+        "score model overwriting the direct total track"
+      ]
+    }
+  },
+  "future_optional_market_constraints": {
+    "correct_score_market": "may constrain observed score cells only after a separately frozen, timestamped and price-complete market contract exists",
+    "multi_line_totals": "may project the direct total prior only from observed synchronized market constraints",
+    "status": "NOT_WIRED_IN_THIS_MODEL_EDIT"
+  },
+  "parameter_policy": {
+    "embedded_fitted_parameters": false,
+    "manual_probability_fill": false,
+    "missing_parameter_behavior": "FAIL_CLOSED",
+    "future_fit_requirement": "strict chronological PIT/OOS only"
+  },
+  "note": "Architecture edited only. No compile, replay, backtest, forward prediction, metric calculation or promotion decision is part of this change."
+}
