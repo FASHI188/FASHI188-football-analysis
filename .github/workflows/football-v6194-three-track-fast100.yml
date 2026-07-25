@@ -23,6 +23,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Persist STARTED heartbeat
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_coherent_special_market_forward_v6224_heartbeat.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          p.write_text(json.dumps({'schema_version':'V6.22.4-heartbeat-r1','status':'STARTED','started_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat()},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_coherent_special_market_forward_v6224_heartbeat.json
+          git commit -m "audit(football): V6.22.4 coherent forward started"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Refresh after heartbeat push
+        run: git pull --rebase origin main
       - name: Run V6.22.4 and always write diagnostic
         env:
           PYTHONPATH: football-data/engine:football-data/validation
@@ -44,7 +63,7 @@ jobs:
           from pathlib import Path
           log=Path('/tmp/v6224.log').read_text(encoding='utf-8',errors='replace')
           p=Path('football-data/manifests/v6_coherent_special_market_forward_v6224_execution_status.json')
-          p.write_text(json.dumps({'schema_version':'V6.22.4-execution-diagnostic-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'exit_code':int(os.environ.get('V6224_EXIT_CODE','2')),'status_receipt_exists':Path('football-data/manifests/v6_coherent_special_market_forward_v6224_status.json').exists(),'log_tail':log[-20000:]},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          p.write_text(json.dumps({'schema_version':'V6.22.4-execution-diagnostic-r2','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'exit_code':int(os.environ.get('V6224_EXIT_CODE','2')),'status_receipt_exists':Path('football-data/manifests/v6_coherent_special_market_forward_v6224_status.json').exists(),'log_tail':log[-20000:]},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
           exit 0
       - name: Persist V6.22.4 artifacts and diagnostic
