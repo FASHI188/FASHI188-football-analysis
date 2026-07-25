@@ -7,6 +7,7 @@ on:
     paths:
       - "football-data/validation/v6_market_first_result_resolver_v651.py"
       - "football-data/validation/v6_correct_score_market_forward_eval_v6215.py"
+      - "football-data/validation/v6_team_total_mode_sum_forward_eval_v6217.py"
       - "football-data/config/team_aliases.json"
       - ".github/workflows/football-v6-market-first-result-resolver-v651.yml"
 permissions:
@@ -26,16 +27,19 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile market-first official result resolver and Correct-Score scorer
+      - name: Compile official result resolver and independent score/total scorers
         run: |
           python -m py_compile football-data/validation/v6_market_first_forward_v651.py
           python -m py_compile football-data/validation/v6_pristine_forward_result_resolver_v612.py
           python -m py_compile football-data/validation/v6_market_first_result_resolver_v651.py
           python -m py_compile football-data/validation/v6_correct_score_market_forward_eval_v6215.py
+          python -m py_compile football-data/validation/v6_team_total_mode_sum_forward_eval_v6217.py
       - name: Resolve eligible market-first results
         run: python football-data/validation/v6_market_first_result_resolver_v651.py
       - name: Score only pre-existing V6.21.5 Correct-Score predictions
         run: python football-data/validation/v6_correct_score_market_forward_eval_v6215.py
+      - name: Score only pre-existing V6.21.7 Team-Total exact-total predictions
+        run: python football-data/validation/v6_team_total_mode_sum_forward_eval_v6217.py
       - name: Persist result receipts, immutable ledger and evaluations
         if: always()
         env:
@@ -48,8 +52,9 @@ jobs:
             --allow-prefix football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
             --allow-prefix football-data/manifests/v6_market_first_result_resolver_v651_status.json \
             --allow-prefix football-data/manifests/v6_correct_score_market_forward_v6215_status.json \
-            --message-prefix "audit(football): persist V6.5.1 settlements plus V6.21.5 score evaluation"
-      - name: Enforce official settlement and no-score-backfill contracts
+            --allow-prefix football-data/manifests/v6_team_total_mode_sum_forward_v6217_status.json \
+            --message-prefix "audit(football): persist V6.5.1 settlements plus V6.21.5 score and V6.21.7 total evaluations"
+      - name: Enforce official settlement and no-backfill score/total contracts
         if: always()
         run: |
           python - <<'PY'
@@ -58,18 +63,20 @@ jobs:
           p=Path('football-data/manifests/v6_market_first_result_resolver_v651_status.json')
           e=Path('football-data/manifests/v6_market_first_forward_evaluation_v651_status.json')
           s=Path('football-data/manifests/v6_correct_score_market_forward_v6215_status.json')
-          if not p.exists() or not e.exists() or not s.exists(): raise SystemExit('settlement receipts missing')
-          x=json.loads(p.read_text()); y=json.loads(e.read_text()); z=json.loads(s.read_text())
-          if x.get('status') not in {'PASS','WARN_UNRESOLVED_ELIGIBLE_RESULTS'} or y.get('status')!='PASS' or z.get('status')!='PASS': raise SystemExit(str({'resolver':x,'market':y,'score':z}))
-          g=x.get('governance') or {};zg=z.get('governance') or {}
+          t=Path('football-data/manifests/v6_team_total_mode_sum_forward_v6217_status.json')
+          if not p.exists() or not e.exists() or not s.exists() or not t.exists(): raise SystemExit('settlement receipts missing')
+          x=json.loads(p.read_text()); y=json.loads(e.read_text()); z=json.loads(s.read_text()); q=json.loads(t.read_text())
+          if x.get('status') not in {'PASS','WARN_UNRESOLVED_ELIGIBLE_RESULTS'} or y.get('status')!='PASS' or z.get('status')!='PASS' or q.get('status')!='PASS': raise SystemExit(str({'resolver':x,'market':y,'score':z,'total':q}))
+          g=x.get('governance') or {}; zg=z.get('governance') or {}; qg=q.get('governance') or {}
           if g.get('existing_market_predictions_only') is not True or g.get('prediction_generation') is not False: raise SystemExit('market prediction immutability missing')
           if g.get('processed_training_repository_used_for_settlement') is not False or g.get('espn_public_scoreboard_primary') is not True or g.get('result_receipt_hash_frozen_into_settlement') is not True: raise SystemExit('official result-source contract missing')
           if zg.get('settlement_only') is not True or zg.get('prediction_generation') is not False or zg.get('prediction_mutation') is not False or zg.get('no_backfill') is not True: raise SystemExit('Correct-Score no-backfill contract missing')
-          print(json.dumps({'resolver':x.get('status'),'market_settled':x.get('settled_count'),'score_predictions':z.get('prediction_count'),'score_settled':z.get('settled_count'),'score_top1':z.get('top1_accuracy'),'score_top3':z.get('top3_accuracy')},ensure_ascii=False))
+          if qg.get('settlement_only') is not True or qg.get('prediction_generation') is not False or qg.get('prediction_mutation') is not False or qg.get('no_backfill') is not True or qg.get('score_track_used') is not False or qg.get('tail_split') is not False: raise SystemExit('Team-Total no-backfill contract missing')
+          print(json.dumps({'resolver':x.get('status'),'market_settled':x.get('settled_count'),'score_predictions':z.get('prediction_count'),'score_settled':z.get('settled_count'),'score_top1':z.get('top1_accuracy'),'total_predictions':q.get('prediction_count'),'total_settled':q.get('settled_count'),'total_accuracy':q.get('accuracy')},ensure_ascii=False))
           PY
       - name: Refresh system issue registry
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-system-issue-registry-v690.yml --ref main
-# Result resolver cannot create market or Correct-Score predictions; all predictions must pre-exist outcomes.
+# Result resolver cannot create market, Correct-Score or Team-Total predictions; all predictions must pre-exist outcomes.
