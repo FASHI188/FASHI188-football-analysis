@@ -1,0 +1,37 @@
+name: Football V6.19.2 Independent 1X2 Forward Eval
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/forward/v6_market_first_events_v651.json"
+      - "football-data/manifests/v6_1x2_independent_primary_prospective_freeze_v6192_status.json"
+      - "football-data/validation/v6_1x2_independent_primary_forward_eval_v6192.py"
+      - ".github/workflows/football-v6192-independent-1x2-forward-eval.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: football-v6192-independent-1x2-forward-eval
+  cancel-in-progress: true
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/v6_1x2_independent_primary_forward_eval_v6192.py
+      - run: python football-data/validation/v6_1x2_independent_primary_forward_eval_v6192.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=football-data/manifests/v6_1x2_independent_primary_forward_eval_v6192_status.json
+          if [ -f "$p" ]; then git add "$p"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.19.2 independent 1X2 forward evaluation"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
