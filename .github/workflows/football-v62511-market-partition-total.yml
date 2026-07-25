@@ -22,12 +22,70 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile challenger
-        run: python -m py_compile football-data/validation/v6_total_market_partition_dynamic_shot_v62511.py
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python -m py_compile football-data/validation/v6_total_market_partition_dynamic_shot_v62511.py > /tmp/v62511_compile.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62511_compile.log
+          exit 0
       - name: Run V6.25.11 market-partition challenger
+        id: run
+        if: steps.compile.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/v6_total_market_partition_dynamic_shot_v62511.py
+        run: |
+          set +e
+          python football-data/validation/v6_total_market_partition_dynamic_shot_v62511.py > /tmp/v62511_run.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62511_run.log
+          exit 0
+      - name: Build failure receipt when needed
+        if: always()
+        shell: bash
+        run: |
+          path=football-data/manifests/v6_total_market_partition_dynamic_shot_v62511_status.json
+          compile_rc='${{ steps.compile.outputs.exit_code }}'
+          run_rc='${{ steps.run.outputs.exit_code }}'
+          if [ "$compile_rc" != "0" ] || [ -z "$run_rc" ] || [ "$run_rc" != "0" ]; then
+            python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          path = Path('football-data/manifests/v6_total_market_partition_dynamic_shot_v62511_status.json')
+          compile_log = Path('/tmp/v62511_compile.log').read_text(encoding='utf-8', errors='replace') if Path('/tmp/v62511_compile.log').exists() else ''
+          run_log = Path('/tmp/v62511_run.log').read_text(encoding='utf-8', errors='replace') if Path('/tmp/v62511_run.log').exists() else ''
+          payload = {
+              'schema_version': 'V6.25.11-market-partition-dynamic-shot-failure-r1',
+              'generated_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'status': 'FAIL',
+              'formal_current_version': 'V5.0.1',
+              'classification': 'RESEARCH_CHALLENGER_FAILURE_RECEIPT_FORMAL_WEIGHT_0',
+              'compile_exit_code': os.environ.get('COMPILE_RC', ''),
+              'run_exit_code': os.environ.get('RUN_RC', ''),
+              'compile_log_tail': compile_log[-6000:],
+              'run_log_tail': run_log[-12000:],
+              'governance': {
+                  'formal_weight': 0,
+                  'current_rule_change': False,
+                  'runtime_probability_change': False,
+              },
+          }
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          fi
+        env:
+          COMPILE_RC: ${{ steps.compile.outputs.exit_code }}
+          RUN_RC: ${{ steps.run.outputs.exit_code }}
       - name: Persist audit receipt
+        if: always()
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -40,6 +98,12 @@ jobs:
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - name: Enforce challenger success
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.compile.outputs.exit_code }}' = '0'
+          test '${{ steps.run.outputs.exit_code }}' = '0'
 
 # Retrospective market research only; formal V5.0.1 is unchanged.
-# Retrigger marker: 2026-07-25T23:14+08:00; no model/statistical change.
+# Audit contract: every triggered run must persist either PASS/PARTIAL metrics or a FAIL receipt.
