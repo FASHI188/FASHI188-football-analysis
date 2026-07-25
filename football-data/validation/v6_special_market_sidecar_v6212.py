@@ -53,7 +53,7 @@ def main():
    if str(env.get('payload_sha256'))!=str(sa.get('parent_raw_response_sha256')):raise ValueError('parent raw hash mismatch')
    cs=sp.correct_score_surface(env);tl=sp.total_ladder(env);bt=sp.btts(env);tt=team_totals(env)
    if cs:counts['correct_score_rank']+=1
-   if cs and cs.get('probability_complete'):counts['correct_score_complete_probability']+=1
+   if cs and cs.get('offer_price_complete'):counts['correct_score_offer_price_complete']+=1
    if tl and tl.get('line_count'):counts['total_ladder']+=1
    if tl and tl.get('complete_0_7plus'):counts['complete_total_distribution']+=1
    if bt:counts['btts']+=1
@@ -64,9 +64,9 @@ def main():
     if dest.read_text(encoding='utf-8')!=text:raise FileExistsError(f'immutable sidecar collision: {dest.name}')
     identical+=1
    else:dest.write_text(text,encoding='utf-8');written+=1
-   rows.append({'source':str(p.relative_to(ROOT)),'sidecar':str(dest.relative_to(ROOT)),'correct_score':bool(cs),'score_probability_complete':bool(cs and cs.get('probability_complete')),'total_lines':int((tl or {}).get('line_count') or 0),'total_complete':bool(tl and tl.get('complete_0_7plus')),'btts':bool(bt),'team_total_teams':len(tt)})
+   rows.append({'source':str(p.relative_to(ROOT)),'sidecar':str(dest.relative_to(ROOT)),'correct_score':bool(cs),'score_offer_price_complete':bool(cs and cs.get('offer_price_complete')),'score_probability_exhaustive':bool(cs and cs.get('probability_exhaustive')),'total_lines':int((tl or {}).get('line_count') or 0),'total_complete':bool(tl and tl.get('complete_0_7plus')),'btts':bool(bt),'team_total_teams':len(tt)})
   except Exception as e:errors.append({'source':str(p.relative_to(ROOT)),'error':f'{type(e).__name__}: {e}'})
  status='PASS' if not errors else 'WARN_ERRORS'
- receipt={'schema_version':'V6.21.2-special-market-sidecar-status-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':status,'source_snapshot_count':len(files),'sidecar_written':written,'sidecar_identical_existing':identical,'surface_counts':dict(counts),'error_count':len(errors),'errors':errors[:50],'rows':rows,'governance':{'immutable_sidecars':True,'network_refetch':False,'formal_weight':0,'current_rule_change':False,'missing_surface_fabrication':False}}
+ receipt={'schema_version':'V6.21.2-special-market-sidecar-status-r2','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':status,'source_snapshot_count':len(files),'sidecar_written':written,'sidecar_identical_existing':identical,'surface_counts':dict(counts),'error_count':len(errors),'errors':errors[:50],'rows':rows,'governance':{'immutable_sidecars':True,'network_refetch':False,'formal_weight':0,'current_rule_change':False,'missing_surface_fabrication':False,'correct_score_offer_price_complete_is_not_probability_exhaustive':True}}
  OUT.write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps({'status':status,'source_snapshot_count':len(files),'written':written,'identical':identical,'surface_counts':dict(counts),'errors':len(errors)},ensure_ascii=False,indent=2));return 0 if not errors else 2
 if __name__=='__main__':raise SystemExit(main())
