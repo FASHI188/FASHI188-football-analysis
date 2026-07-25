@@ -10,6 +10,7 @@ on:
       - "football-data/validation/v6_market_first_forward_readiness_v651.py"
       - "football-data/validation/v6_market_first_forward_inventory_v652.py"
       - "football-data/validation/v6_correct_score_market_forward_v6215.py"
+      - "football-data/validation/v6_team_total_mode_sum_forward_v6217.py"
       - ".github/workflows/football-v6-market-first-forward-v651.yml"
       - "football-data/evidence/markets_prospective/**"
 permissions:
@@ -29,20 +30,27 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile market-first epoch, Correct-Score forward challenger and diagnostics
+      - name: Compile market-first epoch and independent score/total challengers
         run: |
           python -m py_compile football-data/validation/v6_market_first_forward_v651.py
           python -m py_compile football-data/validation/v6_market_first_forward_v652.py
           python -m py_compile football-data/validation/v6_market_first_forward_readiness_v651.py
           python -m py_compile football-data/validation/v6_market_first_forward_inventory_v652.py
           python -m py_compile football-data/validation/v6_special_market_forward_eval_v6211.py
+          python -m py_compile football-data/validation/v6_team_total_market_forward_eval_v6213.py
+          python -m py_compile football-data/validation/v6_team_total_mode_sum_forward_eval_v6216.py
           python -m py_compile football-data/validation/v6_correct_score_market_forward_v6215.py
+          python -m py_compile football-data/validation/v6_team_total_mode_sum_forward_v6217.py
       - name: Freeze new market-first predictions with legacy settlement disabled
         run: python football-data/validation/v6_market_first_forward_v652.py
       - name: Freeze post-epoch Correct-Score market rankings with no backfill
         env:
           PYTHONPATH: football-data/validation
         run: python football-data/validation/v6_correct_score_market_forward_v6215.py
+      - name: Freeze post-epoch Team-Total exact-total point rankings with no backfill
+        env:
+          PYTHONPATH: football-data/validation
+        run: python football-data/validation/v6_team_total_mode_sum_forward_v6217.py
       - name: Explain post-freeze evidence readiness without changing the epoch
         run: python football-data/validation/v6_market_first_forward_readiness_v651.py
       - name: Audit frozen prediction coverage before outcomes
@@ -62,8 +70,11 @@ jobs:
             --allow-prefix football-data/manifests/v6_correct_score_market_forward_freeze_v6215.json \
             --allow-prefix football-data/forward/v6_correct_score_market_predictions_v6215.json \
             --allow-prefix football-data/manifests/v6_correct_score_market_forward_v6215_status.json \
-            --message-prefix "audit(football): persist market-first plus V6.21.5 Correct-Score epoch"
-      - name: Enforce integrity, frozen-window and no-backfill Correct-Score semantics
+            --allow-prefix football-data/manifests/v6_team_total_mode_sum_forward_freeze_v6217.json \
+            --allow-prefix football-data/forward/v6_team_total_mode_sum_predictions_v6217.json \
+            --allow-prefix football-data/manifests/v6_team_total_mode_sum_forward_v6217_status.json \
+            --message-prefix "audit(football): persist market-first plus V6.21.5 score and V6.21.7 total epochs"
+      - name: Enforce integrity and no-backfill score/total semantics
         if: always()
         run: |
           python - <<'PY'
@@ -76,17 +87,23 @@ jobs:
           i=Path('football-data/manifests/v6_market_first_forward_inventory_v652_status.json')
           sf=Path('football-data/manifests/v6_correct_score_market_forward_freeze_v6215.json')
           sp=Path('football-data/manifests/v6_correct_score_market_forward_v6215_status.json')
-          if not all(x.exists() for x in (f,l,p,r,i,sf,sp)): raise SystemExit('forward outputs missing')
-          x=json.loads(p.read_text()); y=json.loads(r.read_text()); z=json.loads(i.read_text()); q=json.loads(sf.read_text()); qs=json.loads(sp.read_text())
-          if x.get('status')!='PASS' or z.get('status')!='PASS' or qs.get('status')!='PASS': raise SystemExit(str({'market':x,'inventory':z,'score':qs}))
+          tf=Path('football-data/manifests/v6_team_total_mode_sum_forward_freeze_v6217.json')
+          tp=Path('football-data/manifests/v6_team_total_mode_sum_forward_v6217_status.json')
+          if not all(x.exists() for x in (f,l,p,r,i,sf,sp,tf,tp)): raise SystemExit('forward outputs missing')
+          x=json.loads(p.read_text()); y=json.loads(r.read_text()); z=json.loads(i.read_text())
+          q=json.loads(sf.read_text()); qs=json.loads(sp.read_text()); t=json.loads(tf.read_text()); ts=json.loads(tp.read_text())
+          if x.get('status')!='PASS' or z.get('status')!='PASS' or qs.get('status')!='PASS' or ts.get('status')!='PASS': raise SystemExit(str({'market':x,'inventory':z,'score':qs,'total':ts}))
           if q.get('status')!='PASS_FROZEN_NO_BACKFILL' or (q.get('governance') or {}).get('no_backfill') is not True: raise SystemExit('Correct-Score freeze contract missing')
-          if (qs.get('governance') or {}).get('prediction_mutation') is not False or (qs.get('governance') or {}).get('formal_weight')!=0: raise SystemExit('Correct-Score governance missing')
+          if t.get('status')!='PASS_FROZEN_NO_BACKFILL' or (t.get('governance') or {}).get('no_backfill') is not True: raise SystemExit('Team-Total freeze contract missing')
+          qg=qs.get('governance') or {}; tg=ts.get('governance') or {}
+          if qg.get('prediction_mutation') is not False or qg.get('formal_weight')!=0: raise SystemExit('Correct-Score governance missing')
+          if tg.get('prediction_mutation') is not False or tg.get('formal_weight')!=0 or tg.get('score_track_used') is not False or tg.get('tail_split') is not False: raise SystemExit('Team-Total governance missing')
           if y.get('status') not in {'PASS','WARN_NO_ELIGIBLE_POST_FREEZE_MARKET_MATCHES'}: raise SystemExit(str(y))
-          print(json.dumps({'market_predictions':x.get('prediction_count'),'score_freeze':q.get('freeze_at_utc'),'score_predictions':qs.get('prediction_count'),'score_settled':qs.get('settled_count'),'score_top1':qs.get('top1_accuracy'),'score_top3':qs.get('top3_accuracy')},ensure_ascii=False))
+          print(json.dumps({'market_predictions':x.get('prediction_count'),'score_freeze':q.get('freeze_at_utc'),'score_predictions':qs.get('prediction_count'),'total_freeze':t.get('freeze_at_utc'),'total_predictions':ts.get('prediction_count'),'score_settled':qs.get('settled_count'),'total_settled':ts.get('settled_count')},ensure_ascii=False))
           PY
       - name: Refresh V6.9 system registry after market-first epoch
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-system-issue-registry-v690.yml --ref main
-# V6.21.5 is a ranking challenger only; V5.0.1 and V6.5.1 probability rules remain unchanged.
+# V6.21.5 and V6.21.7 are research ranking challengers only; V5.0.1 and V6.5.1 probability rules remain unchanged.
