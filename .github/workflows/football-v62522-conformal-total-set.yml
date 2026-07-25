@@ -1,0 +1,96 @@
+name: Football V6.25.22 Conformal Total Set
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_total_conformal_prediction_set_v62522.py"
+      - ".github/workflows/football-v62522-conformal-total-set.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile diagnostic
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python -m py_compile football-data/validation/v6_total_conformal_prediction_set_v62522.py > /tmp/v62522_compile.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62522_compile.log
+          exit 0
+      - name: Run conformal total-goal set diagnostic
+        id: run
+        if: steps.compile.outputs.exit_code == '0'
+        continue-on-error: true
+        shell: bash
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set +e
+          python football-data/validation/v6_total_conformal_prediction_set_v62522.py > /tmp/v62522_run.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          cat /tmp/v62522_run.log
+          exit 0
+      - name: Persist failure receipt if needed
+        if: always()
+        shell: bash
+        env:
+          COMPILE_RC: ${{ steps.compile.outputs.exit_code }}
+          RUN_RC: ${{ steps.run.outputs.exit_code }}
+        run: |
+          path=football-data/manifests/v6_total_conformal_prediction_set_v62522_status.json
+          if [ "$COMPILE_RC" != "0" ] || [ -z "$RUN_RC" ] || [ "$RUN_RC" != "0" ]; then
+            python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_total_conformal_prediction_set_v62522_status.json')
+          cl=Path('/tmp/v62522_compile.log').read_text(encoding='utf-8',errors='replace') if Path('/tmp/v62522_compile.log').exists() else ''
+          rl=Path('/tmp/v62522_run.log').read_text(encoding='utf-8',errors='replace') if Path('/tmp/v62522_run.log').exists() else ''
+          p.parent.mkdir(parents=True,exist_ok=True)
+          p.write_text(json.dumps({
+            'schema_version':'V6.25.22-conformal-total-set-failure-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'FAIL','formal_current_version':'V5.0.1',
+            'compile_exit_code':os.environ.get('COMPILE_RC',''),'run_exit_code':os.environ.get('RUN_RC',''),
+            'compile_log_tail':cl[-6000:],'run_log_tail':rl[-16000:],
+            'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False}
+          },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          fi
+      - name: Persist receipt
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_total_conformal_prediction_set_v62522_status.json
+          test -f "$path"
+          git add "$path"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.25.22 conformal total sets"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Enforce success
+        if: always()
+        shell: bash
+        run: |
+          test '${{ steps.compile.outputs.exit_code }}' = '0'
+          test '${{ steps.run.outputs.exit_code }}' = '0'
+
+# Diagnostic only; exact Top-1 and formal V5.0.1 are unchanged.
