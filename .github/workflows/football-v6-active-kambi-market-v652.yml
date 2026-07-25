@@ -8,6 +8,8 @@ on:
       - "football-data/validation/v6_active_kambi_market_capture_v652.py"
       - "football-data/validation/v6_active_kambi_market_capture_v653.py"
       - "football-data/validation/v6_active_kambi_identity_audit_v652.py"
+      - "football-data/validation/v6_special_market_sidecar_v6212.py"
+      - "football-data/validation/v6_special_market_forward_eval_v6211.py"
       - "football-data/validation/persist_generated_worktree_batch_v652.py"
       - "football-data/config/v6_active_kambi_team_aliases_v652.json"
       - "football-data/config/team_aliases.json"
@@ -30,16 +32,20 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile active-league market capture, identity audit and batch persistence
+      - name: Compile active market capture, special-market sidecar, identity audit and batch persistence
         run: |
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v652.py
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v653.py
           python -m py_compile football-data/validation/v6_active_kambi_identity_audit_v652.py
+          python -m py_compile football-data/validation/v6_special_market_forward_eval_v6211.py
+          python -m py_compile football-data/validation/v6_special_market_sidecar_v6212.py
           python -m py_compile football-data/validation/persist_generated_worktree_batch_v652.py
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/prospective_market_snapshot_v523.py
       - name: Capture current Kambi events within 96 hours using audited provider aliases
         run: python football-data/validation/v6_active_kambi_market_capture_v653.py
+      - name: Derive immutable Correct-Score Total BTTS and Team-Total sidecars
+        run: python football-data/validation/v6_special_market_sidecar_v6212.py
       - name: Build read-only current-team identity diagnostic
         run: python football-data/validation/v6_active_kambi_identity_audit_v652.py
       - name: Persist all generated Active-Kambi artifacts in one atomic commit
@@ -51,10 +57,12 @@ jobs:
           python football-data/validation/persist_generated_worktree_batch_v652.py \
             --allow-prefix football-data/evidence/direct_provider_probes/kambi/active_leagues/ \
             --allow-prefix football-data/evidence/markets_prospective/ \
+            --allow-prefix football-data/evidence/markets_special_prospective/ \
             --allow-prefix football-data/manifests/v6_active_kambi_market_capture_v652_status.json \
             --allow-prefix football-data/manifests/v6_active_kambi_identity_audit_v652_status.json \
-            --message "data(football): persist V6.5.3 Active-Kambi PIT batch"
-      - name: Enforce active-market and identity-alias contracts
+            --allow-prefix football-data/manifests/v6_special_market_sidecar_v6212_status.json \
+            --message "data(football): persist Active-Kambi PIT plus V6.21.2 special markets"
+      - name: Enforce active-market identity and special-market contracts
         if: always()
         run: |
           python - <<'PY'
@@ -62,8 +70,9 @@ jobs:
           from pathlib import Path
           p=Path('football-data/manifests/v6_active_kambi_market_capture_v652_status.json')
           a=Path('football-data/manifests/v6_active_kambi_identity_audit_v652_status.json')
-          if not p.exists() or not a.exists(): raise SystemExit('V6.5.3 active Kambi receipts missing')
-          x=json.loads(p.read_text()); y=json.loads(a.read_text())
+          s=Path('football-data/manifests/v6_special_market_sidecar_v6212_status.json')
+          if not p.exists() or not a.exists() or not s.exists(): raise SystemExit('active Kambi receipts missing')
+          x=json.loads(p.read_text()); y=json.loads(a.read_text()); z=json.loads(s.read_text())
           if x.get('status') not in {'PASS_ACTIVE_KAMBI_PIT','WARN_PARTIAL_IDENTITY','WARN_NO_VALID_ACTIVE_SNAPSHOTS'}: raise SystemExit(str(x))
           if not str(x.get('schema_version') or '').startswith('V6.5.3-'): raise SystemExit(str({'schema_version':x.get('schema_version')}))
           alias=x.get('identity_alias_contract') or {}
@@ -76,7 +85,9 @@ jobs:
           if g.get('capture_window_does_not_change_v651_prediction_window') is not True or g.get('v651_prediction_window_hours')!=[1,72]: raise SystemExit('V6.5.1 frozen window changed')
           yg=y.get('governance') or {}
           if y.get('status')!='PASS' or yg.get('read_only') is not True or yg.get('automatic_alias_application') is not False or yg.get('fuzzy_resolution_allowed') is not False: raise SystemExit('identity diagnostic governance missing')
-          print(json.dumps({'status':x.get('status'),'groups':x.get('target_group_event_counts'),'lead_buckets':x.get('lead_bucket_counts'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'identity_unresolved':x.get('identity_unresolved_count'),'market_fail':x.get('detail_or_market_fail_count'),'alias_bound_snapshots':x.get('alias_bound_snapshot_count'),'alias_contract':alias,'unresolved_names':x.get('unresolved_source_names')},ensure_ascii=False))
+          zg=z.get('governance') or {}
+          if z.get('status') not in {'PASS','WARN_ERRORS'} or zg.get('immutable_sidecars') is not True or zg.get('network_refetch') is not False or zg.get('missing_surface_fabrication') is not False: raise SystemExit('special-market sidecar governance missing')
+          print(json.dumps({'active_status':x.get('status'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'special_status':z.get('status'),'special_source_snapshots':z.get('source_snapshot_count'),'special_surface_counts':z.get('surface_counts'),'special_errors':z.get('error_count')},ensure_ascii=False))
           PY
       - name: Dispatch V6.5.1 market-first forward epoch
         if: success()
@@ -88,6 +99,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-full-market-ladder-v680.yml --ref main
-# High-cardinality evidence is persisted as one Git commit per capture run; force push is forbidden.
-# GITHUB_TOKEN evidence commits do not recursively trigger downstream workflows, so V6.5.1 and V6.8.0 are dispatched explicitly.
-# V6.5.1 retains its frozen 1-72h prediction gate and cannot auto-promote. Similarity suggestions remain diagnostic-only.
+# Special markets are evidence sidecars only; V5.0.1 and V6.5.1 probabilities remain unchanged.
