@@ -1,16 +1,16 @@
-name: Football V6.22.1 Unified Special-Market Projection Selftest
+name: Football V6.22.2 Soft-KL Unified Special-Market Selftest
 on:
   push:
     branches: [main]
     paths:
-      - "football-data/validation/v6_unified_special_market_projection_v6221.py"
-      - "football-data/validation/v6_unified_special_market_projection_selftest_v6221.py"
+      - "football-data/validation/v6_unified_special_market_soft_projection_v6222.py"
+      - "football-data/validation/v6_unified_special_market_soft_projection_selftest_v6222.py"
       - ".github/workflows/football-v6194-three-track-fast100.yml"
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: football-v6221-unified-special-market-selftest
+  group: football-v6222-soft-unified-selftest
   cancel-in-progress: true
 jobs:
   validate:
@@ -21,27 +21,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run V6.22.1 on one real frozen Kambi snapshot
+      - name: Install numerical optimizer
+        run: python -m pip install --quiet numpy scipy
+      - name: Run V6.22.2 on one real frozen Kambi snapshot
         env:
           PYTHONPATH: football-data/validation
         shell: bash
         run: |
           set +e
-          python -m py_compile football-data/validation/v6_unified_special_market_projection_v6221.py football-data/validation/v6_unified_special_market_projection_selftest_v6221.py > /tmp/v6221.log 2>&1
+          python -m py_compile football-data/validation/v6_unified_special_market_soft_projection_v6222.py football-data/validation/v6_unified_special_market_soft_projection_selftest_v6222.py > /tmp/v6222.log 2>&1
           code=$?
-          if [ "$code" = "0" ]; then python football-data/validation/v6_unified_special_market_projection_selftest_v6221.py >> /tmp/v6221.log 2>&1; code=$?; fi
-          cat /tmp/v6221.log
+          if [ "$code" = "0" ]; then python football-data/validation/v6_unified_special_market_soft_projection_selftest_v6222.py >> /tmp/v6222.log 2>&1; code=$?; fi
+          cat /tmp/v6222.log
           echo "exit_code=$code" >> "$GITHUB_ENV"
           exit 0
-      - name: Persist V6.22.1 receipt
+      - name: Persist V6.22.2 receipt
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          p=football-data/manifests/v6_unified_special_market_projection_v6221_status.json
+          p=football-data/manifests/v6_unified_special_market_soft_projection_v6222_status.json
           if [ -f "$p" ]; then git add "$p"; fi
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.22.1 unified special-market selftest"
+            git commit -m "audit(football): persist V6.22.2 soft-KL unified selftest"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
