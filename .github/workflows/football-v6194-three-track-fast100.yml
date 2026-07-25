@@ -21,6 +21,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Persist STARTED heartbeat
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_heartbeat.json')
+          p.parent.mkdir(parents=True,exist_ok=True)
+          p.write_text(json.dumps({'schema_version':'V6.20.5-heartbeat-r1','status':'STARTED','started_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat()},indent=2)+'\n',encoding='utf-8')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_pure_independent_three_track_fast100_v6205_heartbeat.json
+          git commit -m "audit(football): V6.20.5 Fast100 started"
+          git pull --rebase origin main
+          git push origin HEAD:main
+      - name: Refresh after heartbeat push
+        run: git pull --rebase origin main
       - name: Run and always write diagnostic
         env:
           PYTHONPATH: football-data/engine:football-data/validation
@@ -46,10 +65,12 @@ jobs:
           echo "fast100_exit_code=$code" >> "$GITHUB_ENV"
           FAST100_EXIT_CODE="$code" python - <<'PY'
           import json, os
+          from datetime import datetime, timezone
           from pathlib import Path
           log = Path('/tmp/v6205.log').read_text(encoding='utf-8', errors='replace')
           payload = {
-              'schema_version': 'V6.20.5-execution-diagnostic-r2',
+              'schema_version': 'V6.20.5-execution-diagnostic-r3',
+              'generated_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'exit_code': int(os.environ.get('FAST100_EXIT_CODE','2')),
               'model_receipt_exists': Path('football-data/manifests/v6_pure_independent_three_track_fast100_v6205_status.json').exists(),
               'log_tail': log[-16000:],
