@@ -1,11 +1,15 @@
-name: Football V6.17 Formal-Prior Multiline Forward
+name: Football V6.17 + V6.22.4 Formal-Prior Market Forward
 on:
   push:
     branches: [main]
     paths:
       - "football-data/validation/v6170_formalprior_multiline_forward.py"
+      - "football-data/validation/v6_coherent_special_market_projection_v6223.py"
+      - "football-data/validation/v6_unified_special_market_projection_v6221.py"
+      - "football-data/validation/v6_coherent_special_market_forward_v6224.py"
       - ".github/workflows/football-v6170-formalprior-multiline-forward.yml"
       - "football-data/forward/v6_multiline_research_freezes_v6853/**"
+      - "football-data/forward/v6170_formalprior_multiline_freezes/**"
   workflow_dispatch:
   schedule:
     - cron: "37 * * * *"
@@ -14,7 +18,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,11 +26,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m py_compile football-data/validation/v6170_formalprior_multiline_forward.py
-      - env:
+      - name: Compile V6.17 and V6.22.4 forward chain
+        run: |
+          python -m py_compile football-data/validation/v6170_formalprior_multiline_forward.py
+          python -m py_compile football-data/validation/v6_unified_special_market_projection_v6221.py
+          python -m py_compile football-data/validation/v6_coherent_special_market_projection_v6223.py
+          python -m py_compile football-data/validation/v6_coherent_special_market_forward_v6224.py
+      - name: Refresh V6.17 formal-prior multiline freezes
+        env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6170_formalprior_multiline_forward.py
-      - shell: bash
+      - name: Freeze/settle V6.22.4 coherent special-market matrices
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_coherent_special_market_forward_v6224.py
+      - name: Persist both prospective chains
+        if: always()
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -34,8 +50,29 @@ jobs:
           git add football-data/manifests/v6170_formalprior_multiline_forward_status.json || true
           git add football-data/forward/v6170_formalprior_multiline_freezes || true
           git add football-data/evidence/v6170_formalprior_multiline_results || true
+          git add football-data/manifests/v6_coherent_special_market_forward_epoch_v6224.json || true
+          git add football-data/manifests/v6_coherent_special_market_forward_v6224_status.json || true
+          git add football-data/forward/v6_coherent_special_market_freezes_v6224 || true
+          git add football-data/evidence/v6_coherent_special_market_results_v6224 || true
           if ! git diff --cached --quiet; then
-            git commit -m "audit(football): persist V6.17 formal-prior multiline forward sidecar"
+            git commit -m "audit(football): persist V6.17 plus V6.22.4 coherent market forward"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - name: Enforce V6.22.4 no-backfill/governance receipt
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_coherent_special_market_forward_v6224_status.json')
+          e=Path('football-data/manifests/v6_coherent_special_market_forward_epoch_v6224.json')
+          if not p.exists() or not e.exists(): raise SystemExit('V6.22.4 receipts missing')
+          x=json.loads(p.read_text()); q=json.loads(e.read_text())
+          if x.get('status')!='PASS' or q.get('status')!='FROZEN': raise SystemExit(str({'status':x,'epoch':q}))
+          g=x.get('governance') or {}; eg=q.get('governance') or {}
+          if g.get('real_v501_formal_prior') is not True or g.get('exact_hash_bound_frozen_kambi_snapshot') is not True: raise SystemExit('real formal-prior/evidence binding missing')
+          if g.get('new_sidecar_no_started_event_backfill') is not True or g.get('postmatch_reprojection_forbidden') is not True: raise SystemExit('V6.22.4 no-backfill contract missing')
+          if g.get('formal_probability_change') is not False or eg.get('formal_probability_change') is not False: raise SystemExit('formal mutation prohibited')
+          print(json.dumps({'freeze_count':x.get('freeze_count'),'settled':x.get('settled_count'),'open':x.get('open_count'),'freeze_scan':x.get('freeze_scan'),'admission':x.get('admission_summary'),'arms':x.get('arms'),'delta':x.get('coherent_minus_multiline')},ensure_ascii=False))
+          PY
