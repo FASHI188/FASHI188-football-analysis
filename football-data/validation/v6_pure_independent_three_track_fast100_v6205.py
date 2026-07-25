@@ -2,8 +2,9 @@
 """V6.20.5 pure-independent three-track Fast100.
 
 Fast path: no legacy score-matrix replay. Total and score are trained directly from
-strictly lagged process features plus raw de-vigged market features. Train 2022/23+
-2023/24, select on 2024/25, evaluate fixed-seed random100 from 2025/26.
+strictly lagged process features plus raw de-vigged market features. Hyperparameters
+are selected with 2022/23+2023/24 -> 2024/25; the final 2025/26 test model is then
+refit on the two most recent completed seasons only: 2023/24+2024/25.
 """
 from __future__ import annotations
 import json, math, random, sys
@@ -84,22 +85,19 @@ def total_metrics(rows,get):
     for r in rows:
         p=get(r);y=r['actual_total'];order=sorted(range(8),key=lambda i:(-p[i],i));h1+=order[0]==y;h2+=y in order[:2];rr+=rps(p,y);ll+=-math.log(max(EPS,p[y]));modes[str(order[0])]+=1
     return {'count':n,'top1':h1/n,'top2':h2/n,'rps':rr/n,'logloss':ll/n,'mode_counts':dict(modes)}
-
 def select_total(train,valid,shot_names,comps,process):
     board=[]
     for C in CS:
         for a in ALPHAS:
             m=fit_total(train,C,a,shot_names,comps,process);q=total_metrics(valid,lambda r,m=m:total_p(m,r,shot_names,comps,process));q.update({'C':C,'alpha':a});board.append(q)
-    sel=min(board,key=lambda x:(x['rps'],x['logloss'],-x['top1']))
-    return board,sel
+    sel=min(board,key=lambda x:(x['rps'],x['logloss'],-x['top1']));return board,sel
 
 def fit_cond(rows,C,a,shot_names,comps,process):
     models={}
     for t in range(1,7):
         sub=[r for r in rows if r['home_goals']+r['away_goals']==t];y=[r['home_goals'] for r in sub]
         if len(sub)>=80 and len(set(y))>1:models[t]=fit_lr([feat(r,shot_names,comps,process) for r in sub],y,C,a)
-    cells=[(h,a0) for h in range(9) for a0 in range(9) if 7<=h+a0<=10];cc=Counter((r['home_goals'],r['away_goals']) for r in rows if r['home_goals']+r['away_goals']>=7);z=sum(cc[c]+0.25 for c in cells);q7={c:(cc[c]+0.25)/z for c in cells}
-    return models,q7
+    cells=[(h,a0) for h in range(9) for a0 in range(9) if 7<=h+a0<=10];cc=Counter((r['home_goals'],r['away_goals']) for r in rows if r['home_goals']+r['away_goals']>=7);z=sum(cc[c]+0.25 for c in cells);q7={c:(cc[c]+0.25)/z for c in cells};return models,q7
 
 def score_p(r,tm,cm,q7,shot_names,comps,process):
     pt=total_p(tm,r,shot_names,comps,process);out={(0,0):pt[0]};X=[feat(r,shot_names,comps,process)]
@@ -114,7 +112,6 @@ def score_p(r,tm,cm,q7,shot_names,comps,process):
             for h,v in enumerate(q):out[(h,t-h)]=pt[t]*v/s
     for c,v in q7.items():out[c]=pt[7]*v
     s=sum(out.values());return {k:v/s for k,v in out.items()}
-
 def score_metrics(rows,get):
     n=len(rows);h1=h3=0;ll=0.0;modes=Counter()
     for r in rows:
@@ -136,18 +133,16 @@ def one_metrics(rows):
     return {'count':n,'accuracy':hits/n,'p58':{'count':bands[.58][0],'accuracy':bands[.58][1]/bands[.58][0] if bands[.58][0] else None},'p60':{'count':bands[.60][0],'accuracy':bands[.60][1]/bands[.60][0] if bands[.60][0] else None}}
 
 def main():
-    rows,shot_names=rows_fast();comps=sorted({r['competition_id'] for r in rows});train=[r for r in rows if r['season'] in {'2022/23','2023/24'}];valid=[r for r in rows if r['season']=='2024/25'];test=[r for r in rows if r['season']=='2025/26']
-    mb,ms=select_total(train,valid,shot_names,comps,False);pb,ps=select_total(train,valid,shot_names,comps,True)
-    # Only allow process features if proper scores do not worsen versus market-only validation champion.
+    rows,shot_names=rows_fast();comps=sorted({r['competition_id'] for r in rows});select_train=[r for r in rows if r['season'] in {'2022/23','2023/24'}];valid=[r for r in rows if r['season']=='2024/25'];final_train=[r for r in rows if r['season'] in {'2023/24','2024/25'}];test=[r for r in rows if r['season']=='2025/26']
+    mb,ms=select_total(select_train,valid,shot_names,comps,False);pb,ps=select_total(select_train,valid,shot_names,comps,True)
     process_total_ok=ps['rps']<=ms['rps'] and ps['logloss']<=ms['logloss'];chosen_t=ps if process_total_ok else ms;chosen_process=process_total_ok
-    tm_train=fit_total(train,chosen_t['C'],chosen_t['alpha'],shot_names,comps,chosen_process)
-    cb,cs=select_cond(train,valid,tm_train,shot_names,comps,chosen_process);chosen_c=cs
-    tm=fit_total(train+valid,chosen_t['C'],chosen_t['alpha'],shot_names,comps,chosen_process);cm,q7=fit_cond(train+valid,chosen_c['C'],chosen_c['alpha'],shot_names,comps,chosen_process)
+    tm_select=fit_total(select_train,chosen_t['C'],chosen_t['alpha'],shot_names,comps,chosen_process);cb,cs=select_cond(select_train,valid,tm_select,shot_names,comps,chosen_process);chosen_c=cs
+    tm=fit_total(final_train,chosen_t['C'],chosen_t['alpha'],shot_names,comps,chosen_process);cm,q7=fit_cond(final_train,chosen_c['C'],chosen_c['alpha'],shot_names,comps,chosen_process)
     sample=random.Random(SEED).sample(test,100);one=one_metrics(sample);tot=total_metrics(sample,lambda r:total_p(tm,r,shot_names,comps,chosen_process));scr=score_metrics(sample,lambda r:score_p(r,tm,cm,q7,shot_names,comps,chosen_process))
     reasons=Counter();allowed=ahit=0;agree1=agreet=0
     for r in sample:
-        tp=total_p(tm,r,shot_names,comps,chosen_process);sp=score_p(r,tm,cm,q7,shot_names,comps,chosen_process);rank=sorted(sp,key=lambda c:(-sp[c],c[0],c[1]));sr=[{'home_goals':h,'away_goals':a,'probability':sp[(h,a)]} for h,a in rank];g=audit_three_tracks(r['one'],tp,sr,score_model_passed=True);reasons.update(g['reasons']);top=rank[0];op=max(range(3),key=lambda i:r['one'][i]);agree1+=int((0 if top[0]>top[1] else 1 if top[0]==top[1] else 2)==op);agreet+=int(min(7,sum(top))==max(range(8),key=lambda i:tp[i]));
+        tp=total_p(tm,r,shot_names,comps,chosen_process);sp=score_p(r,tm,cm,q7,shot_names,comps,chosen_process);rank=sorted(sp,key=lambda c:(-sp[c],c[0],c[1]));sr=[{'home_goals':h,'away_goals':a,'probability':sp[(h,a)]} for h,a in rank];g=audit_three_tracks(r['one'],tp,sr,score_model_passed=True);reasons.update(g['reasons']);top=rank[0];op=max(range(3),key=lambda i:r['one'][i]);agree1+=int((0 if top[0]>top[1] else 1 if top[0]==top[1] else 2)==op);agreet+=int(min(7,sum(top))==max(range(8),key=lambda i:tp[i]))
         if g['score_exact_allowed']:allowed+=1;ahit+=int(top==(r['home_goals'],r['away_goals']))
-    payload={'schema_version':'V6.20.5-pure-independent-three-track-fast100-r1','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_FIXED_SEED_2025_26_FAST100_RESEARCH','design':{'legacy_score_matrix_replay':False,'train':['2022/23','2023/24'],'validation':'2024/25','test':'2025/26 fixed-seed random100','features':['de-vigged 1X2','O/U2.5','strictly lagged shots/SOT/corners','competition'],'cross_track_probability_feedback':False},'rows':{'all':len(rows),'train':len(train),'validation':len(valid),'test_pool':len(test),'sample':100},'validation':{'market_total_selected':ms,'process_total_selected':ps,'process_total_allowed':process_total_ok,'conditional_selected':chosen_c},'fast100':{'one_x_two':one,'total':tot,'score':scr,'score_1_1_modes':scr['mode_counts'].get('1-1',0),'total_4plus_modes':sum(v for k,v in tot['mode_counts'].items() if int(k)>=4)},'conflict_gate':{'score_allowed_count':allowed,'coverage':allowed/100,'allowed_top1_accuracy':ahit/allowed if allowed else None,'reason_counts':dict(reasons),'score_result_agreement_1x2':agree1/100,'score_total_agreement':agreet/100},'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'test_used_for_selection':False,'missing_context_never_fabricated':True}}
+    payload={'schema_version':'V6.20.5-pure-independent-three-track-fast100-r2','generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),'status':'PASS','formal_current_version':'V5.0.1','classification':'RETROSPECTIVE_FIXED_SEED_2025_26_FAST100_RESEARCH','design':{'legacy_score_matrix_replay':False,'selection_train':['2022/23','2023/24'],'validation':'2024/25','final_train':['2023/24','2024/25'],'test':'2025/26 fixed-seed random100','features':['de-vigged 1X2','O/U2.5','strictly lagged shots/SOT/corners','competition'],'cross_track_probability_feedback':False},'rows':{'all':len(rows),'selection_train':len(select_train),'validation':len(valid),'final_train':len(final_train),'test_pool':len(test),'sample':100},'validation':{'market_total_selected':ms,'process_total_selected':ps,'process_total_allowed':process_total_ok,'conditional_selected':chosen_c},'fast100':{'one_x_two':one,'total':tot,'score':scr,'score_1_1_modes':scr['mode_counts'].get('1-1',0),'total_4plus_modes':sum(v for k,v in tot['mode_counts'].items() if int(k)>=4)},'conflict_gate':{'score_allowed_count':allowed,'coverage':allowed/100,'allowed_top1_accuracy':ahit/allowed if allowed else None,'reason_counts':dict(reasons),'score_result_agreement_1x2':agree1/100,'score_total_agreement':agreet/100},'governance':{'research_only':True,'formal_weight':0,'current_rule_change':False,'test_used_for_selection':False,'missing_context_never_fabricated':True,'final_training_uses_two_most_recent_completed_seasons_only':True}}
     OUT.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps({'validation':payload['validation'],'fast100':payload['fast100'],'conflict_gate':payload['conflict_gate']},ensure_ascii=False,indent=2));return 0
 if __name__=='__main__':raise SystemExit(main())
