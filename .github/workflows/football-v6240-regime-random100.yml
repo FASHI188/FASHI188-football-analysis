@@ -1,0 +1,57 @@
+name: Football V6.24.0 Regime Random100
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/validation/v6_team_regime_state_challenger_v6240.py"
+      - "football-data/engine/v624_regime_ledger.py"
+      - "football-data/engine/v624_regime_state_adapter.py"
+      - "football-data/validation/v6_team_regime_state_runner_v6240.py"
+      - "football-data/validation/v6_team_regime_state_random100_v6240.py"
+      - ".github/workflows/football-v6240-regime-random100.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6240-regime-random100
+  cancel-in-progress: false
+
+jobs:
+  random100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile V6.24.0 regime chain
+        run: |
+          python -m py_compile football-data/validation/v6_team_regime_state_challenger_v6240.py
+          python -m py_compile football-data/engine/v624_regime_ledger.py
+          python -m py_compile football-data/engine/v624_regime_state_adapter.py
+          python -m py_compile football-data/validation/v6_team_regime_state_runner_v6240.py
+          python -m py_compile football-data/validation/v6_team_regime_state_random100_v6240.py
+      - name: Run fixed-seed random100 strict-PIT replay
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_team_regime_state_random100_v6240.py
+      - name: Persist audit receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_team_regime_state_random100_v6240_status.json
+          test -f "$path"
+          git add "$path"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.24.0 regime random100"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+# Research-only validation: formal_weight=0; no CURRENT/runtime mutation.
