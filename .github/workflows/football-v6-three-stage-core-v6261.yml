@@ -7,7 +7,9 @@ on:
     paths:
       - 'football-data/config/v6260_three_stage_core_registry.json'
       - 'football-data/engine/three_stage_core_v6260.py'
+      - 'football-data/engine/cross_season_hedge_state_v6262.py'
       - 'football-data/validation/validate_three_stage_core_v6261.py'
+      - 'football-data/validation/validate_cross_season_state_v6262.py'
       - '.github/workflows/football-v6-three-stage-core-v6261.yml'
 
 permissions:
@@ -16,7 +18,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -26,29 +28,43 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile new core and validator
+      - name: Compile rebuilt core, state source, and validators
         run: |
           python -m py_compile \
             football-data/engine/three_stage_core_v6260.py \
-            football-data/validation/validate_three_stage_core_v6261.py
+            football-data/engine/cross_season_hedge_state_v6262.py \
+            football-data/validation/validate_three_stage_core_v6261.py \
+            football-data/validation/validate_cross_season_state_v6262.py
+
+      - name: Audit cross-season state mechanics
+        run: |
+          python football-data/validation/validate_cross_season_state_v6262.py
 
       - name: Run three-stage strict-PIT structural validation
         run: |
           python football-data/validation/validate_three_stage_core_v6261.py
 
-      - name: Persist immutable research receipt
+      - name: Persist research receipts
         if: always()
         run: |
-          if [ ! -f football-data/manifests/v6_three_stage_core_v6261_status.json ]; then
-            echo 'validation receipt missing' >&2
-            exit 1
-          fi
+          missing=0
+          for f in \
+            football-data/manifests/v6_cross_season_state_v6262_status.json \
+            football-data/manifests/v6_three_stage_core_v6261_status.json; do
+            if [ ! -f "$f" ]; then
+              echo "validation receipt missing: $f" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then exit 1; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add football-data/manifests/v6_three_stage_core_v6261_status.json
+          git add \
+            football-data/manifests/v6_cross_season_state_v6262_status.json \
+            football-data/manifests/v6_three_stage_core_v6261_status.json
           if git diff --cached --quiet; then
-            echo 'receipt unchanged'
+            echo 'receipts unchanged'
             exit 0
           fi
-          git commit -m 'audit(football): persist V6.26 three-stage core validation'
+          git commit -m 'audit(football): persist V6.26 rebuild validation receipts'
           git push
