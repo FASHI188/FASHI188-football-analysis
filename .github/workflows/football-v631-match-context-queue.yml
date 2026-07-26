@@ -6,43 +6,113 @@ on:
     branches: [main]
     paths:
       - 'football-data/config/v6_match_team_context_contract_v631.json'
-      - 'football-data/forward/v6_match_team_context_events_v631.json'
       - 'football-data/validation/v6_seed_match_team_context_v6311.py'
       - 'football-data/validation/v6_match_team_context_queue_v6311.py'
       - '.github/workflows/football-v631-match-context-queue.yml'
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
   queue:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout PR branch
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - name: Compile
+
+      - name: Compile validators
         run: |
           python -m py_compile \
-            football-data/validation/v6_seed_match_team_context_v631.py \
-            football-data/validation/v6_seed_match_team_context_v6311.py \
             football-data/validation/v6_match_team_context_queue_v631.py \
             football-data/validation/v6_match_team_context_queue_v6311.py
-      - name: Seed compact future contexts from repository PIT snapshots
-        run: python football-data/validation/v6_seed_match_team_context_v6311.py
-      - name: Validate seeded ledger and rebuild unresolved queue
+
+      - name: Restore pre-kickoff frozen artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf /tmp/v6311-frozen
+          mkdir -p /tmp/v6311-frozen
+          gh api repos/${{ github.repository }}/actions/artifacts/8631954218/zip > /tmp/v6311-frozen.zip
+          unzip -q /tmp/v6311-frozen.zip -d /tmp/v6311-frozen
+          echo '12f1d236d30844bc8e0c16175c6cea6fd1af10b10e445d9996a8a0fb78fe94bc  /tmp/v6311-frozen/forward/v6_match_team_context_events_v631.json' | sha256sum -c -
+          echo '2a9e535158bedf73e86b0a8496a7b5676855f903651d64bff265ab89e4f5a1d9  /tmp/v6311-frozen/manifests/v6_seed_match_team_context_v6311_status.json' | sha256sum -c -
+          echo '0cdfea8f394c844f63b6d8c68844cc124fd3c9557f0033d68282b22068390474  /tmp/v6311-frozen/manifests/v6_match_team_context_queue_v631_status.json' | sha256sum -c -
+          cp /tmp/v6311-frozen/forward/v6_match_team_context_events_v631.json football-data/forward/v6_match_team_context_events_v631.json
+          cp /tmp/v6311-frozen/manifests/v6_seed_match_team_context_v6311_status.json football-data/manifests/v6_seed_match_team_context_v6311_status.json
+          cp /tmp/v6311-frozen/manifests/v6_match_team_context_queue_v631_status.json football-data/manifests/v6_match_team_context_queue_v631_freeze_20260726T122807Z.json
+
+      - name: Write external artifact provenance receipt
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          root=Path('football-data')
+          def sha(p):
+              h=hashlib.sha256(); h.update(Path(p).read_bytes()); return h.hexdigest()
+          payload={
+            'schema_version':'V6.31.1-pre-kickoff-artifact-import-receipt-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'PASS',
+            'formal_current_version':'V5.0.1',
+            'source_workflow_run_id':30202100655,
+            'source_artifact_id':8631954218,
+            'source_artifact_name':'v6311-match-context-seeded',
+            'source_artifact_created_at_utc':'2026-07-26T12:28:08Z',
+            'source_artifact_digest':'sha256:66ed69fd85114924e9c39219ac9e89cb8ec8bffc2b444d5c415c507562ae5e81',
+            'frozen_context_event_timestamp_utc':'2026-07-26T12:28:07+00:00',
+            'earliest_bound_fixture_kickoff_utc':'2026-07-26T12:30:00+00:00',
+            'pre_kickoff_lead_seconds_for_earliest_fixture':113,
+            'imported_files':{
+              'football-data/forward/v6_match_team_context_events_v631.json':sha(root/'forward/v6_match_team_context_events_v631.json'),
+              'football-data/manifests/v6_seed_match_team_context_v6311_status.json':sha(root/'manifests/v6_seed_match_team_context_v6311_status.json'),
+              'football-data/manifests/v6_match_team_context_queue_v631_freeze_20260726T122807Z.json':sha(root/'manifests/v6_match_team_context_queue_v631_freeze_20260726T122807Z.json')
+            },
+            'adjudication':'The restored bytes existed in a GitHub Actions artifact before the earliest bound kickoff. Persisting the already-frozen artifact later is archival persistence, not post-kickoff context backfill.',
+            'governance':{'research_only':True,'formal_weight':0,'probability_mutation':False,'current_rule_change':False}
+          }
+          p=root/'manifests/v6_match_team_context_artifact_import_v6311_status.json'
+          p.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+
+      - name: Validate restored ledger and build current unresolved queue
         run: python football-data/validation/v6_match_team_context_queue_v6311.py
-      - name: Upload compact seeded ledger and statuses
+
+      - name: Persist frozen context evidence to PR branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            football-data/forward/v6_match_team_context_events_v631.json \
+            football-data/manifests/v6_seed_match_team_context_v6311_status.json \
+            football-data/manifests/v6_match_team_context_queue_v631_freeze_20260726T122807Z.json \
+            football-data/manifests/v6_match_team_context_artifact_import_v6311_status.json \
+            football-data/manifests/v6_match_team_context_queue_v631_status.json
+          if git diff --cached --quiet; then
+            echo 'No generated context evidence changes to persist.'
+          else
+            git commit -m 'data(football): persist V6.31.1 pre-kickoff context freeze'
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          fi
+
+      - name: Upload persisted validation bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v6311-match-context-seeded
+          name: v6311-match-context-persisted
           path: |
             football-data/forward/v6_match_team_context_events_v631.json
             football-data/manifests/v6_seed_match_team_context_v6311_status.json
+            football-data/manifests/v6_match_team_context_queue_v631_freeze_20260726T122807Z.json
+            football-data/manifests/v6_match_team_context_artifact_import_v6311_status.json
             football-data/manifests/v6_match_team_context_queue_v631_status.json
           if-no-files-found: error
