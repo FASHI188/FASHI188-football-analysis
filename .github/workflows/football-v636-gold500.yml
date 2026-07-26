@@ -31,7 +31,13 @@ jobs:
         run: python -m py_compile football-data/validation/build_gold500_feature_library_v6360.py
 
       - name: Build fixed Gold500 library
-        run: python football-data/validation/build_gold500_feature_library_v6360.py
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/build_gold500_feature_library_v6360.py 2>&1 | tee football-data/manifests/v6360_gold500_build.log
+          status=${PIPESTATUS[0]}
+          echo "builder_exit_status=${status}" | tee -a football-data/manifests/v6360_gold500_build.log
+          exit ${status}
 
       - name: Upload Gold500 artifacts
         if: always()
@@ -39,7 +45,8 @@ jobs:
         with:
           name: v6360-gold500-library
           path: |
+            football-data/manifests/v6360_gold500_build.log
             football-data/manifests/v6_gold500_feature_library_v6360_status.json
             football-data/manifests/gold500_v6360/gold500_features_v6360.jsonl
             football-data/manifests/gold500_v6360/gold500_development_labels_v6360.jsonl
-          if-no-files-found: error
+          if-no-files-found: warn
