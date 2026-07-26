@@ -1,0 +1,57 @@
+name: football-v632-direct-random100
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'football-data/validation/validate_direct_xg_shot_market_catboost_random100_v6320.py'
+      - '.github/workflows/football-v632-direct-random100.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  random100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install fixed ML dependency
+        run: python -m pip install --disable-pip-version-check catboost==1.2.10
+
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_direct_xg_shot_market_catboost_random100_v6320.py
+
+      - name: Run fixed unfiltered random100
+        run: python football-data/validation/validate_direct_xg_shot_market_catboost_random100_v6320.py
+
+      - name: Persist audit receipt
+        if: success()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/manifests/v6_direct_xg_shot_market_catboost_random100_v6320_status.json
+          if git diff --cached --quiet; then
+            echo 'No receipt change to commit.'
+          else
+            git commit -m 'audit(football): persist V6.32 fixed random100 result'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6320-direct-random100-receipt
+          path: football-data/manifests/v6_direct_xg_shot_market_catboost_random100_v6320_status.json
+          if-no-files-found: warn
