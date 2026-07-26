@@ -6,6 +6,10 @@ form q(h,a) proportional p(h,a)*exp(alpha_result + beta_total + lambda*g_AH). Fo
 the existing V6.26 IPF solves alpha/beta exactly. Therefore only the scalar lambda remains. This
 runner brackets and bisects lambda, replacing the much slower three-set alternating projection while
 preserving the same constraints and research contract.
+
+The final test remains random100. The fixed outcome-blind attempt pool is widened to 500 only because
+the first 220 contained 168 structurally infeasible AH intersections and produced 52 usable rows.
+The final receipt still takes only the first 100 successful rows in the same seed-6260100 order.
 """
 from __future__ import annotations
 import math,sys
@@ -57,5 +61,6 @@ def reconcile_ah_dual(prior,target_one,target_total,line,home_share):
     return q,{'converged':r<=max(ahm.TOL,5e-9),'iterations':it,'max_residual':r,'target_signed_settlement':target,'final_signed_settlement':mm,'solver':'SCALAR_DUAL_IPF','dual_evaluations':len(cache)}
 
 ahm.reconcile_ah=reconcile_ah_dual
+runner.ATTEMPT_POOL=500
 
 if __name__=='__main__':raise SystemExit(runner.main())
