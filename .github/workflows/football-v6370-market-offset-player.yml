@@ -1,0 +1,68 @@
+name: football-v6370-market-offset-player
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'football-data/validation/validate_market_offset_player_residual_gold500_v6370.py'
+      - '.github/workflows/football-v6370-market-offset-player.yml'
+      - 'football-data/manifests/gold500_v6360/gold500_features_v6360.jsonl'
+      - 'football-data/manifests/gold500_v6360/gold500_development_labels_v6360.jsonl'
+
+permissions:
+  contents: write
+
+jobs:
+  fast100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install fixed dependencies
+        run: python -m pip install --disable-pip-version-check catboost==1.2.10 scipy==1.14.1
+
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_market_offset_player_residual_gold500_v6370.py
+
+      - name: Run V6.37 Gold500 Fast100 challenge
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/validate_market_offset_player_residual_gold500_v6370.py 2>&1 | tee football-data/manifests/v6370_market_offset_player.log
+          status=${PIPESTATUS[0]}
+          echo "validator_exit_status=${status}" | tee -a football-data/manifests/v6370_market_offset_player.log
+          exit ${status}
+
+      - name: Persist successful receipt
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_market_offset_player_residual_gold500_v6370_status.json
+          if git diff --cached --quiet; then
+            echo "V6.37 receipt already persisted"
+          else
+            git commit -m "audit(football): persist V6.37 Gold500 Fast100 result"
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          fi
+
+      - name: Upload receipt and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6370-market-offset-player-fast100
+          path: |
+            football-data/manifests/v6370_market_offset_player.log
+            football-data/manifests/v6_market_offset_player_residual_gold500_v6370_status.json
+          if-no-files-found: warn
