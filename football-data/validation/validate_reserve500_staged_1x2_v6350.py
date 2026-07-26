@@ -15,6 +15,7 @@ Contract
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import sys
@@ -68,6 +69,12 @@ def slim_match(r: dict) -> dict:
     }
 
 
+def sealed_hash(rows: list[dict]) -> str:
+    material = [slim_match(r) for r in rows]
+    raw = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def main() -> int:
     rows, data_audit, feature_names = v632._build_rows()
     train = [r for r in rows if r["season"] in v632.TRAIN_SEASONS]
@@ -109,7 +116,7 @@ def main() -> int:
         }
 
     payload = {
-        "schema_version": "V6.35.0-reserve500-staged-1x2-r1",
+        "schema_version": "V6.35.0-reserve500-staged-1x2-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
@@ -148,7 +155,8 @@ def main() -> int:
         "confirm300": confirm,
         "sealed100": {
             "status": "SEALED_NOT_SCORED",
-            "match_keys_sha_material": [slim_match(r) for r in sealed100],
+            "match_keys_sha256": sealed_hash(sealed100),
+            "match_keys_disclosed": False,
         },
         "decision": (
             "FAST100_PASSED_CONFIRM300_EXECUTED"
