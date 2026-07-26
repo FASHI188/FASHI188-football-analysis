@@ -1,0 +1,62 @@
+name: football-v633-player-core-random100
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'football-data/validation/validate_player_core_strength_1x2_random100_v6330.py'
+      - '.github/workflows/football-v633-player-core-random100.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'football-data/validation/validate_player_core_strength_1x2_random100_v6330.py'
+      - '.github/workflows/football-v633-player-core-random100.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  random100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install fixed ML dependency
+        run: python -m pip install --disable-pip-version-check catboost==1.2.10
+
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_player_core_strength_1x2_random100_v6330.py
+
+      - name: Run player-core fixed random100
+        run: python football-data/validation/validate_player_core_strength_1x2_random100_v6330.py
+
+      - name: Persist audit receipt
+        if: success() && github.event_name == 'push'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/manifests/v6_player_core_strength_1x2_random100_v6330_status.json
+          if git diff --cached --quiet; then
+            echo 'No receipt change to commit.'
+          else
+            git commit -m 'audit(football): persist V6.33 player-core random100 result'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6330-player-core-random100-receipt
+          path: football-data/manifests/v6_player_core_strength_1x2_random100_v6330_status.json
+          if-no-files-found: warn
