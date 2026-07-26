@@ -1,0 +1,42 @@
+name: football-v635-reserve500-staged
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'football-data/validation/validate_reserve500_staged_1x2_v6350.py'
+      - '.github/workflows/football-v635-reserve500-staged.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  staged500:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install fixed dependency
+        run: python -m pip install --disable-pip-version-check catboost==1.2.10
+
+      - name: Compile
+        run: python -m py_compile football-data/validation/validate_reserve500_staged_1x2_v6350.py
+
+      - name: Run reserve500 staged evaluation
+        run: python football-data/validation/validate_reserve500_staged_1x2_v6350.py
+
+      - name: Upload receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6350-reserve500-staged-receipt
+          path: football-data/manifests/v6_reserve500_staged_1x2_v6350_status.json
+          if-no-files-found: error
