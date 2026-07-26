@@ -7,6 +7,7 @@ on:
     paths:
       - 'football-data/config/v6_match_team_context_contract_v631.json'
       - 'football-data/forward/v6_match_team_context_events_v631.json'
+      - 'football-data/validation/v6_seed_match_team_context_v631.py'
       - 'football-data/validation/v6_match_team_context_queue_v631.py'
       - '.github/workflows/football-v631-match-context-queue.yml'
 
@@ -25,13 +26,21 @@ jobs:
         with:
           python-version: '3.11'
       - name: Compile
-        run: python -m py_compile football-data/validation/v6_match_team_context_queue_v631.py
-      - name: Validate ledger and build unresolved queue
+        run: |
+          python -m py_compile \
+            football-data/validation/v6_seed_match_team_context_v631.py \
+            football-data/validation/v6_match_team_context_queue_v631.py
+      - name: Seed future contexts from repository PIT snapshots
+        run: python football-data/validation/v6_seed_match_team_context_v631.py
+      - name: Validate seeded ledger and rebuild unresolved queue
         run: python football-data/validation/v6_match_team_context_queue_v631.py
-      - name: Upload status
+      - name: Upload seeded ledger and statuses
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v631-match-context-queue-status
-          path: football-data/manifests/v6_match_team_context_queue_v631_status.json
+          name: v631-match-context-seeded
+          path: |
+            football-data/forward/v6_match_team_context_events_v631.json
+            football-data/manifests/v6_seed_match_team_context_v631_status.json
+            football-data/manifests/v6_match_team_context_queue_v631_status.json
           if-no-files-found: error
