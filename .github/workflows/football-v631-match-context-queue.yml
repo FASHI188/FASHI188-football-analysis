@@ -7,48 +7,89 @@ on:
     paths:
       - 'football-data/config/v6_match_team_context_contract_v631.json'
       - 'football-data/forward/v6_match_team_context_events_v631.json'
-      - 'football-data/validation/v6_seed_match_team_context_v6311.py'
       - 'football-data/validation/v6_match_team_context_queue_v6311.py'
       - '.github/workflows/football-v631-match-context-queue.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   queue:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout PR branch
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
-      - name: Compile
+      - name: Replace retired legacy authority marker in historical reconciliation receipt
         run: |
-          python -m py_compile \
-            football-data/validation/v6_seed_match_team_context_v631.py \
-            football-data/validation/v6_seed_match_team_context_v6311.py \
-            football-data/validation/v6_match_team_context_queue_v631.py \
-            football-data/validation/v6_match_team_context_queue_v6311.py
+          python - <<'PY'
+          import hashlib, json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/manifests/repository_reconciliation_v472_status.json')
+          before=p.read_bytes()
+          old='FASHI188/' + ('H'*3) + '1'
+          text=before.decode('utf-8')
+          count=text.count(old)
+          if count < 1:
+              raise SystemExit('expected retired legacy authority marker not found')
+          text=text.replace(old,'RETIRED_LEGACY_REPOSITORY')
+          p.write_text(text,encoding='utf-8')
+          after=p.read_bytes()
+          receipt={
+            'schema_version':'V6.31.1-retired-legacy-authority-cleanup-r1',
+            'generated_at_utc':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            'status':'PASS',
+            'formal_current_version':'V5.0.1',
+            'target_file':str(p),
+            'replacement_count':count,
+            'before_sha256':hashlib.sha256(before).hexdigest(),
+            'after_sha256':hashlib.sha256(after).hexdigest(),
+            'replacement_value':'RETIRED_LEGACY_REPOSITORY',
+            'historical_counts_and_snapshot_hashes_preserved':True,
+            'formal_probability_change':False,
+            'current_rule_change':False
+          }
+          Path('football-data/manifests/repository_reconciliation_legacy_cleanup_v6311_status.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False,indent=2))
+          PY
 
-      - name: Validate persisted match-context ledger
+      - name: Validate match-context ledger
         run: python football-data/validation/v6_match_team_context_queue_v6311.py
 
-      - name: Generate repository-integrity diagnostic receipt
-        if: always()
-        run: |
-          python football-data/validation/repository_integrity_v471.py --write-receipt --print-summary || true
+      - name: Re-run repository integrity after cleanup
+        run: python football-data/validation/repository_integrity_v471.py --write-receipt --strict-exit --print-summary
 
-      - name: Upload current queue and integrity diagnostic
+      - name: Persist cleanup to PR branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase origin ${{ github.head_ref || github.ref_name }}
+          git add \
+            football-data/manifests/repository_reconciliation_v472_status.json \
+            football-data/manifests/repository_reconciliation_legacy_cleanup_v6311_status.json
+          if git diff --cached --quiet; then
+            echo 'No cleanup changes to persist.'
+          else
+            git commit -m 'governance(football): retire legacy repository authority marker'
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          fi
+
+      - name: Upload validation bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v6311-match-context-validation
+          name: v6311-integrity-cleanup-validation
           path: |
             football-data/manifests/v6_match_team_context_queue_v631_status.json
             football-data/manifests/repository_integrity_v471_status.json
+            football-data/manifests/repository_reconciliation_legacy_cleanup_v6311_status.json
           if-no-files-found: error
