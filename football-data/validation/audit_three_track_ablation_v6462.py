@@ -4,6 +4,9 @@
 The blend curve is descriptive only. No weight is selected for runtime or promotion from
 this benchmark. Any future fusion weight must be selected on a disjoint development set,
 then frozen before prospective evaluation.
+
+V6.46.4 cache repair: reuse the hash-validated V6.46.1 prediction cache when available;
+fall back to deterministic recomputation only when the cache is absent or invalid.
 """
 from __future__ import annotations
 
@@ -65,14 +68,24 @@ def row_for_metrics(base: dict[str, Any], probs: dict[str, float], provider: str
     }
 
 
+def load_blind_predictions(benchmark: dict[str, Any], benchmark_keys: set[tuple[str, int]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    benchmark_sha = blind.file_sha256(BENCHMARK)
+    config_sha = blind.model_config_sha256()
+    cached, audit = blind.load_valid_cache(benchmark_sha, config_sha)
+    if cached is not None:
+        return cached, {"mode": "HASH_VALIDATED_CACHE", **audit}
+    rows = []
+    for cid in benchmark["target_competitions"]:
+        pred, _ = blind.evaluate_domain(cid, benchmark_keys)
+        rows.extend(pred)
+    rows.sort(key=lambda r: (r["date"], r["competition_id"], r["home_team"], r["away_team"]))
+    return rows, {"mode": "DETERMINISTIC_RECOMPUTE", **audit}
+
+
 def main() -> int:
     benchmark = json.loads(BENCHMARK.read_text(encoding="utf-8"))
     benchmark_keys = {(str(r["source_file"]), int(r["row_index"])) for r in benchmark["rows"]}
-
-    blind_rows = []
-    for cid in benchmark["target_competitions"]:
-        pred, _ = blind.evaluate_domain(cid, benchmark_keys)
-        blind_rows.extend(pred)
+    blind_rows, blind_input_audit = load_blind_predictions(benchmark, benchmark_keys)
     blind_map = {key(r): r for r in blind_rows}
 
     common = []
@@ -125,13 +138,14 @@ def main() -> int:
     )
 
     payload = {
-        "schema_version": "V6.46.2-three-track-ablation-r1",
+        "schema_version": "V6.46.4-three-track-ablation-cache-r2",
         "generated_at_utc": utc_now(),
         "status": "PASS",
         "formal_current_version": "V5.0.1",
         "classification": "RETROSPECTIVE_FIXED1000_DESCRIPTIVE_ABLATION_ONLY",
         "benchmark_path": str(BENCHMARK.relative_to(ROOT)),
         "benchmark_target_n": benchmark["target_n"],
+        "blind_prediction_input": blind_input_audit,
         "common_row_count": len(common),
         "common_row_coverage": len(common) / int(benchmark["target_n"]),
         "market_only_common_rows": market_metrics,
@@ -154,6 +168,12 @@ def main() -> int:
             "future_candidate_weight_requires_disjoint_development_selection": True,
             "future_candidate_weight_requires_postfreeze_validation": True,
         },
+        "engineering": {
+            "hash_safe_prediction_cache_supported": True,
+            "cache_key_benchmark_sha_required": True,
+            "cache_key_model_config_sha_required": True,
+            "recompute_only_on_cache_miss_or_invalidation": True,
+        },
         "governance": {
             "research_only": True,
             "formal_weight": 0,
@@ -166,6 +186,7 @@ def main() -> int:
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
         "common_row_count": payload["common_row_count"],
+        "blind_prediction_input": blind_input_audit,
         "market": market_metrics,
         "blind": blind_metrics,
         "best": payload["descriptive_best_points"],
