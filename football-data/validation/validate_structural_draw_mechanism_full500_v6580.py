@@ -150,7 +150,7 @@ def _metrics(y: np.ndarray, probs: np.ndarray) -> dict[str, Any]:
     n = len(y)
     hits = int(np.sum(picks == y))
     one = np.eye(3, dtype=float)[y]
-    brier = float(np.mean(np.sum((probs - one) ** 2, axis=1))
+    brier = float(np.mean(np.sum((probs - one) ** 2, axis=1)))
     logloss = float(-np.mean(np.log(np.clip(probs[np.arange(n), y], EPS, 1.0))))
     c1 = probs[:, 0] - (y == 0)
     c2 = probs[:, 0] + probs[:, 1] - (y <= 1)
@@ -321,21 +321,6 @@ def _predict(rows: list[dict[str, Any]], model: dict[str, Any], alpha: float) ->
     out[:, 2] = (1.0 - draw) * (1.0 - home_share)
     out /= out.sum(axis=1, keepdims=True)
     return out
-
-
-def _fold_eval(train: list[dict[str, Any]], valid: list[dict[str, Any]], ridge: float, alpha: float) -> tuple[dict[str, Any], dict[str, Any]]:
-    model = _fit_binary(train, ridge)
-    cand = _predict(valid, model, alpha)
-    market = _market_probs(valid)
-    y = np.asarray([int(r["y"]) for r in valid], dtype=int)
-    mm = _metrics(y, market); cm = _metrics(y, cand)
-    return {
-        "market": mm,
-        "candidate": cm,
-        "uplift_pp": 100.0 * (cm["top1"] - mm["top1"]),
-        "logloss_delta": cm["logloss"] - mm["logloss"],
-        "rps_delta": cm["rps"] - mm["rps"],
-    }, model
 
 
 def _load_a100_labels() -> dict[int, int]:
