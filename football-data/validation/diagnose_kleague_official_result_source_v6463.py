@@ -2,9 +2,9 @@
 """V6.46.3 diagnose K League official result HTML for a resolver fallback.
 
 Research engineering only. This script does NOT settle results. It inspects the official
-K LEAGUE attendance-detail page structure and tries conservative pagination parameter
-variants so we can identify a stable official score surface instead of silently falling
-back to a third-party scoreboard.
+K LEAGUE attendance-detail page structure and tries conservative pagination/page-size
+parameter variants so we can identify a stable official score surface instead of silently
+falling back to a third-party scoreboard.
 """
 from __future__ import annotations
 
@@ -60,23 +60,40 @@ def textify(raw: str) -> str:
     return re.sub(r"\s+", " ", raw).strip()
 
 
-def matches(raw: str) -> list[dict[str, object]]:
-    plain = textify(raw)
+def actual_table_matches(raw: str) -> list[dict[str, object]]:
+    rows = [textify(x) for x in re.findall(r"<tr\b[^>]*>(.*?)</tr>", raw, flags=re.I | re.S)]
     out = []
     for date, home, away in TARGETS:
-        tokens = [date, home, away]
-        positions = [plain.find(t) for t in tokens]
-        found = all(p >= 0 for p in positions)
-        near = False
-        snippet = None
-        if found:
-            lo, hi = min(positions), max(positions)
-            near = hi - lo <= 800
-            start = max(0, lo - 180)
-            stop = min(len(plain), hi + 260)
-            snippet = plain[start:stop]
-        out.append({"date": date, "home": home, "away": away, "all_tokens_found": found, "near": near, "snippet": snippet})
+        candidates = []
+        for row in rows:
+            if date in row and home in row and away in row:
+                score = re.search(r"(?<!\d)(\d{1,2})\s*:\s*(\d{1,2})(?!\d)", row)
+                candidates.append({
+                    "row_text": row[:1200],
+                    "score": [int(score.group(1)), int(score.group(2))] if score else None,
+                })
+        out.append({"date": date, "home": home, "away": away, "row_candidates": candidates})
     return out
+
+
+def script_contexts(raw: str) -> list[str]:
+    out = []
+    for token in ("goToPageAudience", "pageBegin", "pageEnd", "audienceDetail", "300건", "300"):
+        pos = 0
+        while True:
+            idx = raw.find(token, pos)
+            if idx < 0:
+                break
+            start, stop = max(0, idx - 500), min(len(raw), idx + 900)
+            snippet = re.sub(r"\s+", " ", html.unescape(raw[start:stop])).strip()
+            if snippet not in out:
+                out.append(snippet)
+            pos = idx + len(token)
+            if len(out) >= 30:
+                break
+        if len(out) >= 30:
+            break
+    return out[:30]
 
 
 def page_meta(raw: str) -> dict[str, object]:
@@ -96,49 +113,64 @@ def page_meta(raw: str) -> dict[str, object]:
     hrefs = sorted(set(html.unescape(x) for x in re.findall(r"href=[\"']([^\"']+)", raw, flags=re.I)))
     page_hrefs = [h for h in hrefs if any(t in h.lower() for t in ("page", "audience"))][:100]
     scripts = sorted(set(re.findall(r"(?:fn_|go|move|search|page)[A-Za-z0-9_]{1,40}", raw, flags=re.I)))[:100]
-    return {"forms": forms[:20], "page_hrefs": page_hrefs, "script_identifiers": scripts}
+    return {
+        "forms": forms[:20],
+        "page_hrefs": page_hrefs,
+        "script_identifiers": scripts,
+        "script_contexts": script_contexts(raw),
+    }
+
+
+def attempt(label: str, method: str, params: dict[str, str] | None) -> dict[str, object]:
+    try:
+        if method == "GET":
+            url = BASE if not params else BASE + "?" + urllib.parse.urlencode(params)
+            status, final_url, raw = fetch(url)
+        else:
+            url = BASE
+            body = urllib.parse.urlencode(params or {}).encode("utf-8")
+            status, final_url, raw = fetch(url, body)
+        found = actual_table_matches(raw)
+        found_count = sum(bool(x["row_candidates"]) for x in found)
+        return {
+            "label": label,
+            "method": method,
+            "params": params,
+            "status": status,
+            "final_url": final_url,
+            "bytes": len(raw.encode("utf-8", errors="ignore")),
+            "target_table_rows": found_count,
+            "matches": [x for x in found if x["row_candidates"]],
+            "raw": raw,
+        }
+    except Exception as exc:
+        return {"label": label, "method": method, "params": params, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main() -> int:
-    attempts: list[dict[str, object]] = []
     variants: list[tuple[str, str, dict[str, str] | None]] = [("base", "GET", None)]
-    for param in ("page", "pageNo", "pageIndex", "currentPage", "pageNum"):
+    for param in ("page", "pageNo", "pageIndex", "currentPage", "pageNum", "pageBegin"):
         for n in range(1, 9):
             variants.append((f"get_{param}_{n}", "GET", {param: str(n), "year": "2026", "leagueId": "1"}))
-    for param in ("page", "pageNo", "pageIndex", "currentPage", "pageNum"):
+    for param in ("page", "pageNo", "pageIndex", "currentPage", "pageNum", "pageBegin"):
         for n in range(1, 6):
             variants.append((f"post_{param}_{n}", "POST", {param: str(n), "year": "2026", "leagueId": "1"}))
+    for param in ("pageSize", "dataCount", "recordCountPerPage", "perPage", "listSize", "rowPerPage"):
+        variants.append((f"get_{param}_300", "GET", {param: "300", "year": "2026", "leagueId": "1"}))
+        variants.append((f"post_{param}_300", "POST", {param: "300", "year": "2026", "leagueId": "1"}))
 
+    attempts = []
     raw_base = ""
     for label, method, params in variants:
-        try:
-            if method == "GET":
-                url = BASE if not params else BASE + "?" + urllib.parse.urlencode(params)
-                status, final_url, raw = fetch(url)
-            else:
-                url = BASE
-                body = urllib.parse.urlencode(params or {}).encode("utf-8")
-                status, final_url, raw = fetch(url, body)
-            if label == "base":
-                raw_base = raw
-            ms = matches(raw)
-            found_count = sum(bool(x["near"]) for x in ms)
-            attempts.append({
-                "label": label,
-                "method": method,
-                "params": params,
-                "status": status,
-                "final_url": final_url,
-                "bytes": len(raw.encode("utf-8", errors="ignore")),
-                "target_matches_near": found_count,
-                "matches": [x for x in ms if x["near"]],
-            })
-        except Exception as exc:
-            attempts.append({"label": label, "method": method, "params": params, "error": f"{type(exc).__name__}: {exc}"})
+        item = attempt(label, method, params)
+        raw = item.pop("raw", "")
+        if label == "base":
+            raw_base = str(raw)
+        attempts.append(item)
 
-    best = sorted(attempts, key=lambda x: int(x.get("target_matches_near") or 0), reverse=True)[:20]
+    best = sorted(attempts, key=lambda x: int(x.get("target_table_rows") or 0), reverse=True)[:30]
     payload = {
-        "schema_version": "V6.46.3-kleague-official-result-source-diag-r1",
+        "schema_version": "V6.46.3-kleague-official-result-source-diag-r2",
         "generated_at_utc": now(),
         "status": "PASS_DIAGNOSTIC",
         "official_source": BASE,
