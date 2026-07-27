@@ -1,0 +1,39 @@
+name: Football V6.46.3 K League Official Result Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/diagnose_kleague_official_result_source_v6463.py"
+      - ".github/workflows/football-v6463-kleague-official-result-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6463-kleague-official-result-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/diagnose_kleague_official_result_source_v6463.py
+      - run: python football-data/validation/diagnose_kleague_official_result_source_v6463.py
+      - name: Persist diagnostic
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_kleague_official_result_source_diag_v6463_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.46.3 K League official-source diagnostic"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
