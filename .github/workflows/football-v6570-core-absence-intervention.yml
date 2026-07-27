@@ -1,4 +1,4 @@
-name: football-v6570-core-absence-intervention
+name: football-v6571-core-absence-intervention-fix
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'football-data/validation/validate_core_absence_intervention_full500_v6570.py'
+      - 'football-data/validation/validate_core_absence_intervention_full500_v6571.py'
       - '.github/workflows/football-v6570-core-absence-intervention.yml'
 
 permissions:
@@ -30,38 +31,41 @@ jobs:
         run: python -m pip install --disable-pip-version-check numpy==2.1.3 catboost==1.2.10 scipy==1.14.1
 
       - name: Compile
-        run: python -m py_compile football-data/validation/validate_core_absence_intervention_full500_v6570.py
+        run: |
+          python -m py_compile \
+            football-data/validation/validate_core_absence_intervention_full500_v6570.py \
+            football-data/validation/validate_core_absence_intervention_full500_v6571.py
 
-      - name: Run strict-PIT absence selection and holdout gate
+      - name: Run unchanged V6.57 research with corrected key mapping
         shell: bash
         run: |
           set +e
-          python football-data/validation/validate_core_absence_intervention_full500_v6570.py 2>&1 | tee football-data/manifests/v6570_core_absence_intervention.log
+          python football-data/validation/validate_core_absence_intervention_full500_v6571.py 2>&1 | tee football-data/manifests/v6571_core_absence_intervention.log
           status=${PIPESTATUS[0]}
-          echo "validator_exit_status=${status}" | tee -a football-data/manifests/v6570_core_absence_intervention.log
+          echo "validator_exit_status=${status}" | tee -a football-data/manifests/v6571_core_absence_intervention.log
           exit ${status}
 
-      - name: Persist V6.57 receipt
+      - name: Persist V6.57.1 receipt
         if: success()
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin ${{ github.head_ref || github.ref_name }} || true
-          git add football-data/manifests/v6_core_absence_intervention_full500_v6570_status.json
+          git add football-data/manifests/v6_core_absence_intervention_full500_v6571_status.json
           if git diff --cached --quiet; then
-            echo "V6.57 receipt already persisted"
+            echo "V6.57.1 receipt already persisted"
           else
-            git commit -m "research(football): persist V6.57 core-absence receipt"
+            git commit -m "research(football): persist V6.57.1 core-absence receipt"
             git push origin HEAD:${{ github.head_ref || github.ref_name }}
           fi
 
-      - name: Upload V6.57 artifacts
+      - name: Upload V6.57.1 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v6570-core-absence-intervention
+          name: v6571-core-absence-intervention
           path: |
-            football-data/manifests/v6570_core_absence_intervention.log
-            football-data/manifests/v6_core_absence_intervention_full500_v6570_status.json
+            football-data/manifests/v6571_core_absence_intervention.log
+            football-data/manifests/v6_core_absence_intervention_full500_v6571_status.json
           if-no-files-found: warn
