@@ -1,0 +1,75 @@
+name: football-v6492-full500-eightbook-balanced
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'football-data/validation/build_full500_richest_data_v6490.py'
+      - 'football-data/validation/build_full500_balanced_richest_v6492.py'
+      - '.github/workflows/football-v6492-full500-eightbook-balanced.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-full500-eightbook-balanced:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install fixed dependency
+        run: python -m pip install --disable-pip-version-check catboost==1.2.10
+
+      - name: Compile
+        run: |
+          python -m py_compile \
+            football-data/validation/build_full500_richest_data_v6490.py \
+            football-data/validation/build_full500_balanced_richest_v6492.py
+
+      - name: Build eight-book balanced richest-data Full500
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/build_full500_balanced_richest_v6492.py 2>&1 | tee football-data/manifests/v6492_full500_build.log
+          status=${PIPESTATUS[0]}
+          echo "builder_exit_status=${status}" | tee -a football-data/manifests/v6492_full500_build.log
+          exit ${status}
+
+      - name: Persist successful V6.49.2 Full500
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            football-data/manifests/v6_full500_balanced_richest_v6492_status.json \
+            football-data/manifests/full500_v6492/full500_features_v6492.jsonl \
+            football-data/manifests/full500_v6492/full500_development_labels_v6492.jsonl
+          if git diff --cached --quiet; then
+            echo "V6.49.2 Full500 files already persisted"
+          else
+            git commit -m "data(football): freeze V6.49.2 eight-book balanced Full500"
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          fi
+
+      - name: Upload V6.49.2 Full500 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6492-full500-eightbook-balanced
+          path: |
+            football-data/manifests/v6492_full500_build.log
+            football-data/manifests/v6_full500_balanced_richest_v6492_status.json
+            football-data/manifests/full500_v6492/full500_features_v6492.jsonl
+            football-data/manifests/full500_v6492/full500_development_labels_v6492.jsonl
+          if-no-files-found: warn
