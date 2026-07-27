@@ -1,0 +1,34 @@
+name: Football V6.46.7 Market Timing Replay
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/replay_market_timing_windows_v6467.py"
+      - "football-data/evidence/markets_prospective/**"
+      - "football-data/forward/v6_market_first_events_v651.json"
+      - ".github/workflows/football-v6467-market-timing-replay.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/replay_market_timing_windows_v6467.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/replay_market_timing_windows_v6467.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_market_timing_replay_v6467_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.46.7 market timing replay"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
