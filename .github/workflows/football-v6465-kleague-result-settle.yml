@@ -1,0 +1,49 @@
+name: Football V6.46.5 K League Official Result Settlement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_market_first_result_resolver_v651.py"
+      - ".github/workflows/football-v6465-kleague-result-settle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6465-kleague-result-settle
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile resolver
+        run: python -m py_compile football-data/validation/v6_market_first_result_resolver_v651.py
+      - name: Settle existing forward predictions from official sources
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_market_first_result_resolver_v651.py
+      - name: Persist settlement evidence
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for path in \
+            football-data/forward/inbox/market_first_results_v651.json \
+            football-data/forward/v6_market_first_events_v651.json \
+            football-data/manifests/v6_market_first_forward_evaluation_v651_status.json \
+            football-data/manifests/v6_market_first_result_resolver_v651_status.json; do
+            if [ -f "$path" ]; then git add "$path"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): settle K League via official fallback V6.46.5"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
