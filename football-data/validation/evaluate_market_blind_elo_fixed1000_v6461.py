@@ -15,12 +15,17 @@ Three-way probabilities:
 
 Hyperparameters are fixed ex ante (initial rating 1500, K=20, home advantage=100 Elo
 points) and are never tuned on fixed1000.
+
+V6.46.4 cache repair:
+- prediction rows are persisted with benchmark SHA-256 + model-config SHA-256;
+- a cache is reused only when both hashes match exactly;
+- downstream ablations can consume the same rows instead of recomputing the full history.
 """
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
-import math
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -39,15 +44,42 @@ from platform_core import parse_match_date
 
 BENCHMARK = ROOT / "benchmarks" / "v6_1x2_neutral_fixed1000_v6131.json"
 OUT = ROOT / "manifests" / "v6_market_blind_fixed1000_v6461_status.json"
+CACHE = ROOT / "cache" / "v6_fixed1000" / "v6461_market_blind_elo_predictions.json"
 INITIAL_RATING = 1500.0
 K_FACTOR = 20.0
 HOME_ADVANTAGE = 100.0
 MIN_PRIOR_COMP_MATCHES = 100
 DIRECTIONS = ("home", "draw", "away")
+CACHE_SCHEMA = "V6.46.4-fixed1000-prediction-cache-r1"
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def model_config() -> dict[str, Any]:
+    return {
+        "model": "result-only three-way Elo baseline",
+        "initial_rating": INITIAL_RATING,
+        "k_factor": K_FACTOR,
+        "home_advantage_elo_points": HOME_ADVANTAGE,
+        "draw_probability": "strictly-prior competition empirical draw rate",
+        "minimum_prior_competition_matches": MIN_PRIOR_COMP_MATCHES,
+        "same_day_update_policy": "predict_all_then_update_all",
+    }
+
+
+def model_config_sha256() -> str:
+    raw = json.dumps(model_config(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return sha256_bytes(raw)
 
 
 def actual(raw: dict[str, str]) -> str | None:
@@ -166,6 +198,7 @@ def evaluate_domain(cid: str, benchmark_keys: set[tuple[str, int]]) -> tuple[lis
                         "home_team": row["home_team"],
                         "away_team": row["away_team"],
                         "actual": row["actual"],
+                        "source_file": row["source_file"],
                         "provider": "MARKET_BLIND_ELO_RESULT_ONLY",
                         "probabilities": probs,
                         "pick": pick,
@@ -193,40 +226,89 @@ def evaluate_domain(cid: str, benchmark_keys: set[tuple[str, int]]) -> tuple[lis
     }
 
 
+def load_valid_cache(benchmark_sha: str, config_sha: str) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    if not CACHE.exists():
+        return None, {"status": "MISS_NOT_FOUND"}
+    try:
+        payload = json.loads(CACHE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, {"status": "MISS_UNREADABLE", "error": f"{type(exc).__name__}: {exc}"}
+    if payload.get("schema_version") != CACHE_SCHEMA:
+        return None, {"status": "MISS_SCHEMA"}
+    if payload.get("benchmark_sha256") != benchmark_sha:
+        return None, {"status": "MISS_BENCHMARK_HASH"}
+    if payload.get("model_config_sha256") != config_sha:
+        return None, {"status": "MISS_MODEL_CONFIG_HASH"}
+    rows = payload.get("predictions")
+    if not isinstance(rows, list):
+        return None, {"status": "MISS_INVALID_ROWS"}
+    return rows, {"status": "HIT", "prediction_count": len(rows), "cache_sha256": file_sha256(CACHE)}
+
+
+def write_cache(predictions: list[dict[str, Any]], domain_status: dict[str, Any], benchmark_sha: str, config_sha: str) -> dict[str, Any]:
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": CACHE_SCHEMA,
+        "generated_at_utc": utc_now(),
+        "benchmark_path": str(BENCHMARK.relative_to(ROOT)),
+        "benchmark_sha256": benchmark_sha,
+        "model_config": model_config(),
+        "model_config_sha256": config_sha,
+        "prediction_count": len(predictions),
+        "predictions": predictions,
+        "domain_status": domain_status,
+        "governance": {
+            "derived_cache_only": True,
+            "safe_to_rebuild": True,
+            "cache_key_requires_benchmark_and_model_hash": True,
+            "formal_weight": 0,
+        },
+    }
+    CACHE.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    return {"status": "MISS_REBUILT", "prediction_count": len(predictions), "cache_sha256": file_sha256(CACHE)}
+
+
 def main() -> int:
     benchmark, keys = load_benchmark()
-    comps = list(benchmark["target_competitions"])
-    all_predictions = []
-    domain_status = {}
-    for cid in comps:
-        pred, status = evaluate_domain(cid, keys)
-        all_predictions.extend(pred)
-        domain_status[cid] = status
+    benchmark_sha = file_sha256(BENCHMARK)
+    config_sha = model_config_sha256()
+    cached, cache_audit = load_valid_cache(benchmark_sha, config_sha)
+    domain_status: dict[str, Any] = {}
 
-    all_predictions.sort(key=lambda r: (r["date"], r["competition_id"], r["home_team"], r["away_team"]))
+    if cached is not None:
+        all_predictions = cached
+        cache_used = True
+    else:
+        comps = list(benchmark["target_competitions"])
+        all_predictions = []
+        for cid in comps:
+            pred, status = evaluate_domain(cid, keys)
+            all_predictions.extend(pred)
+            domain_status[cid] = status
+        all_predictions.sort(key=lambda r: (r["date"], r["competition_id"], r["home_team"], r["away_team"]))
+        cache_audit = write_cache(all_predictions, domain_status, benchmark_sha, config_sha)
+        cache_used = False
+
     matched_keys = {(r["competition_id"], r["date"], r["home_team"], r["away_team"]) for r in all_predictions}
     benchmark_n = int(benchmark["target_n"])
     report = {
-        "schema_version": "V6.46.1-market-blind-elo-fixed1000-r1",
+        "schema_version": "V6.46.4-market-blind-elo-fixed1000-cache-r2",
         "generated_at_utc": utc_now(),
         "status": "PASS" if len(all_predictions) == benchmark_n else "PASS_WITH_WARMUP_GAPS",
         "formal_current_version": "V5.0.1",
         "classification": "SIMPLE_MARKET_BLIND_BASELINE_RESEARCH_ONLY",
         "benchmark_path": str(BENCHMARK.relative_to(ROOT)),
+        "benchmark_sha256": benchmark_sha,
         "benchmark_target_n": benchmark_n,
         "prediction_count": len(all_predictions),
         "coverage": len(all_predictions) / benchmark_n if benchmark_n else 0.0,
         "competition_count": len({r["competition_id"] for r in all_predictions}),
-        "model": {
-            "name": "result-only three-way Elo baseline",
-            "initial_rating": INITIAL_RATING,
-            "k_factor": K_FACTOR,
-            "home_advantage_elo_points": HOME_ADVANTAGE,
-            "draw_probability": "strictly-prior competition empirical draw rate",
-            "minimum_prior_competition_matches": MIN_PRIOR_COMP_MATCHES,
-            "hyperparameters_tuned_on_fixed1000": False,
-            "market_inputs": False,
-            "lineup_or_injury_inputs": False,
+        "model": {**model_config(), "hyperparameters_tuned_on_fixed1000": False, "market_inputs": False, "lineup_or_injury_inputs": False},
+        "model_config_sha256": config_sha,
+        "cache": {
+            "path": str(CACHE.relative_to(ROOT)),
+            "used_existing_cache": cache_used,
+            **cache_audit,
         },
         "metrics": metrics.multiclass_scores(all_predictions),
         "top1_calibration": metrics.top1_ece(all_predictions),
@@ -242,6 +324,8 @@ def main() -> int:
             "odds_read": False,
             "result_only": True,
             "prediction_identity_count": len(matched_keys),
+            "cache_invalidates_on_benchmark_change": True,
+            "cache_invalidates_on_model_config_change": True,
         },
         "governance": {
             "research_only": True,
@@ -258,6 +342,7 @@ def main() -> int:
         "status": report["status"],
         "prediction_count": report["prediction_count"],
         "coverage": report["coverage"],
+        "cache": report["cache"],
         "metrics": report["metrics"],
         "draw_audit": report["draw_audit"],
     }, ensure_ascii=False, indent=2))
