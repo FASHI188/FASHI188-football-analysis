@@ -1,0 +1,32 @@
+name: Football V6.46.8 Domain Shift Diagnostic
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/diagnose_domain_shift_v6468.py"
+      - "football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json"
+      - "football-data/manifests/v6_forward_vs_historical_gap_v6466_status.json"
+      - ".github/workflows/football-v6468-domain-shift.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m py_compile football-data/validation/diagnose_domain_shift_v6468.py
+      - run: python football-data/validation/diagnose_domain_shift_v6468.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_domain_shift_v6468_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.46.8 domain shift diagnostic"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
