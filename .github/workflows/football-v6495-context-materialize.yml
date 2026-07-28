@@ -1,0 +1,100 @@
+name: Football V6.49.5 Direct Context Materialize
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/evidence/match_context_live/manual_web/**"
+      - "football-data/validation/v6_context_enriched_forward_manual_v6489.py"
+      - "football-data/validation/v6_match_context_axes_forward_v6490.py"
+      - "football-data/validation/v6_context_conditioned_selector_forward_v6495.py"
+      - "football-data/validation/v6_context_priority_queue_v6493.py"
+      - ".github/workflows/football-v6495-context-materialize.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6495-direct-context-materialize
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Sync latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: |
+          python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
+          python -m py_compile football-data/validation/v6_context_enriched_forward_manual_v6489.py
+          python -m py_compile football-data/validation/v6_match_context_axes_forward_v6490.py
+          python -m py_compile football-data/validation/v6_context_conditioned_selector_forward_v6495.py
+          python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Materialize exact-match context
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_enriched_forward_manual_v6489.py
+      - name: Materialize manager and roster-delta axes
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_match_context_axes_forward_v6490.py
+      - name: Materialize post-epoch context-conditioned 1X2 audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_conditioned_selector_forward_v6495.py
+      - name: Refresh current-only priority queue
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Persist materialized state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/v6_context_enriched_events_v6486.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_freeze.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_status.json \
+            --allow-prefix football-data/forward/v6_match_context_axes_events_v6490.json \
+            --allow-prefix football-data/manifests/v6_match_context_axes_v6490_status.json \
+            --allow-prefix football-data/forward/v6_context_conditioned_selector_events_v6495.json \
+            --allow-prefix football-data/manifests/v6_context_conditioned_selector_v6495_status.json \
+            --allow-prefix football-data/manifests/v6_context_priority_queue_v6493_status.json \
+            --message-prefix "audit(football): persist V6.49.5 direct context materialization"
+      - name: Hard guards
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/v6_context_enriched_forward_v6486_status.json').read_text(encoding='utf-8'))
+          a=json.loads(Path('football-data/manifests/v6_match_context_axes_v6490_status.json').read_text(encoding='utf-8'))
+          c=json.loads(Path('football-data/manifests/v6_context_conditioned_selector_v6495_status.json').read_text(encoding='utf-8'))
+          q=json.loads(Path('football-data/manifests/v6_context_priority_queue_v6493_status.json').read_text(encoding='utf-8'))
+          if (x.get('governance') or {}).get('historical_backfill') is not False: raise SystemExit('context backfill guard failed')
+          if (a.get('governance') or {}).get('historical_backfill') is not False: raise SystemExit('axes backfill guard failed')
+          cg=c.get('governance') or {}
+          if cg.get('historical_backfill') is not False or cg.get('context_probability_adjustment') is not False or cg.get('context_veto_rule_active') is not False: raise SystemExit('context-conditioned guard failed')
+          qg=q.get('governance') or {}
+          if qg.get('legacy_v6475_v6479_fallback') is not False: raise SystemExit('legacy queue fallback returned')
+          if qg.get('probability_mutation') is not False: raise SystemExit('queue probability mutation')
+          print(json.dumps({
+            'context_events':(x.get('ledger_audit') or {}).get('event_count'),
+            'axes_events':(a.get('ledger_audit') or {}).get('event_count'),
+            'conditioned_events':(c.get('ledger_audit') or {}).get('event_count'),
+            'priority_counts':q.get('priority_counts')
+          },ensure_ascii=False))
+          PY
+
+# Direct evidence-to-ledger materialization. No batch-trigger indirection is required.
