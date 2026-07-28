@@ -1,0 +1,49 @@
+name: Football V6.47 Team-context Source of Truth
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/v6_match_context_live_resolution_v6472.json"
+      - "football-data/validation/audit_team_context_source_of_truth_v6470.py"
+      - "football-data/validation/audit_match_context_resolution_v6472.py"
+      - "football-data/manifests/v6_current_roster_overlay_v669_status.json"
+      - "football-data/manifests/v6_roster_gap_inventory_v6611_status.json"
+      - "football-data/manifests/team_configuration_weekly_scan_20260727_status.json"
+      - ".github/workflows/football-v6470-v6472-team-context-resolution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6470-v6472-team-context-resolution
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/audit_team_context_source_of_truth_v6470.py football-data/validation/audit_match_context_resolution_v6472.py
+      - run: python football-data/validation/audit_team_context_source_of_truth_v6470.py
+      - run: python football-data/validation/audit_match_context_resolution_v6472.py
+      - name: Persist team-context audits
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for path in \
+            football-data/manifests/v6_team_context_source_of_truth_v6470_status.json \
+            football-data/manifests/v6_match_context_resolution_v6472_status.json; do
+            if [ -f "$path" ]; then git add "$path"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.47 team-context resolution state"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
