@@ -1,0 +1,72 @@
+name: Football V6.50.9 Draw Risk Operating Point
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_draw_risk_operating_point_v6509.py"
+      - ".github/workflows/football-v6509-draw-risk-operating-point.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_draw_risk_operating_point_v6509.py"
+      - ".github/workflows/football-v6509-draw-risk-operating-point.yml"
+      - "football-data/manifests/v6_draw_risk_v6509_pr_trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+concurrency:
+  group: football-v6509-draw-risk-operating-point
+  cancel-in-progress: true
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Sync main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and run
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m py_compile football-data/validation/v6_draw_risk_operating_point_v6509.py
+          python football-data/validation/v6_draw_risk_operating_point_v6509.py
+      - name: Upload receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6509-draw-risk-operating-point-receipt
+          path: football-data/manifests/v6_draw_risk_operating_point_v6509_status.json
+          if-no-files-found: error
+      - name: Persist receipt
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_draw_risk_operating_point_v6509_status.json \
+            --message-prefix "audit(football): persist V6.50.9 draw-risk operating point"
+      - name: Governance guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/v6_draw_risk_operating_point_v6509_status.json').read_text(encoding='utf-8'))
+          g=x.get('governance') or {}; d=x.get('design') or {}
+          if g.get('research_only') is not True or g.get('formal_weight')!=0: raise SystemExit('governance drift')
+          if g.get('current_rule_change') is not False or g.get('formal_probability_change') is not False or g.get('formal_selector_threshold_change') is not False: raise SystemExit('formal mutation')
+          if d.get('target_results_used_for_training_or_threshold') is not False: raise SystemExit('target leakage')
+          print(json.dumps({'status':x.get('status'),'target':(x.get('target_2025') or {}).get('candidate'),'gates':x.get('gates')},ensure_ascii=False))
+          PY
+
+# Research only. CURRENT V5.0.1 unchanged.
