@@ -9,6 +9,7 @@ on:
       - "football-data/validation/v6_context_enriched_forward_manual_v6489.py"
       - "football-data/validation/v6_match_context_axes_forward_v6490.py"
       - "football-data/validation/v6_context_conditioned_selector_forward_v6495.py"
+      - "football-data/validation/v6_context_priority_queue_v6493.py"
       - ".github/workflows/football-v6489-manual-context-sidecar.yml"
 
 permissions:
@@ -44,6 +45,7 @@ jobs:
           python -m py_compile football-data/validation/v6_context_enriched_forward_manual_v6489.py
           python -m py_compile football-data/validation/v6_match_context_axes_forward_v6490.py
           python -m py_compile football-data/validation/v6_context_conditioned_selector_forward_v6495.py
+          python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
 
       - name: Freeze eligible manual-web context decisions
         env:
@@ -60,6 +62,11 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_conditioned_selector_forward_v6495.py
 
+      - name: Refresh model-value context priority queue
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_priority_queue_v6493.py
+
       - name: Persist only context ledgers and receipts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +80,7 @@ jobs:
             --allow-prefix football-data/manifests/v6_match_context_axes_v6490_status.json \
             --allow-prefix football-data/forward/v6_context_conditioned_selector_events_v6495.json \
             --allow-prefix football-data/manifests/v6_context_conditioned_selector_v6495_status.json \
+            --allow-prefix football-data/manifests/v6_context_priority_queue_v6493_status.json \
             --message-prefix "audit(football): persist V6.49.5 context sidecars"
 
       - name: Guard no-backfill and no-manual-adjustment semantics
@@ -83,6 +91,7 @@ jobs:
           x=json.loads(Path('football-data/manifests/v6_context_enriched_forward_v6486_status.json').read_text(encoding='utf-8'))
           a=json.loads(Path('football-data/manifests/v6_match_context_axes_v6490_status.json').read_text(encoding='utf-8'))
           c=json.loads(Path('football-data/manifests/v6_context_conditioned_selector_v6495_status.json').read_text(encoding='utf-8'))
+          q=json.loads(Path('football-data/manifests/v6_context_priority_queue_v6493_status.json').read_text(encoding='utf-8'))
           if (x.get('governance') or {}).get('historical_backfill') is not False:
               raise SystemExit('context historical backfill guard failed')
           if (a.get('governance') or {}).get('historical_backfill') is not False:
@@ -92,13 +101,16 @@ jobs:
               raise SystemExit('context-conditioned governance guard failed')
           if (x.get('governance') or {}).get('formal_weight') != 0 or (a.get('governance') or {}).get('formal_weight') != 0 or cg.get('formal_weight') != 0:
               raise SystemExit('formal weight guard failed')
+          if (q.get('governance') or {}).get('probability_mutation') is not False:
+              raise SystemExit('priority queue probability mutation guard failed')
           print(json.dumps({
             'context_events':(x.get('ledger_audit') or {}).get('event_count'),
             'context_features':x.get('feature_counts'),
             'axes_events':(a.get('ledger_audit') or {}).get('event_count'),
             'axes_coverage':a.get('coverage'),
             'conditioned_1x2_events':(c.get('ledger_audit') or {}).get('event_count'),
-            'conditioned_decision':(c.get('evaluation') or {}).get('decision')
+            'conditioned_decision':(c.get('evaluation') or {}).get('decision'),
+            'priority_counts':q.get('priority_counts')
           },ensure_ascii=False))
           PY
 
