@@ -2,10 +2,10 @@ name: Football V6.51.2 Rank Attack Draw
 on:
   push:
     branches: [main]
-    paths: ["football-data/validation/v6_draw_rank_attack_nb_v6512.py","football-data/validation/v6_draw_rank_attack_nb_v6512r2.py",".github/workflows/football-v6512-draw-rank-attack.yml"]
-  pull_request:
-    branches: [main]
-    paths: ["football-data/manifests/v6_draw_rank_attack_v6512_pr_trigger.txt"]
+    paths:
+      - "football-data/validation/v6_draw_rank_attack_nb_v6512.py"
+      - "football-data/validation/v6_draw_rank_attack_nb_v6512r2.py"
+      - ".github/workflows/football-v6512-draw-rank-attack.yml"
   workflow_dispatch:
 permissions:
   contents: write
@@ -18,12 +18,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with: {fetch-depth: 0, ref: main}
+        with:
+          fetch-depth: 0
+          ref: main
       - run: git fetch origin main && git reset --hard origin/main
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
+        with:
+          python-version: "3.12"
       - name: Run V6.51.2-r2
-        env: {PYTHONPATH: "football-data/engine:football-data/validation"}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
         run: |
           python -m py_compile football-data/validation/v6_draw_rank_attack_nb_v6512.py football-data/validation/v6_draw_rank_attack_nb_v6512r2.py
           python football-data/validation/v6_draw_rank_attack_nb_v6512r2.py
@@ -33,15 +37,22 @@ jobs:
           path: football-data/manifests/v6_draw_rank_attack_nb_v6512_status.json
           if-no-files-found: error
       - name: Persist receipt
-        if: github.event_name != 'pull_request'
-        env: {GH_TOKEN: "${{ github.token }}", GH_REPOSITORY: "${{ github.repository }}"}
-        run: python football-data/validation/persist_generated_worktree_v474.py --allow-prefix football-data/manifests/v6_draw_rank_attack_nb_v6512_status.json --message-prefix "audit(football): persist V6.51.2 rank-attack draw challenge"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_draw_rank_attack_nb_v6512_status.json \
+            --message-prefix "audit(football): persist V6.51.2 rank-attack draw challenge"
       - name: Guard
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           x=json.loads(Path('football-data/manifests/v6_draw_rank_attack_nb_v6512_status.json').read_text())
-          if x['governance']['formal_weight']!=0 or x['method']['target_results_used_for_training_or_threshold'] is not False: raise SystemExit('governance/leakage failure')
+          if x['governance']['formal_weight']!=0 or x['method']['target_results_used_for_training_or_threshold'] is not False:
+              raise SystemExit('governance/leakage failure')
           print(json.dumps({'status':x['status'],'target':x['target_2025']['with_rank_attack_draw_reentry'],'gates':x['gates']}))
           PY
+
+# Triggered research run only; no formal model mutation.
