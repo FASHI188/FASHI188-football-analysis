@@ -13,6 +13,7 @@ on:
       - "football-data/validation/v6_context_conditioned_selector_forward_v6495.py"
       - "football-data/validation/v6_context_priority_queue_v6493.py"
       - "football-data/validation/v6_sync_42_runtime_truth_v6495.py"
+      - "football-data/validation/v6_sync_f06_challenge_truth_v6505.py"
       - ".github/workflows/football-v6489-manual-context-sidecar.yml"
 
 permissions:
@@ -31,17 +32,14 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
-
       - name: Synchronize latest main before binding market and context evidence
         shell: bash
         run: |
           git fetch origin main
           git reset --hard origin/main
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Compile context chain
         run: |
           python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
@@ -50,32 +48,31 @@ jobs:
           python -m py_compile football-data/validation/v6_context_conditioned_selector_forward_v6495.py
           python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
           python -m py_compile football-data/validation/v6_sync_42_runtime_truth_v6495.py
-
+          python -m py_compile football-data/validation/v6_sync_f06_challenge_truth_v6505.py
       - name: Freeze eligible manual-web context decisions
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_enriched_forward_manual_v6489.py
-
       - name: Freeze manager and material-roster-delta axes
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_match_context_axes_forward_v6490.py
-
       - name: Run prospective context-conditioned 1X2 audit
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_conditioned_selector_forward_v6495.py
-
       - name: Refresh model-value context priority queue
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_priority_queue_v6493.py
-
-      - name: Synchronize 42-item runtime truth from accepted ledgers
+      - name: Synchronize general 42-item runtime truth from accepted ledgers
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_sync_42_runtime_truth_v6495.py
-
+      - name: Reapply latest F06 challenge evidence to the unique runtime truth
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_sync_f06_challenge_truth_v6505.py
       - name: Persist only context ledgers and receipts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,8 +88,7 @@ jobs:
             --allow-prefix football-data/manifests/v6_context_conditioned_selector_v6495_status.json \
             --allow-prefix football-data/manifests/v6_context_priority_queue_v6493_status.json \
             --allow-prefix football-data/manifests/v6_42_issue_remediation_v6489_status.json \
-            --message-prefix "audit(football): persist V6.49.5 context sidecars"
-
+            --message-prefix "audit(football): persist V6.50.5-aware context sidecars"
       - name: Guard no-backfill no-manual-adjustment and runtime-truth sync semantics
         run: |
           python - <<'PY'
@@ -103,39 +99,21 @@ jobs:
           c=json.loads(Path('football-data/manifests/v6_context_conditioned_selector_v6495_status.json').read_text(encoding='utf-8'))
           q=json.loads(Path('football-data/manifests/v6_context_priority_queue_v6493_status.json').read_text(encoding='utf-8'))
           t=json.loads(Path('football-data/manifests/v6_42_issue_remediation_v6489_status.json').read_text(encoding='utf-8'))
-          if (x.get('governance') or {}).get('historical_backfill') is not False:
-              raise SystemExit('context historical backfill guard failed')
-          if (a.get('governance') or {}).get('historical_backfill') is not False:
-              raise SystemExit('axes historical backfill guard failed')
+          if (x.get('governance') or {}).get('historical_backfill') is not False: raise SystemExit('context historical backfill guard failed')
+          if (a.get('governance') or {}).get('historical_backfill') is not False: raise SystemExit('axes historical backfill guard failed')
           cg=c.get('governance') or {}
-          if cg.get('historical_backfill') is not False or cg.get('context_probability_adjustment') is not False or cg.get('context_veto_rule_active') is not False:
-              raise SystemExit('context-conditioned governance guard failed')
-          if (x.get('governance') or {}).get('formal_weight') != 0 or (a.get('governance') or {}).get('formal_weight') != 0 or cg.get('formal_weight') != 0:
-              raise SystemExit('formal weight guard failed')
-          if (q.get('governance') or {}).get('probability_mutation') is not False:
-              raise SystemExit('priority queue probability mutation guard failed')
+          if cg.get('historical_backfill') is not False or cg.get('context_probability_adjustment') is not False or cg.get('context_veto_rule_active') is not False: raise SystemExit('context-conditioned governance guard failed')
+          if (x.get('governance') or {}).get('formal_weight') != 0 or (a.get('governance') or {}).get('formal_weight') != 0 or cg.get('formal_weight') != 0: raise SystemExit('formal weight guard failed')
+          if (q.get('governance') or {}).get('probability_mutation') is not False: raise SystemExit('priority queue probability mutation guard failed')
           acq=t.get('current_forward_acquisition') or {}
-          if acq.get('clean_context_market_decision_events_verified') != (x.get('ledger_audit') or {}).get('event_count'):
-              raise SystemExit('42-item context count sync guard failed')
-          if acq.get('manager_both_verified_events') != (a.get('coverage') or {}).get('manager_both_verified'):
-              raise SystemExit('42-item manager count sync guard failed')
+          if acq.get('clean_context_market_decision_events_verified') != (x.get('ledger_audit') or {}).get('event_count'): raise SystemExit('42-item context count sync guard failed')
+          if acq.get('manager_both_verified_events') != (a.get('coverage') or {}).get('manager_both_verified'): raise SystemExit('42-item manager count sync guard failed')
+          if t.get('schema_version') != 'V6.50.5-42-issue-runtime-truth-registry-r9': raise SystemExit('latest F06 truth supplement missing')
+          if acq.get('v6505_joint_prediction_count') is None: raise SystemExit('V6.50.5 count missing from runtime truth')
           summary=t.get('summary') or {}
-          if summary.get('PASS') != 36 or summary.get('PARTIAL') != 4 or summary.get('FORWARD_GATED') != 2:
-              raise SystemExit('42-item status composition guard failed')
-          print(json.dumps({
-            'context_events':(x.get('ledger_audit') or {}).get('event_count'),
-            'context_features':x.get('feature_counts'),
-            'axes_events':(a.get('ledger_audit') or {}).get('event_count'),
-            'axes_coverage':a.get('coverage'),
-            'conditioned_1x2_events':(c.get('ledger_audit') or {}).get('event_count'),
-            'conditioned_decision':(c.get('evaluation') or {}).get('decision'),
-            'priority_counts':q.get('priority_counts'),
-            'runtime_truth_summary':summary
-          },ensure_ascii=False))
+          if summary.get('PASS') != 36 or summary.get('PARTIAL') != 4 or summary.get('FORWARD_GATED') != 2: raise SystemExit('42-item status composition guard failed')
+          print(json.dumps({'context_events':(x.get('ledger_audit') or {}).get('event_count'),'axes_events':(a.get('ledger_audit') or {}).get('event_count'),'conditioned_1x2_events':(c.get('ledger_audit') or {}).get('event_count'),'v6505_joint':acq.get('v6505_joint_prediction_count'),'runtime_truth_schema':t.get('schema_version'),'summary':summary},ensure_ascii=False))
           PY
 
-# Human/live web verification only. P0 SELECT=true fixtures remain first priority.
-# V6.49.5 starts after its own freeze epoch; older context is never imported into the new study.
-# No injury/news item manually changes a probability or pick. Formal V5.0.1 remains unchanged.
-# The 42-item runtime-truth registry is audit-only and is derived from accepted ledgers after each run.
-# Push remains primary; hourly schedule is a fallback for already-committed evidence that missed push materialization.
+# Context synchronization may rebuild general counts, but must finish with the V6.50.5-aware unique runtime truth.
+# No context/news item or research challenge can mutate formal V5.0.1 probabilities or weights.
