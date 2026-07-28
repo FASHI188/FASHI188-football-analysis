@@ -1,0 +1,57 @@
+name: Football V6.49.1 Manager Delta Baseline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_manager_delta_from_verified_baseline_v6491.py"
+      - "football-data/forward/v6_match_context_axes_events_v6490.json"
+      - "football-data/evidence/team_manager_context_weekly/**"
+      - ".github/workflows/football-v6491-manager-delta-baseline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6491-manager-delta-baseline
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Sync latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/v6_manager_delta_from_verified_baseline_v6491.py
+      - run: python football-data/validation/v6_manager_delta_from_verified_baseline_v6491.py
+      - name: Persist receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_manager_delta_from_verified_baseline_v6491_status.json \
+            --message-prefix "audit(football): persist V6.49.1 manager delta baseline"
+      - name: Guard missing baseline semantics
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/v6_manager_delta_from_verified_baseline_v6491_status.json').read_text(encoding='utf-8'))
+          if (x.get('governance') or {}).get('missing_prior_baseline_never_means_no_change') is not True:
+              raise SystemExit('missing baseline guard failed')
+          if (x.get('governance') or {}).get('formal_weight') != 0:
+              raise SystemExit('formal weight guard failed')
+          print(json.dumps({'status':x.get('status'),'current':x.get('current_manager_observation_count'),'delta_counts':x.get('delta_counts')},ensure_ascii=False))
+          PY
