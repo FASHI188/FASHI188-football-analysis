@@ -1,0 +1,67 @@
+name: Football V6.48.9 Manual Web Context Sidecar
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/evidence/match_context_live/manual_web/**"
+      - "football-data/validation/v6_context_enriched_forward_manual_v6489.py"
+      - ".github/workflows/football-v6489-manual-context-sidecar.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6489-manual-context-sidecar
+  cancel-in-progress: false
+
+jobs:
+  context_sidecar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile manual context sidecar
+        run: |
+          python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
+          python -m py_compile football-data/validation/v6_context_enriched_forward_manual_v6489.py
+
+      - name: Freeze eligible manual-web context decisions
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_enriched_forward_manual_v6489.py
+
+      - name: Persist only ledger and receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/forward/v6_context_enriched_events_v6486.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_freeze.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_status.json \
+            --message-prefix "audit(football): persist V6.48.9 manual context sidecar"
+
+      - name: Guard no-backfill semantics
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_context_enriched_forward_v6486_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if (x.get('governance') or {}).get('historical_backfill') is not False:
+              raise SystemExit('historical backfill guard failed')
+          if (x.get('governance') or {}).get('formal_weight') != 0:
+              raise SystemExit('formal weight guard failed')
+          print(json.dumps({'status':x.get('status'),'events':(x.get('ledger_audit') or {}).get('event_count'),'features':x.get('feature_counts')},ensure_ascii=False))
+          PY
+
+# Human/live web verification only. This workflow does not crawl external sites.
+# Formal V5.0.1 remains unchanged.
