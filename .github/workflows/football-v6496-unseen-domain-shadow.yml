@@ -103,15 +103,16 @@ jobs:
           ev=x.get('evaluation') or {}
           counts=q.get('counts') or {}
           audit=q.get('audit') or {}
-          batch=w.get('current_batch') or {}
+          cohort=w.get('current_forward_cohort') or {}
+          wc=(w.get('audit') or {}).get('checks') or {}
           acq=r.get('current_forward_acquisition') or {}
           if counts.get('population') != pop.get('eligible_unseen_prediction_count'): raise SystemExit('detail population mismatch')
           if counts.get('shadow_selected') != pop.get('shadow_selected_count'): raise SystemExit('detail selected mismatch')
           if counts.get('shadow_selected_settled') != ((ev.get('shadow_selected_settled') or {}).get('count') or 0): raise SystemExit('detail settled mismatch')
           if not all((audit.get('checks') or {}).values()): raise SystemExit('detail consistency audit failed')
-          if batch.get('fixture_count') != 32: raise SystemExit('unexpected current selector fixture count')
-          if batch.get('active_selected') != 3: raise SystemExit('unexpected active selected count')
-          if batch.get('unseen_domain_forced_abstain') != pop.get('eligible_unseen_prediction_count'): raise SystemExit('throughput unseen count mismatch')
+          if not all(wc.values()): raise SystemExit('throughput consistency audit failed')
+          if cohort.get('cumulative_unseen_domain_forced_abstain', 0) < pop.get('eligible_unseen_prediction_count', 0):
+              raise SystemExit('throughput cumulative unseen count below frozen shadow population')
           if acq.get('v6496_unseen_shadow_population') != pop.get('eligible_unseen_prediction_count'):
               raise SystemExit('runtime truth shadow population mismatch')
           if acq.get('v6496_unseen_shadow_selected') != pop.get('shadow_selected_count'):
@@ -121,9 +122,10 @@ jobs:
           if (r.get('summary') or {}) != {'PASS':36,'PARTIAL':4,'FORWARD_GATED':2,'EXTERNAL_DATA_GAP':0,'TODO':0,'BLOCKED':0}:
               raise SystemExit('42-item status composition drift')
           print(json.dumps({
-            'active_selected':batch.get('active_selected'),
-            'trained_threshold_abstain':batch.get('trained_domain_threshold_abstain'),
-            'unseen_forced_abstain':batch.get('unseen_domain_forced_abstain'),
+            'prediction_count':cohort.get('prediction_count'),
+            'active_selected':cohort.get('active_selected'),
+            'trained_threshold_abstain':cohort.get('trained_domain_threshold_abstain'),
+            'cumulative_unseen_forced_abstain':cohort.get('cumulative_unseen_domain_forced_abstain'),
             'shadow_selected':pop.get('shadow_selected_count'),
             'detail_max_probability_sum_residual':audit.get('max_probability_sum_residual'),
             'runtime_truth_schema':r.get('schema_version')
