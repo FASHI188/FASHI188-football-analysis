@@ -2,7 +2,7 @@
 """V6.47.0 team-context source-of-truth reconciliation.
 
 This audit fixes a bookkeeping defect where later weekly/PIT reports could surface an
-older or narrower roster count than the validated current-roster overlay.  Static
+older or narrower roster count than the validated current-roster overlay. Static
 roster evidence and match-bound PIT evidence are deliberately separate:
 
 * static current roster cache -> latest validated V6.6 overlay + gap inventory;
@@ -43,8 +43,10 @@ def main() -> int:
     v631 = load(MATCH_PIT)
     weekly = load(WEEKLY)
 
-    team_count = int(overlay.get("team_baseline") or gaps.get("team_count") or 0)
-    strict = int(overlay.get("effective_strict_current_count") or 0)
+    # V6.6.15 is the authoritative static-roster ledger. Do not let the narrower
+    # V6.30 semantic audit or an older weekly receipt overwrite these counters.
+    team_count = int(overlay.get("team_baseline_count") or gaps.get("team_count") or 0)
+    strict = int(overlay.get("effective_strict_current_roster_count") or 0)
     gap_count = int(gaps.get("unresolved_strict_current_gap_count") or 0)
 
     registered_overlay_rows = []
@@ -78,9 +80,11 @@ def main() -> int:
         errors.append("missing_validated_current_roster_overlay")
     if not gaps:
         errors.append("missing_roster_gap_inventory")
+    if not v631:
+        errors.append("missing_match_bound_pit_ledger_run")
 
     payload = {
-        "schema_version": "V6.47.0-team-context-source-of-truth-r1",
+        "schema_version": "V6.47.0-team-context-source-of-truth-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "formal_current_version": "V5.0.1",
         "status": "PASS" if not errors else "FAIL",
