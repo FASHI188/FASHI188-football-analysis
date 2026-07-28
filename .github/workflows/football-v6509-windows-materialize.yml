@@ -1,0 +1,47 @@
+name: Football V6.50.9 Windows Materialize
+
+on:
+  push:
+    branches: [v6507-draw-residual-observable]
+    paths:
+      - ".github/workflows/football-v6509-windows-materialize.yml"
+      - "football-data/manifests/v6_draw_risk_v6509_windows_trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6509-windows-materialize
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run V6.50.9 from latest main code
+        run: |
+          git fetch origin main
+          git checkout origin/main -- football-data/validation/v6_draw_residual_net_gain_v6507.py football-data/validation/v6_draw_triage_decision_v6508.py football-data/validation/v6_draw_risk_operating_point_v6509.py
+          PYTHONPATH=football-data/engine:football-data/validation python -m py_compile football-data/validation/v6_draw_risk_operating_point_v6509.py
+          PYTHONPATH=football-data/engine:football-data/validation python football-data/validation/v6_draw_risk_operating_point_v6509.py
+      - name: Commit receipt to research branch only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_draw_risk_operating_point_v6509_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): materialize V6.50.9 draw-risk receipt on research branch"
+            git push origin HEAD:v6507-draw-residual-observable
+          fi
+
+# Temporary execution fallback only. Never merge.
