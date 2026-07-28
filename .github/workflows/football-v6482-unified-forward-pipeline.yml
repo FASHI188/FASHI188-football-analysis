@@ -1,4 +1,4 @@
-name: Football V6.49.2 Unified 17-Domain Forward Pipeline
+name: Football V6.49.4 Unified 17-Domain Forward Pipeline
 
 on:
   workflow_dispatch:
@@ -10,11 +10,13 @@ on:
       - "football-data/config/v6_full17_kambi_group_aliases_v6482.json"
       - "football-data/config/v6_full17_provider_aliases_v6483.json"
       - "football-data/config/v6_ucl_qualifying_identity_v6484.json"
+      - "football-data/config/v6_current_research_scope_v6494.json"
       - "football-data/validation/v6_full17_identity_registry_v6482.py"
       - "football-data/validation/v6_full17_capture_identity_v6484.py"
       - "football-data/validation/v6_full17_kambi_capture_v6482.py"
       - "football-data/validation/v6_full17_kambi_capture_v6484.py"
       - "football-data/validation/v6_fresh_market_forward_challengers_v6492.py"
+      - "football-data/validation/audit_current_research_scope_v6494.py"
       - "football-data/validation/audit_unified_forward_pipeline_v6482.py"
       - ".github/workflows/football-v6482-unified-forward-pipeline.yml"
 
@@ -22,7 +24,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: football-v6492-unified-forward-pipeline
+  group: football-v6494-unified-forward-pipeline
   cancel-in-progress: false
 
 jobs:
@@ -51,22 +53,24 @@ jobs:
         shell: bash
         run: echo "BATCH_START_UTC=$(date -u +'%Y-%m-%dT%H:%M:%S+00:00')" >> "$GITHUB_ENV"
 
-      - name: Compile unified forward chain
+      - name: Compile current execution chain
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: |
+          python -m py_compile football-data/validation/audit_current_research_scope_v6494.py
           python -m py_compile football-data/validation/v6_full17_identity_registry_v6482.py
           python -m py_compile football-data/validation/v6_full17_capture_identity_v6484.py
           python -m py_compile football-data/validation/v6_full17_kambi_capture_v6482.py
           python -m py_compile football-data/validation/v6_full17_kambi_capture_v6484.py
           python -m py_compile football-data/validation/v6_market_first_forward_v652.py
           python -m py_compile football-data/validation/v6_lead_bucket_forward_v6469.py
-          python -m py_compile football-data/validation/v6_hierarchical_selector_forward_v6475.py
-          python -m py_compile football-data/validation/v6_total_margin_forward_v6479.py
           python -m py_compile football-data/validation/v6_fresh_market_forward_challengers_v6492.py
           python -m py_compile football-data/validation/v6_match_context_pit_ledger_v6310.py
           python -m py_compile football-data/validation/v6_market_first_result_resolver_v651.py
           python -m py_compile football-data/validation/audit_unified_forward_pipeline_v6482.py
+
+      - name: Enforce current research scope before any prediction
+        run: python football-data/validation/audit_current_research_scope_v6494.py
 
       - name: Rebuild exact current-team identity for all 17 domains
         env:
@@ -78,23 +82,21 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_full17_capture_identity_v6484.py
 
-      - name: Discover and capture synchronized Kambi 1X2 AH OU across all 17 domains
+      - name: Discover synchronized Kambi 1X2 AH OU market inputs across all 17 domains
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: |
           python football-data/validation/v6_full17_kambi_capture_v6484.py \
             --batch-start-utc "$BATCH_START_UTC"
 
-      - name: Freeze legacy market-first and timing sidecars
+      - name: Maintain market-result infrastructure and timing diagnostic
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: |
           python football-data/validation/v6_market_first_forward_v652.py
           python football-data/validation/v6_lead_bucket_forward_v6469.py
-          python football-data/validation/v6_hierarchical_selector_forward_v6475.py
-          python football-data/validation/v6_total_margin_forward_v6479.py
 
-      - name: Freeze V6.49.2 fresh future-fixture challenger predictions
+      - name: Freeze current V6.49.2 1X2 and total-score challenger predictions
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_fresh_market_forward_challengers_v6492.py
@@ -104,26 +106,24 @@ jobs:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_match_context_pit_ledger_v6310.py
 
-      - name: Resolve open results from official sources
+      - name: Resolve open 90-minute results from official sources
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_market_first_result_resolver_v651.py
 
-      - name: Settle old and fresh challengers after result refresh
+      - name: Settle current challengers after result refresh
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: |
-          python football-data/validation/v6_hierarchical_selector_forward_v6475.py
-          python football-data/validation/v6_total_margin_forward_v6479.py
-          python football-data/validation/v6_lead_bucket_forward_v6469.py
           python football-data/validation/v6_fresh_market_forward_challengers_v6492.py
+          python football-data/validation/v6_lead_bucket_forward_v6469.py
 
       - name: Audit one unified forward state
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/audit_unified_forward_pipeline_v6482.py
 
-      - name: Persist only forward evidence and receipts
+      - name: Persist only current forward evidence and receipts
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,6 +132,7 @@ jobs:
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/config/v6_full17_identity_registry_v6482.json \
             --allow-prefix football-data/config/v6_full17_capture_identity_v6484.json \
+            --allow-prefix football-data/manifests/v6_current_research_scope_v6494_status.json \
             --allow-prefix football-data/manifests/v6_full17_kambi_capture_v6482_status.json \
             --allow-prefix football-data/manifests/v6_unified_forward_pipeline_v6482_status.json \
             --allow-prefix football-data/evidence/direct_provider_probes/kambi/full17/ \
@@ -144,12 +145,6 @@ jobs:
             --allow-prefix football-data/manifests/v6_lead_bucket_forward_v6469_freeze.json \
             --allow-prefix football-data/forward/v6_lead_bucket_events_v6469.json \
             --allow-prefix football-data/manifests/v6_lead_bucket_forward_v6469_status.json \
-            --allow-prefix football-data/manifests/v6_hierarchical_selector_forward_v6475_freeze.json \
-            --allow-prefix football-data/forward/v6_hierarchical_selector_events_v6475.json \
-            --allow-prefix football-data/manifests/v6_hierarchical_selector_forward_v6475_status.json \
-            --allow-prefix football-data/manifests/v6_total_margin_forward_v6479_freeze.json \
-            --allow-prefix football-data/forward/v6_total_margin_events_v6479.json \
-            --allow-prefix football-data/manifests/v6_total_margin_forward_v6479_status.json \
             --allow-prefix football-data/manifests/v6_fresh_market_forward_challengers_v6492_freeze.json \
             --allow-prefix football-data/forward/v6_fresh_selector_events_v6492.json \
             --allow-prefix football-data/forward/v6_fresh_matrix_events_v6492.json \
@@ -157,14 +152,23 @@ jobs:
             --allow-prefix football-data/forward/inbox/market_first_results_v651.json \
             --allow-prefix football-data/manifests/v6_market_first_result_resolver_v651_status.json \
             --allow-prefix football-data/manifests/v6_match_context_pit_v6310_status.json \
-            --message-prefix "audit(football): persist V6.49.2 unified forward pipeline"
+            --message-prefix "audit(football): persist V6.49.4 unified forward pipeline"
 
-      - name: Final no-backfill and 17-domain integrity check
+      - name: Final scope no-backfill and 17-domain integrity check
         if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
+          s=Path('football-data/manifests/v6_current_research_scope_v6494_status.json')
+          if not s.exists(): raise SystemExit('research scope receipt missing')
+          scope=json.loads(s.read_text(encoding='utf-8'))
+          if scope.get('status') != 'PASS': raise SystemExit(str(scope))
+          if scope.get('active_prediction_targets_in_order') != ['90m_1x2','direct_total_goals','exact_score_from_unified_matrix']:
+              raise SystemExit('active target order drift')
+          if scope.get('retired_handicap_prediction_target') is not True:
+              raise SystemExit('retired handicap guard failed')
+
           p=Path('football-data/manifests/v6_unified_forward_pipeline_v6482_status.json')
           if not p.exists(): raise SystemExit('unified forward receipt missing')
           x=json.loads(p.read_text(encoding='utf-8'))
@@ -172,6 +176,7 @@ jobs:
           if len(x.get('target_domains') or []) != 17: raise SystemExit('17-domain contract missing')
           g=x.get('governance') or {}
           if g.get('no_historical_backfill') is not True or g.get('current_rule_change') is not False: raise SystemExit('governance contract failed')
+
           f=Path('football-data/manifests/v6_fresh_market_forward_challengers_v6492_status.json')
           if f.exists():
               z=json.loads(f.read_text(encoding='utf-8'))
@@ -181,13 +186,16 @@ jobs:
                   raise SystemExit('fresh challenger formal-weight guard failed')
           print(json.dumps({
             'status':x.get('status'),
+            'active_targets':scope.get('active_prediction_targets_in_order'),
+            'handicap_prediction_target_retired':scope.get('retired_handicap_prediction_target'),
+            'ah_market_input_retained':scope.get('asian_handicap_market_input_retained'),
             'new_snapshots':(x.get('acquisition') or {}).get('new_market_snapshots_this_run'),
             'domains_with_events':(x.get('acquisition') or {}).get('domains_with_current_kambi_target_events'),
-            'market_predictions':(x.get('market_first') or {}).get('prediction_count'),
-            'legacy_selector_selected_settled':(x.get('hierarchical_1x2_selector') or {}).get('selected_settled'),
-            'legacy_matrix_settled':(x.get('direct_total_conditional_margin_matrix') or {}).get('settled')
+            'market_predictions':(x.get('market_first') or {}).get('prediction_count')
           },ensure_ascii=False))
           PY
 
-# V6.49.2 adds a fresh current-market feed for the frozen research challengers.
-# Old V6.47.5/V6.47.9 ledgers remain immutable evidence. Formal V5.0.1 remains unchanged.
+# V6.49.4 active targets: 90m 1X2 -> direct total goals -> exact score.
+# Asian handicap remains synchronized market input/audit only; handicap prediction research is retired.
+# V6.47.5/V6.47.9 forward ledgers are no longer executed by the hourly pipeline and remain historical evidence.
+# Formal V5.0.1 remains unchanged.
