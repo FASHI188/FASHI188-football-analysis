@@ -1,0 +1,45 @@
+name: Football V6.50.6 Branch Materialize
+
+on:
+  push:
+    branches:
+      - v6506-2025-replay-observable
+    paths:
+      - ".github/workflows/football-v6506-branch-materialize.yml"
+      - "football-data/manifests/v6_fullseason_2025_replay_v6506_branch_trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6506-branch-materialize
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and run strict full-season replay
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m py_compile football-data/validation/v6_fullseason_2025_replay_v6506.py
+          python football-data/validation/v6_fullseason_2025_replay_v6506.py
+      - name: Commit receipt to research branch only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add football-data/manifests/v6_fullseason_2025_replay_v6506_status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): materialize V6.50.6 2025 replay receipt on research branch"
+            git push origin HEAD:v6506-2025-replay-observable
+          fi
+
+# Research branch only. Result file is retrospective diagnostic evidence, never formal promotion evidence.
