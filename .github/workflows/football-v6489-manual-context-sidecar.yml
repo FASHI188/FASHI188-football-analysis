@@ -1,4 +1,4 @@
-name: Football V6.48.9 Manual Web Context Sidecar
+name: Football V6.49.0 Manual Web Context Sidecars
 
 on:
   workflow_dispatch:
@@ -7,17 +7,18 @@ on:
     paths:
       - "football-data/manifests/v6_manual_context_batch_trigger_v6489.json"
       - "football-data/validation/v6_context_enriched_forward_manual_v6489.py"
+      - "football-data/validation/v6_match_context_axes_forward_v6490.py"
       - ".github/workflows/football-v6489-manual-context-sidecar.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: football-v6489-manual-context-sidecar
+  group: football-v6490-manual-context-sidecars
   cancel-in-progress: false
 
 jobs:
-  context_sidecar:
+  context_sidecars:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,17 +29,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compile manual context sidecar
+      - name: Compile manual context sidecars
         run: |
           python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
           python -m py_compile football-data/validation/v6_context_enriched_forward_manual_v6489.py
+          python -m py_compile football-data/validation/v6_match_context_axes_forward_v6490.py
 
       - name: Freeze eligible manual-web context decisions
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_enriched_forward_manual_v6489.py
 
-      - name: Persist only ledger and receipt
+      - name: Freeze manager and material-roster-delta axes
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_match_context_axes_forward_v6490.py
+
+      - name: Persist only ledgers and receipts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -47,7 +54,9 @@ jobs:
             --allow-prefix football-data/forward/v6_context_enriched_events_v6486.json \
             --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_freeze.json \
             --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_status.json \
-            --message-prefix "audit(football): persist V6.48.9 manual context sidecar"
+            --allow-prefix football-data/forward/v6_match_context_axes_events_v6490.json \
+            --allow-prefix football-data/manifests/v6_match_context_axes_v6490_status.json \
+            --message-prefix "audit(football): persist V6.49.0 manual context sidecars"
 
       - name: Guard no-backfill semantics
         run: |
@@ -56,13 +65,20 @@ jobs:
           from pathlib import Path
           p=Path('football-data/manifests/v6_context_enriched_forward_v6486_status.json')
           x=json.loads(p.read_text(encoding='utf-8'))
+          a=json.loads(Path('football-data/manifests/v6_match_context_axes_v6490_status.json').read_text(encoding='utf-8'))
           if (x.get('governance') or {}).get('historical_backfill') is not False:
-              raise SystemExit('historical backfill guard failed')
-          if (x.get('governance') or {}).get('formal_weight') != 0:
+              raise SystemExit('context historical backfill guard failed')
+          if (a.get('governance') or {}).get('historical_backfill') is not False:
+              raise SystemExit('axes historical backfill guard failed')
+          if (x.get('governance') or {}).get('formal_weight') != 0 or (a.get('governance') or {}).get('formal_weight') != 0:
               raise SystemExit('formal weight guard failed')
-          print(json.dumps({'status':x.get('status'),'events':(x.get('ledger_audit') or {}).get('event_count'),'features':x.get('feature_counts')},ensure_ascii=False))
+          print(json.dumps({
+            'context_events':(x.get('ledger_audit') or {}).get('event_count'),
+            'context_features':x.get('feature_counts'),
+            'axes_events':(a.get('ledger_audit') or {}).get('event_count'),
+            'axes_coverage':a.get('coverage')
+          },ensure_ascii=False))
           PY
 
 # Human/live web verification only. Evidence files are committed first, then one batch-trigger
-# receipt starts the sidecar once. This avoids one CI write race per fixture.
-# Formal V5.0.1 remains unchanged.
+# receipt starts both immutable sidecars once. Formal V5.0.1 remains unchanged.
