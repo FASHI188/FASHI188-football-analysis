@@ -1,0 +1,42 @@
+name: Football V6.47.1 Static Roster Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/audit_static_roster_operational_closure_v6471.py"
+      - "football-data/evidence/team_current_roster_weekly/v6471_*"
+      - "football-data/manifests/v6_roster_gap_inventory_v6611_status.json"
+      - ".github/workflows/football-v6471-static-roster-closure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6471-static-roster-closure
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/audit_static_roster_operational_closure_v6471.py
+      - run: python football-data/validation/audit_static_roster_operational_closure_v6471.py
+      - name: Persist closure receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_static_roster_operational_closure_v6471_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.47.1 static roster operational closure"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
