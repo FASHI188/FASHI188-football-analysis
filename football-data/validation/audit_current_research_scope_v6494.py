@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""V6.49.4 guard: prevent retired handicap prediction stages from re-entering active execution.
+"""V6.49.5 active-scope guard.
 
-The guard intentionally does NOT reject asian_handicap fields in market evidence or synchronized
-1X2/AH/OU capture. It only rejects active workflow/executable names that look like retired
-standalone handicap prediction research, and obvious retired-target wording in active workflows.
-Formal CURRENT V5.0.1 is not modified.
+Prevents two classes of retired surfaces from re-entering active execution:
+1) handicap win-draw-loss / standalone Asian-handicap prediction research;
+2) the legacy V6.9.x full-system issue registry, whose global team-context/blocker semantics
+   predate the current match-bound V6.49.x runtime-truth registry.
+
+Asian-handicap market fields remain valid synchronized input/audit data. Frozen V6.47.x
+algorithm definitions may remain library dependencies, but their old forward ledgers have
+execution authority 0. Formal CURRENT V5.0.1 is not modified.
 """
 from __future__ import annotations
 
@@ -23,12 +27,19 @@ FORBIDDEN_NAME_TOKENS = (
     "handicap-1x2",
     "handicap_1x2",
     "rangqiu",
+    "system-issue-registry-v690",
+    "v6_system_issue_registry_v690",
 )
 FORBIDDEN_WORKFLOW_PHRASES = (
     "让球胜平负",
     "handicap accuracy",
     "handicap_accuracy",
     "handicap forward gate",
+)
+LEGACY_V690_ACTIVE_PATHS = (
+    REPO / ".github" / "workflows" / "football-v6-system-issue-registry-v690.yml",
+    ROOT / "validation" / "v6_system_issue_registry_v690.py",
+    ROOT / "manifests" / "v6_system_issue_registry_v690_status.json",
 )
 
 
@@ -44,6 +55,11 @@ def main() -> int:
     h = retired.get("handicap_1x2") or {}
     if h.get("status") != "RETIRED_NO_ACTIVE_RESEARCH" or h.get("forward_gate") is not False:
         errors.append("handicap_1x2_not_retired")
+
+    retired_surfaces = {x.get("artifact_family"): x for x in scope.get("retired_execution_surfaces", [])}
+    v690 = retired_surfaces.get("v6_system_issue_registry_v690") or {}
+    if v690.get("status") != "RETIRED_ARCHIVE_ONLY" or int(v690.get("execution_authority", -1)) != 0:
+        errors.append("legacy_v690_registry_not_retired")
 
     scanned_files = 0
     forbidden_files: list[str] = []
@@ -67,7 +83,11 @@ def main() -> int:
                     forbidden_files.append(rel)
 
     if forbidden_files:
-        errors.append("retired_handicap_active_files:" + ",".join(sorted(set(forbidden_files))))
+        errors.append("retired_active_files:" + ",".join(sorted(set(forbidden_files))))
+
+    v690_paths_present = [str(p.relative_to(REPO)).replace("\\", "/") for p in LEGACY_V690_ACTIVE_PATHS if p.exists()]
+    if v690_paths_present:
+        errors.append("legacy_v690_active_paths_present:" + ",".join(v690_paths_present))
 
     market_policy = scope.get("market_input_policy") or {}
     if market_policy.get("asian_handicap") != "INPUT_AND_AUDIT_ONLY_NOT_PREDICTION_TARGET":
@@ -75,16 +95,31 @@ def main() -> int:
     if market_policy.get("synchronized_1x2_ah_ou_capture") != "KEEP":
         errors.append("synchronized_market_capture_should_remain")
 
+    precedence = scope.get("execution_precedence") or {}
+    if precedence.get("current_runtime_truth_registry") != "v6_42_issue_remediation_v6489_status.json":
+        errors.append("current_runtime_truth_registry_drift")
+
+    hard = scope.get("hard_guards") or {}
+    if hard.get("do_not_reactivate_v690_legacy_system_registry") is not True:
+        errors.append("v690_reactivation_guard_missing")
+    if hard.get("single_current_runtime_truth_surface") is not True:
+        errors.append("single_runtime_truth_guard_missing")
+    if hard.get("context_news_never_manually_changes_1x2_probability") is not True:
+        errors.append("context_manual_probability_guard_missing")
+
     status = {
-        "schema_version": "V6.49.4-current-research-scope-status-r1",
+        "schema_version": "V6.49.5-current-research-scope-status-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "formal_current_version": "V5.0.1",
         "status": "PASS" if not errors else "FAIL",
         "active_prediction_targets_in_order": active,
         "retired_handicap_prediction_target": True,
         "asian_handicap_market_input_retained": True,
+        "retired_v690_system_registry": not v690_paths_present,
+        "current_runtime_truth_registry": precedence.get("current_runtime_truth_registry"),
         "scanned_active_workflow_and_validation_files": scanned_files,
         "forbidden_active_files": sorted(set(forbidden_files)),
+        "legacy_v690_active_paths_present": v690_paths_present,
         "errors": errors,
         "governance": {
             "formal_probability_change": False,
