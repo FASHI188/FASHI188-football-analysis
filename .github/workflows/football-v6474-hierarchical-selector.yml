@@ -1,0 +1,44 @@
+name: Football V6.47.4 Hierarchical 1X2 Selector
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/evaluate_hierarchical_market_selector_v6474.py"
+      - "football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json"
+      - "football-data/processed/**"
+      - ".github/workflows/football-v6474-hierarchical-selector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6474-hierarchical-selector
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile football-data/validation/evaluate_hierarchical_market_selector_v6474.py
+      - env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/evaluate_hierarchical_market_selector_v6474.py
+      - name: Persist research receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_hierarchical_market_selector_v6474_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.47.4 hierarchical selector receipt"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
