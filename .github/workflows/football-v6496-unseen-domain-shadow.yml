@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "football-data/validation/v6_unseen_domain_shadow_v6496.py"
+      - "football-data/validation/v6_unseen_domain_shadow_detail_v6496.py"
       - "football-data/validation/v6_sync_42_runtime_truth_v6495.py"
       - ".github/workflows/football-v6496-unseen-domain-shadow.yml"
 
@@ -38,18 +39,24 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compile shadow and runtime-truth audit
+      - name: Compile shadow detail and runtime-truth audits
         run: |
           python -m py_compile football-data/validation/v6_unseen_domain_shadow_v6496.py
+          python -m py_compile football-data/validation/v6_unseen_domain_shadow_detail_v6496.py
           python -m py_compile football-data/validation/v6_sync_42_runtime_truth_v6495.py
 
       - name: Freeze or evaluate unseen-domain shadow
         run: python football-data/validation/v6_unseen_domain_shadow_v6496.py
 
+      - name: Independently recompute every unseen-domain shadow decision
+        env:
+          PYTHONPATH: football-data/validation
+        run: python football-data/validation/v6_unseen_domain_shadow_detail_v6496.py
+
       - name: Synchronize 42-item runtime truth from accepted ledgers and shadow receipt
         run: python football-data/validation/v6_sync_42_runtime_truth_v6495.py
 
-      - name: Persist shadow receipt and runtime truth together
+      - name: Persist shadow detail and runtime truth together
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -57,21 +64,24 @@ jobs:
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_unseen_domain_shadow_v6496_freeze.json \
             --allow-prefix football-data/manifests/v6_unseen_domain_shadow_v6496_status.json \
+            --allow-prefix football-data/manifests/v6_unseen_domain_shadow_detail_v6496_status.json \
             --allow-prefix football-data/manifests/v6_42_issue_remediation_v6489_status.json \
-            --message-prefix "audit(football): persist V6.49.6 unseen-domain shadow and runtime truth"
+            --message-prefix "audit(football): persist V6.49.6 unseen-domain shadow detail and runtime truth"
 
-      - name: Hard governance and sync guards
+      - name: Hard governance detail and sync guards
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           s=Path('football-data/manifests/v6_unseen_domain_shadow_v6496_status.json')
+          d=Path('football-data/manifests/v6_unseen_domain_shadow_detail_v6496_status.json')
           t=Path('football-data/manifests/v6_42_issue_remediation_v6489_status.json')
-          if not s.exists() or not t.exists(): raise SystemExit('shadow or runtime-truth receipt missing')
+          if not s.exists() or not d.exists() or not t.exists(): raise SystemExit('shadow/detail/runtime-truth receipt missing')
           x=json.loads(s.read_text(encoding='utf-8'))
+          q=json.loads(d.read_text(encoding='utf-8'))
           r=json.loads(t.read_text(encoding='utf-8'))
           g=x.get('governance') or {}
-          if x.get('status') != 'PASS': raise SystemExit(str(x))
+          if x.get('status') != 'PASS' or q.get('status') != 'PASS': raise SystemExit('shadow or detail audit failed')
           if g.get('active_selector_change') is not False: raise SystemExit('active selector change forbidden')
           if g.get('probability_mutation') is not False: raise SystemExit('probability mutation forbidden')
           if g.get('threshold_change') is not False: raise SystemExit('threshold change forbidden')
@@ -80,7 +90,13 @@ jobs:
           if g.get('automatic_promotion') is not False: raise SystemExit('automatic promotion forbidden')
           pop=x.get('population') or {}
           ev=x.get('evaluation') or {}
+          counts=q.get('counts') or {}
+          audit=q.get('audit') or {}
           acq=r.get('current_forward_acquisition') or {}
+          if counts.get('population') != pop.get('eligible_unseen_prediction_count'): raise SystemExit('detail population mismatch')
+          if counts.get('shadow_selected') != pop.get('shadow_selected_count'): raise SystemExit('detail selected mismatch')
+          if counts.get('shadow_selected_settled') != ((ev.get('shadow_selected_settled') or {}).get('count') or 0): raise SystemExit('detail settled mismatch')
+          if not all((audit.get('checks') or {}).values()): raise SystemExit('detail consistency audit failed')
           if acq.get('v6496_unseen_shadow_population') != pop.get('eligible_unseen_prediction_count'):
               raise SystemExit('runtime truth shadow population mismatch')
           if acq.get('v6496_unseen_shadow_selected') != pop.get('shadow_selected_count'):
@@ -93,6 +109,7 @@ jobs:
             'shadow_population':pop.get('eligible_unseen_prediction_count'),
             'shadow_selected':pop.get('shadow_selected_count'),
             'shadow_selected_settled':((ev.get('shadow_selected_settled') or {}).get('count') or 0),
+            'detail_max_probability_sum_residual':audit.get('max_probability_sum_residual'),
             'shadow_decision':ev.get('decision'),
             'runtime_truth_schema':r.get('schema_version')
           },ensure_ascii=False))
