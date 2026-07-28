@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "football-data/validation/v6_unseen_domain_shadow_v6496.py"
+      - "football-data/validation/v6_sync_42_runtime_truth_v6495.py"
       - ".github/workflows/football-v6496-unseen-domain-shadow.yml"
 
 permissions:
@@ -37,13 +38,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Compile shadow audit
-        run: python -m py_compile football-data/validation/v6_unseen_domain_shadow_v6496.py
+      - name: Compile shadow and runtime-truth audit
+        run: |
+          python -m py_compile football-data/validation/v6_unseen_domain_shadow_v6496.py
+          python -m py_compile football-data/validation/v6_sync_42_runtime_truth_v6495.py
 
       - name: Freeze or evaluate unseen-domain shadow
         run: python football-data/validation/v6_unseen_domain_shadow_v6496.py
 
-      - name: Persist only shadow freeze and receipt
+      - name: Synchronize 42-item runtime truth from accepted ledgers and shadow receipt
+        run: python football-data/validation/v6_sync_42_runtime_truth_v6495.py
+
+      - name: Persist shadow receipt and runtime truth together
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -51,16 +57,19 @@ jobs:
           python football-data/validation/persist_generated_worktree_v474.py \
             --allow-prefix football-data/manifests/v6_unseen_domain_shadow_v6496_freeze.json \
             --allow-prefix football-data/manifests/v6_unseen_domain_shadow_v6496_status.json \
-            --message-prefix "audit(football): persist V6.49.6 unseen-domain shadow"
+            --allow-prefix football-data/manifests/v6_42_issue_remediation_v6489_status.json \
+            --message-prefix "audit(football): persist V6.49.6 unseen-domain shadow and runtime truth"
 
-      - name: Hard governance guards
+      - name: Hard governance and sync guards
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('football-data/manifests/v6_unseen_domain_shadow_v6496_status.json')
-          if not p.exists(): raise SystemExit('shadow receipt missing')
-          x=json.loads(p.read_text(encoding='utf-8'))
+          s=Path('football-data/manifests/v6_unseen_domain_shadow_v6496_status.json')
+          t=Path('football-data/manifests/v6_42_issue_remediation_v6489_status.json')
+          if not s.exists() or not t.exists(): raise SystemExit('shadow or runtime-truth receipt missing')
+          x=json.loads(s.read_text(encoding='utf-8'))
+          r=json.loads(t.read_text(encoding='utf-8'))
           g=x.get('governance') or {}
           if x.get('status') != 'PASS': raise SystemExit(str(x))
           if g.get('active_selector_change') is not False: raise SystemExit('active selector change forbidden')
@@ -69,9 +78,26 @@ jobs:
           if g.get('historical_backfill') is not False: raise SystemExit('historical backfill forbidden')
           if g.get('formal_weight') != 0: raise SystemExit('formal weight must remain zero')
           if g.get('automatic_promotion') is not False: raise SystemExit('automatic promotion forbidden')
-          print(json.dumps({'population':x.get('population'),'decision':(x.get('evaluation') or {}).get('decision')},ensure_ascii=False))
+          pop=x.get('population') or {}
+          ev=x.get('evaluation') or {}
+          acq=r.get('current_forward_acquisition') or {}
+          if acq.get('v6496_unseen_shadow_population') != pop.get('eligible_unseen_prediction_count'):
+              raise SystemExit('runtime truth shadow population mismatch')
+          if acq.get('v6496_unseen_shadow_selected') != pop.get('shadow_selected_count'):
+              raise SystemExit('runtime truth shadow selected mismatch')
+          if acq.get('v6496_unseen_shadow_selected_settled') != ((ev.get('shadow_selected_settled') or {}).get('count') or 0):
+              raise SystemExit('runtime truth shadow settled mismatch')
+          if (r.get('summary') or {}) != {'PASS':36,'PARTIAL':4,'FORWARD_GATED':2,'EXTERNAL_DATA_GAP':0,'TODO':0,'BLOCKED':0}:
+              raise SystemExit('42-item status composition drift')
+          print(json.dumps({
+            'shadow_population':pop.get('eligible_unseen_prediction_count'),
+            'shadow_selected':pop.get('shadow_selected_count'),
+            'shadow_selected_settled':((ev.get('shadow_selected_settled') or {}).get('count') or 0),
+            'shadow_decision':ev.get('decision'),
+            'runtime_truth_schema':r.get('schema_version')
+          },ensure_ascii=False))
           PY
 
 # Diagnostic only. V6.49.2 remains the unique active 1X2 forward chain.
 # No unseen-domain shadow score can alter a pick, probability, threshold, or formal weight.
-# Retrigger while the current UCL unseen-domain fixtures are still pre-kickoff; semantics unchanged.
+# Runtime-truth synchronization is audit-only and keeps active selected N separate from shadow selected N.
