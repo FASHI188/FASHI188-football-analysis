@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """V6.49.5 active-scope guard.
 
-Prevents two classes of retired surfaces from re-entering active execution:
-1) handicap win-draw-loss / standalone Asian-handicap prediction research;
-2) the legacy V6.9.x full-system issue registry, whose global team-context/blocker semantics
-   predate the current match-bound V6.49.x runtime-truth registry.
+The current active prediction surface is unique:
+    V6.49.2 90m 1X2 -> direct total goals -> exact score,
+with V6.49.5 match-context failure-regime auditing and V6.5.1 official 90m settlement.
 
-Asian-handicap market fields remain valid synchronized input/audit data. Frozen V6.47.x
-algorithm definitions may remain library dependencies, but their old forward ledgers have
-execution authority 0. Formal CURRENT V5.0.1 is not modified.
+Historical code/evidence may remain for reproducibility, but retired prediction/evaluation
+workflows must not regain execution authority. Asian-handicap data remain synchronized market
+input/audit only. The V6.1.2 result-resolver Python module is explicitly allowed as a library
+because current V6.5.1 settlement imports its ESPN identity/regulation-score helpers.
+Formal CURRENT V5.0.1 is not modified.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ REPO = ROOT.parent
 SCOPE = ROOT / "config" / "v6_current_research_scope_v6494.json"
 OUT = ROOT / "manifests" / "v6_current_research_scope_v6494_status.json"
 
-FORBIDDEN_NAME_TOKENS = (
+FORBIDDEN_GENERAL_NAME_TOKENS = (
     "asian-handicap-increment",
     "asian_handicap_increment",
     "handicap-1x2",
@@ -30,17 +31,40 @@ FORBIDDEN_NAME_TOKENS = (
     "system-issue-registry-v690",
     "v6_system_issue_registry_v690",
 )
+FORBIDDEN_WORKFLOW_NAME_TOKENS = (
+    "pristine-forward-autofeed-v612",
+    "pristine-forward-ledger-v612",
+    "pristine-forward-result-resolver-v612",
+    "pristine-forward-audit-v613",
+    "risk-controlled-forward-v632",
+    "multiline-research-forward-v6853",
+    "v6128-adaptive-forward",
+    "asian-handicap-increment",
+    "system-issue-registry-v690",
+)
 FORBIDDEN_WORKFLOW_PHRASES = (
     "让球胜平负",
     "handicap accuracy",
     "handicap_accuracy",
     "handicap forward gate",
 )
+RETIRED_WORKFLOW_PATHS = (
+    REPO / ".github" / "workflows" / "football-v6-pristine-forward-autofeed-v612.yml",
+    REPO / ".github" / "workflows" / "football-v6-pristine-forward-ledger-v612.yml",
+    REPO / ".github" / "workflows" / "football-v6-pristine-forward-result-resolver-v612.yml",
+    REPO / ".github" / "workflows" / "football-v6-pristine-forward-audit-v613.yml",
+    REPO / ".github" / "workflows" / "football-v6-risk-controlled-forward-v632.yml",
+    REPO / ".github" / "workflows" / "football-v6-multiline-research-forward-v6853.yml",
+    REPO / ".github" / "workflows" / "football-v6128-adaptive-forward.yml",
+    REPO / ".github" / "workflows" / "football-v6112-asian-handicap-increment.yml",
+    REPO / ".github" / "workflows" / "football-v6-system-issue-registry-v690.yml",
+)
 LEGACY_V690_ACTIVE_PATHS = (
     REPO / ".github" / "workflows" / "football-v6-system-issue-registry-v690.yml",
     ROOT / "validation" / "v6_system_issue_registry_v690.py",
     ROOT / "manifests" / "v6_system_issue_registry_v690_status.json",
 )
+ALLOWED_LEGACY_LIBRARY = ROOT / "validation" / "v6_pristine_forward_result_resolver_v612.py"
 
 
 def main() -> int:
@@ -57,13 +81,26 @@ def main() -> int:
         errors.append("handicap_1x2_not_retired")
 
     retired_surfaces = {x.get("artifact_family"): x for x in scope.get("retired_execution_surfaces", [])}
-    v690 = retired_surfaces.get("v6_system_issue_registry_v690") or {}
-    if v690.get("status") != "RETIRED_ARCHIVE_ONLY" or int(v690.get("execution_authority", -1)) != 0:
-        errors.append("legacy_v690_registry_not_retired")
+    required_retired = {
+        "v6_pristine_forward_v61x",
+        "v6_risk_controlled_forward_v632",
+        "v6_multiline_research_forward_v6853",
+        "v6_system_issue_registry_v690",
+        "v6_nested_adaptive_1x2_v6127_v6128",
+    }
+    missing_retired = sorted(required_retired - set(retired_surfaces))
+    if missing_retired:
+        errors.append("retired_surface_registry_missing:" + ",".join(missing_retired))
+    for family in sorted(required_retired & set(retired_surfaces)):
+        item = retired_surfaces[family] or {}
+        if item.get("status") != "RETIRED_ARCHIVE_ONLY" or int(item.get("execution_authority", -1)) != 0:
+            errors.append(f"retired_surface_authority_drift:{family}")
 
     scanned_files = 0
     forbidden_files: list[str] = []
-    for base in (REPO / ".github" / "workflows", ROOT / "validation"):
+    workflow_root = REPO / ".github" / "workflows"
+    validation_root = ROOT / "validation"
+    for base in (workflow_root, validation_root):
         if not base.exists():
             continue
         for path in base.rglob("*"):
@@ -74,10 +111,14 @@ def main() -> int:
             low_name = path.name.lower()
             if path.name == Path(__file__).name:
                 continue
-            if any(token in low_name for token in FORBIDDEN_NAME_TOKENS):
+            if any(token in low_name for token in FORBIDDEN_GENERAL_NAME_TOKENS):
                 forbidden_files.append(rel)
                 continue
-            if base.name == "workflows" or "/.github/workflows/" in f"/{rel}":
+            is_workflow = path.parent == workflow_root or "/.github/workflows/" in f"/{rel}"
+            if is_workflow:
+                if any(token in low_name for token in FORBIDDEN_WORKFLOW_NAME_TOKENS):
+                    forbidden_files.append(rel)
+                    continue
                 text = path.read_text(encoding="utf-8", errors="ignore").lower()
                 if any(phrase.lower() in text for phrase in FORBIDDEN_WORKFLOW_PHRASES):
                     forbidden_files.append(rel)
@@ -85,9 +126,22 @@ def main() -> int:
     if forbidden_files:
         errors.append("retired_active_files:" + ",".join(sorted(set(forbidden_files))))
 
+    retired_workflows_present = [
+        str(p.relative_to(REPO)).replace("\\", "/") for p in RETIRED_WORKFLOW_PATHS if p.exists()
+    ]
+    if retired_workflows_present:
+        errors.append("retired_workflows_present:" + ",".join(retired_workflows_present))
+
     v690_paths_present = [str(p.relative_to(REPO)).replace("\\", "/") for p in LEGACY_V690_ACTIVE_PATHS if p.exists()]
     if v690_paths_present:
         errors.append("legacy_v690_active_paths_present:" + ",".join(v690_paths_present))
+
+    if not ALLOWED_LEGACY_LIBRARY.exists():
+        errors.append("required_current_settlement_helper_missing:v6_pristine_forward_result_resolver_v612.py")
+
+    allowed_libs = {x.get("artifact") for x in scope.get("allowed_legacy_library_dependencies", [])}
+    if "v6_pristine_forward_result_resolver_v612.py" not in allowed_libs:
+        errors.append("allowed_legacy_settlement_library_not_declared")
 
     market_policy = scope.get("market_input_policy") or {}
     if market_policy.get("asian_handicap") != "INPUT_AND_AUDIT_ONLY_NOT_PREDICTION_TARGET":
@@ -100,28 +154,40 @@ def main() -> int:
         errors.append("current_runtime_truth_registry_drift")
 
     hard = scope.get("hard_guards") or {}
-    if hard.get("do_not_reactivate_v690_legacy_system_registry") is not True:
-        errors.append("v690_reactivation_guard_missing")
-    if hard.get("single_current_runtime_truth_surface") is not True:
-        errors.append("single_runtime_truth_guard_missing")
-    if hard.get("context_news_never_manually_changes_1x2_probability") is not True:
-        errors.append("context_manual_probability_guard_missing")
+    required_guards = (
+        "do_not_reactivate_v61x_pristine_forward_workflows",
+        "do_not_reactivate_v632_risk_controlled_forward",
+        "do_not_reactivate_v6853_fast100_forward",
+        "do_not_reactivate_v690_legacy_system_registry",
+        "do_not_reactivate_v6127_v6128_adaptive_forward",
+        "single_current_runtime_truth_surface",
+        "single_current_1x2_forward_chain_v6492",
+        "single_current_total_score_forward_chain_v6492",
+        "context_news_never_manually_changes_1x2_probability",
+    )
+    for key in required_guards:
+        if hard.get(key) is not True:
+            errors.append(f"hard_guard_missing:{key}")
 
     status = {
-        "schema_version": "V6.49.5-current-research-scope-status-r2",
+        "schema_version": "V6.49.5-current-research-scope-status-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "formal_current_version": "V5.0.1",
         "status": "PASS" if not errors else "FAIL",
         "active_prediction_targets_in_order": active,
         "retired_handicap_prediction_target": True,
         "asian_handicap_market_input_retained": True,
+        "retired_execution_families": sorted(required_retired),
+        "retired_workflows_present": retired_workflows_present,
         "retired_v690_system_registry": not v690_paths_present,
         "current_runtime_truth_registry": precedence.get("current_runtime_truth_registry"),
+        "allowed_legacy_settlement_library_present": ALLOWED_LEGACY_LIBRARY.exists(),
         "scanned_active_workflow_and_validation_files": scanned_files,
         "forbidden_active_files": sorted(set(forbidden_files)),
         "legacy_v690_active_paths_present": v690_paths_present,
         "errors": errors,
         "governance": {
+            "historical_code_may_exist_without_execution_authority": True,
             "formal_probability_change": False,
             "formal_weight_change": False,
             "current_rule_change": False,
