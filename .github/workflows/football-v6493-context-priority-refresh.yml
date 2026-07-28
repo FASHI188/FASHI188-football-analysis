@@ -1,0 +1,63 @@
+name: Football V6.49.5 Context Priority Refresh
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/forward/v6_context_enriched_events_v6486.json"
+      - "football-data/forward/v6_match_context_axes_events_v6490.json"
+      - "football-data/forward/v6_fresh_selector_events_v6492.json"
+      - "football-data/forward/v6_fresh_matrix_events_v6492.json"
+      - "football-data/validation/v6_context_priority_queue_v6493.py"
+      - ".github/workflows/football-v6493-context-priority-refresh.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6495-context-priority-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Sync latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rebuild priority queue
+        run: |
+          python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
+          python football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Persist queue receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_context_priority_queue_v6493_status.json \
+            --message-prefix "audit(football): persist V6.49.5 refreshed context priority queue"
+      - name: Guard queue semantics
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/v6_context_priority_queue_v6493_status.json').read_text(encoding='utf-8'))
+          g=x.get('governance') or {}
+          if x.get('status') != 'PASS': raise SystemExit(str(x))
+          if g.get('probability_mutation') is not False or g.get('selection_mutation') is not False or g.get('formal_weight') != 0:
+              raise SystemExit('queue governance failed')
+          print(json.dumps({'future':x.get('future_fixture_count'),'priority_counts':x.get('priority_counts'),'top':(x.get('queue') or [])[:5]},ensure_ascii=False))
+          PY
+
+# Scheduling aid only: it changes no probability or selector decision.
