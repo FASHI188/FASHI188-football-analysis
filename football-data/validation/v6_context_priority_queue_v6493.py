@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""V6.49.3 context-resolution priority queue.
+"""V6.49.5 context-resolution priority queue.
 
-Prioritises scarce live/manual context verification by forward decision value:
-P0: fresh 1X2 selector selected=True and clean context decision missing;
+Prioritises scarce live/manual context verification by CURRENT forward decision value only:
+P0: V6.49.2 fresh 1X2 selector selected=True and clean context decision missing;
 P1: selected=True with context present but manager/material-delta axes missing;
-P2: fresh matrix prediction exists and clean context decision missing;
+P2: V6.49.2 fresh matrix prediction exists and clean context decision missing;
 P3: matrix/context present but manager/material-delta axes missing;
-P4: selector abstained / lower-value future fixture.
+P4: selector abstained / lower-value future fixture / context complete.
+
+Hard scope rule
+---------------
+V6.47.5/V6.47.9 are historical evidence with execution authority 0. This queue MUST NOT
+fall back to them. If either current V6.49.2 ledger is absent or invalid, fail closed.
 
 This script does not change probabilities or selection. It only orders work.
 """
@@ -19,12 +24,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 FRESH_SELECTOR = ROOT / "forward" / "v6_fresh_selector_events_v6492.json"
-LEGACY_SELECTOR = ROOT / "forward" / "v6_hierarchical_selector_events_v6475.json"
 FRESH_MATRIX = ROOT / "forward" / "v6_fresh_matrix_events_v6492.json"
-LEGACY_MATRIX = ROOT / "forward" / "v6_total_margin_events_v6479.json"
 CONTEXT_LEDGER = ROOT / "forward" / "v6_context_enriched_events_v6486.json"
 AXES_LEDGER = ROOT / "forward" / "v6_match_context_axes_events_v6490.json"
 OUT = ROOT / "manifests" / "v6_context_priority_queue_v6493_status.json"
+EXPECTED_SELECTOR_SCHEMA = "V6.49.2-fresh-selector-ledger-r1"
+EXPECTED_MATRIX_SCHEMA = "V6.49.2-fresh-matrix-ledger-r1"
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -34,6 +39,15 @@ def load(path: Path) -> dict[str, Any]:
         x=json.loads(path.read_text(encoding="utf-8")); return x if isinstance(x,dict) else {}
     except Exception:
         return {}
+
+
+def require_current_ledger(path: Path, expected_schema: str, label: str) -> dict[str, Any]:
+    x=load(path)
+    if not x:
+        raise RuntimeError(f"current {label} ledger missing: {path}")
+    if x.get("schema_version") != expected_schema or not isinstance(x.get("events"),list):
+        raise RuntimeError(f"current {label} ledger invalid or wrong schema: {path}")
+    return x
 
 
 def dt(value: object):
@@ -52,9 +66,9 @@ def fkey(fi: dict[str,Any])->str:
     return "|".join([str(fi.get("competition_id") or ""),str(fi.get("kickoff_at") or ""),norm(fi.get("home_team")),norm(fi.get("away_team"))])
 
 
-def pred_map(path: Path, event_type: str)->dict[str,dict[str,Any]]:
-    x=load(path); out={}
-    for e in x.get("events") or []:
+def pred_map(ledger: dict[str,Any], event_type: str)->dict[str,dict[str,Any]]:
+    out={}
+    for e in ledger.get("events") or []:
         if isinstance(e,dict) and e.get("event_type")==event_type:
             fi=(e.get("payload") or {}).get("fixture_identity") or {}
             out[fkey(fi)]=e
@@ -81,11 +95,10 @@ def axes_keys()->set[str]:
 
 def main()->int:
     now=datetime.now(timezone.utc).replace(microsecond=0)
-    selector_path=FRESH_SELECTOR if FRESH_SELECTOR.exists() else LEGACY_SELECTOR
-    selector_type="SELECTOR_PREDICTION_FROZEN"
-    matrix_path=FRESH_MATRIX if FRESH_MATRIX.exists() else LEGACY_MATRIX
-    matrix_type="MATRIX_PREDICTION_FROZEN"
-    selectors=pred_map(selector_path,selector_type); matrices=pred_map(matrix_path,matrix_type)
+    selector_ledger=require_current_ledger(FRESH_SELECTOR,EXPECTED_SELECTOR_SCHEMA,"V6.49.2 selector")
+    matrix_ledger=require_current_ledger(FRESH_MATRIX,EXPECTED_MATRIX_SCHEMA,"V6.49.2 matrix")
+    selectors=pred_map(selector_ledger,"SELECTOR_PREDICTION_FROZEN")
+    matrices=pred_map(matrix_ledger,"MATRIX_PREDICTION_FROZEN")
     contexts=context_keys(); axes=axes_keys()
     keys=set(selectors)|set(matrices); rows=[]
     for key in sorted(keys):
@@ -110,9 +123,12 @@ def main()->int:
     rows.sort(key=lambda r:(order[r["priority"]],r["lead_hours"],str(r["competition_id"]),str(r["home_team"])))
     counts={k:sum(r["priority"]==k for r in rows) for k in order}
     out={
-        "schema_version":"V6.49.3-context-priority-queue-r1","generated_at_utc":now.isoformat(),"formal_current_version":"V5.0.1","status":"PASS",
-        "selector_source":str(selector_path.relative_to(ROOT)),"matrix_source":str(matrix_path.relative_to(ROOT)),"future_fixture_count":len(rows),"priority_counts":counts,"queue":rows,
-        "governance":{"queue_only":True,"probability_mutation":False,"selection_mutation":False,"formal_weight":0,"current_rule_change":False}
+        "schema_version":"V6.49.5-context-priority-queue-r2","generated_at_utc":now.isoformat(),"formal_current_version":"V5.0.1","status":"PASS",
+        "selector_source":str(FRESH_SELECTOR.relative_to(ROOT)),"matrix_source":str(FRESH_MATRIX.relative_to(ROOT)),"future_fixture_count":len(rows),"priority_counts":counts,"queue":rows,
+        "governance":{
+            "queue_only":True,"probability_mutation":False,"selection_mutation":False,"formal_weight":0,"current_rule_change":False,
+            "legacy_v6475_v6479_fallback":False,"fail_closed_if_current_v6492_ledgers_missing":True
+        }
     }
     OUT.write_text(json.dumps(out,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     print(json.dumps({"future_fixture_count":len(rows),"priority_counts":counts,"top":rows[:10]},ensure_ascii=False,indent=2));return 0
