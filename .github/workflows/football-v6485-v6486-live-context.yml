@@ -1,0 +1,100 @@
+name: Football V6.48.5-6 Live Match Context
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_fotmob_match_context_acquire_v6485.py"
+      - "football-data/validation/v6_context_enriched_forward_v6486.py"
+      - "football-data/config/v6_full17_capture_identity_v6484.json"
+      - ".github/workflows/football-v6485-v6486-live-context.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6485-v6486-live-context
+  cancel-in-progress: false
+
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - name: Compile context chain
+        run: |
+          python -m py_compile football-data/validation/v6_fotmob_match_context_acquire_v6485.py
+          python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
+
+      - name: Install Golazo match discovery client
+        shell: bash
+        run: |
+          go install github.com/0xjuanma/golazo@main
+          "$(go env GOPATH)/bin/golazo" capabilities > /tmp/golazo_capabilities.json
+          go version -m "$(go env GOPATH)/bin/golazo" > /tmp/golazo_build.txt
+          cat /tmp/golazo_build.txt
+
+      - name: Discover today's not-started FotMob matches
+        shell: bash
+        env:
+          GOLAZO_AGENT: "1"
+        run: |
+          "$(go env GOPATH)/bin/golazo" finished --include-upcoming --timeout 30s > /tmp/golazo_today.json
+          python - <<'PY'
+          import json
+          p='/tmp/golazo_today.json'
+          x=json.load(open(p,encoding='utf-8'))
+          print({'status':x.get('status'),'count':x.get('count'),'degraded':x.get('degraded',False)})
+          PY
+
+      - name: Acquire conservative pre-kickoff injury and predicted-XI evidence
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_fotmob_match_context_acquire_v6485.py --golazo-json /tmp/golazo_today.json
+
+      - name: Freeze new context-enriched market decisions
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_context_enriched_forward_v6486.py
+
+      - name: Persist context evidence and no-backfill ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/evidence/match_context_live/fotmob/ \
+            --allow-prefix football-data/manifests/v6_fotmob_match_context_acquire_v6485_status.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_freeze.json \
+            --allow-prefix football-data/forward/v6_context_enriched_events_v6486.json \
+            --allow-prefix football-data/manifests/v6_context_enriched_forward_v6486_status.json \
+            --message-prefix "audit(football): persist V6.48.5-6 live context"
+
+      - name: Guard no legacy backfill
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_context_enriched_forward_v6486_status.json')
+          if not p.exists(): raise SystemExit('context sidecar status missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          g=x.get('governance') or {}
+          if g.get('historical_backfill') is not False: raise SystemExit('historical backfill guard failed')
+          if g.get('formal_weight') != 0: raise SystemExit('formal weight guard failed')
+          print(json.dumps({'status':x.get('status'),'events':(x.get('ledger_audit') or {}).get('event_count'),'features':x.get('feature_counts')},ensure_ascii=False))
+          PY
+
+# FotMob/Golazo are research evidence sources only. Formal V5.0.1 remains unchanged.
