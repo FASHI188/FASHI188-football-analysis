@@ -1,0 +1,46 @@
+name: Football V6.47.7 Direct Total + Conditional Margin Matrix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/evaluate_direct_total_margin_matrix_v6477.py"
+      - "football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json"
+      - "football-data/processed/**"
+      - ".github/workflows/football-v6477-direct-total-margin-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: football-v6477-direct-total-margin-matrix
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/evaluate_direct_total_margin_matrix_v6477.py
+      - name: Evaluate fixed1000 research challenge
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/evaluate_direct_total_margin_matrix_v6477.py
+      - name: Persist receipt
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          path=football-data/manifests/v6_direct_total_margin_matrix_v6477_status.json
+          if [ -f "$path" ]; then git add "$path"; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "audit(football): persist V6.47.7 direct-total margin-matrix receipt"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
