@@ -21,6 +21,7 @@ AXES = M / "v6_match_context_axes_v6490_status.json"
 DELTA = M / "v6_manager_delta_from_verified_baseline_v6491_status.json"
 FRESH = M / "v6_fresh_market_forward_challengers_v6492_status.json"
 CONDITIONED = M / "v6_context_conditioned_selector_v6495_status.json"
+SHADOW = M / "v6_unseen_domain_shadow_v6496_status.json"
 QUEUE = M / "v6_context_priority_queue_v6493_status.json"
 UNIFIED = M / "v6_unified_forward_pipeline_v6482_status.json"
 
@@ -71,10 +72,11 @@ def main() -> int:
     delta = load(DELTA)
     fresh = load(FRESH)
     conditioned = load(CONDITIONED)
+    shadow = load(SHADOW) if SHADOW.exists() else None
     queue = load(QUEUE)
     unified = load(UNIFIED)
 
-    for name, obj in (
+    checks = [
         ("context", ctx),
         ("axes", axes),
         ("manager_delta", delta),
@@ -82,7 +84,10 @@ def main() -> int:
         ("conditioned_selector", conditioned),
         ("priority_queue", queue),
         ("unified_pipeline", unified),
-    ):
+    ]
+    if shadow is not None:
+        checks.append(("unseen_domain_shadow", shadow))
+    for name, obj in checks:
         require_pass(name, obj)
 
     ctx_audit = ctx.get("ledger_audit") or {}
@@ -117,6 +122,15 @@ def main() -> int:
     conditioned_selected_settled = int(
         ((conditioned.get("evaluation") or {}).get("selected_settled") or {}).get("count") or 0
     )
+
+    shadow_pop = shadow.get("population") if shadow else {}
+    shadow_eval = shadow.get("evaluation") if shadow else {}
+    shadow_unseen = int((shadow_pop or {}).get("eligible_unseen_prediction_count") or 0)
+    shadow_selected = int((shadow_pop or {}).get("shadow_selected_count") or 0)
+    shadow_selected_settled = int(((shadow_eval or {}).get("shadow_selected_settled") or {}).get("count") or 0)
+    shadow_decision = (shadow_eval or {}).get("decision") if shadow else None
+    shadow_domains = list(((shadow or {}).get("freeze") or {}).get("unseen_target_domains") or []) if shadow else []
+
     priority_counts = queue.get("priority_counts") or {}
 
     item_by_id(truth, "E03")["evidence"] = (
@@ -141,13 +155,23 @@ def main() -> int:
         f"{both_mgr} both-manager axis decisions. Current priority queue="
         f"{priority_counts}. Runtime truth is sourced from accepted ledgers, not stale scheduling state."
     )
+
+    shadow_text = ""
+    if shadow is not None:
+        shadow_text = (
+            f" V6.49.6 unseen-domain shadow is diagnostic-only: unseen population={shadow_unseen}, "
+            f"shadow-selected={shadow_selected}, shadow-selected-settled={shadow_selected_settled}, "
+            f"domains={shadow_domains}, decision={shadow_decision}; these shadow selections do not "
+            "count toward active V6.49.2 selected N and cannot change probabilities, threshold or formal weight."
+        )
     item_by_id(truth, "F05")["evidence"] = (
         "Historical source only: V6.47.4 fixed1000 challenge=208/322=64.60%. "
         f"Current V6.49.2 chain has {selector_events} frozen 1X2 events, "
         f"{selector_all_settled} all-settled and {selector_selected_settled} selected-settled; "
         f"decision={selector_eval.get('decision')}. V6.49.5 has {conditioned_events} post-epoch "
-        f"context-conditioned events and {conditioned_selected_settled} selected-settled. "
-        ">=100 selected settled plus quality/domain gates remain required before promotion or context-veto review."
+        f"context-conditioned events and {conditioned_selected_settled} selected-settled."
+        f"{shadow_text} >=100 active selected settled plus quality/domain gates remain required before formal promotion; "
+        "the separate V6.49.6 shadow has its own >=100 unseen-domain review gate and never auto-promotes."
     )
     item_by_id(truth, "F06")["evidence"] = (
         "Historical source only: V6.47.8 nominated total=comp|margin=full. "
@@ -156,7 +180,7 @@ def main() -> int:
         "total/score proper-score nonworsening remains required."
     )
 
-    truth["schema_version"] = "V6.49.5-42-issue-runtime-truth-registry-r6"
+    truth["schema_version"] = "V6.49.6-42-issue-runtime-truth-registry-r7"
     truth["generated_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     truth["formal_current_version"] = "V5.0.1"
     truth["formal_probability_change"] = False
@@ -189,6 +213,11 @@ def main() -> int:
         "v6495_latest_verified_event_count": conditioned_events,
         "v6495_latest_selected_settled": conditioned_selected_settled,
         "v6495_latest_verified_status": conditioned.get("status"),
+        "v6496_unseen_shadow_population": shadow_unseen,
+        "v6496_unseen_shadow_selected": shadow_selected,
+        "v6496_unseen_shadow_selected_settled": shadow_selected_settled,
+        "v6496_unseen_shadow_domains": shadow_domains,
+        "v6496_unseen_shadow_decision": shadow_decision,
         "v6493_priority_queue_generated_at_utc": queue.get("generated_at_utc"),
         "v6493_priority_counts": priority_counts,
     })
@@ -198,11 +227,13 @@ def main() -> int:
         "manager_delta": delta.get("generated_at_utc"),
         "fresh_forward": fresh.get("generated_at_utc"),
         "conditioned_selector": conditioned.get("generated_at_utc"),
+        "unseen_domain_shadow": shadow.get("generated_at_utc") if shadow else None,
         "priority_queue": queue.get("generated_at_utc"),
         "unified_pipeline": unified.get("generated_at_utc"),
     }
     truth.setdefault("hard_rules", {})["runtime_truth_counts_are_ledger_derived"] = True
     truth["hard_rules"]["status_sync_cannot_change_probabilities_or_weights"] = True
+    truth["hard_rules"]["unseen_domain_shadow_never_counts_as_active_selected_without_separate_forward_review"] = True
 
     if truth["summary"].get("PASS") != 36 or truth["summary"].get("PARTIAL") != 4 or truth["summary"].get("FORWARD_GATED") != 2:
         raise RuntimeError(f"unexpected 42-item status composition: {truth['summary']}")
@@ -212,6 +243,14 @@ def main() -> int:
         raise RuntimeError("fresh forward formal-weight guard failed")
     if conditioned.get("governance", {}).get("context_probability_adjustment") is not False:
         raise RuntimeError("conditioned probability-adjustment guard failed")
+    if shadow is not None:
+        sg = shadow.get("governance") or {}
+        if sg.get("active_selector_change") is not False or sg.get("probability_mutation") is not False:
+            raise RuntimeError("unseen-domain shadow mutated active selector or probability")
+        if sg.get("threshold_change") is not False or sg.get("formal_weight") != 0:
+            raise RuntimeError("unseen-domain shadow threshold/weight guard failed")
+        if sg.get("historical_backfill") is not False or sg.get("automatic_promotion") is not False:
+            raise RuntimeError("unseen-domain shadow governance guard failed")
 
     TRUTH.write_text(json.dumps(truth, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
@@ -221,6 +260,9 @@ def main() -> int:
         "selector_events": selector_events,
         "matrix_events": matrix_events,
         "conditioned_events": conditioned_events,
+        "unseen_shadow_population": shadow_unseen,
+        "unseen_shadow_selected": shadow_selected,
+        "unseen_shadow_selected_settled": shadow_selected_settled,
         "priority_counts": priority_counts,
         "summary": truth["summary"],
     }, ensure_ascii=False, indent=2))
