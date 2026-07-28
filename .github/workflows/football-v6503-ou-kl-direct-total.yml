@@ -1,0 +1,70 @@
+name: Football V6.50.3 OU-KL Direct Total Challenge
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "12 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - "football-data/validation/v6_ou_kl_direct_total_v6503.py"
+      - ".github/workflows/football-v6503-ou-kl-direct-total.yml"
+permissions:
+  contents: write
+concurrency:
+  group: football-v6503-ou-kl-direct-total
+  cancel-in-progress: false
+jobs:
+  challenge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Synchronize latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile OU-KL challenger
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python -m py_compile football-data/validation/v6_ou_kl_direct_total_v6503.py
+      - name: Freeze or settle OU-KL direct totals
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_ou_kl_direct_total_v6503.py
+      - name: Persist only OU-KL challenge ledger and receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python football-data/validation/persist_generated_worktree_v474.py \
+            --allow-prefix football-data/manifests/v6_ou_kl_direct_total_v6503_freeze.json \
+            --allow-prefix football-data/forward/v6_ou_kl_direct_total_events_v6503.json \
+            --allow-prefix football-data/manifests/v6_ou_kl_direct_total_v6503_status.json \
+            --message-prefix "audit(football): persist V6.50.3 OU-KL direct-total challenge"
+      - name: Hard market constraint timing and governance guards
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_ou_kl_direct_total_v6503_status.json')
+          if not p.exists(): raise SystemExit('V6.50.3 status missing')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status')!='PASS': raise SystemExit(str(x))
+          d=x.get('prospective_diagnostics') or {}; g=x.get('governance') or {}; f=x.get('freeze') or {}
+          if float(d.get('max_constraint_residual') or 0.0)>1e-9: raise SystemExit('OU constraint residual failed')
+          if d.get('count',0) and float(d.get('minimum_actual_lead_hours_at_freeze') or 0.0)<1.0: raise SystemExit('actual lead below one hour')
+          if g.get('single_provider_market_challenge') is not True or g.get('independent_provider_consensus') is not False: raise SystemExit('market-source classification drift')
+          if g.get('source_probability_mutation') is not False or g.get('historical_backfill') is not False or g.get('formal_weight')!=0 or g.get('automatic_promotion') is not False or g.get('current_rule_change') is not False: raise SystemExit('governance failed')
+          if (f.get('market_quality') or {}).get('current_single_provider_can_auto_promote') is not False: raise SystemExit('single-provider promotion forbidden')
+          print(json.dumps({'prediction_scan':x.get('prediction_scan'),'prospective_diagnostics':d,'evaluation':x.get('evaluation')},ensure_ascii=False))
+          PY
+
+# Single-provider PIT OU can challenge the direct-total prior but cannot satisfy the formal
+# independent-market source gate by itself. No backfill and no automatic promotion.
