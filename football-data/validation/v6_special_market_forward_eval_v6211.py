@@ -93,7 +93,14 @@ def total_ladder(env):
 
 def identifiable_total_top(tl):
  if not tl or float(tl.get('max_monotonicity_violation') or 0)>1e-6:return None
- by=tl.get('byline') or {};c=[];k=0
+ # JSON object keys are strings after a sidecar is serialized. Normalize both
+ # in-memory float keys and reloaded string keys to float so prospective sidecar
+ # consumers do not silently lose the partial-CDF arm.
+ raw_by=tl.get('byline') or {};by={}
+ for key,val in raw_by.items():
+  try:by[float(key)]=val
+  except (TypeError,ValueError):continue
+ c=[];k=0
  while (k+0.5) in by:
   c.append(float(by[k+0.5]['cdf_under']));k+=1
  if not c:return None
