@@ -1,4 +1,4 @@
-name: Football V6.49.4 Current State Audit
+name: Football V6.49.4 Current State Audit Read-Only
 
 on:
   workflow_dispatch:
@@ -7,13 +7,11 @@ on:
     paths:
       - "football-data/config/v6_current_research_scope_v6494.json"
       - "football-data/manifests/v6_current_research_scope_v6494_status.json"
-      - "football-data/manifests/v6_fresh_market_forward_challengers_v6492_status.json"
-      - "football-data/manifests/v6_context_priority_queue_v6493_status.json"
       - "football-data/validation/audit_unified_forward_pipeline_v6482.py"
       - ".github/workflows/football-v6494-current-state-audit.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-v6494-current-state-audit
@@ -25,44 +23,24 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: main
-      - name: Sync latest main
-        run: |
-          git fetch origin main
-          git reset --hard origin/main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Compile current-state audit
         run: python -m py_compile football-data/validation/audit_unified_forward_pipeline_v6482.py
-      - name: Rebuild current-only unified status
+      - name: Rebuild current-only unified status locally
         run: python football-data/validation/audit_unified_forward_pipeline_v6482.py
-      - name: Persist unified status only
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPOSITORY: ${{ github.repository }}
-        run: |
-          python football-data/validation/persist_generated_worktree_v474.py \
-            --allow-prefix football-data/manifests/v6_unified_forward_pipeline_v6482_status.json \
-            --message-prefix "audit(football): persist V6.49.4 current-only unified state"
       - name: Guard current-only presentation
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('football-data/manifests/v6_unified_forward_pipeline_v6482_status.json').read_text(encoding='utf-8'))
-          if x.get('schema_version') != 'V6.49.4-unified-forward-pipeline-status-r3':
-              raise SystemExit('old unified status schema still active')
-          if x.get('active_prediction_targets_in_order') != ['90m_1x2','direct_total_goals','exact_score_from_unified_matrix']:
-              raise SystemExit('active target order drift')
-          if (x.get('governance') or {}).get('legacy_v6475_v6479_execution_authority') != 0:
-              raise SystemExit('legacy execution authority not zero')
-          if 'hierarchical_1x2_selector' in x or 'direct_total_conditional_margin_matrix' in x:
-              raise SystemExit('old forward modules still presented as current')
-          print(json.dumps({'status':x.get('status'),'active_targets':x.get('active_prediction_targets_in_order'),'current_challengers':x.get('current_challengers'),'historical_sources':x.get('historical_sources')},ensure_ascii=False))
+          p=Path('football-data/manifests/v6_unified_forward_pipeline_v6482_status.json')
+          if not p.exists(): raise SystemExit('current-state receipt missing from local audit')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('schema_version') != 'V6.49.4-unified-forward-pipeline-status-r3': raise SystemExit('old unified status schema still active')
+          if x.get('active_prediction_targets_in_order') != ['90m_1x2','direct_total_goals','exact_score_from_unified_matrix']: raise SystemExit('active target order drift')
+          if (x.get('governance') or {}).get('legacy_v6475_v6479_execution_authority') != 0: raise SystemExit('legacy execution authority not zero')
+          print(json.dumps({'status':x.get('status'),'active_targets':x.get('active_prediction_targets_in_order')},ensure_ascii=False))
           PY
-
-# Lightweight materialization of the current-only status surface.
-# Retrigger after registration so the new status schema is written immediately.
+      - run: echo "Read-only current-state audit; local status is not persisted."
