@@ -2,8 +2,14 @@
 set -euo pipefail
 
 python -m pip install --disable-pip-version-check -q PyYAML
-python -m py_compile scripts/governance/final_workflow_acceptance.py scripts/governance/verify_consolidated_capabilities.py
-python scripts/governance/final_workflow_acceptance.py --strict
+python -m py_compile \
+  scripts/governance/final_workflow_acceptance.py \
+  scripts/governance/verify_consolidated_capabilities.py
+
+python scripts/governance/final_workflow_acceptance.py \
+  --strict \
+  --write-archive-blob-ledger
+
 python scripts/governance/verify_consolidated_capabilities.py --require-archived
 
 export PYTHONPATH="football-data/engine:football-data/validation${PYTHONPATH:+:$PYTHONPATH}"
