@@ -1,4 +1,4 @@
-name: football-v6521-total-independence-audit
+name: football-v6521-v6522-total-evaluation-audits
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - "football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py"
+      - "football-data/validation/v6_active_correct_score_total_single_decision_audit_v6522.py"
       - "football-data/forward/v6_active_correct_score_total_predictions_v62520.json"
       - "football-data/forward/v6_market_first_events_v651.json"
       - ".github/workflows/football-v6521-total-independence-audit.yml"
@@ -15,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: football-v6521-total-independence-audit
+  group: football-v6521-v6522-total-evaluation-audits
   cancel-in-progress: true
 
 jobs:
@@ -27,49 +28,61 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile independence audit
+      - name: Compile total-goal evaluation audits
         run: |
           python -m py_compile football-data/validation/v6_active_correct_score_total_forward_v62520.py
           python -m py_compile football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py
+          python -m py_compile football-data/validation/v6_active_correct_score_total_single_decision_audit_v6522.py
           python -m py_compile football-data/validation/v6_special_market_forward_eval_v6211.py
       - name: Run strict unique-fixture 1-72h audit
         run: python football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py
-      - name: Enforce audit contract
+      - name: Run one-decision-per-fixture timing sensitivity audit
+        run: python football-data/validation/v6_active_correct_score_total_single_decision_audit_v6522.py
+      - name: Enforce audit contracts
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           p=Path('football-data/manifests/v6_active_correct_score_total_independence_audit_v6521_status.json')
-          if not p.exists(): raise SystemExit('V6.52.1 status missing')
-          x=json.loads(p.read_text())
-          g=x.get('governance') or {}
+          q=Path('football-data/manifests/v6_active_correct_score_total_single_decision_audit_v6522_status.json')
+          if not p.exists() or not q.exists(): raise SystemExit('total evaluation audit status missing')
+          x=json.loads(p.read_text()); y=json.loads(q.read_text())
+          g=x.get('governance') or {}; h=y.get('governance') or {}
           if x.get('status')!='PASS': raise SystemExit(str(x))
           if g.get('snapshot_rows_are_not_independent_matches') is not True: raise SystemExit('snapshot independence guard missing')
           if g.get('review_gate_uses_unique_fixture_identity') is not True: raise SystemExit('unique fixture gate missing')
           if g.get('review_gate_enforces_minimum_lead_hour_1') is not True: raise SystemExit('minimum 1h gate missing')
           if g.get('review_gate_maximum_lead_hour_72') is not True: raise SystemExit('maximum 72h gate missing')
           if g.get('sub_1h_snapshots_diagnostic_only') is not True: raise SystemExit('sub-1h quarantine missing')
-          if g.get('no_model_training') is not True or g.get('no_prediction_change') is not True: raise SystemExit('audit-only governance missing')
+          if g.get('no_model_training') is not True or g.get('no_prediction_change') is not True: raise SystemExit('V6.52.1 audit-only governance missing')
+          if y.get('status')!='PASS': raise SystemExit(str(y))
+          if h.get('one_snapshot_per_fixture_per_policy') is not True: raise SystemExit('single-decision guard missing')
+          if h.get('strict_lead_window_hours') != [1,72]: raise SystemExit('V6.52.2 lead window mismatch')
+          if h.get('posthoc_policy_diagnostic') is not True or h.get('not_promotion_evidence') is not True or h.get('no_policy_winner_selection') is not True: raise SystemExit('V6.52.2 posthoc governance missing')
+          if h.get('no_model_training') is not True or h.get('no_prediction_change') is not True: raise SystemExit('V6.52.2 audit-only governance missing')
           print(json.dumps({
-            'schema': x.get('schema_version'),
+            'v6521_schema': x.get('schema_version'),
             'settled_snapshots_all': x.get('settled_snapshot_count'),
             'settled_snapshots_1_72h': x.get('settled_snapshot_count_1_72h'),
             'sub_1h_diagnostic': x.get('sub_1h_settled_snapshot_count_diagnostic_only'),
             'unique_fixtures_1_72h': x.get('unique_settled_fixture_count_1_72h'),
-            'review_state': x.get('review_state')
+            'review_state': x.get('review_state'),
+            'v6522_schema': y.get('schema_version'),
+            'single_decision_policies': list((y.get('policies') or {}).keys())
           }, ensure_ascii=False))
           PY
-      - name: Persist audit receipt
+      - name: Persist audit receipts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add football-data/manifests/v6_active_correct_score_total_independence_audit_v6521_status.json
+          git add football-data/manifests/v6_active_correct_score_total_single_decision_audit_v6522_status.json
           if git diff --cached --quiet; then
-            echo "No V6.52.1 audit changes."
+            echo "No total evaluation audit changes."
             exit 0
           fi
-          git commit -m "audit(football): persist strict V6.52.1 unique-fixture total review"
+          git commit -m "audit(football): persist V6.52.1-V6.52.2 total evaluation audits"
           git pull --rebase origin main
           git push origin HEAD:main
 
-# Evaluation correction only. No model training, prediction changes, formal-weight changes, or CURRENT changes.
+# Evaluation correction/diagnostic only. No model training, prediction changes, formal-weight changes, or CURRENT changes.
