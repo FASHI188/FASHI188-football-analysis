@@ -8,14 +8,20 @@ whose rollforward receipt passes all bound hash and point-in-time checks.
 from __future__ import annotations
 
 import copy
+import hashlib
 from datetime import datetime
 from typing import Any
 
 from football_v460_engine import ENGINE_PATH
 from oof_matrix_calibration import CALIBRATION_MODULE_PATH
-from platform_core import ROOT, PlatformError, load_json, parse_iso_datetime, sha256_file, sha256_json
+from platform_core import ROOT, PlatformError, load_json, parse_iso_datetime, sha256_json
 
 ROLLFORWARD_PATH = ROOT / "manifests" / "oof_next_season_rollforward_v470_status.json"
+
+
+def canonical_sha256(path) -> str:
+    """Hash repository text consistently on LF and CRLF checkouts."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def load_rollforward_calibrator(
@@ -41,15 +47,15 @@ def load_rollforward_calibrator(
     base = load_json(base_path)
     calibration_report = load_json(calibration_report_path)
     checks = {
-        "engine_sha_match": report.get("engine_sha256") == sha256_file(ENGINE_PATH),
-        "calibration_code_sha_match": report.get("calibration_code_sha256") == sha256_file(CALIBRATION_MODULE_PATH),
-        "source_report_sha_match": report.get("source_nested_backtest_report_sha256") == sha256_file(source_path),
-        "base_calibrator_sha_match": report.get("base_calibrator_sha256") == sha256_file(base_path),
-        "base_calibration_report_sha_match": report.get("base_calibration_report_sha256") == sha256_file(calibration_report_path),
-        "source_engine_binding_match": source.get("engine_sha256") == sha256_file(ENGINE_PATH),
-        "base_engine_binding_match": base.get("engine_sha256") == sha256_file(ENGINE_PATH),
-        "base_calibration_code_binding_match": base.get("calibration_code_sha256") == sha256_file(CALIBRATION_MODULE_PATH),
-        "base_source_report_binding_match": base.get("source_nested_backtest_report_sha256") == sha256_file(source_path),
+        "engine_sha_match": report.get("engine_sha256") == canonical_sha256(ENGINE_PATH),
+        "calibration_code_sha_match": report.get("calibration_code_sha256") == canonical_sha256(CALIBRATION_MODULE_PATH),
+        "source_report_sha_match": report.get("source_nested_backtest_report_sha256") == canonical_sha256(source_path),
+        "base_calibrator_sha_match": report.get("base_calibrator_sha256") == canonical_sha256(base_path),
+        "base_calibration_report_sha_match": report.get("base_calibration_report_sha256") == canonical_sha256(calibration_report_path),
+        "source_engine_binding_match": source.get("engine_sha256") == canonical_sha256(ENGINE_PATH),
+        "base_engine_binding_match": base.get("engine_sha256") == canonical_sha256(ENGINE_PATH),
+        "base_calibration_code_binding_match": base.get("calibration_code_sha256") == canonical_sha256(CALIBRATION_MODULE_PATH),
+        "base_source_report_binding_match": base.get("source_nested_backtest_report_sha256") == canonical_sha256(source_path),
         "base_calibration_report_binding_match": base.get("calibration_report_sha256") == sha256_json(calibration_report),
         "guardrail_passed": report.get("guardrail_passed") is True,
         "unsupported_actual_scores_zero": int(report.get("unsupported_actual_scores_excluded", -1)) == 0,

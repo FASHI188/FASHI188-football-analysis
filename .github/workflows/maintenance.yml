@@ -1,18 +1,103 @@
-# PAUSED_FOR_REPOSITORY_GOVERNANCE
-name: Governance Maintenance Skeleton
+name: Formal Runtime Read-Only Maintenance
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/engine/formal_governance_runtime_v470.py"
+      - "football-data/engine/formal_next_season_parameter_runtime_v470.py"
+      - "football-data/engine/oof_next_season_runtime_v470.py"
+      - "football-data/engine/promoted_challenger_runtime_gate_v470.py"
+      - "football-data/engine/promoted_challenger_runtime_v470.py"
+      - "football-data/engine/selective_direction_gate_v500.py"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - "football-data/validation/activate_mls_d_conditional_runtime_v470.py"
+      - "football-data/validation/activate_selective_direction_runtime_v501.py"
+      - "football-data/validation/smoke_*runtime_v470.py"
+      - "football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py"
+      - "football-data/validation/smoke_selective_direction_runtime_v500.py"
+      - "football-data/manifests/promotions/USA_MLS_d_conditional_v470*.json"
+      - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500*.json"
+      - "football-data/manifests/v500_upgrade_status.json"
+      - "football-data/manifests/v501_upgrade_status.json"
+      - ".github/workflows/maintenance.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "football-data/engine/formal_governance_runtime_v470.py"
+      - "football-data/engine/formal_next_season_parameter_runtime_v470.py"
+      - "football-data/engine/oof_next_season_runtime_v470.py"
+      - "football-data/engine/promoted_challenger_runtime_gate_v470.py"
+      - "football-data/engine/promoted_challenger_runtime_v470.py"
+      - "football-data/engine/selective_direction_gate_v500.py"
+      - "football-data/engine/run_formal_prediction_actionable.py"
+      - "football-data/validation/activate_mls_d_conditional_runtime_v470.py"
+      - "football-data/validation/activate_selective_direction_runtime_v501.py"
+      - "football-data/validation/smoke_*runtime_v470.py"
+      - "football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py"
+      - "football-data/validation/smoke_selective_direction_runtime_v500.py"
+      - "football-data/manifests/promotions/USA_MLS_d_conditional_v470*.json"
+      - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500*.json"
+      - "football-data/manifests/v500_upgrade_status.json"
+      - "football-data/manifests/v501_upgrade_status.json"
+      - ".github/workflows/maintenance.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: governance-maintenance-${{ github.ref }}
+  group: formal-runtime-maintenance-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  paused:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - run: echo "PAUSED_FOR_REPOSITORY_GOVERNANCE"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile formal runtime chain
+        run: |
+          python -m py_compile \
+            football-data/engine/formal_governance_runtime_v470.py \
+            football-data/engine/formal_next_season_parameter_runtime_v470.py \
+            football-data/engine/oof_next_season_runtime_v470.py \
+            football-data/engine/promoted_challenger_runtime_gate_v470.py \
+            football-data/engine/promoted_challenger_runtime_v470.py \
+            football-data/engine/run_formal_prediction_actionable.py \
+            football-data/engine/selective_direction_gate_v500.py \
+            football-data/validation/activate_mls_d_conditional_runtime_v470.py \
+            football-data/validation/activate_selective_direction_runtime_v501.py \
+            football-data/validation/smoke_formal_governance_runtime_v470.py \
+            football-data/validation/smoke_oof_next_season_runtime_v470.py \
+            football-data/validation/smoke_promoted_mls_d_runtime_v470.py \
+            football-data/validation/smoke_selective_direction_runtime_v500.py
+      - name: Verify committed hash-bound activations
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/activate_selective_direction_runtime_v501.py --check
+          python football-data/validation/activate_mls_d_conditional_runtime_v470.py --check
+      - name: Run consolidated formal runtime smokes
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python football-data/validation/smoke_formal_governance_runtime_v470.py
+          python football-data/validation/smoke_selective_direction_runtime_v500.py
+          python football-data/validation/smoke_promoted_mls_d_runtime_v470.py
+          python football-data/validation/smoke_formal_next_season_parameter_runtime_v470.py
+          python football-data/validation/smoke_oof_next_season_runtime_v470.py
+          python football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py
+          python football-data/validation/smoke_dynamic_strength_pre_oof_runtime_v470.py
+      - name: Prove maintenance is read-only
+        shell: bash
+        run: |
+          if ! git diff --quiet; then
+            echo "Runtime smokes changed tracked receipts in the ephemeral checkout."
+            git diff --stat
+          fi
+          test -z "$(git status --porcelain --untracked-files=no | grep -v '^ M football-data/manifests/' || true)"

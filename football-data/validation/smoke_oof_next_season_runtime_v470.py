@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import oof_matrix_calibration as calibration
-from oof_next_season_runtime_v470 import load_rollforward_calibrator
+from oof_next_season_runtime_v470 import canonical_sha256, load_rollforward_calibrator
 from platform_core import ROOT
 
 OUT = ROOT / "manifests" / "oof_next_season_runtime_v470_smoke.json"
@@ -31,6 +31,7 @@ def calculation(engine_sha: str) -> dict:
 
 def main() -> int:
     original_loader = calibration.load_oof_matrix_calibrator
+    original_hash = calibration.sha256_file
     checks = {}
     reports = {}
     for cid in ("ESP_LaLiga", "NED_Eredivisie"):
@@ -43,6 +44,7 @@ def main() -> int:
             return (path, augmented) if requested == cid else original_loader(requested)
 
         calibration.load_oof_matrix_calibrator = temporary_loader
+        calibration.sha256_file = canonical_sha256
         try:
             output = calibration.apply_oof_matrix_calibration(
                 {"match_identity": {"competition_id": cid, "freeze_time_utc": "2026-07-20T12:00:00Z"}},
@@ -50,6 +52,7 @@ def main() -> int:
             )
         finally:
             calibration.load_oof_matrix_calibrator = original_loader
+            calibration.sha256_file = original_hash
         checks[f"{cid}_canonical_has_no_2026_27"] = not canonical_has_2026
         checks[f"{cid}_rollforward_audit_passes"] = audit.get("status") == "通过"
         checks[f"{cid}_unchanged_calibration_function_passes"] = output.get("module_states", {}).get("oof_matrix_calibration") == "通过"

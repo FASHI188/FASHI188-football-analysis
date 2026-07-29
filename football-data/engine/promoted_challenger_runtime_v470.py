@@ -12,6 +12,7 @@ leaves the current formal matrix unchanged.
 from __future__ import annotations
 
 import copy
+import hashlib
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,6 @@ from platform_core import (
     score_matrix_rows,
     settle_home_handicap,
     settle_over_total,
-    sha256_file,
     top_scores,
 )
 
@@ -39,6 +39,11 @@ PROMOTION_RECEIPTS = {
 }
 
 
+def _canonical_sha256(path: Path) -> str:
+    """Hash repository text consistently on LF and CRLF checkouts."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def _set_state(calculation: dict[str, Any], status: str, reason: str, *, receipt_path: Path | None = None) -> dict[str, Any]:
     output = copy.deepcopy(calculation)
     output.setdefault("module_states", {})["conditional_allocation_v470"] = status
@@ -49,7 +54,7 @@ def _set_state(calculation: dict[str, Any], status: str, reason: str, *, receipt
     }
     if receipt_path is not None and receipt_path.exists():
         audit["receipt_path"] = str(receipt_path.relative_to(ROOT))
-        audit["receipt_sha256"] = sha256_file(receipt_path)
+        audit["receipt_sha256"] = _canonical_sha256(receipt_path)
     output["conditional_allocation_v470_audit"] = audit
     return output
 
@@ -140,7 +145,7 @@ def _verify_receipt(competition_id: str, season: str, receipt_path: Path) -> tup
         expected = str(evidence.get(hash_field) or "")
         if not expected or not path.exists():
             return None, f"bound promotion artifact missing: {hash_field}"
-        if sha256_file(path) != expected:
+        if _canonical_sha256(path) != expected:
             return None, f"bound promotion artifact hash mismatch: {hash_field}"
 
     maintenance = load_json(RUNTIME_MAINTENANCE)
@@ -264,8 +269,8 @@ def apply_promoted_v470_post_calibration_challengers(
         "formal_weight": receipt.get("formal_weight"),
         "parameters": receipt.get("parameters"),
         "receipt_path": str(receipt_path.relative_to(ROOT)),
-        "receipt_sha256": sha256_file(receipt_path),
-        "runtime_module_sha256": sha256_file(MODULE_PATH),
+        "receipt_sha256": _canonical_sha256(receipt_path),
+        "runtime_module_sha256": _canonical_sha256(MODULE_PATH),
         "transform_audit": transform_audit,
         "probability_sum_residual": float(marginals["probability_sum"]) - 1.0,
         "max_final_total_marginal_residual": max_total_residual,

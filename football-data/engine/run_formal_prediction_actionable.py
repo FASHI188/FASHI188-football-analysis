@@ -44,7 +44,7 @@ from formal_next_season_parameter_runtime_v470 import (
 )
 from market_coordination_runtime_basis_v470 import apply_market_coordination_runtime
 from match_pipeline import freeze_prediction
-from oof_next_season_runtime_v470 import load_rollforward_calibrator
+from oof_next_season_runtime_v470 import canonical_sha256, load_rollforward_calibrator
 from platform_core import PlatformError
 from probable_lineup_runtime_v470 import apply_probable_lineup_runtime
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
@@ -77,6 +77,15 @@ def main() -> int:
     original_validation = base_runner.validate_calculation_output
     original_parameter_selector = engine_module._select_point_in_time_parameters
     original_calibrator_loader = calibration_module.load_oof_matrix_calibrator
+
+    def portable_calibration(context, calculation):
+        """Preserve frozen LF hashes on both LF and CRLF working trees."""
+        original_hash = calibration_module.sha256_file
+        calibration_module.sha256_file = canonical_sha256
+        try:
+            return original_calibration(context, calculation)
+        finally:
+            calibration_module.sha256_file = original_hash
 
     def parameter_selector_with_rollforward(artifact, target_season):
         try:
@@ -162,7 +171,7 @@ def main() -> int:
         }
 
         if canonical_has_target:
-            calibrated = original_calibration(context, calculation)
+            calibrated = portable_calibration(context, calculation)
         else:
             try:
                 rollforward_path, augmented_artifact, oof_rollforward_audit = load_rollforward_calibrator(
@@ -178,7 +187,7 @@ def main() -> int:
 
                 calibration_module.load_oof_matrix_calibrator = temporary_loader
                 try:
-                    calibrated = original_calibration(context, calculation)
+                    calibrated = portable_calibration(context, calculation)
                 finally:
                     calibration_module.load_oof_matrix_calibrator = original_calibrator_loader
             except PlatformError as exc:
@@ -189,7 +198,7 @@ def main() -> int:
                     "probability_mutation": False,
                     "reason": str(exc),
                 }
-                calibrated = original_calibration(context, calculation)
+                calibrated = portable_calibration(context, calculation)
 
         calibrated["oof_next_season_rollforward_audit"] = oof_rollforward_audit
         promoted = apply_hash_bound_promoted_v470_challengers(context, calibrated)

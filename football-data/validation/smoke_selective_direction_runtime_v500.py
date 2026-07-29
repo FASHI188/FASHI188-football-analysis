@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ if str(ENGINE) not in sys.path:
     sys.path.insert(0, str(ENGINE))
 
 from platform_core import atomic_write_json, load_json
+import selective_direction_gate_v500 as gate_module
 from selective_direction_gate_v500 import apply_selective_direction_gate
 
 ACTIVATION = FOOTBALL_ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_direction_v500_runtime_activation.json"
@@ -22,8 +24,8 @@ OUT = FOOTBALL_ROOT / "manifests" / "promotions" / "ESP_LaLiga_selective_directi
 
 
 def git_blob_sha(path: Path) -> str:
-    data = path.read_bytes()
-    header = f"blob {len(data)}\0".encode("utf-8")
+    data = path.read_bytes().replace(b"\r\n", b"\n")
+    header = f"blob {len(data)}\0".encode("ascii")
     return hashlib.sha1(header + data).hexdigest()
 
 
@@ -39,6 +41,7 @@ def main() -> int:
         "runtime_gate": REPO_ROOT / str(root_paths.get("runtime_gate") or ""),
         "actionable_runner": REPO_ROOT / str(root_paths.get("actionable_runner") or ""),
         "v500_governance": REPO_ROOT / str(root_paths.get("v500_governance") or ""),
+        "v501_governance": REPO_ROOT / str(root_paths.get("v501_governance") or ""),
     }
     actual_hashes = {}
     for key, path in key_to_path.items():
@@ -69,9 +72,24 @@ def main() -> int:
     strong_out = apply_selective_direction_gate(strong_context, strong_calc)
     weak_out = apply_selective_direction_gate(weak_context, weak_calc)
     other_out = apply_selective_direction_gate(other_context, other_calc)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        stale_activation = json.loads(json.dumps(activation))
+        stale_activation["bound_git_blob_sha"]["actionable_runner"] = "0" * 40
+        stale_path = Path(temp_dir) / "stale_activation.json"
+        stale_path.write_text(
+            json.dumps(stale_activation, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        original_activation_path = gate_module.ACTIVATION
+        gate_module.ACTIVATION = stale_path
+        try:
+            stale_out = gate_module.apply_selective_direction_gate(strong_context, strong_calc)
+        finally:
+            gate_module.ACTIVATION = original_activation_path
     strong_audit = strong_out.get("selective_direction_gate_v500_audit") or {}
     weak_audit = weak_out.get("selective_direction_gate_v500_audit") or {}
     other_audit = other_out.get("selective_direction_gate_v500_audit") or {}
+    stale_audit = stale_out.get("selective_direction_gate_v500_audit") or {}
 
     if strong_audit.get("status") != "通过" or strong_audit.get("formal_direction_allowed") is not True:
         errors.append(f"strong signal not allowed: {strong_audit}")
@@ -85,9 +103,15 @@ def main() -> int:
         errors.append("weak case probabilities mutated")
     if float(strong_audit.get("threshold", -1)) != 0.30:
         errors.append(f"unexpected threshold: {strong_audit.get('threshold')}")
+    if (
+        stale_audit.get("status") != "不可用"
+        or stale_audit.get("formal_direction_allowed") is not False
+        or "hash mismatch" not in str(stale_audit.get("reason") or "")
+    ):
+        errors.append(f"stale activation did not fail closed: {stale_audit}")
 
     payload = {
-        "schema_version": "V5.0.0-selective-direction-runtime-smoke-r2",
+        "schema_version": "V5.0.1-selective-direction-runtime-smoke-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS" if not errors else "FAIL",
         "competition_id": "ESP_LaLiga",
@@ -104,10 +128,16 @@ def main() -> int:
             "other_domain_not_applicable": other_audit.get("status") == "不适用",
             "probabilities_unchanged": strong_out.get("probabilities") == strong_calc.get("probabilities") and weak_out.get("probabilities") == weak_calc.get("probabilities"),
             "threshold_is_0_30": float(strong_audit.get("threshold", -1)) == 0.30,
+            "stale_activation_fails_closed": (
+                stale_audit.get("status") == "不可用"
+                and stale_audit.get("formal_direction_allowed") is False
+                and "hash mismatch" in str(stale_audit.get("reason") or "")
+            ),
         },
         "strong_case_audit": strong_audit,
         "weak_case_audit": weak_audit,
         "other_domain_audit": other_audit,
+        "stale_activation_audit": stale_audit,
         "errors": errors,
         "policy": "Direction/abstention gate only; no probability mutation. Any bound hash mismatch fails closed."
     }

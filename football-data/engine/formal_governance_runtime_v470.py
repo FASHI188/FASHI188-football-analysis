@@ -16,16 +16,23 @@ from typing import Any
 
 from platform_core import ROOT, load_json, sha256_file
 
+V501_GOVERNANCE_STATUS = ROOT / "manifests" / "v501_upgrade_status.json"
 V500_GOVERNANCE_STATUS = ROOT / "manifests" / "v500_upgrade_status.json"
 V480_GOVERNANCE_STATUS = ROOT / "manifests" / "v480_upgrade_status.json"
 
 
 def _active_governance_path() -> Path:
-    if V500_GOVERNANCE_STATUS.exists():
-        candidate = load_json(V500_GOVERNANCE_STATUS)
+    for path in (
+        V501_GOVERNANCE_STATUS,
+        V500_GOVERNANCE_STATUS,
+        V480_GOVERNANCE_STATUS,
+    ):
+        if not path.exists():
+            continue
+        candidate = load_json(path)
         if str(candidate.get("status") or "").startswith("FORMALLY_ACTIVATED"):
-            return V500_GOVERNANCE_STATUS
-    return V480_GOVERNANCE_STATUS
+            return path
+    return V501_GOVERNANCE_STATUS
 
 
 def apply_formal_governance_runtime(calculation: dict[str, Any]) -> dict[str, Any]:
@@ -67,8 +74,11 @@ def apply_formal_governance_runtime(calculation: dict[str, Any]) -> dict[str, An
         "governance_status": governance_status,
         "governance_manifest_path": str(governance_path.relative_to(ROOT)),
         "governance_manifest_sha256": sha256_file(governance_path),
-        "formal_rule_source": governance.get("formal_rule_source"),
-        "active_rule_file": governance.get("active_rule_file") or governance.get("candidate_rule_file"),
+        "formal_rule_source": governance.get("formal_rule_source")
+        or "ChatGPT project File Library unique CURRENT activation receipt",
+        "active_rule_file": governance.get("active_rule_file")
+        or governance.get("candidate_rule_file")
+        or governance.get("formal_rule_file"),
         "probability_mutation": False,
         "market_mutation": False,
         "price_mutation": False,
