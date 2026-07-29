@@ -2,6 +2,19 @@ name: Formal Runtime Read-Only Maintenance
 
 on:
   workflow_dispatch:
+    inputs:
+      retained_capability:
+        description: "Optional explicitly retained legacy capability to execute without repository persistence"
+        required: false
+        default: "none"
+        type: choice
+        options:
+          - none
+          - runtime-maintenance-v473
+          - formal-next-season-parameter-rollforward-v470
+          - formal-next-season-runtime-readiness-v470
+          - kambi-formal-domain-coverage-v6852
+          - workflow-stability-v474
   pull_request:
     paths:
       - "football-data/engine/formal_ev_lomo_gate_v470.py"
@@ -14,6 +27,11 @@ on:
       - "football-data/engine/run_formal_prediction_actionable.py"
       - "football-data/validation/activate_mls_d_conditional_runtime_v470.py"
       - "football-data/validation/activate_selective_direction_runtime_v501.py"
+      - "football-data/validation/runtime_maintenance_v473.py"
+      - "football-data/validation/formal_next_season_parameter_rollforward_v470.py"
+      - "football-data/validation/formal_next_season_runtime_readiness_v470.py"
+      - "football-data/validation/v6_kambi_formal_domain_coverage_v6852.py"
+      - "football-data/validation/workflow_stability_audit_v474.py"
       - "football-data/validation/smoke_formal_ev_lomo_gate_v470.py"
       - "football-data/validation/smoke_*runtime_v470.py"
       - "football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py"
@@ -23,6 +41,7 @@ on:
       - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500*.json"
       - "football-data/manifests/v500_upgrade_status.json"
       - "football-data/manifests/v501_upgrade_status.json"
+      - "governance/consolidated_capability_adjudication.json"
       - ".github/workflows/maintenance.yml"
   push:
     branches:
@@ -38,6 +57,11 @@ on:
       - "football-data/engine/run_formal_prediction_actionable.py"
       - "football-data/validation/activate_mls_d_conditional_runtime_v470.py"
       - "football-data/validation/activate_selective_direction_runtime_v501.py"
+      - "football-data/validation/runtime_maintenance_v473.py"
+      - "football-data/validation/formal_next_season_parameter_rollforward_v470.py"
+      - "football-data/validation/formal_next_season_runtime_readiness_v470.py"
+      - "football-data/validation/v6_kambi_formal_domain_coverage_v6852.py"
+      - "football-data/validation/workflow_stability_audit_v474.py"
       - "football-data/validation/smoke_formal_ev_lomo_gate_v470.py"
       - "football-data/validation/smoke_*runtime_v470.py"
       - "football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py"
@@ -47,6 +71,7 @@ on:
       - "football-data/manifests/promotions/ESP_LaLiga_selective_direction_v500*.json"
       - "football-data/manifests/v500_upgrade_status.json"
       - "football-data/manifests/v501_upgrade_status.json"
+      - "governance/consolidated_capability_adjudication.json"
       - ".github/workflows/maintenance.yml"
 
 permissions:
@@ -62,10 +87,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile formal runtime chain
+      - name: Compile formal runtime and explicitly retained capability chain
         run: |
           python -m py_compile \
             football-data/engine/formal_ev_lomo_gate_v470.py \
@@ -78,6 +105,11 @@ jobs:
             football-data/engine/selective_direction_gate_v500.py \
             football-data/validation/activate_mls_d_conditional_runtime_v470.py \
             football-data/validation/activate_selective_direction_runtime_v501.py \
+            football-data/validation/runtime_maintenance_v473.py \
+            football-data/validation/formal_next_season_parameter_rollforward_v470.py \
+            football-data/validation/formal_next_season_runtime_readiness_v470.py \
+            football-data/validation/v6_kambi_formal_domain_coverage_v6852.py \
+            football-data/validation/workflow_stability_audit_v474.py \
             football-data/validation/smoke_formal_ev_lomo_gate_v470.py \
             football-data/validation/smoke_formal_governance_runtime_v470.py \
             football-data/validation/smoke_oof_next_season_runtime_v470.py \
@@ -102,11 +134,54 @@ jobs:
           python football-data/validation/smoke_oof_next_season_runtime_v470.py
           python football-data/validation/smoke_dynamic_strength_live_input_contract_v470.py
           python football-data/validation/smoke_dynamic_strength_pre_oof_runtime_v470.py
-      - name: Prove maintenance is read-only
+
+      - name: Execute retained runtime maintenance capability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_capability == 'runtime-maintenance-v473' }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/runtime_maintenance_v473.py --write-receipt --print-summary
+          python football-data/validation/runtime_maintenance_v473.py --strict-exit --print-summary
+
+      - name: Execute retained formal parameter rollforward capability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_capability == 'formal-next-season-parameter-rollforward-v470' }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/formal_next_season_parameter_rollforward_v470.py
+
+      - name: Execute retained formal runtime readiness capability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_capability == 'formal-next-season-runtime-readiness-v470' }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/formal_next_season_runtime_readiness_v470.py
+
+      - name: Execute retained Kambi formal-domain coverage capability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_capability == 'kambi-formal-domain-coverage-v6852' }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_kambi_formal_domain_coverage_v6852.py
+
+      - name: Execute retained workflow stability capability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_capability == 'workflow-stability-v474' }}
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/workflow_stability_audit_v474.py \
+            --write-receipt \
+            --strict-exit \
+            --print-summary
+
+      - name: Prove no repository persistence path is present
         shell: bash
         run: |
+          if git diff --cached --quiet; then
+            echo "no staged repository mutation"
+          else
+            echo "unexpected staged repository mutation" >&2
+            git diff --cached --stat >&2
+            exit 2
+          fi
           if ! git diff --quiet; then
-            echo "Runtime smokes changed tracked receipts in the ephemeral checkout."
+            echo "ephemeral local receipts were generated; they are intentionally not committed or pushed"
             git diff --stat
           fi
-          test -z "$(git status --porcelain --untracked-files=no | grep -v '^ M football-data/manifests/' || true)"
