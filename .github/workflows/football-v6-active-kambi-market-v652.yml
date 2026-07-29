@@ -11,6 +11,7 @@ on:
       - "football-data/validation/v6_special_market_sidecar_v6212.py"
       - "football-data/validation/v6_special_market_forward_eval_v6211.py"
       - "football-data/validation/v6_active_correct_score_total_forward_v62520.py"
+      - "football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py"
       - "football-data/validation/persist_generated_worktree_batch_v652.py"
       - "football-data/config/v6_active_kambi_team_aliases_v652.json"
       - "football-data/config/team_aliases.json"
@@ -33,7 +34,7 @@ jobs:
         with: {fetch-depth: 0}
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
-      - name: Compile active market capture, special-market sidecar, fresh total challenger, identity audit and batch persistence
+      - name: Compile active market capture, special-market sidecar, fresh total challenger, independence audit, identity audit and batch persistence
         run: |
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v652.py
           python -m py_compile football-data/validation/v6_active_kambi_market_capture_v653.py
@@ -41,6 +42,7 @@ jobs:
           python -m py_compile football-data/validation/v6_special_market_forward_eval_v6211.py
           python -m py_compile football-data/validation/v6_special_market_sidecar_v6212.py
           python -m py_compile football-data/validation/v6_active_correct_score_total_forward_v62520.py
+          python -m py_compile football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py
           python -m py_compile football-data/validation/persist_generated_worktree_batch_v652.py
           python -m py_compile football-data/validation/kambi_v523_adapter_v5511.py
           python -m py_compile football-data/validation/prospective_market_snapshot_v523.py
@@ -52,6 +54,8 @@ jobs:
         run: python football-data/validation/v6_special_market_sidecar_v6212.py
       - name: Freeze fresh Active-Kambi score-to-total prospective rankings
         run: python football-data/validation/v6_active_correct_score_total_forward_v62520.py
+      - name: Audit V6.25.20 settled-snapshot independence and unique-fixture review gate
+        run: python football-data/validation/v6_active_correct_score_total_independence_audit_v6521.py
       - name: Build read-only current-team identity diagnostic
         run: python football-data/validation/v6_active_kambi_identity_audit_v652.py
       - name: Persist all generated Active-Kambi artifacts in one atomic commit
@@ -70,8 +74,9 @@ jobs:
             --allow-prefix football-data/manifests/v6_active_correct_score_total_epoch_v62520.json \
             --allow-prefix football-data/forward/v6_active_correct_score_total_predictions_v62520.json \
             --allow-prefix football-data/manifests/v6_active_correct_score_total_forward_v62520_status.json \
-            --message "data(football): persist Active-Kambi PIT plus fresh exact-total rankings"
-      - name: Enforce active-market identity, special-market and fresh-total contracts
+            --allow-prefix football-data/manifests/v6_active_correct_score_total_independence_audit_v6521_status.json \
+            --message "data(football): persist Active-Kambi PIT plus fresh exact-total rankings and independence audit"
+      - name: Enforce active-market identity, special-market, fresh-total and independence-audit contracts
         if: always()
         run: |
           python - <<'PY'
@@ -81,8 +86,9 @@ jobs:
           a=Path('football-data/manifests/v6_active_kambi_identity_audit_v652_status.json')
           s=Path('football-data/manifests/v6_special_market_sidecar_v6212_status.json')
           t=Path('football-data/manifests/v6_active_correct_score_total_forward_v62520_status.json')
-          if not p.exists() or not a.exists() or not s.exists() or not t.exists(): raise SystemExit('active Kambi receipts missing')
-          x=json.loads(p.read_text()); y=json.loads(a.read_text()); z=json.loads(s.read_text()); q=json.loads(t.read_text())
+          u=Path('football-data/manifests/v6_active_correct_score_total_independence_audit_v6521_status.json')
+          if not p.exists() or not a.exists() or not s.exists() or not t.exists() or not u.exists(): raise SystemExit('active Kambi receipts missing')
+          x=json.loads(p.read_text()); y=json.loads(a.read_text()); z=json.loads(s.read_text()); q=json.loads(t.read_text()); r=json.loads(u.read_text())
           if x.get('status') not in {'PASS_ACTIVE_KAMBI_PIT','WARN_PARTIAL_IDENTITY','WARN_NO_VALID_ACTIVE_SNAPSHOTS'}: raise SystemExit(str(x))
           if not str(x.get('schema_version') or '').startswith('V6.5.3-'): raise SystemExit(str({'schema_version':x.get('schema_version')}))
           alias=x.get('identity_alias_contract') or {}
@@ -99,7 +105,9 @@ jobs:
           if z.get('status') not in {'PASS','WARN_ERRORS'} or zg.get('immutable_sidecars') is not True or zg.get('network_refetch') is not False or zg.get('missing_surface_fabrication') is not False: raise SystemExit('special-market sidecar governance missing')
           qg=q.get('governance') or {}
           if q.get('status')!='PASS' or qg.get('source_sidecar_must_be_on_or_after_epoch') is not True or qg.get('already_started_backfill') is not False or qg.get('rankings_not_probability_distributions') is not True: raise SystemExit('fresh total challenger governance missing')
-          print(json.dumps({'active_status':x.get('status'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'special_status':z.get('status'),'special_source_snapshots':z.get('source_snapshot_count'),'special_surface_counts':z.get('surface_counts'),'fresh_total_predictions':q.get('prediction_count'),'fresh_total_lead_buckets':q.get('lead_bucket_counts'),'fresh_total_settled':q.get('settled_count')},ensure_ascii=False))
+          rg=r.get('governance') or {}
+          if r.get('status')!='PASS' or rg.get('snapshot_rows_are_not_independent_matches') is not True or rg.get('review_gate_uses_unique_fixture_identity') is not True or rg.get('no_prediction_change') is not True: raise SystemExit('fresh total independence audit missing')
+          print(json.dumps({'active_status':x.get('status'),'written':x.get('formal_snapshot_count_written'),'v651_timing_eligible':x.get('v651_timing_eligible_snapshot_count'),'special_status':z.get('status'),'special_source_snapshots':z.get('source_snapshot_count'),'special_surface_counts':z.get('surface_counts'),'fresh_total_predictions':q.get('prediction_count'),'fresh_total_snapshot_settled':q.get('settled_count'),'fresh_total_unique_settled_1_72h':r.get('unique_settled_fixture_count_1_72h'),'fresh_total_independence_review':r.get('review_state')},ensure_ascii=False))
           PY
       - name: Dispatch V6.5.1 market-first forward epoch
         if: success()
@@ -112,5 +120,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run football-v6-full-market-ladder-v680.yml --ref main
 # V6.25.20 epoch is frozen before capture; all special-market rankings remain research-only and V5.0.1 probabilities are unchanged.
+# V6.52.1 independence audit only corrects evaluation N semantics; it does not train or change predictions.
 # Retrigger marker: 2026-07-25T16:09Z for fresh near-freeze evidence; no model/rule change.
 # Retrigger marker: 2026-07-26T09:37Z automation PIT refresh; no CURRENT/model change.
