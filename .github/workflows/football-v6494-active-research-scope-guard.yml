@@ -1,4 +1,4 @@
-name: Football V6.49.4 Active Research Scope Guard
+name: Football V6.49.4 Active Research Scope Guard Read-Only
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       - ".github/workflows/**"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: football-v6494-active-research-scope-guard
@@ -22,40 +22,22 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Compile scope guard
         run: python -m py_compile football-data/validation/audit_current_research_scope_v6494.py
-      - name: Enforce active research scope
+      - name: Enforce active research scope in ephemeral checkout
         run: python football-data/validation/audit_current_research_scope_v6494.py
-      - name: Persist audit receipt
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPOSITORY: ${{ github.repository }}
-        run: |
-          python football-data/validation/persist_generated_worktree_v474.py \
-            --allow-prefix football-data/manifests/v6_current_research_scope_v6494_status.json \
-            --message-prefix "audit(football): persist V6.49.4 active research scope guard"
-      - name: Print enforced scope
+      - name: Print and enforce scope
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('football-data/manifests/v6_current_research_scope_v6494_status.json').read_text(encoding='utf-8'))
-          print(json.dumps({
-            'status': x.get('status'),
-            'active_targets': x.get('active_prediction_targets_in_order'),
-            'handicap_retired': x.get('retired_handicap_prediction_target'),
-            'ah_market_input_retained': x.get('asian_handicap_market_input_retained'),
-            'forbidden_active_files': x.get('forbidden_active_files')
-          }, ensure_ascii=False))
-          if x.get('status') != 'PASS':
-              raise SystemExit(1)
+          p=Path('football-data/manifests/v6_current_research_scope_v6494_status.json')
+          if not p.exists(): raise SystemExit('scope receipt missing from local validation')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status') != 'PASS': raise SystemExit(str(x))
+          print(json.dumps({'status':x.get('status'),'active_targets':x.get('active_prediction_targets_in_order')},ensure_ascii=False))
           PY
-
-# Research engineering scope only. Formal CURRENT V5.0.1 is unchanged.
-# Revalidated after V6.50.5 OU-result coherent joint sidecar; all V6.50.x paths remain weight-0 research/audit surfaces.
+      - run: echo "Read-only scope validation; no receipt is persisted."
