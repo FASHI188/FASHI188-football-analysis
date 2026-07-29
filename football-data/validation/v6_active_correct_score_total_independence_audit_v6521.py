@@ -6,8 +6,10 @@ Research/audit only; formal_weight=0.
 V6.25.20 intentionally stores every immutable Active-Kambi freeze snapshot. That
 is useful for lead-time diagnostics, but repeated snapshots of the same fixture
 must not be treated as independent matches when deciding whether a >=100-match
-review gate has been reached. This audit leaves every frozen prediction intact
-and reports both snapshot-level and fixture-clustered metrics.
+review gate has been reached. The formal review window is 1-72 hours before
+kickoff; sub-1-hour snapshots remain diagnostic but do not count toward that
+review gate. This audit leaves every frozen prediction intact and reports both
+snapshot-level and fixture-clustered metrics.
 
 No model is trained, no prediction is changed, and no historical fixture is
 backfilled.
@@ -39,6 +41,14 @@ def _fixture_key(pred: dict[str, Any]) -> tuple[str, str, str, str]:
         str(pred.get("away_team") or ""),
         str(pred.get("kickoff_at") or ""),
     )
+
+
+def _review_eligible_1_72(row: dict[str, Any]) -> bool:
+    try:
+        lead = float(row.get("lead_hours"))
+    except (TypeError, ValueError):
+        return False
+    return 1.0 <= lead <= 72.0
 
 
 def _settled_rows(preds: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,7 +89,7 @@ def _clustered_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     for group in groups:
         if group == "ALL_1_72":
-            group_rows = [r for r in rows if r["lead_bucket"] != "OUTSIDE"]
+            group_rows = [r for r in rows if _review_eligible_1_72(r)]
         else:
             group_rows = [r for r in rows if r["lead_bucket"] == group]
 
@@ -115,16 +125,14 @@ def main() -> int:
     rows = _settled_rows(preds)
     by_fixture = Counter(tuple(r["fixture_key"]) for r in rows)
     duplicate_fixture_counts = [n for n in by_fixture.values() if n > 1]
-    unique_1_72 = {
-        tuple(r["fixture_key"])
-        for r in rows
-        if r["lead_bucket"] != "OUTSIDE"
-    }
+    review_rows = [r for r in rows if _review_eligible_1_72(r)]
+    unique_1_72 = {tuple(r["fixture_key"]) for r in review_rows}
+    sub_1h_rows = [r for r in rows if 0.0 < float(r.get("lead_hours") or 0.0) < 1.0]
     metrics = _clustered_metrics(rows)
     review_ready = len(unique_1_72) >= 100
 
     payload = {
-        "schema_version": "V6.52.1-active-score-total-independence-audit-r1",
+        "schema_version": "V6.52.1-active-score-total-independence-audit-r2",
         "generated_at_utc": base._utcnow().isoformat(),
         "formal_current_version": "V5.0.1",
         "status": "PASS",
@@ -132,6 +140,8 @@ def main() -> int:
         "source_prediction_file": str(PREDICTIONS.relative_to(ROOT)),
         "source_status_file": str(base.OUT.relative_to(ROOT)),
         "settled_snapshot_count": len(rows),
+        "settled_snapshot_count_1_72h": len(review_rows),
+        "sub_1h_settled_snapshot_count_diagnostic_only": len(sub_1h_rows),
         "unique_settled_fixture_count": len(by_fixture),
         "unique_settled_fixture_count_1_72h": len(unique_1_72),
         "fixtures_with_repeated_settled_snapshots": len(duplicate_fixture_counts),
@@ -141,7 +151,8 @@ def main() -> int:
         "audit_interpretation": (
             "V6.25.20 stores immutable freeze snapshots. Snapshot rows are correlated when multiple freezes belong to the same fixture; "
             "therefore snapshot_count must not be described as an independent match count. The >=100 review gate is evaluated on unique "
-            "settled fixture identity within the preregistered 1-72h window. Snapshot metrics remain diagnostic only."
+            "settled fixture identity with lead time >=1 and <=72 hours. Sub-1-hour snapshots remain diagnostic only. Snapshot metrics "
+            "remain diagnostic; fixture-equal-weight accuracy is descriptive and is not a one-decision-per-fixture execution score."
         ),
         "governance": {
             "research_only": True,
@@ -151,7 +162,11 @@ def main() -> int:
             "no_historical_backfill": True,
             "snapshot_rows_are_not_independent_matches": True,
             "review_gate_uses_unique_fixture_identity": True,
+            "review_gate_enforces_minimum_lead_hour_1": True,
+            "review_gate_maximum_lead_hour_72": True,
+            "sub_1h_snapshots_diagnostic_only": True,
             "fixture_equal_weight_metric_is_cluster_robust_descriptive": True,
+            "fixture_equal_weight_metric_is_not_single_execution_policy": True,
             "automatic_promotion": False,
             "formal_probability_change": False,
             "formal_weight_change": False,
