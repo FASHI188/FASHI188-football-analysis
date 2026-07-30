@@ -1,0 +1,53 @@
+name: Football Research Big Five High-Completeness B100
+
+on:
+  push:
+    branches:
+      - research/big5-high-completeness-b100
+    paths:
+      - "football-data/research/big5_high_completeness_b100.py"
+      - ".github/workflows/football-research-big5-b100.yml"
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - "football-data/research/big5_high_completeness_b100.py"
+      - ".github/workflows/football-research-big5-b100.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-big-five:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact research HEAD
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check
+        run: python -m py_compile football-data/research/big5_high_completeness_b100.py
+
+      - name: Run research-only B100 benchmark
+        run: |
+          python football-data/research/big5_high_completeness_b100.py \
+            --output-dir artifacts/research/big5_high_completeness_b100 \
+            --print-summary
+
+      - name: Upload B100 report
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-big5-b100-${{ github.sha }}
+          path: artifacts/research/big5_high_completeness_b100/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        run: |
+          test -z "$(git status --porcelain -- football-data/models football-data/config football-data/processed football-data/CURRENT* 2>/dev/null)"
