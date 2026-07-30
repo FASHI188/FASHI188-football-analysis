@@ -98,6 +98,13 @@ This stage must not:
 - modify formal model, data, config, CURRENT or formal weights;
 - issue a promotion receipt.
 
+## Machine-verifiable declarations
+
+- Candidate model fit: 0
+- Threshold tuning: 0
+- Every match on the same calendar date must be frozen before updates.
+- E3f-1A does not authorize model training.
+
 ## Stop condition
 
 After feature construction and coverage audit, stop. The next permissible stage is E3f-1B external PIT source and timestamp contracting. No new H/D/A OOF experiment is authorized by E3f-1A alone.
