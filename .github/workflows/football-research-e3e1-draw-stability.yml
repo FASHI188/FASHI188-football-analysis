@@ -1,0 +1,113 @@
+name: Football Research E3e-1 Draw Stability Audit
+
+on:
+  pull_request:
+    branches:
+      - research/e3e0-pure-hda-draw-identifiability
+    paths:
+      - football-data/research/e3e1_draw_stability_audit.py
+      - football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+      - .github/workflows/football-research-e3e1-draw-stability.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3e1-draw-stability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-draw-stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact research HEAD
+        id: exact_head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_head="$(git rev-parse HEAD)"
+          echo "expected_head=${EXPECTED_HEAD}"
+          echo "actual_head=${actual_head}"
+          test "${actual_head}" = "${EXPECTED_HEAD}"
+          git diff --exit-code
+          echo "sha=${actual_head}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install fixed numerical dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            numpy==2.1.3 scipy==1.14.1 scikit-learn==1.5.2
+
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            football-data/research/e3e1_draw_stability_audit.py \
+            football-data/research/e3e0_draw_identifiability.py \
+            football-data/research/e3d1_direct_td_joint_head.py
+
+      - name: Verify stability audit contract
+        run: |
+          set -euo pipefail
+          test -f football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+          grep -F 'Status: `AUTHORIZED_STABILITY_AUDIT`' football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+          grep -F 'formal_weight: `0`' football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+          grep -F 'Exact score, total goals and BTTS are `NOT_APPLICABLE`' football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+          grep -F 'No threshold is activated and no model is promoted' football-data/research/contracts/e3e1_draw_stability_audit_contract.md
+
+      - name: Run research-only E3e-1 stability audit
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation:football-data/research
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/e3e1_draw_stability_audit.py --print-summary
+
+      - name: Verify source report HEAD and fixed samples
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          path = Path("artifacts/research/e3e1_draw_stability_audit/e3e1_draw_stability_audit.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if report.get("repository_head") != actual:
+              raise SystemExit("E3e-1 report HEAD mismatch")
+          if report.get("sample", {}).get("count") != 6251:
+              raise SystemExit("E3e-1 fixed sample contract failed")
+          if report.get("b100", {}).get("count") != 100:
+              raise SystemExit("E3e-1 B100 contract failed")
+          audit = report.get("audit", {})
+          if any((audit.get("new_model_family"), audit.get("new_features"), audit.get("new_hyperparameters"), audit.get("class_weights_used"), audit.get("manual_draw_threshold_used"), audit.get("score_total_btts_output_or_gate_used"))):
+              raise SystemExit("E3e-1 isolation contract failed")
+          PY
+
+      - name: Upload E3e-1 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3e1-draw-stability-${{ steps.exact_head.outputs.sha }}
+          path: artifacts/research/e3e1_draw_stability_audit/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        if: always()
+        run: |
+          git diff --exit-code -- football-data/models football-data/config football-data/processed football-data/raw
+          git diff --exit-code
