@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gold_standard_match_manifest_v1.schema.json",
+  "title": "Football Gold-Standard Match Manifest V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_version",
+    "created_at_utc",
+    "selection_cutoff_utc",
+    "sealed",
+    "records"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "manifest_version": {"type": "string", "minLength": 1},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "selection_cutoff_utc": {"type": "string", "format": "date-time"},
+    "sealed": {"const": true},
+    "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "records": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/record"}
+    }
+  },
+  "$defs": {
+    "sourceEvidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source", "captured_at_utc"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "captured_at_utc": {"type": "string", "format": "date-time"},
+        "url": {"type": "string"},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "pricePair": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["line", "side_a_price", "side_b_price"],
+      "properties": {
+        "line": {"type": "number"},
+        "side_a_price": {"type": "number", "exclusiveMinimum": 1.0},
+        "side_b_price": {"type": "number", "exclusiveMinimum": 1.0}
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "gold_standard_candidate",
+        "gold_standard_tier",
+        "match_identity",
+        "freeze_audit",
+        "result_90m",
+        "source_evidence",
+        "context_sha256"
+      ],
+      "properties": {
+        "gold_standard_candidate": {"const": true},
+        "gold_standard_tier": {"enum": ["GS-CORE", "GS-FULL"]},
+        "match_identity": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "match_id",
+            "competition_id",
+            "round_or_stage",
+            "home_team",
+            "away_team",
+            "kickoff_time_utc",
+            "match_status",
+            "venue_or_neutral_status",
+            "freeze_time_utc",
+            "settlement_scope",
+            "is_two_legged",
+            "first_leg_status"
+          ],
+          "properties": {
+            "match_id": {"type": "string", "minLength": 1},
+            "competition_id": {"type": "string", "minLength": 1},
+            "round_or_stage": {"type": "string", "minLength": 1},
+            "home_team": {"type": "string", "minLength": 1},
+            "away_team": {"type": "string", "minLength": 1},
+            "kickoff_time_utc": {"type": "string", "format": "date-time"},
+            "match_status": {"type": "string", "minLength": 1},
+            "venue_or_neutral_status": {"type": "string", "minLength": 1},
+            "freeze_time_utc": {"type": "string", "format": "date-time"},
+            "settlement_scope": {"const": "90_minutes_including_stoppage"},
+            "is_two_legged": {"type": "boolean"},
+            "first_leg_status": {"type": "string", "minLength": 1}
+          }
+        },
+        "freeze_audit": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["post_freeze_data_excluded", "freeze_not_after_kickoff"],
+          "properties": {
+            "post_freeze_data_excluded": {"const": true},
+            "freeze_not_after_kickoff": {"const": true}
+          }
+        },
+        "result_90m": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["home_goals", "away_goals", "scope", "extra_time_included", "penalties_included"],
+          "properties": {
+            "home_goals": {"type": "integer", "minimum": 0},
+            "away_goals": {"type": "integer", "minimum": 0},
+            "scope": {"const": "90_minutes_including_stoppage"},
+            "extra_time_included": {"const": false},
+            "penalties_included": {"const": false}
+          }
+        },
+        "source_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourceEvidence"}
+        },
+        "context_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "market_snapshot": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "captured_at_utc",
+            "synchronization_window_seconds",
+            "source_independence_status",
+            "one_x_two",
+            "asian_handicap",
+            "total_goals"
+          ],
+          "properties": {
+            "captured_at_utc": {"type": "string", "format": "date-time"},
+            "synchronization_window_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+            "source_independence_status": {"const": "verified"},
+            "one_x_two": {
+              "type": "object",
+              "required": ["home_price", "draw_price", "away_price"],
+              "properties": {
+                "home_price": {"type": "number", "exclusiveMinimum": 1.0},
+                "draw_price": {"type": "number", "exclusiveMinimum": 1.0},
+                "away_price": {"type": "number", "exclusiveMinimum": 1.0}
+              }
+            },
+            "asian_handicap": {"$ref": "#/$defs/pricePair"},
+            "total_goals": {"$ref": "#/$defs/pricePair"}
+          }
+        },
+        "lineup_assessment": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["status", "lineup_type", "captured_at_utc", "source"],
+          "properties": {
+            "status": {"const": "通过"},
+            "lineup_type": {"enum": ["official", "predicted"]},
+            "captured_at_utc": {"type": "string", "format": "date-time"},
+            "source": {"type": "string", "minLength": 1}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"gold_standard_tier": {"const": "GS-FULL"}},
+            "required": ["gold_standard_tier"]
+          },
+          "then": {"required": ["market_snapshot", "lineup_assessment"]}
+        }
+      ]
+    }
+  }
+}
