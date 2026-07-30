@@ -1,10 +1,10 @@
 # E3e-0 Pure 90-Minute H/D/A Isolated Research Contract
 
-- Contract version: `E3E0-CONTRACT-1.0`
+- Contract version: `E3E0-CONTRACT-1.1`
 - Rule authority: `足球项目_CURRENT_唯一正式规则_V5.0.2_纯1X2隔离研究轨与联合门控边界维护版.docx`
 - Research branch: `research/e3e0-pure-hda-draw-identifiability`
 - Base research HEAD: `d0a794be3868ac22d2f5f9cfcacbc46d9942485a`
-- Status: `FROZEN_NO_RUN`
+- Status: `AUTHORIZED_DIAGNOSTIC_RUN`
 - formal_weight: `0`
 - Automatic promotion: `false`
 - Merge authorization: `false`
@@ -194,13 +194,21 @@ A later formal candidate requires a separate promotion receipt binding at least:
 
 E3e-0 cannot automatically modify or influence any other formal output.
 
-## 13. Current execution prohibition
+## 13. Current execution authorization
 
-For the V5.0.2 rule-upgrade task:
+After V5.0.2 uniqueness activation and explicit user approval, one E3e-0 diagnostic execution is authorized.
 
-- do not train;
-- do not run E3e-0;
-- do not create an effect report;
-- do not modify formal assets;
-- do not merge;
-- keep this contract and the diagnostic implementation frozen pending review.
+The authorized execution may:
+
+- train the preregistered rolling-OOF diagnostic models;
+- generate the identifiability and H/D/A comparison report;
+- upload a research artifact;
+- update the Draft PR with the exact execution receipt.
+
+The authorized execution must not:
+
+- modify formal models, formal data, formal config or CURRENT weights;
+- modify the formal unified score matrix;
+- merge the Draft PR;
+- promote any candidate;
+- use post-result threshold tuning, artificial draw uplift or class-weight-only improvement.
