@@ -1,0 +1,56 @@
+name: Football Research E1 Draw Decision Boundary
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "research/full-1x2-diagnostic-d0"
+    paths:
+      - "football-data/research/draw_decision_boundary_v701.py"
+      - ".github/workflows/football-research-e1-draw-boundary.yml"
+  push:
+    branches:
+      - "research/**"
+    paths:
+      - "football-data/research/draw_decision_boundary_v701.py"
+      - ".github/workflows/football-research-e1-draw-boundary.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e1-draw-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  draw-decision-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run research-only E1 boundary study
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation:football-data/research
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/draw_decision_boundary_v701.py --print-summary
+
+      - name: Upload E1 research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e1-draw-boundary-${{ github.sha }}
+          path: artifacts/research/draw_decision_boundary_e1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed by runtime
+        if: always()
+        run: |
+          git diff --exit-code -- football-data/models football-data/config
+          git status --short
