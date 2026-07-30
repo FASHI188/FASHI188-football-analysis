@@ -1,0 +1,56 @@
+name: Football Research A0 Conditional Draw Structure
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - "football-data/research/conditional_draw_structure_a0.py"
+      - ".github/workflows/football-research-a0-conditional-draw.yml"
+  push:
+    branches:
+      - "research/conditional-draw-structure-a0"
+    paths:
+      - "football-data/research/conditional_draw_structure_a0.py"
+      - ".github/workflows/football-research-a0-conditional-draw.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-a0-conditional-draw-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose-conditional-draw-structure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run research-only A0 architecture diagnostic
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation:football-data/research
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/conditional_draw_structure_a0.py --print-summary
+
+      - name: Upload A0 research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-a0-conditional-draw-${{ github.sha }}
+          path: artifacts/research/conditional_draw_structure_a0/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        if: always()
+        run: |
+          git diff --exit-code -- football-data/models football-data/config football-data/processed football-data/raw
+          git diff --exit-code
