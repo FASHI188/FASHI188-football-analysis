@@ -1,0 +1,49 @@
+name: Football Research D0 Full 1X2 Diagnostic
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/research/full_1x2_diagnostic_v700.py"
+      - ".github/workflows/football-research-d0-full-1x2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-d0-full-1x2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose-full-1x2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run research-only D0 diagnostic
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/full_1x2_diagnostic_v700.py --print-summary
+
+      - name: Upload research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-d0-full-1x2-${{ github.sha }}
+          path: artifacts/research/full_1x2_d0/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed by runtime
+        if: always()
+        run: |
+          git diff --exit-code -- football-data/models football-data/config
+          git status --short
