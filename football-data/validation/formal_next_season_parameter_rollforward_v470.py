@@ -4,9 +4,12 @@
 This rolls only validated hyperparameters into a future target season. Team strength
 never rolls forward: the unchanged formal engine still requires same-season history
 and its hard competition/team sample gates before any probability can be produced.
+Engine identity is checked against LF-normalized repository text so Windows CRLF
+checkout conversion cannot create a false hash mismatch.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +26,11 @@ TARGETS = {
 }
 
 
+def repository_text_sha256(path: Path) -> str:
+    data = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
 def build_one(competition_id: str, spec: dict[str, str]) -> dict[str, Any]:
     model_path = ROOT / "models" / "formal_core_v460" / competition_id / "model.json"
     report_path = ROOT / "validation" / "reports" / "formal_core_v460" / f"{competition_id}.json"
@@ -33,8 +41,9 @@ def build_one(competition_id: str, spec: dict[str, str]) -> dict[str, Any]:
         raise RuntimeError("validated selected_parameters missing")
     if model.get("operational_status") != "NON_A_FORMAL_CORE_AVAILABLE":
         raise RuntimeError(f"formal core is not operational: {model.get('operational_status')}")
-    if model.get("engine_sha256") != sha256_file(ENGINE_PATH):
-        raise RuntimeError("model engine hash mismatch")
+    engine_sha = repository_text_sha256(ENGINE_PATH)
+    if model.get("engine_sha256") != engine_sha:
+        raise RuntimeError("model engine hash mismatch after LF-normalized repository-text verification")
     if model.get("validation_report_sha256") != sha256_json(report):
         raise RuntimeError("model validation report hash mismatch")
     if str(model.get("live_target_season") or "") != spec["source_season"]:
@@ -46,7 +55,8 @@ def build_one(competition_id: str, spec: dict[str, str]) -> dict[str, Any]:
         "target_season": spec["target_season"],
         "selected_parameters": params,
         "parameter_sha256": sha256_json(params),
-        "engine_sha256": sha256_file(ENGINE_PATH),
+        "engine_sha256": engine_sha,
+        "engine_hash_normalization": "CRLF_TO_LF_BEFORE_SHA256",
         "config_sha256": sha256_file(CONFIG_PATH),
         "source_model_path": str(model_path.relative_to(ROOT)),
         "source_model_sha256": sha256_file(model_path),
@@ -79,7 +89,7 @@ def main() -> int:
                 "probability_change": False,
             }
     out = {
-        "schema_version": "V4.7.0-formal-next-season-parameter-rollforward-r1",
+        "schema_version": "V4.7.0-formal-next-season-parameter-rollforward-r2",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "status": "PASS" if not failures else "PARTIAL",
         "failed_competitions": failures,
@@ -87,7 +97,7 @@ def main() -> int:
         "team_strength_rollforward": False,
         "probability_change": False,
         "reports": reports,
-        "policy": "Fail closed on any source-model, validation-report, engine or config hash mismatch.",
+        "policy": "Fail closed on any source-model, validation-report, LF-normalized repository-text engine or config hash mismatch.",
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
