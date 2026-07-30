@@ -1,0 +1,116 @@
+name: Football Research E3f-1B External PIT Source Contract
+
+on:
+  pull_request:
+    branches:
+      - research/e3f1a-internal-pit-feature-build
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3f1b_external_pit_source_matrix.json
+      - football-data/research/e3f1b_external_pit_source_audit.py
+      - football-data/research/contracts/e3f1b_external_pit_source_contract.md
+      - .github/workflows/football-research-e3f1b-external-pit-source-contract.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3f1b-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit-external-pit-sources:
+    if: github.event.pull_request.head.ref == 'research/e3f1b-external-pit-source-contract'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_SHA: 332556cffaffa5004036b03beb8f2bd5c284bccc
+      OUT_DIR: football-data/artifacts/research/e3f1b_external_pit_source_audit
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact research HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Syntax and JSON checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/e3f1b_external_pit_source_audit.py
+          python -m json.tool football-data/research/e3f1b_external_pit_source_matrix.json >/dev/null
+
+      - name: Verify source-contract declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'External record ingestion: 0' football-data/research/contracts/e3f1b_external_pit_source_contract.md
+          grep -q 'Candidate model fit: 0' football-data/research/contracts/e3f1b_external_pit_source_contract.md
+          grep -q 'does not fetch, store, join or train' football-data/research/contracts/e3f1b_external_pit_source_contract.md
+          grep -q 'No external source may be joined' football-data/research/contracts/e3f1b_external_pit_source_contract.md
+
+      - name: Run research-only E3f-1B source audit
+        run: python football-data/research/e3f1b_external_pit_source_audit.py --output-dir "$OUT_DIR" --print-summary
+
+      - name: Verify report and no-ingestion contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          out = Path(os.environ['OUT_DIR'])
+          report = json.loads((out / 'e3f1b_external_pit_source_audit.json').read_text())
+          assert report['research_status'] == 'PASS'
+          assert report['repository_head'] == subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          matrix = report['matrix']
+          assert matrix['fixed_target_matches'] == 6251
+          assert matrix['fixed_b100'] == 100
+          assert matrix['external_records_ingested'] == 0
+          assert matrix['api_calls_with_credentials'] == 0
+          assert matrix['website_scrapes'] == 0
+          assert matrix['candidate_model_fits'] == 0
+          assert matrix['threshold_tuning_count'] == 0
+          assert matrix['formal_weight'] == 0
+          verdict = matrix['overall_verdict']
+          assert verdict['full_6251_external_source_ready'] is False
+          assert verdict['source_ready_for_immediate_training_join'] is False
+          assert verdict['training_authorized'] is False
+          assert verdict['promotion_candidate'] is False
+          assert verdict['formal_assets_changed'] == 0
+          assert report['audit']['external_network_calls_during_workflow'] == 0
+          PY
+
+      - name: Upload E3f-1B source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3f1b-external-pit-source-audit-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ env.OUT_DIR }}/e3f1b_external_pit_source_audit.json
+            ${{ env.OUT_DIR }}/e3f1b_external_pit_source_audit.md
+            football-data/research/e3f1b_external_pit_source_matrix.json
+            football-data/research/contracts/e3f1b_external_pit_source_contract.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" HEAD)"
+          echo "$changed"
+          if echo "$changed" | grep -E '(^|/)(CURRENT|model|models|data|config)(/|$)|formal_weight' ; then
+            echo 'Protected formal asset change detected.' >&2
+            exit 1
+          fi
