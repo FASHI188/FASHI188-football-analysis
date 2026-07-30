@@ -152,6 +152,10 @@ def _diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "one_x_two_accuracy": hits / count,
         "balanced_accuracy": mean(recalls),
         "macro_f1": mean(f1s),
+        "mean_one_x_two_log_loss": mean(
+            -math.log(max(1e-15, float(r[f"p_{r['actual_outcome']}"])))
+            for r in records
+        ),
         "mean_one_x_two_brier": mean(float(r["one_x_two_brier"]) for r in records),
         "mean_one_x_two_rps": mean(float(r["one_x_two_rps"]) for r in records),
         "one_x_two_ece": _multiclass_ece(records),
@@ -301,6 +305,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Full 1X2 accuracy: {model['one_x_two_accuracy']:.6f}",
         f"- Balanced accuracy: {model['balanced_accuracy']:.6f}",
         f"- Macro-F1: {model['macro_f1']:.6f}",
+        f"- 1X2 LogLoss: {model['mean_one_x_two_log_loss']:.6f}",
         f"- 1X2 Brier: {model['mean_one_x_two_brier']:.6f}",
         f"- 1X2 RPS: {model['mean_one_x_two_rps']:.6f}",
         f"- Predicted H/D/A: {model['predicted_counts']}",
@@ -312,6 +317,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Full 1X2 accuracy: {baseline['one_x_two_accuracy']:.6f}",
         f"- Balanced accuracy: {baseline['balanced_accuracy']:.6f}",
         f"- Macro-F1: {baseline['macro_f1']:.6f}",
+        f"- 1X2 LogLoss: {baseline['mean_one_x_two_log_loss']:.6f}",
         f"- 1X2 Brier: {baseline['mean_one_x_two_brier']:.6f}",
         f"- 1X2 RPS: {baseline['mean_one_x_two_rps']:.6f}",
         "",
