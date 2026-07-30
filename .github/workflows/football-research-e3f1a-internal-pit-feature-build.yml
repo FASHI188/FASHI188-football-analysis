@@ -1,0 +1,114 @@
+name: Football Research E3f-1A Internal PIT Feature Build
+
+on:
+  pull_request:
+    branches:
+      - research/e3f0-pit-feature-coverage
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3f1a_internal_pit_feature_build.py
+      - football-data/research/contracts/e3f1a_internal_pit_feature_build_contract.md
+      - .github/workflows/football-research-e3f1a-internal-pit-feature-build.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3f1a-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-internal-pit-features:
+    if: github.event.pull_request.head.ref == 'research/e3f1a-internal-pit-feature-build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASE_SHA: de18cb335be8a7d4bba2339997d6afa97702f7ef
+      OUT_DIR: football-data/artifacts/research/e3f1a_internal_pit_feature_build
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact research HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fixed numerical dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.1.3 scipy==1.14.1 scikit-learn==1.5.2
+
+      - name: Syntax check
+        run: python -m py_compile football-data/research/e3f1a_internal_pit_feature_build.py
+
+      - name: Verify feature-build contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'Candidate model fit: 0' football-data/research/contracts/e3f1a_internal_pit_feature_build_contract.md
+          grep -q 'same calendar date must be frozen' football-data/research/contracts/e3f1a_internal_pit_feature_build_contract.md
+          grep -q 'does not authorize model training' football-data/research/contracts/e3f1a_internal_pit_feature_build_contract.md
+
+      - name: Run research-only E3f-1A feature build
+        run: python football-data/research/e3f1a_internal_pit_feature_build.py --output-dir "$OUT_DIR" --print-summary
+
+      - name: Verify report, identity and no-training contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, json, os, subprocess
+          from pathlib import Path
+          out = Path(os.environ['OUT_DIR'])
+          report = json.loads((out / 'e3f1a_internal_pit_feature_build.json').read_text())
+          assert report['research_status'] == 'PASS'
+          assert report['repository_head'] == subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          assert report['sample_count'] == 6251
+          assert report['b100_count'] == 100
+          assert report['candidate_model_fit_count'] == 0
+          assert report['threshold_tuning_count'] == 0
+          assert report['formal_weight'] == 0
+          audit = report['audit']
+          assert audit['unique_keys']
+          assert audit['same_day_order_invariant']
+          assert audit['all_finite']
+          assert audit['forbidden_feature_names'] == []
+          assert audit['standings_reset_by_season']
+          assert audit['prior_completed_only']
+          assert audit['current_match_fields_excluded']
+          assert audit['formal_assets_changed'] == 0
+          with (out / 'e3f1a_internal_pit_features.csv').open(encoding='utf-8', newline='') as handle:
+              rows = list(csv.DictReader(handle))
+          assert len(rows) == 6251
+          assert len({row['match_key'] for row in rows}) == 6251
+          PY
+
+      - name: Upload E3f-1A report and feature artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3f1a-internal-pit-features-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ env.OUT_DIR }}/e3f1a_internal_pit_feature_build.json
+            ${{ env.OUT_DIR }}/e3f1a_internal_pit_feature_build.md
+            ${{ env.OUT_DIR }}/e3f1a_internal_pit_features.csv
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" HEAD)"
+          echo "$changed"
+          if echo "$changed" | grep -E '(^|/)(CURRENT|model|models|data|config)(/|$)|formal_weight' ; then
+            echo 'Protected formal asset change detected.' >&2
+            exit 1
+          fi
