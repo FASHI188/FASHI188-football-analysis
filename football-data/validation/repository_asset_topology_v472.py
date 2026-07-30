@@ -62,6 +62,9 @@ def _capability_adjudication(source_path: str) -> dict[str, Any] | None:
 
 def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
+    if not registry_row:
+        errors.append({"code": "jpn_registry_record_missing"})
+
     missing = [
         path.relative_to(ROOT).as_posix()
         for path in (JPN_TRANSITION_MANIFEST, JPN_PROMOTION_REVIEW)
@@ -72,7 +75,7 @@ def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, An
             "status": "FAIL",
             "evidence_mode": "FROZEN_COMMITTED_MANIFESTS",
             "untracked_work_products_required": False,
-            "errors": [{"code": "jpn_transition_frozen_evidence_missing", "paths": missing}],
+            "errors": [*errors, {"code": "jpn_transition_frozen_evidence_missing", "paths": missing}],
         }
 
     transition_blob = _canonical_git_blob_sha(JPN_TRANSITION_MANIFEST)
@@ -236,11 +239,9 @@ def audit() -> dict[str, Any]:
             batch001_authority = "GOVERNANCE_ARCHIVE_STATIC_REFERENCE_ONLY"
 
     jpn = next((item for item in registry.get("competitions", []) if item.get("competition_id") == "JPN_J1"), {})
-    jpn_transition_evidence: dict[str, Any] | None = None
-    if jpn.get("official_transition_route_status") == "OFFICIAL_TRANSITION_ROUTE_VALIDATED":
-        jpn_transition_evidence = _audit_jpn_transition_evidence(jpn)
-        if jpn_transition_evidence["status"] != "PASS":
-            errors.extend(jpn_transition_evidence["errors"])
+    jpn_transition_evidence = _audit_jpn_transition_evidence(jpn)
+    if jpn_transition_evidence["status"] != "PASS":
+        errors.extend(jpn_transition_evidence["errors"])
 
     reconciliation_path = FOOTBALL / "manifests" / "repository_reconciliation_v472_status.json"
     reconciliation_summary: dict[str, Any] | None = None
