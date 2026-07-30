@@ -8,12 +8,14 @@ on:
     types: [opened, synchronize, reopened, edited]
     paths:
       - "football-data/research/market_joint_direct_outcome_e3b1.py"
+      - "football-data/research/market_joint_direct_outcome_e3b1_league_audit.py"
       - ".github/workflows/football-research-e3b1-market-joint-outcome.yml"
   push:
     branches:
       - "research/market-joint-direct-outcome-e3b1"
     paths:
       - "football-data/research/market_joint_direct_outcome_e3b1.py"
+      - "football-data/research/market_joint_direct_outcome_e3b1_league_audit.py"
       - ".github/workflows/football-research-e3b1-market-joint-outcome.yml"
 
 permissions:
@@ -28,8 +30,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
-      - name: Checkout exact research HEAD
+      - name: Checkout exact research branch HEAD
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact research HEAD
+        id: exact_head
+        env:
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_head="$(git rev-parse HEAD)"
+          echo "expected_head=${EXPECTED_HEAD}"
+          echo "actual_head=${actual_head}"
+          test "${actual_head}" = "${EXPECTED_HEAD}"
+          git diff --exit-code
+          echo "sha=${actual_head}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -43,19 +61,27 @@ jobs:
       - name: Syntax check
         run: |
           python -m py_compile football-data/research/market_joint_direct_outcome_e3b1.py
+          python -m py_compile football-data/research/market_joint_direct_outcome_e3b1_league_audit.py
 
-      - name: Run research-only E3b-1 experiment
+      - name: Run research-only E3b-1 experiment unchanged
         env:
           PYTHONPATH: football-data/engine:football-data/validation:football-data/research
           PYTHONUTF8: "1"
         run: |
           python football-data/research/market_joint_direct_outcome_e3b1.py --print-summary
 
-      - name: Upload E3b-1 report
+      - name: Build exact-HEAD per-league audit receipt
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/market_joint_direct_outcome_e3b1_league_audit.py \
+            --expected-head "${{ steps.exact_head.outputs.sha }}"
+
+      - name: Upload E3b-1 report and league audit
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: football-e3b1-market-joint-${{ github.sha }}
+          name: football-e3b1-market-joint-${{ steps.exact_head.outputs.sha }}
           path: artifacts/research/market_joint_direct_outcome_e3b1/
           if-no-files-found: error
           retention-days: 30
