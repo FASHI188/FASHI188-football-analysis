@@ -248,7 +248,9 @@ def validate_lineup(record: dict[str, Any], freeze: datetime | None) -> list[str
     if not isinstance(lineup, dict): return ["lineup_assessment_missing"]
     reasons: list[str] = []
     if lineup.get("status") != "通过": reasons.append("lineup_status_not_passed")
-    if lineup.get("lineup_type") not in {"official", "predicted"}: reasons.append("lineup_type_invalid")
+    lineup_type = lineup.get("lineup_type")
+    if not isinstance(lineup_type, str) or lineup_type not in {"official", "predicted"}:
+        reasons.append("lineup_type_invalid")
     captured = parse_timestamp(lineup.get("captured_at_utc"))
     if captured is None: reasons.append("lineup_timestamp_invalid")
     elif freeze is not None and captured > freeze: reasons.append("lineup_after_freeze")
@@ -260,7 +262,8 @@ def evaluate(record: dict[str, Any], meta: dict[str, Any] | None) -> dict[str, A
     reasons: list[str] = []
     if record.get("gold_standard_candidate") is not True: reasons.append("explicit_candidate_flag_missing")
     tier = record.get("gold_standard_tier")
-    if tier not in {"GS-CORE", "GS-FULL"}: reasons.append("gold_standard_tier_invalid")
+    if not isinstance(tier, str) or tier not in {"GS-CORE", "GS-FULL"}:
+        reasons.append("gold_standard_tier_invalid")
     identity, identity_reasons = validate_identity(record)
     reasons.extend(identity_reasons)
     reasons.extend(validate_result(record))
@@ -280,7 +283,7 @@ def evaluate(record: dict[str, Any], meta: dict[str, Any] | None) -> dict[str, A
     match_id = identity.get("match_id") if identity else None
     return {
         "match_id": match_id,
-        "declared_tier": tier,
+        "declared_tier": tier if isinstance(tier, str) else None,
         "core_eligible": not core_reasons,
         "full_eligible": not full_reasons,
         "core_reasons": core_reasons,
