@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
 python -m pip install --disable-pip-version-check -q PyYAML
 python -m py_compile \
   scripts/governance/final_workflow_acceptance.py \
-  scripts/governance/verify_consolidated_capabilities.py
+  scripts/governance/verify_consolidated_capabilities.py \
+  scripts/governance/verify_powershell_acceptance_parity.py
 
 python scripts/governance/final_workflow_acceptance.py \
   --strict \
   --write-archive-blob-ledger
 
-python scripts/governance/verify_consolidated_capabilities.py --require-archived
+python scripts/governance/verify_consolidated_capabilities.py \
+  --require-archived \
+  --execute-retained
+
+python scripts/governance/verify_powershell_acceptance_parity.py
 
 export PYTHONPATH="football-data/engine:football-data/validation${PYTHONPATH:+:$PYTHONPATH}"
 python -m unittest \
