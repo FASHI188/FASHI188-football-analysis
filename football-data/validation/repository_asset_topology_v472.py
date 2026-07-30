@@ -5,11 +5,18 @@ This guard catches cross-batch deletion and migration incompleteness that pure
 syntax/hash checks cannot detect. It never changes CURRENT or formal weights.
 Governance-archived workflows are validated against their explicit capability
 adjudication instead of being incorrectly required to remain active.
+
+For the JPN J1 2026 special transition route, the raw/processed work products were
+never committed to Git. Clean-checkout audit therefore verifies the committed,
+source-hash-bound transition manifest and the independently committed promotion
+review for exact cross-consistency instead of pretending untracked files are
+repository assets.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +27,13 @@ OUT = FOOTBALL / "manifests" / "repository_asset_topology_v472_status.json"
 CAP_ADJ = ROOT / "governance" / "consolidated_capability_adjudication.json"
 BATCH001_SOURCE = ".github/workflows/football-data-batch-001.yml"
 BATCH001_ARCHIVE = ROOT / "governance" / "archive" / "workflows" / "phase2c-consolidate-batch01" / "football-data-batch-001.yml"
+JPN_TRANSITION_MANIFEST = FOOTBALL / "manifests" / "jpn_j1_2026_special_official_v467_status.json"
+JPN_PROMOTION_REVIEW = FOOTBALL / "manifests" / "jpn_j1_promotion_review_v467_status.json"
+EXPECTED_JPN_STAGE_COUNTS = {
+    "transition_regional_east": 90,
+    "transition_regional_west": 90,
+    "transition_playoff_round": 20,
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -34,6 +48,113 @@ def _capability_adjudication(source_path: str) -> dict[str, Any] | None:
         if isinstance(row, dict) and row.get("source_path") == source_path:
             return row
     return None
+
+
+def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, Any]:
+    errors: list[dict[str, Any]] = []
+    missing = [
+        path.relative_to(ROOT).as_posix()
+        for path in (JPN_TRANSITION_MANIFEST, JPN_PROMOTION_REVIEW)
+        if not path.is_file()
+    ]
+    if missing:
+        return {
+            "status": "FAIL",
+            "evidence_mode": "COMMITTED_FROZEN_MANIFESTS",
+            "untracked_work_products_required": False,
+            "errors": [{"code": "jpn_transition_frozen_evidence_missing", "paths": missing}],
+        }
+
+    official = load_json(JPN_TRANSITION_MANIFEST)
+    review = load_json(JPN_PROMOTION_REVIEW)
+    review_route = review.get("official_transition_route") or {}
+    deployment_gate = review.get("target_season_deployment_gate") or {}
+    review_checks = review.get("checks") or {}
+    official_audit = official.get("audit") or {}
+
+    def require(condition: bool, code: str, **extra: Any) -> None:
+        if not condition:
+            errors.append({"code": code, **extra})
+
+    response_sha = str(official.get("response_sha256") or "")
+    source = str(official.get("source") or "")
+    official_stage_counts = official_audit.get("stage_counts") or {}
+
+    require(registry_row.get("official_transition_route_status") == "OFFICIAL_TRANSITION_ROUTE_VALIDATED",
+            "jpn_registry_transition_status_invalid",
+            actual=registry_row.get("official_transition_route_status"))
+    require(official.get("status") == "OFFICIAL_TRANSITION_ROUTE_VALIDATED",
+            "jpn_transition_manifest_status_invalid",
+            actual=official.get("status"))
+    require(official.get("competition_id") == "JPN_J1", "jpn_transition_manifest_competition_invalid")
+    require(official.get("season") == "2026_special", "jpn_transition_manifest_season_invalid")
+    require(source.startswith("https://data.j-league.or.jp/"),
+            "jpn_transition_manifest_source_not_official",
+            source=source)
+    require(bool(re.fullmatch(r"[0-9a-fA-F]{64}", response_sha)),
+            "jpn_transition_manifest_response_sha_invalid",
+            response_sha256=response_sha)
+    require(official.get("processed_path") == "processed/JPN_J1/official_2026_special.csv",
+            "jpn_transition_manifest_processed_path_invalid",
+            actual=official.get("processed_path"))
+    require(official.get("transition_season_is_separate_domain") is True,
+            "jpn_transition_manifest_separate_domain_false")
+    require(official.get("must_not_pool_into_2026_27_target_season") is True,
+            "jpn_transition_manifest_pooling_guard_false")
+    require(official.get("settlement_scope") == "90_minutes_including_stoppage",
+            "jpn_transition_manifest_settlement_scope_invalid")
+    require(official_audit.get("match_count") == 200,
+            "jpn_transition_manifest_match_count_invalid",
+            actual=official_audit.get("match_count"))
+    require(official_audit.get("team_count") == 20,
+            "jpn_transition_manifest_team_count_invalid",
+            actual=official_audit.get("team_count"))
+    require(official_stage_counts == EXPECTED_JPN_STAGE_COUNTS,
+            "jpn_transition_manifest_stage_counts_invalid",
+            actual=official_stage_counts)
+    require(official_audit.get("probability_input_score_scope") == "90_minute_scores_only",
+            "jpn_transition_manifest_probability_scope_invalid")
+    require(official_audit.get("penalty_shootout_used_for_formal_score") is False,
+            "jpn_transition_manifest_penalty_scope_invalid")
+
+    require(review.get("competition_id") == "JPN_J1", "jpn_promotion_review_competition_invalid")
+    require(review.get("formal_weight") == 0, "jpn_promotion_review_formal_weight_nonzero")
+    require(review.get("automatic_promotion") is False, "jpn_promotion_review_automatic_promotion_enabled")
+    require(registry_row.get("promotion_review_status") == review.get("status"),
+            "jpn_registry_promotion_review_status_mismatch",
+            registry=registry_row.get("promotion_review_status"),
+            manifest=review.get("status"))
+    require(review_route.get("status") == official.get("status"),
+            "jpn_transition_crosscheck_status_mismatch")
+    require(review_route.get("season") == official.get("season"),
+            "jpn_transition_crosscheck_season_mismatch")
+    require(review_route.get("match_count") == official_audit.get("match_count"),
+            "jpn_transition_crosscheck_match_count_mismatch")
+    require(review_route.get("stage_counts") == official_stage_counts,
+            "jpn_transition_crosscheck_stage_counts_mismatch")
+    require(review_route.get("settlement_scope") == official.get("settlement_scope"),
+            "jpn_transition_crosscheck_settlement_scope_mismatch")
+    require(review_route.get("separate_domain") is True,
+            "jpn_transition_crosscheck_separate_domain_false")
+    require(deployment_gate.get("special_2026_may_supply_2026_27_team_strength") is False,
+            "jpn_transition_deployment_pooling_guard_false")
+    require(review_checks.get("official_2026_special_route_validated") is True,
+            "jpn_transition_review_validation_check_false")
+    require(review_checks.get("special_transition_kept_separate") is True,
+            "jpn_transition_review_separation_check_false")
+
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "evidence_mode": "COMMITTED_FROZEN_MANIFESTS",
+        "untracked_work_products_required": False,
+        "official_source": source,
+        "official_response_sha256": response_sha,
+        "match_count": official_audit.get("match_count"),
+        "stage_counts": official_stage_counts,
+        "transition_manifest": JPN_TRANSITION_MANIFEST.relative_to(ROOT).as_posix(),
+        "promotion_review_manifest": JPN_PROMOTION_REVIEW.relative_to(ROOT).as_posix(),
+        "errors": errors,
+    }
 
 
 def audit() -> dict[str, Any]:
@@ -93,19 +214,11 @@ def audit() -> dict[str, Any]:
             batch001_authority = "GOVERNANCE_ARCHIVE_STATIC_REFERENCE_ONLY"
 
     jpn = next((item for item in registry.get("competitions", []) if item.get("competition_id") == "JPN_J1"), {})
+    jpn_transition_evidence: dict[str, Any] | None = None
     if jpn.get("official_transition_route_status") == "OFFICIAL_TRANSITION_ROUTE_VALIDATED":
-        required_jpn = [
-            FOOTBALL / "processed" / "JPN_J1" / "official_2026_special.csv",
-            FOOTBALL / "raw" / "JPN_J1" / "official_2026_special_source.json",
-            FOOTBALL / "manifests" / "jpn_j1_2026_special_official_v467_status.json",
-            FOOTBALL / "manifests" / "jpn_j1_promotion_review_v467_status.json",
-        ]
-        missing = [p.relative_to(ROOT).as_posix() for p in required_jpn if not p.is_file()]
-        if missing:
-            errors.append({
-                "code": "jpn_validated_special_route_assets_missing",
-                "paths": missing,
-            })
+        jpn_transition_evidence = _audit_jpn_transition_evidence(jpn)
+        if jpn_transition_evidence["status"] != "PASS":
+            errors.extend(jpn_transition_evidence["errors"])
 
     reconciliation_path = FOOTBALL / "manifests" / "repository_reconciliation_v472_status.json"
     reconciliation_summary: dict[str, Any] | None = None
@@ -125,7 +238,7 @@ def audit() -> dict[str, Any]:
 
     status = "PASS" if not errors else "FAIL"
     return {
-        "schema_version": "V4.7.2-repository-asset-topology-governance-aware-r2",
+        "schema_version": "V4.7.2-repository-asset-topology-governance-aware-r3",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
         "hard_error_count": len(errors),
@@ -135,10 +248,15 @@ def audit() -> dict[str, Any]:
         "registered_competition_count": len(competitions),
         "registered_competition_profiles_present": len(competitions) - len(missing_profiles),
         "batch001_workflow_authority": locals().get("batch001_authority", "INVALID"),
+        "jpn_transition_evidence": jpn_transition_evidence,
         "reconciliation_summary": reconciliation_summary,
         "formal_weight_change": False,
         "automatic_promotion": False,
-        "policy": "Repository asset topology only; governance-archived STATIC_REFERENCE_ONLY workflows are not required to remain active; no CURRENT or formal model weight changes.",
+        "policy": (
+            "Repository asset topology only; governance-archived STATIC_REFERENCE_ONLY workflows are not required to remain active. "
+            "JPN 2026-special clean-checkout validation is bound to committed official-source/hash manifests rather than untracked work products. "
+            "No CURRENT or formal model weight changes."
+        ),
     }
 
 
@@ -154,6 +272,7 @@ def main() -> int:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.print_summary:
+        jpn_evidence = report.get("jpn_transition_evidence") or {}
         print(json.dumps({
             "status": report["status"],
             "hard_error_count": report["hard_error_count"],
@@ -161,6 +280,8 @@ def main() -> int:
             "registered_competition_profiles_present": report["registered_competition_profiles_present"],
             "registered_competition_count": report["registered_competition_count"],
             "batch001_workflow_authority": report["batch001_workflow_authority"],
+            "jpn_transition_evidence_status": jpn_evidence.get("status"),
+            "jpn_transition_evidence_mode": jpn_evidence.get("evidence_mode"),
             "errors": report["errors"],
         }, ensure_ascii=False, indent=2))
     return 2 if args.strict_exit and report["status"] != "PASS" else 0
