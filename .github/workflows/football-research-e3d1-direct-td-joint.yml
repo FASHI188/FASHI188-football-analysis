@@ -1,0 +1,99 @@
+name: Football Research E3d-1 Direct Legal T-D Joint
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "research/e3c1-soft-joint-matrix"
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - "football-data/research/e3d1_direct_td_joint_head.py"
+      - ".github/workflows/football-research-e3d1-direct-td-joint.yml"
+  push:
+    branches:
+      - "research/e3d1-direct-td-joint-head"
+    paths:
+      - "football-data/research/e3d1_direct_td_joint_head.py"
+      - ".github/workflows/football-research-e3d1-direct-td-joint.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3d1-direct-td-joint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate-direct-td-joint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact research HEAD
+        id: exact_head
+        env:
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_head="$(git rev-parse HEAD)"
+          echo "expected_head=${EXPECTED_HEAD}"
+          echo "actual_head=${actual_head}"
+          test "${actual_head}" = "${EXPECTED_HEAD}"
+          git diff --exit-code
+          echo "sha=${actual_head}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install fixed numerical dependencies
+        run: |
+          python -m pip install --disable-pip-version-check numpy==2.1.3 scipy==1.14.1
+
+      - name: Syntax check
+        run: |
+          python -m py_compile football-data/research/e3d1_direct_td_joint_head.py
+
+      - name: Run research-only E3d-1 challenge
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation:football-data/research
+          PYTHONUTF8: "1"
+        run: |
+          python football-data/research/e3d1_direct_td_joint_head.py --print-summary
+
+      - name: Verify source report HEAD
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          report_path = Path("artifacts/research/e3d1_direct_td_joint_head/e3d1_direct_td_joint_head.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          recorded = report.get("repository_head")
+          print({"actual_head": actual, "report_head": recorded})
+          if recorded != actual:
+              raise SystemExit("E3d-1 report HEAD mismatch")
+          PY
+
+      - name: Upload E3d-1 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3d1-direct-td-joint-${{ steps.exact_head.outputs.sha }}
+          path: artifacts/research/e3d1_direct_td_joint_head/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        if: always()
+        run: |
+          git diff --exit-code -- football-data/models football-data/config football-data/processed football-data/raw
+          git diff --exit-code -- '*CURRENT*'
