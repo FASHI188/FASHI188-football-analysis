@@ -1,0 +1,61 @@
+name: Football Research G0 Gold-Standard Inventory
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "football-data/research/contracts/gold_standard_evaluation_contract_v1.md"
+      - "football-data/research/contracts/gold_standard_match_manifest_v1.schema.json"
+      - "football-data/research/gold_standard_inventory_g0.py"
+      - ".github/workflows/football-research-g0-gold-standard-inventory.yml"
+  push:
+    branches:
+      - "research/gold-standard-evaluation-contract-g0"
+    paths:
+      - "football-data/research/contracts/gold_standard_evaluation_contract_v1.md"
+      - "football-data/research/contracts/gold_standard_match_manifest_v1.schema.json"
+      - "football-data/research/gold_standard_inventory_g0.py"
+      - ".github/workflows/football-research-g0-gold-standard-inventory.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inventory-gold-standard-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact research HEAD
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check research-only inventory
+        run: python -m py_compile football-data/research/gold_standard_inventory_g0.py
+
+      - name: Run fail-closed G0 inventory
+        run: |
+          python football-data/research/gold_standard_inventory_g0.py \
+            --output-dir artifacts/research/gold_standard_inventory_g0 \
+            --print-summary
+
+      - name: Upload G0 inventory report
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-g0-gold-standard-${{ github.sha }}
+          path: artifacts/research/gold_standard_inventory_g0/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed by runtime
+        run: |
+          git diff --exit-code -- \
+            football-data/models \
+            football-data/config \
+            football-data/manifests \
+            football-data/registry.json \
+            football-data/CURRENT_唯一正式规则* \
+            football-data/data
