@@ -1,20 +1,12 @@
 name: Football Research E3e-0 Draw Identifiability
 
+# V5.0.2 rule-upgrade freeze:
+# - no push trigger
+# - no pull_request trigger
+# - no automatic training or diagnosis
+# - manual dispatch only after separate user approval
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - "research/e3d1-direct-td-joint-head"
-    types: [opened, synchronize, reopened, edited]
-    paths:
-      - "football-data/research/e3e0_draw_identifiability.py"
-      - ".github/workflows/football-research-e3e0-draw-identifiability.yml"
-  push:
-    branches:
-      - "research/e3e0-pure-hda-draw-identifiability"
-    paths:
-      - "football-data/research/e3e0_draw_identifiability.py"
-      - ".github/workflows/football-research-e3e0-draw-identifiability.yml"
 
 permissions:
   contents: read
@@ -31,14 +23,14 @@ jobs:
       - name: Checkout exact research branch HEAD
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Verify exact research HEAD
         id: exact_head
         env:
-          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
           actual_head="$(git rev-parse HEAD)"
@@ -64,6 +56,14 @@ jobs:
             football-data/research/e3e0_draw_identifiability.py \
             football-data/research/e3d1_direct_td_joint_head.py \
             football-data/research/market_joint_direct_outcome_e3b1.py
+
+      - name: Verify isolated research contract
+        run: |
+          set -euo pipefail
+          test -f football-data/research/contracts/e3e0_pure_hda_isolated_research_contract.md
+          grep -F 'Status: `FROZEN_NO_RUN`' football-data/research/contracts/e3e0_pure_hda_isolated_research_contract.md
+          grep -F 'formal_weight: `0`' football-data/research/contracts/e3e0_pure_hda_isolated_research_contract.md
+          grep -F 'Exact-score, total-goal and BTTS statuses are `NOT_APPLICABLE`' football-data/research/contracts/e3e0_pure_hda_isolated_research_contract.md
 
       - name: Run research-only E3e-0 diagnosis
         env:
