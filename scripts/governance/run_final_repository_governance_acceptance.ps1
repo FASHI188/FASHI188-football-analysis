@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 
 # Force UTF-8 end-to-end on Windows PowerShell / PowerShell 7 so Python JSON and
 # Kambi/non-ASCII output cannot fall back to the system ANSI/GBK code page.
-$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $Utf8NoBom
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
@@ -11,10 +11,9 @@ $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
 
 function Invoke-Python {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    & python @Arguments
+    & python @args
     if ($LASTEXITCODE -ne 0) {
-        throw "python $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+        throw "python $($args -join ' ') failed with exit code $LASTEXITCODE"
     }
 }
 
