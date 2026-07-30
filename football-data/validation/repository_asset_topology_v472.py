@@ -9,12 +9,13 @@ adjudication instead of being incorrectly required to remain active.
 For the JPN J1 2026 special transition route, the raw/processed work products were
 never committed to Git. Clean-checkout audit therefore verifies the committed,
 source-hash-bound transition manifest and the independently committed promotion
-review for exact cross-consistency instead of pretending untracked files are
-repository assets.
+review for exact cross-consistency and frozen Git-blob identity instead of
+pretending untracked files are repository assets.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ BATCH001_SOURCE = ".github/workflows/football-data-batch-001.yml"
 BATCH001_ARCHIVE = ROOT / "governance" / "archive" / "workflows" / "phase2c-consolidate-batch01" / "football-data-batch-001.yml"
 JPN_TRANSITION_MANIFEST = FOOTBALL / "manifests" / "jpn_j1_2026_special_official_v467_status.json"
 JPN_PROMOTION_REVIEW = FOOTBALL / "manifests" / "jpn_j1_promotion_review_v467_status.json"
+JPN_TRANSITION_MANIFEST_FROZEN_BLOB = "62ca43ef12929c03997e8842dd01f99590bdb9d1"
+JPN_PROMOTION_REVIEW_FROZEN_BLOB = "0789c73d6760ac7905dee822691b3487243ff7c5"
 EXPECTED_JPN_STAGE_COUNTS = {
     "transition_regional_east": 90,
     "transition_regional_west": 90,
@@ -38,6 +41,13 @@ EXPECTED_JPN_STAGE_COUNTS = {
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _canonical_git_blob_sha(path: Path) -> str:
+    """Compute the committed-text Git blob identity independent of CRLF checkout conversion."""
+    content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    header = f"blob {len(content)}\0".encode("ascii")
+    return hashlib.sha1(header + content).hexdigest()
 
 
 def _capability_adjudication(source_path: str) -> dict[str, Any] | None:
@@ -60,11 +70,13 @@ def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, An
     if missing:
         return {
             "status": "FAIL",
-            "evidence_mode": "COMMITTED_FROZEN_MANIFESTS",
+            "evidence_mode": "FROZEN_COMMITTED_MANIFESTS",
             "untracked_work_products_required": False,
             "errors": [{"code": "jpn_transition_frozen_evidence_missing", "paths": missing}],
         }
 
+    transition_blob = _canonical_git_blob_sha(JPN_TRANSITION_MANIFEST)
+    promotion_blob = _canonical_git_blob_sha(JPN_PROMOTION_REVIEW)
     official = load_json(JPN_TRANSITION_MANIFEST)
     review = load_json(JPN_PROMOTION_REVIEW)
     review_route = review.get("official_transition_route") or {}
@@ -80,6 +92,14 @@ def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, An
     source = str(official.get("source") or "")
     official_stage_counts = official_audit.get("stage_counts") or {}
 
+    require(transition_blob == JPN_TRANSITION_MANIFEST_FROZEN_BLOB,
+            "jpn_transition_manifest_frozen_blob_mismatch",
+            expected=JPN_TRANSITION_MANIFEST_FROZEN_BLOB,
+            actual=transition_blob)
+    require(promotion_blob == JPN_PROMOTION_REVIEW_FROZEN_BLOB,
+            "jpn_promotion_review_frozen_blob_mismatch",
+            expected=JPN_PROMOTION_REVIEW_FROZEN_BLOB,
+            actual=promotion_blob)
     require(registry_row.get("official_transition_route_status") == "OFFICIAL_TRANSITION_ROUTE_VALIDATED",
             "jpn_registry_transition_status_invalid",
             actual=registry_row.get("official_transition_route_status"))
@@ -145,8 +165,10 @@ def _audit_jpn_transition_evidence(registry_row: dict[str, Any]) -> dict[str, An
 
     return {
         "status": "PASS" if not errors else "FAIL",
-        "evidence_mode": "COMMITTED_FROZEN_MANIFESTS",
+        "evidence_mode": "FROZEN_COMMITTED_MANIFESTS",
         "untracked_work_products_required": False,
+        "transition_manifest_frozen_blob": transition_blob,
+        "promotion_review_frozen_blob": promotion_blob,
         "official_source": source,
         "official_response_sha256": response_sha,
         "match_count": official_audit.get("match_count"),
@@ -238,7 +260,7 @@ def audit() -> dict[str, Any]:
 
     status = "PASS" if not errors else "FAIL"
     return {
-        "schema_version": "V4.7.2-repository-asset-topology-governance-aware-r3",
+        "schema_version": "V4.7.2-repository-asset-topology-governance-aware-r4",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
         "hard_error_count": len(errors),
@@ -254,7 +276,7 @@ def audit() -> dict[str, Any]:
         "automatic_promotion": False,
         "policy": (
             "Repository asset topology only; governance-archived STATIC_REFERENCE_ONLY workflows are not required to remain active. "
-            "JPN 2026-special clean-checkout validation is bound to committed official-source/hash manifests rather than untracked work products. "
+            "JPN 2026-special clean-checkout validation is bound to exact frozen manifest blobs plus official-source/response hashes rather than untracked work products. "
             "No CURRENT or formal model weight changes."
         ),
     }
