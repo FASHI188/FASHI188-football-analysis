@@ -17,8 +17,8 @@ ARCHIVE_ROOT = ROOT / "governance" / "archive" / "workflows"
 SUMMARY = {"ci.yml", "forward.yml", "maintenance.yml", "research.yml", "scheduled-data.yml"}
 ALLOWED = {"EXECUTION_RETAINED", "STATIC_REFERENCE_ONLY", "RETIRED_ARCHIVE_ONLY"}
 EXPECTED_COUNTS = {
-    "EXECUTION_RETAINED": 5,
-    "STATIC_REFERENCE_ONLY": 34,
+    "EXECUTION_RETAINED": 6,
+    "STATIC_REFERENCE_ONLY": 33,
     "RETIRED_ARCHIVE_ONLY": 15,
 }
 RETAINED_COMMANDS: dict[str, list[str]] = {
@@ -26,6 +26,9 @@ RETAINED_COMMANDS: dict[str, list[str]] = {
         "football-data/validation/runtime_maintenance_v473.py",
         "--strict-exit",
         "--print-summary",
+    ],
+    ".github/workflows/football-v470-formal-next-season-parameter-rollforward.yml": [
+        "football-data/validation/formal_next_season_parameter_rollforward_v470.py",
     ],
     ".github/workflows/football-v470-formal-next-season-runtime-readiness.yml": [
         "football-data/validation/formal_next_season_runtime_readiness_v470.py",
