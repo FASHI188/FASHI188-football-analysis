@@ -238,18 +238,26 @@ def matrix_structure(record: dict[str, Any]) -> dict[str, Any]:
         by_total[total] = ordered
     total_probability = np.asarray([total_mass[total] / probability_sum for total in totals])
     conditional = {}
+    positive_total_mask = []
     for total in totals:
         mass = total_mass[total]
-        if mass <= 0:
-            raise RuntimeError(f"zero total mass for total={total}")
-        conditional[total] = np.asarray(
-            [float(item["probability"]) / mass for item in by_total[total]], dtype=float
-        )
+        positive = mass > EPS
+        positive_total_mask.append(positive)
+        if positive:
+            conditional[total] = np.asarray(
+                [float(item["probability"]) / mass for item in by_total[total]], dtype=float
+            )
+        else:
+            # Structural cells exist, but the Champion tail can be exactly zero
+            # after floating-point truncation. Keep that total at zero probability;
+            # this placeholder conditional is never allowed to create mass.
+            conditional[total] = np.full(total + 1, 1.0 / (total + 1), dtype=float)
     return {
         "cells": cells,
         "by_total": dict(by_total),
         "totals": totals,
         "total_probability": total_probability,
+        "positive_total_mask": positive_total_mask,
         "conditional": conditional,
     }
 
@@ -276,6 +284,9 @@ def prepare_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         actual_home = int(str(record["actual_score"]).split("-", 1)[0])
         if actual_total not in structure["by_total"]:
             raise RuntimeError(f"actual total outside matrix support: {actual_total}")
+        actual_total_index = structure["totals"].index(actual_total)
+        if not structure["positive_total_mask"][actual_total_index]:
+            raise RuntimeError(f"actual total has zero prior support: {actual_total}")
         if not 0 <= actual_home <= actual_total:
             raise RuntimeError("actual home score is illegal for total")
         raw_features.append(values)
@@ -317,8 +328,11 @@ def standardize_fit(raw: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray
 
 def total_prior_matrix(structures: list[dict[str, Any]]) -> np.ndarray:
     prior = np.asarray([item["total_probability"] for item in structures], dtype=float)
-    prior = np.clip(prior, EPS, 1.0)
-    prior /= prior.sum(axis=1, keepdims=True)
+    prior = np.maximum(0.0, prior)
+    row_sum = prior.sum(axis=1, keepdims=True)
+    if np.any(row_sum <= 0):
+        raise RuntimeError("total prior row has no mass")
+    prior /= row_sum
     return prior
 
 
@@ -339,7 +353,7 @@ def fit_total_head(
     lookup = {total: index for index, total in enumerate(totals)}
     actual = np.asarray([lookup[int(row["actual_total"])] for row in rows], dtype=int)
     prior = total_prior_matrix(structures)
-    offset = np.log(prior)
+    offset = np.where(prior > 0.0, np.log(np.maximum(prior, EPS)), -1e30)
     onehot = np.zeros_like(prior)
     onehot[np.arange(n), actual] = 1.0
 
@@ -563,7 +577,7 @@ def predict_model(model: dict[str, Any], rows: list[dict[str, Any]]) -> list[dic
     total_interaction_weights = np.asarray(model["total_head"]["interaction_weights"])
     prior_total = total_prior_matrix(prepared["structures"])
     total_logits = (
-        np.log(prior_total)
+        np.where(prior_total > 0.0, np.log(np.maximum(prior_total, EPS)), -1e30)
         + total_base @ total_base_weights
         + (x @ total_interaction_weights) @ total_interaction.T
     )
@@ -777,6 +791,7 @@ def matrix_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
     legal = True
     finite = True
     support_identity = True
+    zero_probability_support_preserved = True
     for row in rows:
         matrix = row["e3d1_matrix"]
         total = sum(float(cell["probability"]) for cell in matrix)
@@ -796,6 +811,18 @@ def matrix_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
             (int(cell["home_goals"]), int(cell["away_goals"])) for cell in matrix
         }
         support_identity = support_identity and prior_support == candidate_support
+        prior_probability = {
+            (int(cell["home_goals"]), int(cell["away_goals"])): float(cell["probability"])
+            for cell in row["matrix"]
+        }
+        zero_probability_support_preserved = (
+            zero_probability_support_preserved
+            and all(
+                prior_probability[(int(cell["home_goals"]), int(cell["away_goals"]))] > EPS
+                or float(cell["probability"]) <= PROB_TOL
+                for cell in matrix
+            )
+        )
 
         derived_outcome = {name: 0.0 for name in OUTCOMES}
         by_total: dict[int, float] = defaultdict(float)
@@ -813,9 +840,8 @@ def matrix_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
         )
         conditional_sum_residual = 0.0
         for total_value, mass in by_total.items():
-            if mass <= 0:
-                conditional_sum_residual = math.inf
-                break
+            if mass <= PROB_TOL:
+                continue
             conditional_sum = sum(
                 float(cell["probability"]) / mass
                 for cell in matrix
@@ -830,6 +856,7 @@ def matrix_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "all_finite_nonnegative": finite,
         "all_legal_score_coordinates": legal,
         "support_identity": support_identity,
+        "zero_probability_support_preserved": zero_probability_support_preserved,
         "max_probability_residual": max(probability_residuals, default=None),
         "max_outcome_derivation_residual": max(outcome_residuals, default=None),
         "max_conditional_normalization_residual": max(
@@ -1072,6 +1099,7 @@ def main() -> int:
             and audit["all_finite_nonnegative"]
             and audit["all_legal_score_coordinates"]
             and audit["support_identity"]
+            and audit["zero_probability_support_preserved"]
             and float(audit["max_probability_residual"]) <= PROB_TOL
             and float(audit["max_outcome_derivation_residual"]) <= PROB_TOL
             and float(audit["max_conditional_normalization_residual"]) <= PROB_TOL
