@@ -6,7 +6,6 @@ import collections
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,8 +46,8 @@ EXPECTED = {
     "unknown_count": 0,
 }
 EXPECTED_CAPABILITY_COUNTS = {
-    "EXECUTION_RETAINED": 5,
-    "STATIC_REFERENCE_ONLY": 34,
+    "EXECUTION_RETAINED": 6,
+    "STATIC_REFERENCE_ONLY": 33,
     "RETIRED_ARCHIVE_ONLY": 15,
 }
 EXPECTED_ARCHIVE_BLOB_COUNT = 402
@@ -67,6 +66,8 @@ def git(*args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(ROOT), *args],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
     )
     if proc.returncode:
@@ -111,9 +112,20 @@ def main() -> int:
             except Exception as exc:
                 errors.append(f"YAML parse failed {rel(path)}: {exc}")
         contents_write = bool(re.search(r"(?m)^\s*contents:\s*write\s*(?:#.*)?$", text))
-        persistence = bool(re.search(r"persist_generated_worktree|persist_files_v474\.py|\bgit\s+(?:commit|push)\b|api\.github\.com/repos/.*/contents", text, re.I))
+        persistence = bool(
+            re.search(
+                r"persist_generated_worktree|persist_files_v474\.py|\bgit\s+(?:commit|push)\b|api\.github\.com/repos/.*/contents",
+                text,
+                re.I,
+            )
+        )
         git_cp = bool(re.search(r"\bgit\s+(?:commit|push)\b|persist_generated_worktree|persist_files_v474\.py", text, re.I))
-        direct_main = bool(re.search(r"(?i)\bgit\s+push[^\n]*\bmain\b|persist_generated_worktree[^\n]*--branch\s+main|[\"\']branch[\"\']\s*:\s*[\"\']main[\"\']", text))
+        direct_main = bool(
+            re.search(
+                r"(?i)\bgit\s+push[^\n]*\bmain\b|persist_generated_worktree[^\n]*--branch\s+main|[\"']branch[\"']\s*:\s*[\"']main[\"']",
+                text,
+            )
+        )
         push_trigger = bool(re.search(r"(?m)^  push:\s*$", text))
         schedule_trigger = bool(re.search(r"(?m)^  schedule:\s*$", text))
         has_concurrency = bool(re.search(r"(?m)^concurrency:\s*$", text))
@@ -197,7 +209,6 @@ def main() -> int:
                 )
                 archive_blob_mismatch += 1
                 continue
-
             archive_path = copies[0]
             try:
                 frozen_blob_sha = blob_at(frozen_sha, source)
@@ -208,8 +219,7 @@ def main() -> int:
                 archive_blob_mismatch += int(not exact_match)
                 if not exact_match:
                     errors.append(
-                        f"archive blob mismatch {source}: frozen={frozen_blob_sha} "
-                        f"archive={archive_blob_sha} path={archive_path}"
+                        f"archive blob mismatch {source}: frozen={frozen_blob_sha} archive={archive_blob_sha} path={archive_path}"
                     )
                 archive_blob_entries.append(
                     {
@@ -233,9 +243,8 @@ def main() -> int:
                         "error": str(exc),
                     }
                 )
-        else:
-            if source not in active:
-                errors.append(f"retained disposition not active: {source}")
+        elif source not in active:
+            errors.append(f"retained disposition not active: {source}")
 
     if archive_blob_checked != EXPECTED_ARCHIVE_BLOB_COUNT:
         errors.append(f"archive_blob_checked={archive_blob_checked} expected={EXPECTED_ARCHIVE_BLOB_COUNT}")
