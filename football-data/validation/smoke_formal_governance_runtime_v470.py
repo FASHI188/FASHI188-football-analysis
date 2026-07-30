@@ -17,7 +17,7 @@ from formal_governance_runtime_v470 import apply_formal_governance_runtime
 from platform_core import ROOT, atomic_write_json, load_json
 
 OUT = ROOT / "manifests" / "formal_governance_runtime_v470_smoke.json"
-GOVERNANCE = ROOT / "manifests" / "v470_upgrade_status.json"
+GOVERNANCE = ROOT / "manifests" / "v501_upgrade_status.json"
 
 
 def main() -> int:
@@ -34,6 +34,11 @@ def main() -> int:
     output = apply_formal_governance_runtime(calculation)
     checks = {
         "formal_rule_version_matches_active_governance": output["rule_version"] == governance["formal_rule_version"],
+        "formal_rule_version_is_unique_current_v501": output["rule_version"] == "V5.0.1",
+        "v501_manifest_selected": output["formal_governance_audit"]["governance_manifest_path"]
+        == "manifests\\v501_upgrade_status.json"
+        or output["formal_governance_audit"]["governance_manifest_path"]
+        == "manifests/v501_upgrade_status.json",
         "underlying_implementation_version_preserved": output["implementation_rule_version"] == "V4.6.1",
         "probabilities_unchanged": output["probabilities"] == before,
         "audit_passed": output["formal_governance_audit"]["status"] == "通过",
@@ -41,7 +46,7 @@ def main() -> int:
     }
     status = "PASS" if all(checks.values()) else "FAIL"
     payload = {
-        "schema_version": "V4.7.0-formal-governance-runtime-smoke-r1",
+        "schema_version": "V5.0.1-formal-governance-runtime-smoke-r2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
         "checks": checks,

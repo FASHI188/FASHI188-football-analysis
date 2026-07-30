@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from pathlib import Path
 from typing import Any
 
-from platform_core import ROOT, load_json, sha256_file
+from platform_core import ROOT, load_json
 from promoted_challenger_runtime_v470 import apply_promoted_v470_post_calibration_challengers
 
 MODULE_PATH = Path(__file__).resolve()
@@ -14,6 +15,11 @@ RUNTIME_MODULE = ROOT / "engine" / "promoted_challenger_runtime_v470.py"
 ACTIONABLE_RUNNER = ROOT / "engine" / "run_formal_prediction_actionable.py"
 ACTIVATION_MANIFEST = ROOT / "manifests" / "promotions" / "USA_MLS_d_conditional_v470_runtime_activation.json"
 PROMOTION_RECEIPT = ROOT / "manifests" / "promotions" / "USA_MLS_d_conditional_v470.json"
+
+
+def _canonical_sha256(path: Path) -> str:
+    """Hash repository text consistently on LF and CRLF checkouts."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _unavailable(calculation: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -69,10 +75,10 @@ def apply_hash_bound_promoted_v470_challengers(
 
     expected = activation.get("bound_sha256") or {}
     actual = {
-        "promotion_receipt": sha256_file(PROMOTION_RECEIPT),
-        "runtime_module": sha256_file(RUNTIME_MODULE),
-        "runtime_gate": sha256_file(MODULE_PATH),
-        "actionable_runner": sha256_file(ACTIONABLE_RUNNER),
+        "promotion_receipt": _canonical_sha256(PROMOTION_RECEIPT),
+        "runtime_module": _canonical_sha256(RUNTIME_MODULE),
+        "runtime_gate": _canonical_sha256(MODULE_PATH),
+        "actionable_runner": _canonical_sha256(ACTIONABLE_RUNNER),
     }
     for key, value in actual.items():
         if str(expected.get(key) or "") != value:

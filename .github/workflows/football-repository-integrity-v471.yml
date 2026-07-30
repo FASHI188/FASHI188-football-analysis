@@ -1,22 +1,7 @@
-name: Football V4.7.1 Repository Integrity
+name: Football V4.7.1 Repository Integrity Read-Only
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
-      - "football-data/engine/**"
-      - "football-data/validation/**"
-      - "football-data/config/**"
-      - "football-data/raw/**"
-      - "football-data/processed/**"
-      - "football-data/league_profiles/**"
-      - "football-data/manifests/runtime_bootstrap.json"
-      - "football-data/manifests/formal_core_v460_status.json"
-      - "football-data/manifests/repository_reconciliation_v472_status.json"
-      - "football-data/manifests/runtime_authority_governance_v462_status.json"
   pull_request:
     branches: [main]
     paths:
@@ -25,13 +10,14 @@ on:
       - "football-data/engine/**"
       - "football-data/validation/**"
       - "football-data/config/**"
-      - "football-data/raw/**"
-      - "football-data/processed/**"
-      - "football-data/league_profiles/**"
-      - "football-data/manifests/runtime_bootstrap.json"
-      - "football-data/manifests/formal_core_v460_status.json"
-      - "football-data/manifests/repository_reconciliation_v472_status.json"
-      - "football-data/manifests/runtime_authority_governance_v462_status.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "football-data/engine/**"
+      - "football-data/validation/**"
+      - "football-data/config/**"
   schedule:
     - cron: "23 4 * * 1"
 
@@ -44,49 +30,25 @@ concurrency:
 
 jobs:
   repository-integrity:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Compile integrity auditors and persistence helper
+      - name: Compile integrity auditors
         run: |
           python -m py_compile football-data/validation/repository_integrity_v471.py
           python -m py_compile football-data/validation/repository_integrity_runtime_v473.py
           python -m py_compile football-data/validation/repository_asset_topology_v472.py
           python -m py_compile football-data/validation/workflow_stability_audit_v474.py
-          python -m py_compile football-data/validation/persist_files_v474.py
-
-      - name: Run repository-wide preflight and write local receipts
-        run: |
-          python football-data/validation/repository_integrity_runtime_v473.py --write-receipt --print-summary
-          python football-data/validation/repository_asset_topology_v472.py --write-receipt --print-summary
-          python football-data/validation/workflow_stability_audit_v474.py --write-receipt --print-summary
-
-      - name: Enforce fail-closed integrity gates before persistence
+      - name: Run fail-closed integrity gates
         run: |
           python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
           python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
-
-      - name: Persist PASS integrity and diagnostic receipts safely
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPOSITORY: ${{ github.repository }}
+          python football-data/validation/workflow_stability_audit_v474.py --print-summary
+      - name: Confirm no repository writeback
         run: |
-          python football-data/validation/persist_files_v474.py \
-            football-data/manifests/repository_integrity_v471_status.json \
-            football-data/manifests/repository_asset_topology_v472_status.json \
-            football-data/manifests/workflow_stability_v474_status.json \
-            --message-prefix "audit(football): persist integrity receipt"
-
-# V4.7.4 hardening: fail-closed validation happens before persistence. All receipt
-# writes use the shared optimistic Contents API helper; no direct Git writeback.
+          git status --short
+          echo "Integrity receipts, if generated locally, are not persisted."

@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from football_v460_engine import ENGINE_PATH
-from platform_core import ROOT, PlatformError, load_json, sha256_file, sha256_json
+from platform_core import ROOT, PlatformError, load_json, sha256_json
+from repository_text_hash import repository_text_sha256
 
 CONFIG_PATH = ROOT / "config" / "formal_core_v460.json"
 ROLLFORWARD_PATH = ROOT / "manifests" / "formal_next_season_parameter_rollforward_v470_status.json"
@@ -28,22 +29,25 @@ def _report_for(competition_id: str, target_season: str) -> tuple[dict[str, Any]
         raise PlatformError("competition has no valid next-season parameter rollforward")
     if str(report.get("target_season") or "") != target_season:
         raise PlatformError("next-season parameter rollforward target season mismatch")
+
     model_path = ROOT / str(report.get("source_model_path") or "")
     validation_path = ROOT / str(report.get("source_validation_report_path") or "")
     if not model_path.exists() or not validation_path.exists():
         raise PlatformError("next-season parameter rollforward source artifact missing")
     model = load_json(model_path)
     validation = load_json(validation_path)
+
     checks = {
-        "engine_sha_match": report.get("engine_sha256") == sha256_file(ENGINE_PATH),
-        "config_sha_match": report.get("config_sha256") == sha256_file(CONFIG_PATH),
-        "source_model_sha_match": report.get("source_model_sha256") == sha256_file(model_path),
-        "source_validation_report_sha_match": report.get("source_validation_report_sha256") == sha256_file(validation_path),
+        "engine_sha_match": report.get("engine_sha256") == repository_text_sha256(ENGINE_PATH),
+        "config_sha_match": report.get("config_sha256") == repository_text_sha256(CONFIG_PATH),
+        "source_model_sha_match": report.get("source_model_sha256") == repository_text_sha256(model_path),
+        "source_validation_report_sha_match": report.get("source_validation_report_sha256") == repository_text_sha256(validation_path),
         "model_validation_binding_match": model.get("validation_report_sha256") == sha256_json(validation),
         "parameter_sha_match": report.get("parameter_sha256") == sha256_json(report.get("selected_parameters") or {}),
         "model_selected_parameters_match": model.get("selected_parameters") == report.get("selected_parameters"),
         "source_season_match": str(model.get("live_target_season") or "") == str(report.get("source_season") or ""),
         "team_strength_rollforward_false": report.get("team_strength_rollforward") is False,
+        "shared_repository_text_hash_normalization": report.get("repository_text_hash_normalization") == "CRLF_AND_CR_TO_LF_BEFORE_SHA256",
     }
     if not all(checks.values()):
         raise PlatformError(f"next-season parameter rollforward hash/invariant failure: {checks}")

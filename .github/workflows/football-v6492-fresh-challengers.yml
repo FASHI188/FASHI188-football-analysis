@@ -1,116 +1,40 @@
-name: Football V6.49.3 Fresh Forward Challengers + Context Priority
+name: Football V6.49.3 Fresh Forward Challengers MANUAL_ONLY
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "37 * * * *"
-  push:
-    branches: [main]
-    paths:
-      - "football-data/validation/v6_fresh_market_forward_challengers_v6492.py"
-      - "football-data/validation/v6_fresh_matrix_structural_audit_v6498.py"
-      - "football-data/validation/v6_joint_surface_coherence_v6499.py"
-      - "football-data/validation/v6_context_priority_queue_v6493.py"
-      - ".github/workflows/football-v6492-fresh-challengers.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: football-v6493-fresh-challengers
-  cancel-in-progress: false
+  group: football-v6493-fresh-challengers-manual
+  cancel-in-progress: true
 
 jobs:
   evaluate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
-      - name: Sync latest main
-        run: |
-          git fetch origin main
-          git reset --hard origin/main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Compile
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Compile audit chain
         run: |
           python -m py_compile football-data/validation/v6_fresh_market_forward_challengers_v6492.py
           python -m py_compile football-data/validation/v6_fresh_matrix_structural_audit_v6498.py
           python -m py_compile football-data/validation/v6_joint_surface_coherence_v6499.py
           python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
-      - name: Freeze fresh future-fixture challengers
+      - name: Run manually approved challenger audit in ephemeral checkout
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/v6_fresh_market_forward_challengers_v6492.py
-      - name: Independently audit every fresh candidate and reference matrix
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/v6_fresh_matrix_structural_audit_v6498.py
-      - name: Audit F05 1X2 versus F06 matrix result-marginal coherence
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/v6_joint_surface_coherence_v6499.py
-      - name: Build model-value context priority queue
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
-        run: python football-data/validation/v6_context_priority_queue_v6493.py
-      - name: Persist ledgers and receipts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPOSITORY: ${{ github.repository }}
         run: |
-          python football-data/validation/persist_generated_worktree_v474.py \
-            --allow-prefix football-data/manifests/v6_fresh_market_forward_challengers_v6492_freeze.json \
-            --allow-prefix football-data/forward/v6_fresh_selector_events_v6492.json \
-            --allow-prefix football-data/forward/v6_fresh_matrix_events_v6492.json \
-            --allow-prefix football-data/manifests/v6_fresh_market_forward_challengers_v6492_status.json \
-            --allow-prefix football-data/manifests/v6_fresh_matrix_structural_audit_v6498_status.json \
-            --allow-prefix football-data/manifests/v6_joint_surface_coherence_v6499_status.json \
-            --allow-prefix football-data/manifests/v6_context_priority_queue_v6493_status.json \
-            --message-prefix "audit(football): persist V6.49.9 joint-surface coherence and fresh matrices"
-      - name: Hard guards
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          x=json.loads(Path('football-data/manifests/v6_fresh_market_forward_challengers_v6492_status.json').read_text(encoding='utf-8'))
-          m=json.loads(Path('football-data/manifests/v6_fresh_matrix_structural_audit_v6498_status.json').read_text(encoding='utf-8'))
-          c=json.loads(Path('football-data/manifests/v6_joint_surface_coherence_v6499_status.json').read_text(encoding='utf-8'))
-          q=json.loads(Path('football-data/manifests/v6_context_priority_queue_v6493_status.json').read_text(encoding='utf-8'))
-          g=x.get('governance') or {}
-          mg=m.get('governance') or {}
-          cg=c.get('governance') or {}
-          if x.get('status') != 'PASS' or m.get('status') != 'PASS' or c.get('status') != 'PASS' or q.get('status') != 'PASS': raise SystemExit('status guard failed')
-          if g.get('future_fixture_only') is not True: raise SystemExit('future fixture guard failed')
-          if g.get('historical_result_backfill') is not False: raise SystemExit('historical result backfill guard failed')
-          if g.get('formal_weight') != 0 or mg.get('formal_weight') != 0 or cg.get('formal_weight') != 0 or (q.get('governance') or {}).get('formal_weight') != 0: raise SystemExit('formal weight guard failed')
-          if mg.get('probability_mutation') is not False or mg.get('matrix_mutation') is not False: raise SystemExit('matrix audit mutation forbidden')
-          if cg.get('probability_mutation') is not False or cg.get('matrix_mutation') is not False or cg.get('selector_mutation') is not False: raise SystemExit('coherence audit mutation forbidden')
-          if m.get('prediction_count') != (x.get('matrix_ledger_audit') or {}).get('event_count'): raise SystemExit('matrix audit count mismatch')
-          if c.get('prediction_count') != (x.get('matrix_ledger_audit') or {}).get('event_count'): raise SystemExit('coherence audit count mismatch')
-          if not all(((m.get('audit') or {}).get('checks') or {}).values()): raise SystemExit('matrix structural check failed')
-          if not all(((c.get('audit') or {}).get('checks') or {}).values()): raise SystemExit('coherence execution check failed')
-          print(json.dumps({
-            'freeze_stats':x.get('freeze_stats'),
-            'selector_events':(x.get('selector_ledger_audit') or {}).get('event_count'),
-            'matrix_events':(x.get('matrix_ledger_audit') or {}).get('event_count'),
-            'matrix_audit':m.get('audit'),
-            'total_goal_diagnostic':m.get('total_goal_diagnostic'),
-            'exact_score_diagnostic':m.get('exact_score_diagnostic'),
-            'joint_surface_candidate_vs_f05':c.get('candidate_vs_f05'),
-            'joint_surface_selected_subset':c.get('active_selected_candidate_vs_f05'),
-            'formal_joint_surface_ready_without_coordination':c.get('formal_joint_surface_ready_without_coordination'),
-            'priority_counts':q.get('priority_counts')
-          },ensure_ascii=False))
-          PY
-
-# V6.49.2 remains the unique active forward challenger. The :37 schedule is an idempotent
-# fallback for delayed/missed unified-pipeline runs; one immutable prediction per fixture and
-# no historical backfill remain enforced by the frozen V6.49.2 contract.
-# V6.49.8/V6.49.9 are audit-only: they can expose bad structure/coherence but cannot mutate probabilities or matrices.
+          python football-data/validation/v6_fresh_market_forward_challengers_v6492.py
+          python football-data/validation/v6_fresh_matrix_structural_audit_v6498.py
+          python football-data/validation/v6_joint_surface_coherence_v6499.py
+          python football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Confirm no repository persistence
+        run: git status --short

@@ -12,11 +12,12 @@ ENGINE_DIR = ROOT_DIR / "engine"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
-from platform_core import ROOT, derive_score_marginals, atomic_write_json
+from platform_core import ROOT, derive_score_marginals, atomic_write_json, load_json
 from promoted_challenger_runtime_gate_v470 import apply_hash_bound_promoted_v470_challengers
 from total_goals_peak_diagnostics_v470 import apply_total_goals_peak_diagnostics
 
 OUT = ROOT / "manifests" / "promotions" / "USA_MLS_d_conditional_v470_runtime_smoke.json"
+ACTIVATION = ROOT / "manifests" / "promotions" / "USA_MLS_d_conditional_v470_runtime_activation.json"
 
 
 def _base_calculation():
@@ -59,6 +60,8 @@ def _margin2plus(matrix):
 
 
 def main() -> int:
+    activation = load_json(ACTIVATION)
+    activation_active = activation.get("activation_status") == "ACTIVE"
     calculation = _base_calculation()
     before = derive_score_marginals(calculation["probabilities"]["score_matrix"])
     before_margin2 = _margin2plus(calculation["probabilities"]["score_matrix"])
@@ -85,27 +88,37 @@ def main() -> int:
     peak_audit = promoted.get("total_goals_peak_audit") or {}
     conclusions = promoted.get("conclusions") or {}
     checks = {
-        "mls_2026_module_passed": promoted.get("module_states", {}).get("conditional_allocation_v470") == "通过",
         "probability_conservation": abs(after["probability_sum"] - 1.0) <= 1e-10,
         "total_marginal_preserved": max_total_residual <= 1e-10,
-        "validated_margin2plus_direction_applied": after_margin2 < before_margin2,
-        "non_mls_not_activated": non_mls.get("module_states", {}).get("conditional_allocation_v470") == "未启用",
-        "new_season_without_receipt_not_activated": wrong_season.get("module_states", {}).get("conditional_allocation_v470") == "未启用",
-        "handicap_recomputed": isinstance(promoted.get("derived_markets", {}).get("home_handicap", {}).get("win"), float),
-        "total_market_recomputed": isinstance(promoted.get("derived_markets", {}).get("over_total", {}).get("win"), float),
-        "top_score_rebuilt": bool(conclusions.get("top_score")),
-        "promoted_transform_status_normalized": transform_audit.get("status") == "PROMOTED_RUNTIME_ACTIVE" and float(transform_audit.get("formal_weight", 0.0)) == 1.0,
+        "non_mls_probability_matrix_unchanged": non_mls["probabilities"]["score_matrix"] == calculation["probabilities"]["score_matrix"],
+        "new_season_probability_matrix_unchanged": wrong_season["probabilities"]["score_matrix"] == calculation["probabilities"]["score_matrix"],
         "total_goals_peak_diagnostic_passed": peak_audit.get("status") == "通过",
         "total_goals_top1_probability_exposed": isinstance(conclusions.get("total_goals_top1_probability"), float),
         "total_goals_top2_probability_exposed": isinstance(conclusions.get("total_goals_top2_probability"), float),
         "total_goals_gap_exposed": isinstance(conclusions.get("total_goals_top1_top2_gap"), float),
         "total_goals_peak_label_exposed": conclusions.get("total_goals_peak_status") in {"WEAK_PEAK_PLATFORM", "DISTINCT_TOP1"},
     }
+    if activation_active:
+        checks.update({
+            "mls_2026_module_passed": promoted.get("module_states", {}).get("conditional_allocation_v470") == "通过",
+            "validated_margin2plus_direction_applied": after_margin2 < before_margin2,
+            "handicap_recomputed": isinstance(promoted.get("derived_markets", {}).get("home_handicap", {}).get("win"), float),
+            "total_market_recomputed": isinstance(promoted.get("derived_markets", {}).get("over_total", {}).get("win"), float),
+            "top_score_rebuilt": bool(conclusions.get("top_score")),
+            "promoted_transform_status_normalized": transform_audit.get("status") == "PROMOTED_RUNTIME_ACTIVE" and float(transform_audit.get("formal_weight", 0.0)) == 1.0,
+        })
+    else:
+        checks.update({
+            "stale_activation_fails_closed": "not ACTIVE" in str(runtime_audit.get("reason") or ""),
+            "inactive_mls_probability_matrix_unchanged": promoted["probabilities"]["score_matrix"] == calculation["probabilities"]["score_matrix"],
+            "inactive_mls_transform_not_applied": abs(after_margin2 - before_margin2) <= 1e-12,
+        })
     status = "PASS" if all(checks.values()) else "FAIL"
     payload = {
-        "schema_version": "V4.7.0-USA_MLS-promoted-runtime-smoke-r2",
+        "schema_version": "V4.7.0-USA_MLS-promoted-runtime-smoke-r3",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
+        "activation_status": activation.get("activation_status"),
         "checks": checks,
         "max_total_marginal_residual": max_total_residual,
         "probability_sum_residual": after["probability_sum"] - 1.0,

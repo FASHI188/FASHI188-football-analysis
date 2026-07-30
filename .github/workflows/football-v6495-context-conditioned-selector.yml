@@ -1,24 +1,13 @@
-name: Football V6.49.5 Context Conditioned 1X2 Forward Audit
+name: Football V6.49.5 Context Conditioned 1X2 Audit MANUAL_ONLY
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "37 * * * *"
-  push:
-    branches: [main]
-    paths:
-      - "football-data/manifests/v6_context_conditioned_selector_v6495_freeze.json"
-      - "football-data/forward/v6_context_enriched_events_v6486.json"
-      - "football-data/forward/v6_match_context_axes_events_v6490.json"
-      - "football-data/forward/inbox/market_first_results_v651.json"
-      - "football-data/validation/v6_context_conditioned_selector_forward_v6495.py"
-      - ".github/workflows/football-v6495-context-conditioned-selector.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: football-v6495-context-conditioned-selector
+  group: football-v6495-context-conditioned-selector-manual
   cancel-in-progress: true
 
 jobs:
@@ -26,50 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
-      - name: Sync latest main
-        run: |
-          git fetch origin main
-          git reset --hard origin/main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Compile
-        env:
-          PYTHONPATH: football-data/engine:football-data/validation
+      - name: Compile context audit
         run: python -m py_compile football-data/validation/v6_context_conditioned_selector_forward_v6495.py
-      - name: Run context-conditioned forward audit
+      - name: Run manually approved context audit in ephemeral checkout
         env:
           PYTHONPATH: football-data/engine:football-data/validation
         run: python football-data/validation/v6_context_conditioned_selector_forward_v6495.py
-      - name: Persist immutable ledger and receipt
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPOSITORY: ${{ github.repository }}
-        run: |
-          python football-data/validation/persist_generated_worktree_v474.py \
-            --allow-prefix football-data/forward/v6_context_conditioned_selector_events_v6495.json \
-            --allow-prefix football-data/manifests/v6_context_conditioned_selector_v6495_status.json \
-            --message-prefix "audit(football): persist V6.49.5 context-conditioned selector"
-      - name: Hard guards
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          x=json.loads(Path('football-data/manifests/v6_context_conditioned_selector_v6495_status.json').read_text(encoding='utf-8'))
-          g=x.get('governance') or {}
-          if x.get('status') != 'PASS': raise SystemExit(str(x))
-          if g.get('prediction_rule_change') is not False: raise SystemExit('prediction rule changed')
-          if g.get('context_probability_adjustment') is not False: raise SystemExit('manual context probability adjustment detected')
-          if g.get('context_veto_rule_active') is not False: raise SystemExit('context veto activated before forward evidence')
-          if g.get('historical_backfill') is not False: raise SystemExit('historical backfill guard failed')
-          if g.get('formal_weight') != 0: raise SystemExit('formal weight guard failed')
-          print(json.dumps({'events':(x.get('ledger_audit') or {}).get('event_count'),'freeze_scan':x.get('freeze_scan'),'decision':(x.get('evaluation') or {}).get('decision')},ensure_ascii=False))
-          PY
-
-# Context can only become a future abstention/veto signal after its own forward evidence.
-# New context/manager/result ledger commits trigger immediate reevaluation; hourly schedule is only a fallback.
-# No manual injury adjustment and no formal V5.0.1 probability change are allowed here.
+      - name: Confirm no repository persistence
+        run: git status --short
