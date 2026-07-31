@@ -1,0 +1,217 @@
+name: Football Research E3g-0D API-Football Forward Collector
+
+on:
+  pull_request:
+    branches:
+      - research/e3g0c-zero-cost-budget-forward-design
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3g0d_api_football_forward_collector.py
+      - football-data/research/contracts/e3g0d_api_football_forward_collection_contract.md
+      - .github/workflows/football-research-e3g0d-api-football-forward-collector.yml
+  workflow_dispatch:
+    inputs:
+      collector_mode:
+        description: Collector mode
+        required: true
+        default: self-test
+        type: choice
+        options: [self-test, build-plan, odds, injuries, lineup-window]
+      target_date:
+        description: Optional UTC date YYYY-MM-DD
+        required: false
+        type: string
+  schedule:
+    - cron: '5 0 * * *'
+    - cron: '10 */3 * * *'
+    - cron: '20 */4 * * *'
+    - cron: '*/15 10-22 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football-research-e3g0d-${{ github.event_name }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  COLLECTOR: football-data/research/e3g0d_api_football_forward_collector.py
+  CONTRACT: football-data/research/contracts/e3g0d_api_football_forward_collection_contract.md
+  LEAGUE_ID: '39'
+  SEASON: '2026'
+  TIMEZONE_NAME: UTC
+  BASE_SHA: 9376cbb2c6af6945a4a1be709b606d928c28a826
+
+jobs:
+  validate-implementation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Draft PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Verify exact research HEAD
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax check
+        run: python -m py_compile "$COLLECTOR"
+      - name: Verify frozen contract
+        run: |
+          set -euo pipefail
+          grep -q 'formal_weight: `0`' "$CONTRACT"
+          grep -q 'IMPLEMENTED_NOT_LIVE' "$CONTRACT"
+          grep -q 'no credentialed API call' "$CONTRACT"
+          grep -q 'no automatic commit' "$CONTRACT"
+          grep -q 'do not start E3g-1' "$CONTRACT"
+          grep -q '90 days is insufficient' "$CONTRACT"
+      - name: Run no-key append-only self-test
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/e3g0d-self-test"
+          python "$COLLECTOR" --mode self-test --output-dir "$out" --print-summary
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'e3g0d-self-test'
+          result=json.loads((root/'self_test_result.json').read_text())
+          assert result['self_test'] == 'PASS'
+          assert result['secret_redaction'] == 'PASS'
+          assert result['freeze_candidate'] == 'PASS'
+          assert result['candidate_probabilities'] == 0
+          assert result['model_fits'] == 0
+          assert result['formal_weight'] == 0
+          assert list(root.glob('raw/**/*.json'))
+          assert list(root.glob('manifests/**/*.manifest.json'))
+          assert list(root.glob('freeze_candidates/**/*final*.json'))
+          PY
+          ! grep -R 'SECRET_SHOULD_NEVER_APPEAR' "$out"
+      - name: Verify isolated research diff
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$files"
+          test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l)" -eq 3
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/e3g0d_api_football_forward_collector.py'
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/contracts/e3g0d_api_football_forward_collection_contract.md'
+          printf '%s\n' "$files" | grep -Fxq '.github/workflows/football-research-e3g0d-api-football-forward-collector.yml'
+      - name: Upload validation Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0d-validation-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/e3g0d-self-test
+          retention-days: 30
+          if-no-files-found: error
+
+  collect-forward-snapshots:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout workflow branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve collector mode
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            mode='${{ inputs.collector_mode }}'
+          else
+            case '${{ github.event.schedule }}' in
+              '5 0 * * *') mode='build-plan' ;;
+              '10 */3 * * *') mode='odds' ;;
+              '20 */4 * * *') mode='injuries' ;;
+              '*/15 10-22 * * *') mode='lineup-window' ;;
+              *) mode='self-test' ;;
+            esac
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "target_date=${{ inputs.target_date || '' }}" >> "$GITHUB_OUTPUT"
+      - name: Check activation Secret
+        id: activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.mode.outputs.mode }}" == 'self-test' ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$API_FOOTBALL_KEY" ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'API_FOOTBALL_KEY is absent; live collection remains inactive.'
+          fi
+      - name: Resolve UTC date
+        if: steps.activation.outputs.enabled == 'true'
+        id: date
+        shell: bash
+        run: |
+          set -euo pipefail
+          requested='${{ steps.mode.outputs.target_date }}'
+          if [[ -n "$requested" ]]; then day="$requested"; else day="$(date -u +%F)"; fi
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+      - name: Download immutable daily plan Artifact
+        if: steps.activation.outputs.enabled == 'true' && (steps.mode.outputs.mode == 'injuries' || steps.mode.outputs.mode == 'lineup-window')
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          day='${{ steps.date.outputs.day }}'
+          name="football-e3g0d-plan-$day"
+          mkdir -p "$RUNNER_TEMP/e3g0d-plan"
+          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq ".artifacts | map(select(.name == \"$name\" and .expired == false)) | sort_by(.created_at) | reverse | .[0].id // empty")"
+          if [[ -z "$artifact_id" ]]; then
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            echo "No plan Artifact named $name; skip without API fallback."
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/e3g0d-plan.zip"
+          unzip -q "$RUNNER_TEMP/e3g0d-plan.zip" -d "$RUNNER_TEMP/e3g0d-plan"
+          plan_file="$(find "$RUNNER_TEMP/e3g0d-plan" -path '*/plans/*.json' -type f | head -1)"
+          test -n "$plan_file"
+          echo 'found=true' >> "$GITHUB_OUTPUT"
+          echo "path=$plan_file" >> "$GITHUB_OUTPUT"
+      - name: Run self-test
+        if: steps.activation.outputs.enabled == 'true' && steps.mode.outputs.mode == 'self-test'
+        run: python "$COLLECTOR" --mode self-test --output-dir "$RUNNER_TEMP/e3g0d-output" --print-summary
+      - name: Run build-plan or odds collector
+        if: steps.activation.outputs.enabled == 'true' && (steps.mode.outputs.mode == 'build-plan' || steps.mode.outputs.mode == 'odds')
+        shell: bash
+        run: |
+          set -euo pipefail
+          python "$COLLECTOR" --mode '${{ steps.mode.outputs.mode }}' --output-dir "$RUNNER_TEMP/e3g0d-output" --date '${{ steps.date.outputs.day }}' --league "$LEAGUE_ID" --season "$SEASON" --timezone "$TIMEZONE_NAME" --print-summary
+      - name: Run plan-dependent collector
+        if: steps.activation.outputs.enabled == 'true' && steps.plan.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python "$COLLECTOR" --mode '${{ steps.mode.outputs.mode }}' --output-dir "$RUNNER_TEMP/e3g0d-output" --plan '${{ steps.plan.outputs.path }}' --date '${{ steps.date.outputs.day }}' --league "$LEAGUE_ID" --season "$SEASON" --timezone "$TIMEZONE_NAME" --print-summary
+      - name: Upload daily plan Artifact
+        if: steps.activation.outputs.enabled == 'true' && steps.mode.outputs.mode == 'build-plan'
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0d-plan-${{ steps.date.outputs.day }}
+          path: ${{ runner.temp }}/e3g0d-output
+          retention-days: 2
+          if-no-files-found: error
+      - name: Upload append-only snapshot Artifact
+        if: steps.activation.outputs.enabled == 'true' && steps.mode.outputs.mode != 'build-plan' && (steps.mode.outputs.mode == 'self-test' || steps.mode.outputs.mode == 'odds' || steps.plan.outputs.found == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0d-${{ steps.mode.outputs.mode }}-${{ steps.date.outputs.day }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/e3g0d-output
+          retention-days: 90
+          if-no-files-found: error
