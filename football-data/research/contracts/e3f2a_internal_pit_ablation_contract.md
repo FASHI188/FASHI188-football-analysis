@@ -7,6 +7,12 @@
 - `formal_weight=0`.
 - Draft PR only; do not merge.
 - This stage evaluates internally derived PIT features only.
+- Feature groups: 7.
+- Model types: 2.
+- Candidate model specifications: 14.
+- External records ingested: 0.
+- Class weights: 0.
+- Post-hoc thresholds: 0.
 
 ## Fixed identities
 
