@@ -223,11 +223,12 @@ def render_report(normalized_input: Mapping[str, Any], context: Mapping[str, Any
     total_interval = _total_interval(totals)
     tail_5_plus = totals["5"] + totals["6"] + totals["7+"]
     identity_status = str((normalized_input.get("identity_evidence") or {}).get("status"))
+    identity_runtime_state = "警告" if demo else context_states.get("competition_identity_and_time", "不可用")
     formal_direction = "弃权" if demo or validation.get("status") != "通过" else direction
     price_decision = "价格不可用" if not market_status.get("ev_gate") else "No Bet"
     final_line = f"{formal_direction}；可信等级{confidence}；{price_decision}。"
     modules = [
-        {"模块": "赛事、口径与时点", "注册状态": "正式治理", "本场状态": context_states.get("competition_identity_and_time", "不可用"), "输入证据": f"{identity['competition_id']} / {identity['freeze_time_utc']}", "运行结果或降级原因": "90分钟含补时；身份状态=" + identity_status},
+        {"模块": "赛事、口径与时点", "注册状态": "正式治理", "本场状态": identity_runtime_state, "输入证据": f"{identity['competition_id']} / {identity['freeze_time_utc']}", "运行结果或降级原因": "90分钟含补时；身份状态=" + identity_status},
         {"模块": "数据质量与来源裁决", "注册状态": "正式治理", "本场状态": calc_states.get("data_freshness", "不可用"), "输入证据": str(freshness.get("source_name") or "无"), "运行结果或降级原因": f"历史场次={freshness.get('engine_history_matches')}，最新={freshness.get('engine_latest_history_match_date')}"},
         {"模块": "同步市场", "注册状态": "条件正式", "本场状态": context_states.get("synchronized_market", "不可用"), "输入证据": f"source_count={market_status.get('source_count', 0)}", "运行结果或降级原因": "完整、同步、可成交价格缺失" if not market_status.get("ev_gate") else "市场门通过"},
         {"模块": "球队、阵容与任务", "注册状态": "正式输入治理", "本场状态": _worst_state(context_states.get("team_dynamic_features", "不可用"), context_states.get("lineup_and_task", "不可用")), "输入证据": f"team_snapshot={team_status.get('snapshot_sha256')}；lineup={lineup_status.get('evidence_status')}", "运行结果或降级原因": "球队样本可用；阵容未核验" if lineup_status.get("status") != "通过" else "球队与阵容证据通过"},
