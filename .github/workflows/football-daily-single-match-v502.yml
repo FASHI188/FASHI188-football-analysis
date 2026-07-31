@@ -1,0 +1,106 @@
+name: Football Daily Single Match V5.0.2 Read-Only
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/engine/daily_single_match_v502.py"
+      - "football-data/tests/test_daily_single_match_v502.py"
+      - "football-data/examples/daily_single_match_v502_offline_demo.json"
+      - ".github/workflows/football-daily-single-match-v502.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-daily-single-match-v502-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: 605abf2d9f98c46f063106c7bd47193b96e588e4
+  EVIDENCE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  validate-daily-flow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.EVIDENCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Exact-head and static safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVIDENCE_HEAD"
+          python -m py_compile football-data/engine/daily_single_match_v502.py football-data/tests/test_daily_single_match_v502.py
+          ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|requests\.|urllib\.request|httpx|aiohttp' \
+            football-data/engine/daily_single_match_v502.py \
+            football-data/tests/test_daily_single_match_v502.py
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          ! printf '%s\n' "$files" | grep -E '(^|/)(models?|processed|team_strengths|config|CURRENT|formal_core_v460|oof_matrix_calibration_v461_status)'
+      - name: Existing formal core regression
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m unittest football-data/tests/test_football_v460_engine.py -v
+          python -m unittest football-data/tests/test_prediction_pipeline.py -v
+      - name: Daily flow unit and end-to-end tests
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python -m unittest football-data/tests/test_daily_single_match_v502.py -v
+      - name: Generate exact-head sample evidence
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/daily-single-match"
+          python football-data/engine/daily_single_match_v502.py \
+            --input football-data/examples/daily_single_match_v502_offline_demo.json \
+            --output-dir "$RUNNER_TEMP/daily-single-match" \
+            --print-summary
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'daily-single-match'
+          receipt = json.loads((root / 'receipt.json').read_text(encoding='utf-8'))
+          report = json.loads((root / 'report.json').read_text(encoding='utf-8'))
+          calculation = json.loads((root / 'calculation.json').read_text(encoding='utf-8'))
+          validation = json.loads((root / 'validation.json').read_text(encoding='utf-8'))
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert receipt['status'] == 'PASS'
+          assert receipt['exact_head'] == head == os.environ['EVIDENCE_HEAD']
+          assert receipt['provider_network_used'] is False
+          assert receipt['external_request_attempts'] == 0
+          assert receipt['api_football_key_accessed'] is False
+          assert validation['status'] == '通过'
+          assert abs(sum(calculation['probabilities']['one_x_two'].values()) - 1.0) < 1e-8
+          assert abs(sum(calculation['probabilities']['total_goals'].values()) - 1.0) < 1e-8
+          assert len(report['B. 模块状态表']) == 9
+          assert report['H. 最终一句话'].startswith('弃权；')
+          metadata = {
+              'checkout_head': head,
+              'evidence_head': head,
+              'run_head': head,
+              'workflow_run_id': os.environ['GITHUB_RUN_ID'],
+              'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'provider_network_used': False,
+              'external_request_attempts': 0,
+              'model_diff': 0,
+              'formal_data_diff': 0,
+              'config_diff': 0,
+              'current_diff': 0,
+          }
+          (root / 'artifact_metadata.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-daily-single-match-v502-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/daily-single-match
+          retention-days: 30
+          if-no-files-found: error
