@@ -20,6 +20,16 @@ from e3g0d_common import (
 )
 
 
+PLAN_EVIDENCE_FIELDS = {
+    "selected_plan_sha256": "plan_sha256",
+    "selected_plan_artifact_id": "plan_artifact_id",
+    "selected_plan_source_raw_sha256": "source_raw_response_sha256",
+    "selected_plan_index_artifact_id": "plan_index_artifact_id",
+    "selected_plan_artifact_digest": "plan_artifact_digest",
+    "selected_plan_index_artifact_digest": "plan_index_artifact_digest",
+}
+
+
 def response_ids(payload: Mapping[str, Any]) -> set[int]:
     output: set[int] = set()
     rows = payload.get("response")
@@ -56,6 +66,12 @@ class Store:
         self.selected_plan = dict(selected_plan or {})
         self.sequence = 0
 
+    def plan_evidence(self) -> dict[str, Any]:
+        return {
+            output_key: self.selected_plan.get(source_key)
+            for output_key, source_key in PLAN_EVIDENCE_FIELDS.items()
+        }
+
     def event_id(self, observed: Any, endpoint: str, digest: str) -> str:
         self.sequence += 1
         return (
@@ -86,6 +102,7 @@ class Store:
         event = self.event_id(observed, endpoint, digest)
         ids = response_ids(payload)
         records: list[dict[str, Any]] = []
+        plan_evidence = self.plan_evidence()
 
         for fixture in fixtures:
             fixture_id = int(fixture["fixture_id"])
@@ -134,15 +151,11 @@ class Store:
                     "post-kickoff local finalizer selects latest observation strictly before same kickoff version"
                 ),
                 "target_labels": sorted(set(labels)),
-                "selected_plan_sha256": self.selected_plan.get("plan_sha256"),
-                "selected_plan_artifact_id": self.selected_plan.get("plan_artifact_id"),
-                "selected_plan_source_raw_sha256": self.selected_plan.get("source_raw_response_sha256"),
+                **plan_evidence,
                 "append_only": True,
                 "formal_weight": 0,
             }
-            record_rel = (
-                Path("records") / str(fixture_id) / endpoint_slug / f"{event}.json"
-            )
+            record_rel = Path("records") / str(fixture_id) / endpoint_slug / f"{event}.json"
             xwrite(self.root / record_rel, packed(record) + b"\n")
             record["record_path"] = record_rel.as_posix()
             records.append(record)
@@ -173,9 +186,7 @@ class Store:
             "records": records,
             "run_head": self.head,
             "workflow_run_id": self.run_id,
-            "selected_plan_sha256": self.selected_plan.get("plan_sha256"),
-            "selected_plan_artifact_id": self.selected_plan.get("plan_artifact_id"),
-            "selected_plan_source_raw_sha256": self.selected_plan.get("source_raw_response_sha256"),
+            **plan_evidence,
             "artifact_retention_days": self.retention,
             "artifact_expires_at_utc": self.expires,
             "append_only": True,
