@@ -23,6 +23,7 @@ env:
   ARCHIVE: football-data/research/e3g0d_api_football_archive_helper_secure.py
   RUNTIME: football-data/research/e3g0d_runtime.py
   RUNTIME_TESTS: football-data/research/e3g0d_runtime_tests.py
+  GH_TOKEN_TESTS: football-data/research/e3g0d_github_token_tests.py
   JOB: football-data/research/e3g0d_workflow_job.py
   WORKFLOW_FILE: .github/workflows/football-research-e3g0d-api-football-forward-collector.yml
   BASE_SHA: 9376cbb2c6af6945a4a1be709b606d928c28a826
@@ -47,14 +48,16 @@ jobs:
           python "$COLLECTOR" --mode self-test --output-dir "$RUNNER_TEMP/v/c"
           python "$ARCHIVE" self-test --archive-root "$RUNNER_TEMP/v/a"
           python "$RUNTIME_TESTS" --workflow "$WORKFLOW_FILE" --output "$RUNNER_TEMP/v/runtime_security_validation.json"
+          python "$GH_TOKEN_TESTS" --workflow "$WORKFLOW_FILE" --job "$JOB" --output "$RUNNER_TEMP/v/github_token_security_validation.json"
           python "$COLLECTOR" --mode preflight --output-dir "$RUNNER_TEMP/v/p" --date 2026-08-15 --league 39 --season 2026 --fixture-limit 1 --max-requests 3 --dry-run true --no-network true --upload-artifact false --allow-schedule false --retention 30 --run-head "$EXPECTED_HEAD" --run-id "$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"
           python - <<'PY'
           import json,os,re,subprocess
           from pathlib import Path
-          r=Path(os.environ['RUNNER_TEMP'])/'v'; c=json.loads((r/'c/self_test_result.json').read_text()); a=json.loads((r/'a/archive_helper_self_test.json').read_text()); t=json.loads((r/'runtime_security_validation.json').read_text()); p=json.loads(next((r/'p/run_receipts').glob('*.json')).read_text()); h=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          r=Path(os.environ['RUNNER_TEMP'])/'v'; c=json.loads((r/'c/self_test_result.json').read_text()); a=json.loads((r/'a/archive_helper_self_test.json').read_text()); t=json.loads((r/'runtime_security_validation.json').read_text()); g=json.loads((r/'github_token_security_validation.json').read_text()); p=json.loads(next((r/'p/run_receipts').glob('*.json')).read_text()); h=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           assert h==os.environ['EXPECTED_HEAD']==p['run_head'] and p['request_attempts']==0; assert c['self_test']==a['self_test']==t['self_test']=='PASS' and c['no_provider_network'] and not a['network_used']; assert all(all(v=='PASS' for v in t[k].values()) for k in ('digest_format_tests','artifact_redirect_tests','malicious_input_tests','quota_fault_tests','production_quota_ledger_tests')); assert t['workflow_uses_tested_production_functions']==t['production_quota_ledger_binding']=='PASS' and t['real_provider_request_attempts']==t['formal_weight']==0
           lineup=t['lineup_no_due_prepare_integration']; assert lineup['due_check_calls']==1 and lineup['needs_requests']=='false' and lineup['reservation']==0 and lineup['provider_request_attempts']==0 and lineup['no_network_due_receipt']==lineup['gate_expected_no_request_success']=='PASS'
           assert t['workflow_timeouts']=={'validate-implementation':20,'collect-forward-snapshots':25}; quota=t['production_quota_ledger_values']; assert quota['requests_used_today']==6 and quota['quota_reservation_count']==2 and quota['artifact_pages']==3
+          assert g['evidcnce_head_residual_count']==0 and g['github_token_binding']=='PASS' and g['real_provider_request_attempts']==0 and all(v=='PASS' for v in g['github_token_auth_tests'].values())
           w=Path(os.environ['WORKFLOW_FILE']).read_text(); blocks=[]; lines=w.splitlines(); i=0
           while i<len(lines):
            m=re.match(r'^(\s*)run:\s*\|\s*$',lines[i])
@@ -64,7 +67,7 @@ jobs:
            blocks.append('\n'.join(b))
           assert ('$'+'{{') not in '\n'.join(blocks); (r/'security_validation.json').write_text(json.dumps({'checkout_head':h,'evidence_head':h,'event_sha':os.environ['EVENT_SHA'],**t},sort_keys=True)+'\n')
           PY
-          files="$(git diff --name-only "$BASE_SHA"...HEAD)"; test "$(printf '%s\n' "$files"|sed '/^$/d'|wc -l)" -eq 15; ! printf '%s\n' "$files"|grep -E '(^|/)(models?|data/formal|config|CURRENT|score|btts|total.?goal)'
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"; test "$(printf '%s\n' "$files"|sed '/^$/d'|wc -l)" -eq 16; ! printf '%s\n' "$files"|grep -E '(^|/)(models?|data/formal|config|CURRENT|score|btts|total.?goal)'
       - name: Metadata
         env: {EXPECTED_HEAD: '${{ env.EVIDENCE_HEAD }}'}
         run: python -c 'import json,os,pathlib;h=os.environ["EXPECTED_HEAD"];pathlib.Path(os.environ["RUNNER_TEMP"]+"/v/artifact_metadata.json").write_text(json.dumps({"checkout_head":h,"evidence_head":h,"run_head":h,"event_sha":os.environ["GITHUB_SHA"],"workflow_run_id":os.environ["GITHUB_RUN_ID"],"workflow_run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],"deployment_status":"IMPLEMENTED_NOT_LIVE","remediation_status":"GPT_REMEDIATED_PENDING_CODEX_RECHECK","real_provider_request_attempts":0,"formal_weight":0})+"\n")'
@@ -83,7 +86,7 @@ jobs:
         with: {python-version: '3.12'}
       - name: Prepare
         id: prepare
-        env: {EVENT_NAME: '${{ github.event_name }}', REF_VALUE: '${{ github.ref }}', CRON_VALUE: '${{ github.event.schedule }}', INPUT_MODE: '${{ inputs.collector_mode }}', INPUT_TARGET: '${{ inputs.target_date }}', INPUT_LEAGUE: '${{ inputs.league_id }}', INPUT_SEASON: '${{ inputs.season_id }}', INPUT_LIMIT: '${{ inputs.fixture_limit }}', INPUT_MAX: '${{ inputs.max_requests }}', INPUT_PLAN_ID: '${{ inputs.plan_artifact_id }}', INPUT_PLAN_SHA: '${{ inputs.plan_sha256 }}', INPUT_DRY: '${{ inputs.dry_run }}', INPUT_NETWORK: '${{ inputs.no_network }}', INPUT_UPLOAD: '${{ inputs.upload_artifact }}', INPUT_ALLOW: '${{ inputs.allow_schedule }}', EXPECTED_HEAD: '${{ env.EVIDENCE_HEAD }}', ARCHIVE: '${{ env.ARCHIVE }}'}
+        env: {EVENT_NAME: '${{ github.event_name }}', REF_VALUE: '${{ github.ref }}', CRON_VALUE: '${{ github.event.schedule }}', INPUT_MODE: '${{ inputs.collector_mode }}', INPUT_TARGET: '${{ inputs.target_date }}', INPUT_LEAGUE: '${{ inputs.league_id }}', INPUT_SEASON: '${{ inputs.season_id }}', INPUT_LIMIT: '${{ inputs.fixture_limit }}', INPUT_MAX: '${{ inputs.max_requests }}', INPUT_PLAN_ID: '${{ inputs.plan_artifact_id }}', INPUT_PLAN_SHA: '${{ inputs.plan_sha256 }}', INPUT_DRY: '${{ inputs.dry_run }}', INPUT_NETWORK: '${{ inputs.no_network }}', INPUT_UPLOAD: '${{ inputs.upload_artifact }}', INPUT_ALLOW: '${{ inputs.allow_schedule }}', EXPECTED_HEAD: '${{ env.EVIDENCE_HEAD }}', ARCHIVE: '${{ env.ARCHIVE }}', GH_TOKEN: '${{ github.token }}'}
         run: python "$JOB" prepare
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         id: reservation_upload
@@ -114,7 +117,7 @@ jobs:
         id: snapshot_upload
         if: steps.collect.outcome == 'success' && steps.prepare.outputs.mode != 'build-plan'
         continue-on-error: true
-        with: {name: 'football-e3g0d-snapshot-${{ steps.prepare.outputs.mode }}-${{ env.EVIDCNCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+        with: {name: 'football-e3g0d-snapshot-${{ steps.prepare.outputs.mode }}-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         id: final_receipt_upload
         if: always() && steps.reservation_upload.outcome == 'success'

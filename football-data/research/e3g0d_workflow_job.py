@@ -289,10 +289,6 @@ def main() -> int:
         if args.command == "prepare":
             result = prepare(dict(os.environ), root)
             write_github_outputs(result, os.environ["GITHUB_OUTPUT"])
-            github_env = os.environ.get("GITHUB_ENV")
-            if github_env:
-                with Path(github_env).open("a", encoding="utf-8") as handle:
-                    handle.write(f"EVIDCNCE_HEAD={result['evidence_head']}\n")
         elif args.command == "collect":
             return collect(dict(os.environ), root)
         elif args.command == "plan-index":
