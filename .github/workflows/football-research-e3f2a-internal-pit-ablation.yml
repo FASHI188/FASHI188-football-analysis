@@ -1,40 +1,42 @@
 name: Football Research E3f-2A Internal PIT Ablation
 
 on:
-  push:
+  pull_request:
     branches:
-      - research/e3f2a-internal-pit-ablation
+      - research/e3f1b-external-pit-source-contract
+    types: [opened, synchronize, reopened]
     paths:
       - football-data/research/e3f2a_internal_pit_ablation.py
       - football-data/research/contracts/e3f2a_internal_pit_ablation_contract.md
       - .github/workflows/football-research-e3f2a-internal-pit-ablation.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: football-research-e3f2a-internal-pit-ablation
+  group: football-research-e3f2a-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   run-ablation:
+    if: github.event.pull_request.head.ref == 'research/e3f2a-internal-pit-ablation'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       BASE_SHA: 5842f1a42c75a56f9a34fadda7ae85016c4e674c
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
       OUT_DIR: football-data/artifacts/research/e3f2a_internal_pit_ablation
     steps:
       - name: Checkout exact research branch HEAD
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Verify exact research HEAD
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -71,7 +73,7 @@ jobs:
           from pathlib import Path
           p=Path(os.environ["OUT_DIR"])/"e3f2a_internal_pit_ablation.json"
           r=json.loads(p.read_text())
-          assert r["repository_head"] == os.environ["GITHUB_SHA"]
+          assert r["repository_head"] == os.environ["EXPECTED_HEAD"]
           assert r["sample_count"] == 6251
           assert r["b100_count"] == 100
           assert r["internal_feature_count"] == 93
@@ -86,7 +88,7 @@ jobs:
       - name: Upload E3f-2A report
         uses: actions/upload-artifact@v4
         with:
-          name: football-e3f2a-internal-pit-ablation-${{ github.sha }}
+          name: football-e3f2a-internal-pit-ablation-${{ github.event.pull_request.head.sha }}
           path: |
             ${{ env.OUT_DIR }}/e3f2a_internal_pit_ablation.json
             ${{ env.OUT_DIR }}/e3f2a_internal_pit_ablation.md
