@@ -1,0 +1,125 @@
+name: Football Research E3g-0C Zero-Cost Budget Design
+
+on:
+  pull_request:
+    branches:
+      - research/e3g0b-external-pit-source-feasibility
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3g0c_zero_cost_budget_design.py
+      - football-data/research/contracts/e3g0c_zero_cost_budget_design_contract.md
+      - .github/workflows/football-research-e3g0c-zero-cost-budget-design.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3g0c-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-budget-design:
+    if: github.event.pull_request.head.ref == 'research/e3g0c-zero-cost-budget-forward-design'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BASE_SHA: 079739688c7b1b57528d8dfac4781eaa06b7e917
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      OUT_DIR: football-data/artifacts/research/e3g0c_zero_cost_budget_design
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact research HEAD
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Syntax check
+        run: |
+          python -m py_compile football-data/research/e3g0c_zero_cost_budget_design.py
+
+      - name: Verify frozen research contract
+        run: |
+          set -euo pipefail
+          contract=football-data/research/contracts/e3g0c_zero_cost_budget_design_contract.md
+          grep -q 'formal_weight=0' "$contract"
+          grep -q 'no credentialed API call' "$contract"
+          grep -q 'no scheduled job deployment' "$contract"
+          grep -q '10 \* number_of_regions \* number_of_markets' "$contract"
+          grep -q 'Do not start E3g-1' "$contract"
+
+      - name: Download official no-key public samples
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e3g0c"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            https://public-odds-api-sample-data.s3.amazonaws.com/historical-epl.json \
+            -o "$RUNNER_TEMP/e3g0c/historical-epl.json"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            https://public-odds-api-sample-data.s3.amazonaws.com/historical-nfl.json \
+            -o "$RUNNER_TEMP/e3g0c/historical-nfl.json"
+
+      - name: Run zero-paid-request budget audit
+        run: |
+          python football-data/research/e3g0c_zero_cost_budget_design.py \
+            --output-dir "$OUT_DIR" \
+            --historical-epl-sample "$RUNNER_TEMP/e3g0c/historical-epl.json" \
+            --historical-three-market-sample "$RUNNER_TEMP/e3g0c/historical-nfl.json" \
+            --print-summary
+
+      - name: Verify report identity and zero execution
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['OUT_DIR'])/'e3g0c_zero_cost_budget_design.json'
+          r=json.loads(p.read_text())
+          assert r['repository_head'] == os.environ['EXPECTED_HEAD']
+          assert r['fixed_sample']['count'] == 6251
+          assert r['selection']['competition_id'] == 'ENG_PremierLeague'
+          assert r['selection']['season'] == '2024/25'
+          assert r['schedule']['match_count'] == 340
+          assert r['credentialed_api_calls'] == 0
+          assert r['paid_api_calls'] == 0
+          assert r['subscriptions'] == 0
+          assert r['secrets_created'] == 0
+          assert r['schedules_started'] == 0
+          assert r['model_fits'] == 0
+          assert r['candidate_probabilities'] == 0
+          assert r['formal_weight'] == 0
+          assert r['verdict']['formal_assets_changed'] == 0
+          assert r['verdict']['start_e3g1'] is False
+          samples=r['the_odds_api']['public_sample_audit']
+          assert samples['historical_epl_h2h']['has_h2h_draw'] is True
+          assert samples['historical_three_market']['has_spreads_point'] is True
+          assert samples['historical_three_market']['has_totals_point'] is True
+          PY
+
+      - name: Upload E3g-0C budget artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0c-zero-cost-budget-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ env.OUT_DIR }}/e3g0c_zero_cost_budget_design.json
+            ${{ env.OUT_DIR }}/e3g0c_zero_cost_budget_design.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$files"
+          test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l)" -eq 3
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/e3g0c_zero_cost_budget_design.py'
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/contracts/e3g0c_zero_cost_budget_design_contract.md'
+          printf '%s\n' "$files" | grep -Fxq '.github/workflows/football-research-e3g0c-zero-cost-budget-design.yml'
