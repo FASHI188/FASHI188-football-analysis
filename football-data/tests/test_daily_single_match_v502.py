@@ -99,6 +99,7 @@ class DailySingleMatchV502Tests(unittest.TestCase):
         for section in ("A. 比赛与冻结时点", "B. 模块状态表", "C. 数据及市场输入", "D. 计算与审计", "E. 反证及失效条件", "F. 三块正式结论", "G. EV或No Bet", "H. 最终一句话"):
             self.assertIn(section, report)
         self.assertEqual(len(report["B. 模块状态表"]), 9)
+        self.assertEqual(report["B. 模块状态表"][0]["本场状态"], "警告")
         self.assertEqual(report["H. 最终一句话"], "弃权；可信等级D；价格不可用。")
 
     def test_end_to_end_existing_formal_engine(self):
@@ -120,6 +121,7 @@ class DailySingleMatchV502Tests(unittest.TestCase):
             self.assertEqual(validation["status"], "通过")
             self.assertAlmostEqual(sum(calculation["probabilities"]["one_x_two"].values()), 1.0, places=8)
             self.assertAlmostEqual(sum(calculation["probabilities"]["total_goals"].values()), 1.0, places=8)
+            self.assertEqual(report["B. 模块状态表"][0]["本场状态"], "警告")
             self.assertEqual(report["H. 最终一句话"].split("；")[0], "弃权")
             self.assertTrue((output / "report.md").is_file())
 
