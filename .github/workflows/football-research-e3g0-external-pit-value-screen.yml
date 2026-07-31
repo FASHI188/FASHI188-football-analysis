@@ -1,0 +1,114 @@
+name: Football Research E3g-0 External PIT Value Screen
+
+on:
+  pull_request:
+    branches:
+      - research/e3f2a-internal-pit-ablation
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3g0_external_pit_value_screen.py
+      - football-data/research/contracts/e3g0_external_pit_value_screen_contract.md
+      - .github/workflows/football-research-e3g0-external-pit-value-screen.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3g0-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit-external-pit-source:
+    if: github.event.pull_request.head.ref == 'research/e3g0-external-pit-value-screen'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BASE_SHA: 1fb6e5f9d8e3d65dcdca2ff90f554d884194cf25
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      OUT_DIR: football-data/artifacts/research/e3g0_external_pit_value_screen
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact research HEAD
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fixed dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            numpy==2.2.6 scipy==1.15.3 scikit-learn==1.7.1
+
+      - name: Syntax check
+        run: python -m py_compile football-data/research/e3g0_external_pit_value_screen.py
+
+      - name: Verify E3g-0 contract
+        run: |
+          set -euo pipefail
+          c=football-data/research/contracts/e3g0_external_pit_value_screen_contract.md
+          grep -q 'formal_weight=0' "$c"
+          grep -q 'exactly one external PIT source' "$c"
+          grep -q '6,251 matches' "$c"
+          grep -q 'PIT_UNVERIFIED_RESEARCH_ONLY' "$c"
+          grep -q 'no model fit is allowed' "$c"
+          grep -q 'Do not start E3g-1' "$c"
+
+      - name: Run source, identity, timestamp and coverage audit
+        run: |
+          python football-data/research/e3g0_external_pit_value_screen.py \
+            --output-dir "$OUT_DIR" --print-summary
+
+      - name: Verify hard-gate stop receipt
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['OUT_DIR'])/'e3g0_external_pit_value_screen.json'
+          r=json.loads(p.read_text())
+          assert r['repository_head'] == os.environ['EXPECTED_HEAD']
+          assert r['status'] == 'PIT_IDENTITY_OR_TIMESTAMP_FAILED'
+          assert r['fixed_sample_count'] == 6251
+          assert r['external_source_count'] == 1
+          assert r['source']['provider'] == 'StatsBomb Open Data'
+          assert r['coverage']['source_match_count'] == 34
+          assert r['coverage']['matched_intersection_count'] == 34
+          assert r['coverage']['all_source_matches_involve_focal_club'] is True
+          assert r['pit_audit']['timestamp_gate_pass'] is False
+          assert r['pit_audit']['coverage_gate_pass'] is False
+          assert r['candidate_model_fit_count'] == 0
+          assert r['model_stage']['stop_before_training'] is True
+          assert r['formal_weight'] == 0
+          assert all(v == 0 or v is False for v in r['asset_protection'].values())
+          m=Path(os.environ['OUT_DIR'])/'e3g0_source_snapshot_manifest.json'
+          assert m.exists()
+          PY
+
+      - name: Upload E3g-0 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0-external-pit-screen-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ env.OUT_DIR }}/e3g0_external_pit_value_screen.json
+            ${{ env.OUT_DIR }}/e3g0_external_pit_value_screen.md
+            ${{ env.OUT_DIR }}/e3g0_source_snapshot_manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$files"
+          test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l)" -eq 3
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/e3g0_external_pit_value_screen.py'
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/contracts/e3g0_external_pit_value_screen_contract.md'
+          printf '%s\n' "$files" | grep -Fxq '.github/workflows/football-research-e3g0-external-pit-value-screen.yml'
