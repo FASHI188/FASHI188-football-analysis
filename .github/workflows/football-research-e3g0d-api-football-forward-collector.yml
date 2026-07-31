@@ -109,7 +109,8 @@ jobs:
           run_text='\n'.join(blocks)
           direct_inputs=run_text.count('$'+'{{ inputs.')
           direct_outputs=run_text.count('$'+'{{ steps.')
-          assert direct_inputs==0 and direct_outputs==0
+          direct_expressions=run_text.count('$'+'{{')
+          assert direct_inputs==0 and direct_outputs==0 and direct_expressions==0
           upload_names=[]
           for n,line in enumerate(lines):
               if not re.match(r'^\s*- uses:\s*actions/upload-artifact@',line): continue
@@ -117,7 +118,8 @@ jobs:
                   m=re.match(r'^\s*name:\s*[\'\"]?(.+?)[\'\"]?\s*$',candidate)
                   if m: upload_names.append(m.group(1)); break
           assert len(upload_names)==8
-          assert all('${{ github.run_id }}' in x and '${{ github.run_attempt }}' in x for x in upload_names)
+          run_id_expr='$'+'{{ github.run_id }}'; run_attempt_expr='$'+'{{ github.run_attempt }}'
+          assert all(run_id_expr in x and run_attempt_expr in x for x in upload_names)
           assert 'id: reservation_upload' in w and 'id: partial_failure_upload' in w
           assert w.index('id: reservation_upload') < w.index('id: collector')
           assert "steps.reservation_upload.outcome == 'success'" in w
@@ -148,6 +150,7 @@ jobs:
           security={
             'direct_inputs_in_run':direct_inputs,
             'direct_untrusted_step_outputs_in_run':direct_outputs,
+            'direct_github_expressions_in_run':direct_expressions,
             'artifact_names_include_run_id':True,
             'artifact_names_include_run_attempt':True,
             'live_requires_upload_artifact_true':True,
