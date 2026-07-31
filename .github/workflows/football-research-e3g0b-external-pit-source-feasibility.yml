@@ -1,0 +1,82 @@
+name: Football Research E3g-0B External PIT Source Feasibility
+
+on:
+  pull_request:
+    branches:
+      - research/e3g0-external-pit-value-screen
+    types: [opened, synchronize, reopened]
+    paths:
+      - football-data/research/e3g0b_external_pit_source_feasibility_matrix.md
+      - football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md
+      - .github/workflows/football-research-e3g0b-external-pit-source-feasibility.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-research-e3g0b-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-source-feasibility:
+    if: github.event.pull_request.head.ref == 'research/e3g0b-external-pit-source-feasibility'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BASE_SHA: b7aca0ffbaacb847ff08700683c88f10f51090ed
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact research HEAD
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+      - name: Verify research contract
+        run: |
+          set -euo pipefail
+          grep -q 'formal_weight=0' football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md
+          grep -q 'PIT_RECONSTRUCTED_RESEARCH_ONLY' football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md
+          grep -q 'Do not start E3g-1' football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md
+
+      - name: Verify source matrix and zero execution
+        run: |
+          set -euo pipefail
+          f=football-data/research/e3g0b_external_pit_source_feasibility_matrix.md
+          grep -q 'Betfair Exchange Historical Data' "$f"
+          grep -q 'The Odds API historical snapshots' "$f"
+          grep -q 'Sportmonks xG' "$f"
+          grep -q 'API-Football lineups and injuries' "$f"
+          grep -q 'PIT_RECONSTRUCTED_RESEARCH_ONLY' "$f"
+          grep -q 'external records downloaded: 0' "$f"
+          grep -q 'credentialed API calls: 0' "$f"
+          grep -q 'subscriptions purchased: 0' "$f"
+          grep -q 'candidate model fits: 0' "$f"
+          grep -q 'candidate probabilities created: 0' "$f"
+          grep -q 'Automatic next stage: false' "$f"
+          grep -q 'Do not start E3g-1' "$f"
+
+      - name: Upload E3g-0B source matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-e3g0b-source-feasibility-${{ github.event.pull_request.head.sha }}
+          path: |
+            football-data/research/e3g0b_external_pit_source_feasibility_matrix.md
+            football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm protected formal assets were not changed
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$files"
+          test "$(printf '%s\n' "$files" | sed '/^$/d' | wc -l)" -eq 3
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/e3g0b_external_pit_source_feasibility_matrix.md'
+          printf '%s\n' "$files" | grep -Fxq 'football-data/research/contracts/e3g0b_external_pit_source_feasibility_contract.md'
+          printf '%s\n' "$files" | grep -Fxq '.github/workflows/football-research-e3g0b-external-pit-source-feasibility.yml'
