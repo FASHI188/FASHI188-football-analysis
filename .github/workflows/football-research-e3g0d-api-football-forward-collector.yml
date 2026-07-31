@@ -33,6 +33,7 @@ jobs:
   validate-implementation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {ref: '${{ env.EVIDENCE_HEAD }}', fetch-depth: 0, persist-credentials: false}
@@ -51,7 +52,9 @@ jobs:
           import json,os,re,subprocess
           from pathlib import Path
           r=Path(os.environ['RUNNER_TEMP'])/'v'; c=json.loads((r/'c/self_test_result.json').read_text()); a=json.loads((r/'a/archive_helper_self_test.json').read_text()); t=json.loads((r/'runtime_security_validation.json').read_text()); p=json.loads(next((r/'p/run_receipts').glob('*.json')).read_text()); h=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          assert h==os.environ['EXPECTED_HEAD']==p['run_head'] and p['request_attempts']==0; assert c['self_test']==a['self_test']==t['self_test']=='PASS' and c['no_provider_network'] and not a['network_used']; assert all(all(v=='PASS' for v in t[k].values()) for k in ('digest_format_tests','artifact_redirect_tests','malicious_input_tests','quota_fault_tests')); assert t['workflow_uses_tested_production_functions']=='PASS' and t['real_provider_request_attempts']==t['formal_weight']==0
+          assert h==os.environ['EXPECTED_HEAD']==p['run_head'] and p['request_attempts']==0; assert c['self_test']==a['self_test']==t['self_test']=='PASS' and c['no_provider_network'] and not a['network_used']; assert all(all(v=='PASS' for v in t[k].values()) for k in ('digest_format_tests','artifact_redirect_tests','malicious_input_tests','quota_fault_tests','production_quota_ledger_tests')); assert t['workflow_uses_tested_production_functions']==t['production_quota_ledger_binding']=='PASS' and t['real_provider_request_attempts']==t['formal_weight']==0
+          lineup=t['lineup_no_due_prepare_integration']; assert lineup['due_check_calls']==1 and lineup['needs_requests']=='false' and lineup['reservation']==0 and lineup['provider_request_attempts']==0 and lineup['no_network_due_receipt']==lineup['gate_expected_no_request_success']=='PASS'
+          assert t['workflow_timeouts']=={'validate-implementation':20,'collect-forward-snapshots':25}; quota=t['production_quota_ledger_values']; assert quota['requests_used_today']==6 and quota['quota_reservation_count']==2 and quota['artifact_pages']==3
           w=Path(os.environ['WORKFLOW_FILE']).read_text(); blocks=[]; lines=w.splitlines(); i=0
           while i<len(lines):
            m=re.match(r'^(\s*)run:\s*\|\s*$',lines[i])
@@ -70,6 +73,7 @@ jobs:
   collect-forward-snapshots:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && vars.API_FOOTBALL_COLLECTOR_ENABLED == 'true' && vars.API_FOOTBALL_SCHEDULE_ENABLED == 'true')
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     permissions: {contents: read, actions: read}
     concurrency: {group: e3g0d-api-football-live-main, cancel-in-progress: false}
     steps:
@@ -110,7 +114,7 @@ jobs:
         id: snapshot_upload
         if: steps.collect.outcome == 'success' && steps.prepare.outputs.mode != 'build-plan'
         continue-on-error: true
-        with: {name: 'football-e3g0d-snapshot-${{ steps.prepare.outputs.mode }}-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+        with: {name: 'football-e3g0d-snapshot-${{ steps.prepare.outputs.mode }}-${{ env.EVIDCNCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         id: final_receipt_upload
         if: always() && steps.reservation_upload.outcome == 'success'
