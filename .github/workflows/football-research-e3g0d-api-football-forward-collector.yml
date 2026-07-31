@@ -3,22 +3,21 @@ on:
   pull_request:
     branches: [research/e3g0c-zero-cost-budget-forward-design]
     types: [opened, synchronize, reopened]
-    paths:
-      - football-data/research/e3g0d_*.py
-      - football-data/research/contracts/e3g0d_api_football_forward_collection_contract.md
-      - .github/workflows/football-research-e3g0d-api-football-forward-collector.yml
+    paths: [football-data/research/e3g0d_*.py, football-data/research/contracts/e3g0d_api_football_forward_collection_contract.md, .github/workflows/football-research-e3g0d-api-football-forward-collector.yml]
   workflow_dispatch:
     inputs:
-      collector_mode: {description: Mode, required: true, default: preflight, type: choice, options: [self-test, preflight, status-check, build-plan, odds, injuries, lineup-window]}
-      target_date: {description: One UTC date, required: false, type: string}
-      league_id: {description: Pilot league; only 39, required: true, default: '39', type: string}
-      season_id: {description: Season start year, required: true, default: '2026', type: string}
-      fixture_limit: {description: First trial default 1, required: true, default: '1', type: string}
-      max_requests: {description: First trial default 3 attempts, required: true, default: '3', type: string}
-      dry_run: {description: No provider request, required: true, default: true, type: boolean}
-      no_network: {description: Hard network disable, required: true, default: true, type: boolean}
-      upload_artifact: {description: Upload temporary output, required: true, default: false, type: boolean}
-      allow_schedule: {description: Records schedule permission only, required: true, default: false, type: boolean}
+      collector_mode: {required: true, default: preflight, type: choice, options: [self-test, preflight, status-check, build-plan, odds, injuries, lineup-window]}
+      target_date: {required: false, type: string}
+      league_id: {required: true, default: '39', type: string}
+      season_id: {required: true, default: '2026', type: string}
+      fixture_limit: {required: true, default: '1', type: string}
+      max_requests: {required: true, default: '3', type: string}
+      plan_artifact_id: {required: false, type: string}
+      plan_sha256: {required: false, type: string}
+      dry_run: {required: true, default: true, type: boolean}
+      no_network: {required: true, default: true, type: boolean}
+      upload_artifact: {required: true, default: false, type: boolean}
+      allow_schedule: {required: true, default: false, type: boolean}
   schedule:
     - cron: '5 0 * * *'
     - cron: '10 */3 * * *'
@@ -26,9 +25,6 @@ on:
     - cron: '*/15 10-22 * * *'
 permissions:
   contents: read
-concurrency:
-  group: e3g0d-${{ github.event_name }}-${{ github.run_id }}
-  cancel-in-progress: false
 env:
   ROOT: football-data/research
   COLLECTOR: football-data/research/e3g0d_api_football_forward_collector.py
@@ -41,137 +37,163 @@ jobs:
   validate-implementation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0, persist-credentials: false}
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Compile and contract audit
+      - name: Compile, contract, no-key and no-provider-network tests
         shell: bash
         run: |
-          set -euo pipefail
-          python -m py_compile "$ROOT"/e3g0d_*.py
-          for x in 'formal_weight: `0`' IMPLEMENTED_NOT_LIVE API_FOOTBALL_COLLECTOR_ENABLED=false API_FOOTBALL_SCHEDULE_ENABLED=false 'maximum archival interval is 30 days' 'no credentialed API call' 'no automatic commit' 'do not start E3g-1'; do grep -q "$x" "$CONTRACT"; done
-      - name: No-key and no-network self-tests
-        shell: bash
-        run: |
-          set -euo pipefail; unset API_FOOTBALL_KEY GH_TOKEN
-          python "$COLLECTOR" --mode self-test --output-dir "$RUNNER_TEMP/v/collector" --print-summary
-          python "$ARCHIVE" self-test --archive-root "$RUNNER_TEMP/v/archive" --print-summary
-          python "$COLLECTOR" --mode preflight --output-dir "$RUNNER_TEMP/v/preflight" --date 2026-08-15 --league 39 --season 2026 --fixture-limit 1 --max-requests 3 --dry-run true --no-network true --upload-artifact false --allow-schedule false --print-summary
+          set -euo pipefail; python -m py_compile "$ROOT"/e3g0d_*.py; unset API_FOOTBALL_KEY GH_TOKEN
+          for x in 'formal_weight: `0`' 'IMPLEMENTED_NOT_LIVE' 'GPT_REMEDIATED_PENDING_CODEX_RECHECK' 'request_day_utc' 'e3g0d-api-football-live-main' 'retention-days: 30' 'Multiple unpinned' 'no credentialed API call' 'do not start E3g-1'; do grep -Fq "$x" "$CONTRACT"; done
+          python "$COLLECTOR" --mode self-test --output-dir "$RUNNER_TEMP/v/c" --print-summary
+          python "$ARCHIVE" self-test --archive-root "$RUNNER_TEMP/v/a" --print-summary
+          python "$COLLECTOR" --mode preflight --output-dir "$RUNNER_TEMP/v/p" --date 2026-08-15 --league 39 --season 2026 --fixture-limit 1 --max-requests 3 --dry-run true --no-network true --upload-artifact false --allow-schedule false --retention 30 --print-summary
           python - <<'PY'
-          import json,os
+          import json,os,re
           from pathlib import Path
-          r=Path(os.environ['RUNNER_TEMP'])/'v'
-          c=json.loads((r/'collector/self_test_result.json').read_text());a=json.loads((r/'archive/archive_helper_self_test.json').read_text());p=json.loads(next((r/'preflight/run_receipts').glob('*.json')).read_text())
-          assert c['self_test']==a['self_test']=='PASS';assert c['online_final_freeze_prohibited']=='PASS';assert a['post_kickoff_final_freeze_selection']=='PASS'
-          assert p['deployment_status']=='IMPLEMENTED_NOT_LIVE' and not p['guard']['network_requested'] and not p['guard']['collector_enabled'] and not p['guard']['schedule_enabled']
+          r=Path(os.environ['RUNNER_TEMP'])/'v';c=json.loads((r/'c/self_test_result.json').read_text());a=json.loads((r/'a/archive_helper_self_test.json').read_text());p=json.loads(next((r/'p/run_receipts').glob('*.json')).read_text())
+          ck=['different_target_dates_share_same_request_day_quota','target_date_cannot_bypass_daily_cap','failed_run_quota_receipt_written','retry_attempts_counted','post_request_validation_failure_counted','failed_collector_job_remains_failed','secret_redaction_on_failure','snapshot_records_selected_plan_identity','append_only','online_final_freeze_prohibited']
+          ak=['artifact_pagination_all_pages','quota_receipts_beyond_first_page_counted','daily_plan_beyond_first_page_found','unarchived_artifacts_beyond_first_page_found','expiry_monitor_beyond_first_page_found','pagination_failure_is_fail_closed','same_day_duplicate_plan_is_not_overwritten','plan_artifact_name_contains_identity','plan_sha_verified_before_collection','multiple_unpinned_plans_fail_closed','plan_source_raw_sha_chain_verified','retention_metadata_matches_workflow','archive_interval_compatible_with_retention']
+          assert c['self_test']==a['self_test']=='PASS' and all(c[k]=='PASS' for k in ck) and all(a[k]=='PASS' for k in ak);assert a['all_e3g0d_artifact_retention_days']==30 and c['no_provider_network'] and not a['network_used'];assert p['deployment_status']=='IMPLEMENTED_NOT_LIVE' and p['request_attempts']==0 and not p['guard']['network_requested'];assert c['candidate_probabilities']==c['model_fits']==c['formal_weight']==0
+          w=Path('.github/workflows/football-research-e3g0d-api-football-forward-collector.yml').read_text();blocked=['contents:'+' write','actions:'+' write','pull-requests:'+' write','pull_request'+'_target','git '+'push','git '+'commit','gh pr '+'create'];assert 'permissions:\n  contents: read' in w and not any(x in w for x in blocked);assert w.count('secrets.API_FOOTBALL_'+'KEY')==1 and len(re.findall(r'^\s*persist-credentials:\s*false',w,re.M))==2;live=w.rsplit('  collect-forward-snapshots:',1)[1];lock=live.split('    concurrency:',1)[1].split('    steps:',1)[0];assert 'group: e3g0d-api-football-live-main' in lock and 'cancel-in-progress: false' in lock and not any(x in lock for x in ['run_id','mode','target_date']);assert "always() && steps.c.outputs.ok == 'true'" in w and 'request_day="$(date -u +%F)"' in w;assert not re.search(r'retention-days:\s*2',w) and len(re.findall(r'retention-days:\s*30',w))>=6;assert 'sha256-${{ steps.collector.outputs.plan_sha256 }}' in w
           PY
           ! grep -R 'SECRET_SHOULD_NEVER_APPEAR' "$RUNNER_TEMP/v"
-      - name: Workflow safety and isolated diff audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          t=Path('.github/workflows/football-research-e3g0d-api-football-forward-collector.yml').read_text();blocked=['contents:'+' write','actions:'+' write','pull-requests:'+' write','pull_request'+'_target','git '+'push','git '+'commit','gh pr '+'create']
-          assert 'permissions:\n  contents: read' in t and not any(x in t for x in blocked);assert t.count('secrets.API_FOOTBALL_'+'KEY')==1
-          assert t.count('persist-credentials: false')==3
-          assert "github.ref }}\" == 'refs/heads/main'" in t and 'API_FOOTBALL_COLLECTOR_ENABLED' in t and 'API_FOOTBALL_SCHEDULE_ENABLED' in t
-          assert 'limit <= 1 && max <= 3' in t and "github.event_name == 'schedule' && vars.API_FOOTBALL_COLLECTOR_ENABLED == 'true'" in t
-          PY
-          files="$(git diff --name-only "$BASE_SHA"...HEAD)"; printf '%s\n' "$files"; test "$(printf '%s\n' "$files"|sed '/^$/d'|wc -l)" -eq 9
+          files="$(git diff --name-only "$BASE_SHA"...HEAD)"; test "$(printf '%s\n' "$files"|sed '/^$/d'|wc -l)" -eq 9
           for f in e3g0d_common.py e3g0d_http.py e3g0d_store.py e3g0d_collect.py e3g0d_archive_core.py e3g0d_api_football_forward_collector.py e3g0d_api_football_archive_helper.py; do printf '%s\n' "$files"|grep -Fxq "football-data/research/$f"; done
-          printf '%s\n' "$files"|grep -Fxq "$CONTRACT"; printf '%s\n' "$files"|grep -Fxq '.github/workflows/football-research-e3g0d-api-football-forward-collector.yml'
-      - name: Write validation expiry metadata
+          printf '%s\n' "$files"|grep -Fxq "$CONTRACT"; printf '%s\n' "$files"|grep -Fxq '.github/workflows/football-research-e3g0d-api-football-forward-collector.yml'; ! printf '%s\n' "$files"|grep -E '(^|/)(models?|data/formal|config|CURRENT|score|btts|total.?goal)'
+      - name: Write validation metadata
         run: |
           python - <<'PY'
           import json,os
           from datetime import datetime,timedelta,timezone
           from pathlib import Path
-          p=Path(os.environ['RUNNER_TEMP'])/'v';n=datetime.now(timezone.utc);(p/'artifact_metadata.json').write_text(json.dumps({'artifact_name':f"football-e3g0d-validation-{os.environ['GITHUB_SHA']}",'retention_days':30,'created_at_utc':n.isoformat(),'expires_at_utc':(n+timedelta(days=30)).isoformat(),'deployment_status':'IMPLEMENTED_NOT_LIVE','formal_weight':0},sort_keys=True)+'\n')
+          n=datetime.now(timezone.utc);p=Path(os.environ['RUNNER_TEMP'])/'v/artifact_metadata.json';p.write_text(json.dumps({'artifact_name':f"football-e3g0d-validation-{os.environ['GITHUB_SHA']}",'retention_days':30,'created_at_utc':n.isoformat(),'expires_at_utc':(n+timedelta(days=30)).isoformat(),'deployment_status':'IMPLEMENTED_NOT_LIVE','remediation_status':'GPT_REMEDIATED_PENDING_CODEX_RECHECK','real_api_calls':0,'formal_weight':0},sort_keys=True)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         with: {name: 'football-e3g0d-validation-${{ github.event.pull_request.head.sha }}', path: '${{ runner.temp }}/v', retention-days: 30, if-no-files-found: error}
   collect-forward-snapshots:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && vars.API_FOOTBALL_COLLECTOR_ENABLED == 'true' && vars.API_FOOTBALL_SCHEDULE_ENABLED == 'true')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions: {contents: read, actions: read}
+    concurrency:
+      group: e3g0d-api-football-live-main
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-        with: {persist-credentials: false}
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Resolve default-disabled controls
+      - name: Resolve controls and actual UTC request day
         id: c
         shell: bash
         run: |
-          set -euo pipefail
-          if [[ '${{ github.event_name }}' == workflow_dispatch ]]; then mode='${{ inputs.collector_mode }}';day='${{ inputs.target_date }}';league='${{ inputs.league_id }}';season='${{ inputs.season_id }}';limit='${{ inputs.fixture_limit }}';max='${{ inputs.max_requests }}';dry='${{ inputs.dry_run }}';net='${{ inputs.no_network }}';upload='${{ inputs.upload_artifact }}';allow='${{ inputs.allow_schedule }}';
-          else day='';league=39;season=2026;dry=false;net=false;upload=true;allow=true;case '${{ github.event.schedule }}' in '5 0 * * *')mode=build-plan;limit=10;max=1;;'10 */3 * * *')mode=odds;limit=10;max=2;;'20 */4 * * *')mode=injuries;limit=10;max=2;;'*/15 10-22 * * *')mode=lineup-window;limit=10;max=6;;*)mode=preflight;limit=1;max=1;dry=true;net=true;upload=false;allow=false;;esac;fi
-          [[ -n "$day" ]]||day="$(date -u +%F)";live=false;case "$mode" in build-plan|odds|injuries|lineup-window)live=true;;esac;ok=false
-          if [[ '${{ github.event_name }}' == workflow_dispatch && "$live" == true ]]; then [[ "$limit" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]] || exit 2; (( limit <= 1 && max <= 3 )) || { echo 'First live trial is hard-limited to one fixture and three attempts.' >&2; exit 2; }; fi
-          if [[ "$live" == true && "${{ github.ref }}" == 'refs/heads/main' && "$API_FOOTBALL_COLLECTOR_ENABLED" == true && "$dry" == false && "$net" == false ]];then [[ '${{ github.event_name }}' == workflow_dispatch || ( '${{ github.event_name }}' == schedule && "$API_FOOTBALL_SCHEDULE_ENABLED" == true && "$allow" == true ) ]]&&ok=true;fi
-          retention=30;[[ "$mode" == build-plan ]]&&retention=2;expires="$(date -u -d "+$retention days" +%FT%TZ)"
-          for v in mode day league season limit max dry net upload allow live ok retention expires;do echo "$v=${!v}" >> "$GITHUB_OUTPUT";done
+          set -euo pipefail; request_day="$(date -u +%F)"
+          if [[ '${{ github.event_name }}' == workflow_dispatch ]]; then mode='${{ inputs.collector_mode }}';target='${{ inputs.target_date }}';league='${{ inputs.league_id }}';season='${{ inputs.season_id }}';limit='${{ inputs.fixture_limit }}';max='${{ inputs.max_requests }}';plan_id='${{ inputs.plan_artifact_id }}';plan_sha='${{ inputs.plan_sha256 }}';dry='${{ inputs.dry_run }}';net='${{ inputs.no_network }}';upload='${{ inputs.upload_artifact }}';allow='${{ inputs.allow_schedule }}'; else target='';league=39;season=2026;plan_id='';plan_sha='';dry=false;net=false;upload=true;allow=true;case '${{ github.event.schedule }}' in '5 0 * * *') mode=build-plan;limit=10;max=1;;'10 */3 * * *') mode=odds;limit=10;max=2;;'20 */4 * * *') mode=injuries;limit=10;max=2;;'*/15 10-22 * * *') mode=lineup-window;limit=10;max=6;;*) mode=preflight;limit=1;max=1;dry=true;net=true;upload=false;allow=false;;esac;fi
+          [[ -n "$target" ]]||target="$request_day";live=false;case "$mode" in build-plan|odds|injuries|lineup-window) live=true;;esac
+          if [[ '${{ github.event_name }}' == workflow_dispatch && "$live" == true ]]; then [[ "$limit" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]]&&((limit<=1&&max<=3))||exit 2;fi
+          ok=false;if [[ "$live" == true && '${{ github.ref }}' == refs/heads/main && "$API_FOOTBALL_COLLECTOR_ENABLED" == true && "$dry" == false && "$net" == false ]]; then if [[ '${{ github.event_name }}' == workflow_dispatch || ( '${{ github.event_name }}' == schedule && "$API_FOOTBALL_SCHEDULE_ENABLED" == true && "$allow" == true ) ]];then ok=true;fi;fi
+          retention=30;expires="$(date -u -d '+30 days' +%FT%TZ)";for v in request_day mode target league season limit max plan_id plan_sha dry net upload allow live ok retention expires;do echo "$v=${!v}" >> "$GITHUB_OUTPUT";done
       - name: No-network path
         if: steps.c.outputs.ok != 'true' && steps.c.outputs.mode != 'status-check'
-        run: python "$COLLECTOR" --mode preflight --output-dir "$RUNNER_TEMP/out" --date '${{ steps.c.outputs.day }}' --league '${{ steps.c.outputs.league }}' --season '${{ steps.c.outputs.season }}' --fixture-limit '${{ steps.c.outputs.limit }}' --max-requests '${{ steps.c.outputs.max }}' --dry-run true --no-network true --upload-artifact '${{ steps.c.outputs.upload }}' --allow-schedule '${{ steps.c.outputs.allow }}' --retention '${{ steps.c.outputs.retention }}' --expires '${{ steps.c.outputs.expires }}' --print-summary
+        run: python "$COLLECTOR" --mode preflight --output-dir "$RUNNER_TEMP/out" --date '${{ steps.c.outputs.target }}' --league '${{ steps.c.outputs.league }}' --season '${{ steps.c.outputs.season }}' --fixture-limit '${{ steps.c.outputs.limit }}' --max-requests '${{ steps.c.outputs.max }}' --dry-run true --no-network true --upload-artifact '${{ steps.c.outputs.upload }}' --allow-schedule '${{ steps.c.outputs.allow }}' --retention 30 --expires '${{ steps.c.outputs.expires }}' --print-summary
       - name: Read-only status
         if: steps.c.outputs.mode == 'status-check'
         env: {GH_TOKEN: '${{ github.token }}'}
         run: python "$ARCHIVE" status --repository "$GITHUB_REPOSITORY" --archive-root "$RUNNER_TEMP/out" --print-summary
-      - name: Daily quota ledger
+      - name: Read complete request-day quota
         if: steps.c.outputs.ok == 'true'
         id: q
-        env: {GH_TOKEN: '${{ github.token }}', DAY: '${{ steps.c.outputs.day }}'}
+        env: {GH_TOKEN: '${{ github.token }}'}
         run: |
+          python "$ARCHIVE" quota-used --repository "$GITHUB_REPOSITORY" --archive-root "$RUNNER_TEMP/q" --request-day-utc '${{ steps.c.outputs.request_day }}' --print-summary > "$RUNNER_TEMP/q.json"
           python - <<'PY'
-          import json,os,subprocess,tempfile,zipfile
-          used=0;repo=os.environ['GITHUB_REPOSITORY'];day=os.environ['DAY'];arts=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/actions/artifacts?per_page=100'])).get('artifacts',[])
-          for a in arts:
-            if a.get('name','').startswith(f'football-e3g0d-quota-{day}-') and not a.get('expired'):
-              f=tempfile.NamedTemporaryFile(delete=False);subprocess.run(['gh','api',f"repos/{repo}/actions/artifacts/{a['id']}/zip"],stdout=f,check=True);f.close()
-              with zipfile.ZipFile(f.name) as z:used+=int(json.loads(z.read(next(n for n in z.namelist() if n.endswith('quota_receipt.json'))))['request_attempts'])
-          open(os.environ['GITHUB_OUTPUT'],'a').write(f'used={used}\n')
+          import json,os
+          from pathlib import Path
+          v=json.loads((Path(os.environ['RUNNER_TEMP'])/'q.json').read_text());open(os.environ['GITHUB_OUTPUT'],'a').write(f"used={int(v['requests_used_today'])}\n")
           PY
-      - name: Get immutable daily plan
+      - name: Resolve pinned immutable plan across all pages
         if: steps.c.outputs.ok == 'true' && steps.c.outputs.mode != 'build-plan'
         id: p
         env: {GH_TOKEN: '${{ github.token }}'}
+        shell: bash
         run: |
-          name='football-e3g0d-plan-${{ steps.c.outputs.day }}';id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq ".artifacts|map(select(.name==\"$name\" and .expired==false))|sort_by(.created_at)|reverse|.[0].id//empty")";test -n "$id"||exit 2;mkdir -p "$RUNNER_TEMP/plan";gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip">"$RUNNER_TEMP/p.zip";unzip -q "$RUNNER_TEMP/p.zip" -d "$RUNNER_TEMP/plan";f="$(find "$RUNNER_TEMP/plan" -path '*/plans/*.json'|head -1)";test -n "$f";echo "path=$f">>"$GITHUB_OUTPUT"
-      - name: Credentialed collector on controlled main trigger only
+          set -euo pipefail;a=();[[ -z '${{ steps.c.outputs.plan_id }}' ]]||a+=(--artifact-id '${{ steps.c.outputs.plan_id }}');[[ -z '${{ steps.c.outputs.plan_sha }}' ]]||a+=(--plan-sha256 '${{ steps.c.outputs.plan_sha }}');python "$ARCHIVE" resolve-plan --repository "$GITHUB_REPOSITORY" --archive-root "$RUNNER_TEMP/plan" --target-date-utc '${{ steps.c.outputs.target }}' --league '${{ steps.c.outputs.league }}' --season '${{ steps.c.outputs.season }}' "${a[@]}" --print-summary > "$RUNNER_TEMP/p.json"
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          v=json.loads((Path(os.environ['RUNNER_TEMP'])/'p.json').read_text());f=open(os.environ['GITHUB_OUTPUT'],'a');[f.write(f"{k}={v[k]}\n") for k in ('selected_plan_artifact_id','selected_plan_sha256','selected_plan_source_raw_sha256','selected_plan_run_head','selected_plan_path')]
+          PY
+      - name: Credentialed controlled-main collector
+        id: collector
         if: steps.c.outputs.ok == 'true'
+        continue-on-error: true
         env: {API_FOOTBALL_KEY: '${{ secrets.API_FOOTBALL_KEY }}'}
         shell: bash
         run: |
-          plan=();[[ '${{ steps.c.outputs.mode }}' == build-plan ]]||plan=(--plan '${{ steps.p.outputs.path }}')
-          python "$COLLECTOR" --mode '${{ steps.c.outputs.mode }}' --output-dir "$RUNNER_TEMP/out" --date '${{ steps.c.outputs.day }}' --league '${{ steps.c.outputs.league }}' --season '${{ steps.c.outputs.season }}' --fixture-limit '${{ steps.c.outputs.limit }}' --max-requests '${{ steps.c.outputs.max }}' --requests-used-today '${{ steps.q.outputs.used }}' --timeout 15 --retries 1 --backoff 8 --dry-run false --no-network false --upload-artifact '${{ steps.c.outputs.upload }}' --allow-schedule '${{ steps.c.outputs.allow }}' --retention '${{ steps.c.outputs.retention }}' --expires '${{ steps.c.outputs.expires }}' "${plan[@]}" --print-summary
-      - name: Quota receipt
-        if: steps.c.outputs.ok == 'true'
+          set +e;pa=();if [[ '${{ steps.c.outputs.mode }}' != build-plan ]];then pa=(--plan '${{ steps.p.outputs.selected_plan_path }}' --selected-plan-artifact-id '${{ steps.p.outputs.selected_plan_artifact_id }}' --selected-plan-sha256 '${{ steps.p.outputs.selected_plan_sha256 }}' --selected-plan-source-raw-sha256 '${{ steps.p.outputs.selected_plan_source_raw_sha256 }}' --selected-plan-run-head '${{ steps.p.outputs.selected_plan_run_head }}');fi
+          python "$COLLECTOR" --mode '${{ steps.c.outputs.mode }}' --output-dir "$RUNNER_TEMP/out" --date '${{ steps.c.outputs.target }}' --league '${{ steps.c.outputs.league }}' --season '${{ steps.c.outputs.season }}' --fixture-limit '${{ steps.c.outputs.limit }}' --max-requests '${{ steps.c.outputs.max }}' --requests-used-today '${{ steps.q.outputs.used }}' --timeout 15 --retries 1 --backoff 8 --dry-run false --no-network false --upload-artifact '${{ steps.c.outputs.upload }}' --allow-schedule '${{ steps.c.outputs.allow }}' --retention 30 --expires '${{ steps.c.outputs.expires }}' --expected-request-day-utc '${{ steps.c.outputs.request_day }}' "${pa[@]}" --print-summary;code=$?;r="$(find "$RUNNER_TEMP/out/run_receipts" -name '*.json' -type f 2>/dev/null|head -1)";echo "exit_code=$code" >> "$GITHUB_OUTPUT";if [[ -n "$r" ]];then echo "receipt_path=$r" >> "$GITHUB_OUTPUT";python - "$r" <<'PY'
+          import json,os,sys
+          v=json.load(open(sys.argv[1]));f=open(os.environ['GITHUB_OUTPUT'],'a')
+          for k in ('request_attempts','request_day_utc','target_date_utc','outcome','plan_sha256','plan_path','selected_plan_artifact_id','selected_plan_sha256','selected_plan_source_raw_sha256'):f.write(f"{k}={v.get(k) or ''}\n")
+          PY
+          fi;exit "$code"
+      - name: Prepare mandatory quota receipt
+        id: quota
+        if: ${{ always() && steps.c.outputs.ok == 'true' }}
+        continue-on-error: true
         run: |
-          mkdir -p "$RUNNER_TEMP/quota";python - <<'PY'
+          r='${{ steps.collector.outputs.receipt_path }}';[[ -n "$r" && -f "$r" ]]||exit 2;mkdir -p "$RUNNER_TEMP/quota";python - "$r" <<'PY'
+          import json,os,sys
+          from datetime import datetime,timedelta,timezone
+          from pathlib import Path
+          r=json.load(open(sys.argv[1]));n=datetime.now(timezone.utc);q={k:r.get(k) for k in ('deployment_status','outcome','failure_class','mode','request_day_utc','target_date_utc','request_attempts','requests_used_today_before_run','daily_free_limit','daily_safety_cap','run_head','workflow_run_id')};q.update(schema_version='E3G0D-QUOTA-RECEIPT-1.2',created_at_utc=n.isoformat(),retention_days=30,expires_at_utc=(n+timedelta(days=30)).isoformat(),append_only=True,formal_weight=0);(Path(os.environ['RUNNER_TEMP'])/'quota/quota_receipt.json').write_text(json.dumps(q,sort_keys=True)+'\n');open(os.environ['GITHUB_OUTPUT'],'a').write('ready=true\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        id: quota_upload
+        if: ${{ always() && steps.c.outputs.ok == 'true' && steps.quota.outputs.ready == 'true' }}
+        continue-on-error: true
+        with: {name: 'football-e3g0d-quota-${{ steps.collector.outputs.request_day_utc }}-${{ github.run_id }}', path: '${{ runner.temp }}/quota', retention-days: 30, if-no-files-found: error}
+      - uses: actions/upload-artifact@v4
+        id: plan_upload
+        if: ${{ steps.c.outputs.ok == 'true' && steps.collector.outcome == 'success' && steps.c.outputs.upload == 'true' && steps.c.outputs.mode == 'build-plan' }}
+        continue-on-error: true
+        with: {name: 'football-e3g0d-plan-${{ steps.c.outputs.target }}-league-${{ steps.c.outputs.league }}-season-${{ steps.c.outputs.season }}-sha256-${{ steps.collector.outputs.plan_sha256 }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+      - name: Write plan index with Artifact ID
+        id: plan_index
+        if: ${{ steps.plan_upload.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/index";python - <<'PY'
           import json,os
           from datetime import datetime,timedelta,timezone
           from pathlib import Path
-          r=json.loads(next((Path(os.environ['RUNNER_TEMP'])/'out/run_receipts').glob('*.json')).read_text());n=datetime.now(timezone.utc)
-          (Path(os.environ['RUNNER_TEMP'])/'quota/quota_receipt.json').write_text(json.dumps({'request_attempts':r['request_attempts'],'target_date_utc':r['target_date_utc'],'retention_days':2,'created_at_utc':n.isoformat(),'expires_at_utc':(n+timedelta(days=2)).isoformat(),'append_only':True},sort_keys=True)+'\n')
+          n=datetime.now(timezone.utc);r=json.load(open('${{ steps.collector.outputs.receipt_path }}'));v={'schema_version':'E3G0D-PLAN-INDEX-1.0','plan_artifact_id':int('${{ steps.plan_upload.outputs.artifact-id }}'),'plan_sha256':'${{ steps.collector.outputs.plan_sha256 }}','source_raw_response_sha256':r.get('snapshots',[{}])[0].get('sha256'),'workflow_run_id':os.environ['GITHUB_RUN_ID'],'run_head':os.environ['GITHUB_SHA'],'request_day_utc':'${{ steps.c.outputs.request_day }}','target_date_utc':'${{ steps.c.outputs.target }}','competition_id':int('${{ steps.c.outputs.league }}'),'season_id':int('${{ steps.c.outputs.season }}'),'created_at_utc':n.isoformat(),'retention_days':30,'expires_at_utc':(n+timedelta(days=30)).isoformat(),'append_only':True,'formal_weight':0};(Path(os.environ['RUNNER_TEMP'])/'index/plan_index_receipt.json').write_text(json.dumps(v,sort_keys=True)+'\n')
           PY
       - uses: actions/upload-artifact@v4
-        if: steps.c.outputs.ok == 'true'
-        with: {name: 'football-e3g0d-quota-${{ steps.c.outputs.day }}-${{ github.run_id }}', path: '${{ runner.temp }}/quota', retention-days: 2}
-      - name: Upload immutable daily plan Artifact
-        uses: actions/upload-artifact@v4
-        if: steps.c.outputs.ok == 'true' && steps.c.outputs.upload == 'true' && steps.c.outputs.mode == 'build-plan'
-        with: {name: 'football-e3g0d-plan-${{ steps.c.outputs.day }}', path: '${{ runner.temp }}/out', retention-days: 2, if-no-files-found: error}
-      - name: Upload append-only snapshot Artifact
-        uses: actions/upload-artifact@v4
-        if: steps.c.outputs.ok == 'true' && steps.c.outputs.upload == 'true' && steps.c.outputs.mode != 'build-plan'
-        with: {name: 'football-e3g0d-${{ steps.c.outputs.mode }}-${{ steps.c.outputs.day }}-${{ github.run_id }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+        id: plan_index_upload
+        if: ${{ steps.plan_index.outcome == 'success' }}
+        continue-on-error: true
+        with: {name: 'football-e3g0d-plan-index-${{ steps.plan_upload.outputs.artifact-id }}-${{ github.run_id }}', path: '${{ runner.temp }}/index', retention-days: 30, if-no-files-found: error}
       - uses: actions/upload-artifact@v4
-        if: steps.c.outputs.ok != 'true' && steps.c.outputs.upload == 'true'
-        with: {name: 'football-e3g0d-no-network-${{ github.run_id }}', path: '${{ runner.temp }}/out', retention-days: 30}
+        id: snapshot_upload
+        if: ${{ steps.c.outputs.ok == 'true' && steps.collector.outcome == 'success' && steps.c.outputs.upload == 'true' && steps.c.outputs.mode != 'build-plan' }}
+        continue-on-error: true
+        with: {name: 'football-e3g0d-${{ steps.c.outputs.mode }}-${{ steps.c.outputs.target }}-${{ github.run_id }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+      - uses: actions/upload-artifact@v4
+        if: ${{ steps.c.outputs.ok != 'true' && steps.c.outputs.upload == 'true' }}
+        with: {name: 'football-e3g0d-no-network-${{ github.run_id }}', path: '${{ runner.temp }}/out', retention-days: 30, if-no-files-found: error}
+      - name: Preserve failure after mandatory evidence
+        if: ${{ always() && steps.c.outputs.ok == 'true' }}
+        run: |
+          [[ '${{ steps.collector.outcome }}' == success && '${{ steps.quota.outcome }}' == success && '${{ steps.quota_upload.outcome }}' == success ]]||exit 2
+          if [[ '${{ steps.c.outputs.mode }}' == build-plan && '${{ steps.c.outputs.upload }}' == true ]];then [[ '${{ steps.plan_upload.outcome }}' == success && '${{ steps.plan_index.outcome }}' == success && '${{ steps.plan_index_upload.outcome }}' == success ]]||exit 2;fi
+          if [[ '${{ steps.c.outputs.mode }}' != build-plan && '${{ steps.c.outputs.upload }}' == true ]];then [[ '${{ steps.snapshot_upload.outcome }}' == success ]]||exit 2;fi
