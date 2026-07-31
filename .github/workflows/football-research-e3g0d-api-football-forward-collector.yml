@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0}
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0, persist-credentials: false}
       - run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
@@ -78,7 +78,9 @@ jobs:
           from pathlib import Path
           t=Path('.github/workflows/football-research-e3g0d-api-football-forward-collector.yml').read_text();blocked=['contents:'+' write','actions:'+' write','pull-requests:'+' write','pull_request'+'_target','git '+'push','git '+'commit','gh pr '+'create']
           assert 'permissions:\n  contents: read' in t and not any(x in t for x in blocked);assert t.count('secrets.API_FOOTBALL_'+'KEY')==1
+          assert t.count('persist-credentials: false')==3
           assert "github.ref }}\" == 'refs/heads/main'" in t and 'API_FOOTBALL_COLLECTOR_ENABLED' in t and 'API_FOOTBALL_SCHEDULE_ENABLED' in t
+          assert 'limit <= 1 && max <= 3' in t and "github.event_name == 'schedule' && vars.API_FOOTBALL_COLLECTOR_ENABLED == 'true'" in t
           PY
           files="$(git diff --name-only "$BASE_SHA"...HEAD)"; printf '%s\n' "$files"; test "$(printf '%s\n' "$files"|sed '/^$/d'|wc -l)" -eq 9
           for f in e3g0d_common.py e3g0d_http.py e3g0d_store.py e3g0d_collect.py e3g0d_archive_core.py e3g0d_api_football_forward_collector.py e3g0d_api_football_archive_helper.py; do printf '%s\n' "$files"|grep -Fxq "football-data/research/$f"; done
@@ -94,12 +96,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: {name: 'football-e3g0d-validation-${{ github.event.pull_request.head.sha }}', path: '${{ runner.temp }}/v', retention-days: 30, if-no-files-found: error}
   collect-forward-snapshots:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && vars.API_FOOTBALL_COLLECTOR_ENABLED == 'true' && vars.API_FOOTBALL_SCHEDULE_ENABLED == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: {contents: read, actions: read}
     steps:
       - uses: actions/checkout@v4
+        with: {persist-credentials: false}
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - name: Resolve default-disabled controls
@@ -110,6 +113,7 @@ jobs:
           if [[ '${{ github.event_name }}' == workflow_dispatch ]]; then mode='${{ inputs.collector_mode }}';day='${{ inputs.target_date }}';league='${{ inputs.league_id }}';season='${{ inputs.season_id }}';limit='${{ inputs.fixture_limit }}';max='${{ inputs.max_requests }}';dry='${{ inputs.dry_run }}';net='${{ inputs.no_network }}';upload='${{ inputs.upload_artifact }}';allow='${{ inputs.allow_schedule }}';
           else day='';league=39;season=2026;dry=false;net=false;upload=true;allow=true;case '${{ github.event.schedule }}' in '5 0 * * *')mode=build-plan;limit=10;max=1;;'10 */3 * * *')mode=odds;limit=10;max=2;;'20 */4 * * *')mode=injuries;limit=10;max=2;;'*/15 10-22 * * *')mode=lineup-window;limit=10;max=6;;*)mode=preflight;limit=1;max=1;dry=true;net=true;upload=false;allow=false;;esac;fi
           [[ -n "$day" ]]||day="$(date -u +%F)";live=false;case "$mode" in build-plan|odds|injuries|lineup-window)live=true;;esac;ok=false
+          if [[ '${{ github.event_name }}' == workflow_dispatch && "$live" == true ]]; then [[ "$limit" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]] || exit 2; (( limit <= 1 && max <= 3 )) || { echo 'First live trial is hard-limited to one fixture and three attempts.' >&2; exit 2; }; fi
           if [[ "$live" == true && "${{ github.ref }}" == 'refs/heads/main' && "$API_FOOTBALL_COLLECTOR_ENABLED" == true && "$dry" == false && "$net" == false ]];then [[ '${{ github.event_name }}' == workflow_dispatch || ( '${{ github.event_name }}' == schedule && "$API_FOOTBALL_SCHEDULE_ENABLED" == true && "$allow" == true ) ]]&&ok=true;fi
           retention=30;[[ "$mode" == build-plan ]]&&retention=2;expires="$(date -u -d "+$retention days" +%FT%TZ)"
           for v in mode day league season limit max dry net upload allow live ok retention expires;do echo "$v=${!v}" >> "$GITHUB_OUTPUT";done
