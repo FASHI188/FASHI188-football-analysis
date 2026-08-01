@@ -7,6 +7,7 @@ import hashlib
 import json
 import pathlib
 import subprocess
+import sys
 from typing import Any
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -33,6 +34,8 @@ ALLOWED_PATHS = {
     "football-data/research/draw_auto_research_controller_r1.py",
     "football-data/research/validate_draw_auto_research_preflight_r1.py",
     "football-data/research/test_draw_auto_research_r1.py",
+    "football-data/research/validate_draw_auto_authorization_r1.py",
+    "football-data/research/test_draw_auto_authorization_r1.py",
     "football-data/research/draw_auto_research_identity_r1.json",
     AUTH_REL,
 }
@@ -70,10 +73,13 @@ def verify_spec(spec: dict[str, Any]) -> None:
         raise ValueError("spec status mismatch")
     if spec.get("user_authorization_record") != "rec0WJJzXiuDvAqSb":
         raise ValueError("authorization record mismatch")
-    if spec.get("data_status") != "VIEWED_DEVELOPMENT_DATA" or spec.get("formal_weight") != 0:
-        raise ValueError("data/formal boundary mismatch")
+    if spec.get("data_status") != "VIEWED_DEVELOPMENT_DATA":
+        raise ValueError("data status mismatch")
+    if spec.get("formal_weight") != 0:
+        raise ValueError("formal weight mismatch")
     budget = spec["budget"]
-    expected = {"batch_size": 20, "maximum_candidates": 200, "maximum_cumulative_seconds": 21600, "maximum_stagnant_batches": 3}
+    expected = {"batch_size": 20, "maximum_candidates": 200, "maximum_cumulative_seconds": 21600,
+                "maximum_stagnant_batches": 3}
     for key, value in expected.items():
         if budget.get(key) != value:
             raise ValueError(f"budget mismatch: {key}")
@@ -96,7 +102,19 @@ def verify_spec(spec: dict[str, Any]) -> None:
 
 def verify_workflow() -> dict[str, Any]:
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
-    required = ["runs-on: ubuntu-latest", "max-parallel: 1", "fail-fast: false", "cancel-in-progress: false", "draw_auto_research_controller_r1.py", "actions/cache/restore@v4", "actions/cache/save@v4", "actions/upload-artifact@v4", "matrix:", "slot:", "VIEWED_DEVELOPMENT_DATA"]
+    required = [
+        "runs-on: ubuntu-latest",
+        "max-parallel: 1",
+        "fail-fast: false",
+        "cancel-in-progress: false",
+        "draw_auto_research_controller_r1.py",
+        "actions/cache/restore@v4",
+        "actions/cache/save@v4",
+        "actions/upload-artifact@v4",
+        "matrix:",
+        "slot:",
+        "VIEWED_DEVELOPMENT_DATA",
+    ]
     missing = [token for token in required if token not in text]
     if missing:
         raise ValueError(f"workflow missing tokens: {missing}")
@@ -122,14 +140,18 @@ def verify_identity(identity: dict[str, Any]) -> dict[str, str]:
         blob = run("git", "hash-object", str(path.relative_to(ROOT)))
         if blob != item["git_blob_sha"]:
             raise ValueError(f"identity blob mismatch {name}: {blob} != {item['git_blob_sha']}")
-        if item.get("canonical_json_sha256") and canonical_sha(read_json(path)) != item["canonical_json_sha256"]:
-            raise ValueError(f"identity canonical mismatch: {name}")
+        if item.get("canonical_json_sha256"):
+            if canonical_sha(read_json(path)) != item["canonical_json_sha256"]:
+                raise ValueError(f"identity canonical mismatch: {name}")
         checked[name] = blob
     return checked
 
 
 def verify_datasets(spec: dict[str, Any]) -> dict[str, Any]:
-    required_header = {"competition_id", "season", "date", "home_team", "away_team", "home_last5_gf", "home_last5_ga", "home_last5_ppg", "away_last5_gf", "away_last5_ga", "away_last5_ppg", "elo_difference_with_home_advantage", "label_result"}
+    required_header = {"competition_id", "season", "date", "home_team", "away_team",
+                       "home_last5_gf", "home_last5_ga", "home_last5_ppg",
+                       "away_last5_gf", "away_last5_ga", "away_last5_ppg",
+                       "elo_difference_with_home_advantage", "label_result"}
     checks: dict[str, Any] = {}
     for competition, expected in sorted(spec["dataset_sha256"].items()):
         path = ROOT / "football-data" / "training_datasets" / competition / "point_in_time.csv"
@@ -145,9 +167,39 @@ def verify_datasets(spec: dict[str, Any]) -> dict[str, Any]:
     return checks
 
 
+def verify_authorization_payload(authorization: dict[str, Any], spec: dict[str, Any], identity: dict[str, Any]) -> None:
+    if authorization.get("schema_version") != "DRAW-AUTO-RESEARCH-AUTHORIZATION-R1.0":
+        raise ValueError("authorization schema mismatch")
+    if authorization.get("status") != "AUTHORIZED_VIEWED_DEVELOPMENT_AUTO_RESEARCH":
+        raise ValueError("authorization status mismatch")
+    if authorization.get("user_authorization_record") != "rec0WJJzXiuDvAqSb":
+        raise ValueError("authorization record mismatch")
+    if authorization.get("data_status") != "VIEWED_DEVELOPMENT_DATA" or authorization.get("formal_weight") != 0:
+        raise ValueError("authorization data/formal boundary mismatch")
+    if int(authorization.get("maximum_candidates", 0)) != int(spec["budget"]["maximum_candidates"]):
+        raise ValueError("authorization candidate budget mismatch")
+    if int(authorization.get("maximum_cumulative_seconds", 0)) != int(spec["budget"]["maximum_cumulative_seconds"]):
+        raise ValueError("authorization time budget mismatch")
+    if authorization.get("spec_canonical_sha256") != canonical_sha(spec):
+        raise ValueError("authorization spec digest mismatch")
+    if authorization.get("identity_canonical_sha256") != canonical_sha(identity):
+        raise ValueError("authorization identity digest mismatch")
+    if authorization.get("identity_git_blob_sha") != run("git", "hash-object", str(IDENTITY_PATH.relative_to(ROOT))):
+        raise ValueError("authorization identity Git blob mismatch")
+    required = list(identity.get("authorization_required_bindings") or [])
+    files = identity.get("files") or {}
+    bindings = authorization.get("bindings") or {}
+    if not required or set(bindings) != set(required):
+        raise ValueError("authorization binding set mismatch")
+    for key in required:
+        if key not in files or bindings.get(key) != files[key]:
+            raise ValueError(f"authorization binding mismatch: {key}")
+
+
 def verify_repository(mode: str) -> dict[str, Any]:
     head = run("git", "rev-parse", "HEAD")
-    if run("git", "merge-base", BASE_SHA, head) != BASE_SHA:
+    merge_base = run("git", "merge-base", BASE_SHA, head)
+    if merge_base != BASE_SHA:
         raise ValueError("HEAD not descended from base")
     changed = [line for line in run("git", "diff", "--name-only", f"{BASE_SHA}..{head}").splitlines() if line]
     unexpected = sorted(set(changed) - ALLOWED_PATHS)
@@ -156,10 +208,10 @@ def verify_repository(mode: str) -> dict[str, Any]:
     formal = [path for path in changed if path.startswith(("football-data/models/", "football-data/config/", "football-data/training_datasets/")) or "CURRENT_唯一正式规则" in path]
     if formal:
         raise ValueError(f"formal asset changes found: {formal}")
-    authorization = None
     if mode == "preauth":
         if AUTH_PATH.exists():
             raise ValueError("authorization file must be absent on code preflight HEAD")
+        authorization = None
     else:
         if not AUTH_PATH.is_file():
             raise ValueError("authorization file missing")
@@ -173,7 +225,9 @@ def verify_repository(mode: str) -> dict[str, Any]:
         auth_diff = [line for line in run("git", "diff", "--name-only", f"{frozen}..{head}").splitlines() if line]
         if auth_diff != [AUTH_REL]:
             raise ValueError(f"authorization commit contains extra files: {auth_diff}")
-    return {"exact_head": head, "changed_paths": changed, "unexpected_paths": unexpected, "formal_asset_changes": 0, "authorization_file_present": AUTH_PATH.exists(), "authorization": authorization}
+    return {"exact_head": head, "changed_paths": changed, "unexpected_paths": unexpected,
+            "formal_asset_changes": 0, "authorization_file_present": AUTH_PATH.exists(),
+            "authorization": authorization}
 
 
 def main() -> int:
@@ -185,8 +239,11 @@ def main() -> int:
         spec = read_json(SPEC_PATH)
         verify_spec(spec)
         workflow = verify_workflow()
-        checked_identity = verify_identity(read_json(IDENTITY_PATH))
+        identity = read_json(IDENTITY_PATH)
+        checked_identity = verify_identity(identity)
         repository = verify_repository(args.mode)
+        if args.mode == "authorized":
+            verify_authorization_payload(repository["authorization"], spec, identity)
         datasets = verify_datasets(spec)
         result = {
             "schema_version": "DRAW-AUTO-RESEARCH-PREFLIGHT-R1.0",
@@ -220,7 +277,9 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
-        failure = {"schema_version": "DRAW-AUTO-RESEARCH-PREFLIGHT-R1.0", "status": "FAIL_CLOSED", "mode": args.mode, "error": str(exc), "rows_parsed": 0, "labels_parsed": 0, "training_runs": 0, "scoring_runs": 0, "experiment_executed": False}
+        failure = {"schema_version": "DRAW-AUTO-RESEARCH-PREFLIGHT-R1.0", "status": "FAIL_CLOSED",
+                   "mode": args.mode, "error": str(exc), "rows_parsed": 0, "labels_parsed": 0,
+                   "training_runs": 0, "scoring_runs": 0, "experiment_executed": False}
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(failure, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(failure, ensure_ascii=False, indent=2))
