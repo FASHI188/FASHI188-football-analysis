@@ -35,12 +35,14 @@ def build_audit(root: Path) -> dict[str, Any]:
         "previous_status": "HISTORICAL_VALIDATED_VERSION",
         "silent_rewrite": False,
     }
-    audit["formal_weight"] = 0
-    audit["model_training"] = 0
-    audit["new_target_period_scoring"] = 0
-    audit["provider_network_used"] = False
-    audit["external_request_attempts"] = 0
-    audit["api_football_key_accessed"] = False
+    audit.update({
+        "formal_weight": 0,
+        "model_training": 0,
+        "new_target_period_scoring": 0,
+        "provider_network_used": False,
+        "external_request_attempts": 0,
+        "api_football_key_accessed": False,
+    })
     audit["execution_boundary"] = {
         "actual_jobs": [
             "exact-head-no-provider-and-protected-asset-gates",
@@ -63,9 +65,36 @@ def build_audit(root: Path) -> dict[str, Any]:
     return audit
 
 
+def _write_v503_claim_outputs(out: Path, audit: Mapping[str, Any], root: Path) -> dict[str, Any]:
+    """Write negative boundary records without presenting them as affirmative claims."""
+    rule_info = claims.validate_rule_sources(root)
+    records, contexts = claims.build_current_claims(audit, rule_info)
+    for record in records:
+        if record.get("claim_id") in {"round-predictive-value", "draw-signal-effectiveness"}:
+            record["claim_type"] = "SIGNAL_EFFECTIVENESS_STATUS"
+        elif record.get("claim_id") == "draw-problem-solved":
+            record["claim_type"] = "DRAW_PROBLEM_STATUS"
+    verification = claims.validate_claims(records, contexts)
+    report = claims.build_report(records, audit)
+    payloads = {
+        "claim_records.json": {
+            "schema_version": "DRAW-SIGNAL-CLAIM-RECORDS-V503-1.0",
+            "head": audit["head"],
+            "records": records,
+            "records_sha256": claims.canonical_sha(records),
+        },
+        "claim_contract_verification.json": verification,
+        "claim_report.json": report,
+    }
+    for name, value in payloads.items():
+        (out / name).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (out / "claim_report.md").write_text(claims.report_markdown(report), encoding="utf-8")
+    return {"rule_info": rule_info, "verification": verification, "report": report, "records": records}
+
+
 def write_audit(out: Path, audit: Mapping[str, Any], root: Path) -> None:
     historical.write_audit(out, audit)
-    claim_output = claims.write_claim_outputs(out, audit, root)
+    claim_output = _write_v503_claim_outputs(out, audit, root)
     metadata_path = out / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update({
