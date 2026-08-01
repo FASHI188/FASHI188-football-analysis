@@ -48,11 +48,43 @@ jobs:
           python -m py_compile football-data/research/draw_challenger_inventory_v502.py
           ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
             football-data/research/draw_challenger_inventory_v502.py
-      - name: Build read-only repository inventory
+      - name: Build read-only repository inventory and source bundle
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/draw-inventory"
           python football-data/research/draw_challenger_inventory_v502.py --output-dir "$out"
+          mkdir -p "$out/source_bundle"
+          files=(
+            DRAW_AUDIT_HANDOFF.md
+            football-data/validation/cache/v696_last_complete_season_1x2_rows.json
+            football-data/validation/cache/v6169_joint_ipf_selection_rows.json
+            football-data/benchmarks/v6_1x2_fixed1000_v6130.json
+            football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json
+            football-data/validation/diagnose_1x2_accuracy_v696.py
+            football-data/validation/evaluate_hierarchical_market_selector_v6474.py
+            football-data/validation/v6_fresh_market_forward_challengers_v6492.py
+            football-data/validation/v6_fullseason_2025_replay_v6506.py
+            football-data/validation/v6_draw_residual_override_v670.py
+            football-data/validation/v6_draw_triage_decision_v6508.py
+            football-data/validation/v6_draw_risk_operating_point_v6509.py
+            football-data/validation/validate_1x2_draw_risk_veto_v6130.py
+            football-data/validation/generate_joint_ipf_selection_rows_v6169.py
+            football-data/validation/evaluate_joint_ipf_selective_v6169.py
+            football-data/engine/build_training_dataset.py
+            football-data/engine/football_v460_engine.py
+            football-data/engine/oof_matrix_calibration.py
+            football-data/manifests/v6_draw_problem_resolution_v6510_status.json
+            football-data/manifests/v6_draw_problem_resolution_v6512_status.json
+            football-data/manifests/v6_draw_residual_override_v670_status.json
+            football-data/manifests/v6_draw_risk_operating_point_v6509_status.json
+            football-data/manifests/v6_1x2_accuracy_diagnostic_v696_status.json
+          )
+          for file in "${files[@]}"; do
+            test -f "$file"
+            mkdir -p "$out/source_bundle/$(dirname "$file")"
+            cp "$file" "$out/source_bundle/$file"
+          done
+          (cd "$out/source_bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$out/source_bundle_sha256.txt"
           python - <<'PY'
           import json, os, pathlib, subprocess
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-inventory'
@@ -65,6 +97,7 @@ jobs:
           assert meta['external_request_attempts'] == 0
           assert meta['api_football_key_accessed'] is False
           assert meta['model_training'] == 0
+          assert len(list((root / 'source_bundle').rglob('*'))) >= 20
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
