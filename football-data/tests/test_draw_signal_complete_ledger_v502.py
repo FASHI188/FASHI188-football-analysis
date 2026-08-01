@@ -1,56 +1,73 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_PATH = ROOT / "research" / "draw_signal_closure_audit_v502.py"
-FINAL_PATH = ROOT / "research" / "draw_signal_complete_ledger_v502.py"
+VERIFY_PATH = ROOT / "research" / "draw_signal_complete_ledger_v502.py"
 
 core_spec = importlib.util.spec_from_file_location("draw_signal_closure_audit_v502", CORE_PATH)
 core = importlib.util.module_from_spec(core_spec)
 assert core_spec.loader is not None
 core_spec.loader.exec_module(core)
 
-final_spec = importlib.util.spec_from_file_location("draw_signal_complete_ledger_v502", FINAL_PATH)
-finalizer = importlib.util.module_from_spec(final_spec)
-assert final_spec.loader is not None
-final_spec.loader.exec_module(finalizer)
+verify_spec = importlib.util.spec_from_file_location("draw_signal_complete_ledger_v502", VERIFY_PATH)
+verifier = importlib.util.module_from_spec(verify_spec)
+assert verify_spec.loader is not None
+verify_spec.loader.exec_module(verifier)
 
 
 class DrawSignalCompleteLedgerTests(unittest.TestCase):
-    def test_family_inference_does_not_rename_known_routes(self):
-        self.assertEqual(finalizer.infer_family("validate_1x2_injury_onset_fast100_v6131.py"), "availability and disciplinary context")
-        self.assertEqual(finalizer.infer_family("v6_1x2_market_movement_v6105_status.json"), "bookmaker market level/movement/dispersion")
-        self.assertEqual(finalizer.infer_family("v6_zero_modified_skellam_draw_v672.py"), "score/goal-difference matrix")
+    def test_deliberately_omitted_research_asset_fails_coverage(self):
+        coverage = core.research_asset_coverage(["a.py", "b.json"], [{"path": "a.py", "matched": True}])
+        self.assertFalse(coverage["all_covered"])
+        self.assertEqual(coverage["missing"], ["b.json"])
+        with self.assertRaises(ValueError):
+            verifier.verify_asset_coverage(coverage)
 
-    def test_pit_inference_is_fail_closed(self):
-        self.assertEqual(finalizer.infer_pit("market.py", "closing odds"), "RETROSPECTIVE_MARKET_REFERENCE_TIMESTAMP_UNPROVEN")
-        self.assertEqual(finalizer.infer_pit("random100.py", ""), "RANDOM_SAMPLE_NOT_PROMOTION_GRADE")
-        self.assertEqual(finalizer.infer_pit("unknown.py", ""), "PIT_STATUS_NOT_PROVEN_IN_FILE")
+    def test_content_based_asset_discovery_does_not_require_draw_or_1x2_filename(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "season_phase_route.py"
+            path.write_text('DIRECTIONS=("home","draw","away")\ndef evaluate(rows):\n    return accuracy_score(rows)\n', encoding="utf-8")
+            self.assertTrue(core.is_expected_research_asset(path))
 
-    def test_extra_identity_fields_are_not_new_signals(self):
-        feature = {
-            "fields": [{
-                "field": "venue", "classification": "UNKNOWN_PIT_STATUS",
-                "pit_safe": False, "substantive_predictive_candidate": True,
-                "previously_tested_exact_or_alias": False, "tested_alias_families": [],
-                "untested": True, "qualifies_existing_pit_safe_untested": False,
-            }]
-        }
-        result = finalizer.tighten_feature_difference(feature)
-        row = result["fields"][0]
-        self.assertEqual(row["classification"], "PIT_SAFE_STRUCTURAL")
-        self.assertFalse(row["substantive_predictive_candidate"])
-        self.assertEqual(result["EXISTING_PIT_SAFE_UNTESTED_FEATURES"], [])
-        self.assertEqual(result["UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED"], [])
+    def test_both_legal_decisions_are_accepted_when_evidence_matches(self):
+        negative = verifier.verify_decision_evidence(core.NEGATIVE_DECISION, [], None)
+        self.assertTrue(negative["consistent"])
+        candidate = {"field": "new_signal"}
+        prereg = core.make_preregistration([candidate])
+        positive = verifier.verify_decision_evidence(core.POSITIVE_DECISION, [candidate], prereg)
+        self.assertEqual(positive["candidate_count"], 1)
 
-    def test_research_file_discovery_excludes_cache(self):
-        paths = finalizer.relevant_research_files(ROOT.parent)
-        self.assertTrue(paths)
-        self.assertFalse(any("/cache/" in path.as_posix() for path in paths))
-        self.assertTrue(all("draw" in path.name.lower() or "1x2" in path.name.lower() for path in paths))
+    def test_mismatched_decision_fails_closed(self):
+        with self.assertRaises(ValueError):
+            verifier.verify_decision_evidence(core.NEGATIVE_DECISION, [{"field": "new_signal"}], None)
+
+    def test_workflow_allows_both_decisions_without_negative_hardcode(self):
+        workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "football-draw-challenger-v502.yml"
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn("ALLOWED_DECISIONS", text)
+        self.assertNotIn("== 'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING'", text)
+        self.assertNotIn("UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED'] == []", text)
+
+    def test_verify_closure_outputs_accepts_positive_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = {"field": "new_signal"}
+            prereg = core.make_preregistration([candidate])
+            coverage = {"expected": ["a.py"], "matched": ["a.py"], "missing": [], "extra": [], "all_covered": True, "expected_count": 1, "matched_count": 1}
+            base = {"formal_weight": 0, "provider_network_used": False, "external_request_attempts": 0, "api_football_key_accessed": False, "model_training": 0, "decision": core.POSITIVE_DECISION}
+            (root / "closure_audit.json").write_text(json.dumps({**base, "preregistration": prereg, "research_asset_coverage": coverage}), encoding="utf-8")
+            (root / "feature_difference.json").write_text(json.dumps({"EXISTING_PIT_SAFE_UNTESTED_FEATURES": [candidate], "UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED": []}), encoding="utf-8")
+            (root / "decision.json").write_text(json.dumps({"decision": core.POSITIVE_DECISION}), encoding="utf-8")
+            (root / "complete_research_file_ledger.json").write_text(json.dumps({"count": 1, "rows": [{"path": "a.py", "formal_weight": 0}], "coverage": coverage}), encoding="utf-8")
+            (root / "metadata.json").write_text(json.dumps(base), encoding="utf-8")
+            result = verifier.verify_closure_outputs(root)
+            self.assertEqual(result["decision_check"]["expected_decision"], core.POSITIVE_DECISION)
 
 
 if __name__ == "__main__":
