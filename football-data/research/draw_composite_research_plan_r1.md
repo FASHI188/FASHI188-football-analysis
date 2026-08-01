@@ -29,3 +29,7 @@ The loop stops at 200 candidates, six cumulative research hours, three complete 
 ## Outputs
 
 The final Artifact contains checkpoints, the complete ledger, every candidate result and failure, per-fold and per-league metrics, calibration, batch summaries, Top 5, the unique recommended challenger, the stop reason, and whether future untouched data validation is worth waiting for. Large training datasets are never copied into Artifacts.
+
+## Authorization identity
+
+After Codex accepts the frozen code HEAD, the authorization-only child commit must bind the identity Git blob and every frozen contract, runner, workflow, validator, test, preregistration, receipt and report-plan entry. Missing or altered bindings fail closed before any label access.
