@@ -15,7 +15,7 @@ spec.loader.exec_module(module)
 class DrawSignalClosureAuditTests(unittest.TestCase):
     def test_required_version_families_are_registered(self):
         versions = {row["version"] for row in module.EXPERIMENT_SPECS}
-        missing = [prefix for prefix in module.REQUIRED_VERSION_PREFIXES if not any(version.startswith(prefix) for v in versions)]
+        missing = [prefix for prefix in module.REQUIRED_VERSION_PREFIXES if not any(version.startswith(prefix) for version in versions)]
         self.assertEqual(missing, [])
 
     def test_synthetic_pit_safe_covered_untested_field_becomes_candidate_and_preregistration(self):
