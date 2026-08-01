@@ -1,0 +1,144 @@
+name: Football KOR Round Ablation R1
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/football-kor-round-ablation-r1.yml"
+      - "football-data/research/kor_round_ablation_r1_contract.json"
+      - "football-data/research/kor_round_preflight_r1.py"
+      - "football-data/research/kor_round_ablation_r1.py"
+      - "football-data/research/kor_round_run_authorization_r1.json"
+      - "football-data/tests/test_kor_round_research_r1.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kor-round-ablation-r1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  research-gated-run:
+    runs-on: ubuntu-24.04
+    env:
+      BASE_MAIN: 605abf2d9f98c46f063106c7bd47193b96e588e4
+      EVIDENCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Exact-head and protected-asset gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVIDENCE_HEAD"
+          changed="$(git diff --name-only "$BASE_MAIN"...HEAD)"
+          printf '%s\n' "$changed"
+          ! printf '%s\n' "$changed" | grep -E '(^|/)(models?|processed|raw|training_datasets|league_profiles|config|CURRENT)'
+          ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
+            football-data/research/kor_round_preflight_r1.py \
+            football-data/research/kor_round_ablation_r1.py
+          test ! -e football-data/research/__pycache__
+
+      - name: Compile and run frozen tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/kor_round_preflight_r1.py \
+            football-data/research/kor_round_ablation_r1.py \
+            football-data/tests/test_kor_round_research_r1.py
+          python -m unittest football-data/tests/test_kor_round_research_r1.py -v
+
+      - name: Run PIT and holdout-seal preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/kor-round-ablation-r1"
+          mkdir -p "$root/preflight" "$root/result"
+          extra=()
+          if test -f football-data/research/kor_round_run_authorization_r1.json; then
+            extra+=(--allow-authorization)
+            printf 'authorized\n' > "$root/mode.txt"
+          else
+            printf 'preflight-only\n' > "$root/mode.txt"
+          fi
+          python football-data/research/kor_round_preflight_r1.py \
+            --contract football-data/research/kor_round_ablation_r1_contract.json \
+            --output-dir "$root/preflight" \
+            "${extra[@]}"
+          cp football-data/research/kor_round_ablation_r1_contract.json "$root/contract.json"
+
+      - name: Run single authorized ablation
+        if: ${{ hashFiles('football-data/research/kor_round_run_authorization_r1.json') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          root="$RUNNER_TEMP/kor-round-ablation-r1"
+          python football-data/research/kor_round_ablation_r1.py \
+            --preflight-receipt "$root/preflight/preflight_receipt.json" \
+            --output-dir "$root/result"
+          cp football-data/research/kor_round_run_authorization_r1.json "$root/run_authorization.json"
+
+      - name: Create exact-head artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/kor-round-ablation-r1"
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          from datetime import datetime, timezone
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "kor-round-ablation-r1"
+          files = {}
+          for path in sorted(root.rglob("*")):
+              if path.is_file() and path.name != "artifact_metadata.json":
+                  files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          mode = (root / "mode.txt").read_text(encoding="utf-8").strip()
+          payload = {
+              "schema_version": "KOR-ROUND-ABLATION-R1-ARTIFACT-1.0",
+              "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "checkout_head": head,
+              "evidence_head": os.environ["EVIDENCE_HEAD"],
+              "run_head": head,
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "mode": mode,
+              "formal_weight": 0,
+              "api_football_requests": 0,
+              "provider_requests": 0,
+              "secret_access": False,
+              "model_diff": 0,
+              "formal_data_diff": 0,
+              "config_diff": 0,
+              "current_diff": 0,
+              "files": files,
+          }
+          assert payload["checkout_head"] == payload["evidence_head"] == payload["run_head"]
+          (root / "artifact_metadata.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload research evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-kor-round-ablation-r1-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kor-round-ablation-r1
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 6
