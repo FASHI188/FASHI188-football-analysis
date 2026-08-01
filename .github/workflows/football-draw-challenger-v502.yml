@@ -6,6 +6,7 @@ on:
     branches: [research/draw-challenger-v502]
     paths:
       - "football-data/audit/draw_signal_asset_registry_v502.b85"
+      - "football-data/audit/draw_signal_asset_registry_v502.provenance.json"
       - "football-data/audit/draw_signal_closure_engine_v502_r4.py"
       - "football-data/research/draw_challenger_*.py"
       - "football-data/research/draw_signal_*.py"
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "football-data/audit/draw_signal_asset_registry_v502.b85"
+      - "football-data/audit/draw_signal_asset_registry_v502.provenance.json"
       - "football-data/audit/draw_signal_closure_engine_v502_r4.py"
       - "football-data/research/draw_challenger_*.py"
       - "football-data/research/draw_signal_*.py"
@@ -61,6 +63,7 @@ jobs:
             football-data/tests/test_draw_signal_closure_audit_v502.py \
             football-data/tests/test_draw_signal_complete_ledger_v502.py
           test -s football-data/audit/draw_signal_asset_registry_v502.b85
+          test -s football-data/audit/draw_signal_asset_registry_v502.provenance.json
           ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
             football-data/research/draw_signal_closure_engine_v502_r3.py \
             football-data/audit/draw_signal_closure_engine_v502_r4.py \
@@ -121,29 +124,44 @@ jobs:
           assert complete['count'] == len(complete['rows'])
           assert all((row['included'] and row['inclusion_reason']) or ((not row['included']) and row['exclusion_reason']) for row in complete['rows'])
 
+          provenance = audit['research_asset_registry_provenance']
+          assert provenance['source_index_tree_sha256'] == core.SOURCE_INDEX_TREE_SHA256
+          assert provenance['source_index_tree_sha256_verified'] is True
+          assert provenance['source_index_entry_count'] == core.SOURCE_INDEX_ENTRY_COUNT
+          assert provenance['source_head_present'] is False
+
           route = audit['experiment_route_closure']
           if route['blocks_exhausted']:
               assert audit['decision'] != core.NEGATIVE_DECISION
           global_candidates = feature['EXISTING_PIT_SAFE_UNTESTED_FEATURES']
-          domain_candidates = feature['DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES']
-          expected, prereg = core.decide_and_preregister(global_candidates, domain_candidates, route)
+          strict_domain = feature['DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES']
+          reconstructed_domain = feature['DOMAIN_SPECIFIC_RECONSTRUCTED_RESEARCH_CANDIDATES']
+          expected, prereg = core.decide_and_preregister(global_candidates, strict_domain + reconstructed_domain, route)
           assert audit['decision'] == expected
           assert audit['preregistration'] == prereg
           if expected == core.POSITIVE_DECISION:
               assert audit['preregistration']['run_authorized'] is False
+              assert audit['preregistration']['formal_promotion_authorized'] is False
 
           market_aliases = {'ahh','avgaha','avgahh','b365aha','b365ahh','b36ca','bfeaha','bfeahh','maxaha','maxahh','paha','pahh'}
           by_name = {row['field'].lower(): row for row in feature['fields']}
           assert market_aliases.issubset(by_name)
           assert all(by_name[name]['classification'] == 'RETROSPECTIVE_MARKET_REFERENCE_TIMESTAMP_UNPROVEN' for name in market_aliases)
 
-          round_rows = [row for row in feature['fields'] if row['field'].lower() == 'round']
+          round_rows = [row for row in reconstructed_domain if row['field'].lower() == 'round']
           assert len(round_rows) == 1
           round_row = round_rows[0]
-          assert round_row['classification'] == 'PIT_SAFE_PREDICTION_TIME'
+          assert round_row['classification'] == core.RECONSTRUCTED_CLASSIFICATION
           assert round_row['qualifies_existing_pit_safe_untested'] is False
-          assert round_row['qualifies_domain_specific_pit_safe_untested'] is True
+          assert round_row['qualifies_domain_specific_pit_safe_untested'] is False
+          assert round_row['qualifies_domain_specific_reconstructed_research_candidate'] is True
+          assert round_row['forward_pit_proof_required'] is True
           assert any(item['competition'] == 'KOR_KLeague1' and item['rows'] >= 500 and item['season_count'] >= 3 for item in round_row['eligible_domain_specific_scopes'])
+          round_prereg = [item for item in audit['preregistration']['features'] if item['field'].lower() == 'round']
+          assert len(round_prereg) == 1
+          assert round_prereg[0]['scope'] == core.RECONSTRUCTED_SCOPE
+          assert audit['preregistration']['forward_pit_proof_required'] is True
+          assert audit['preregistration']['holdout_status'] == 'NOT_YET_PROVEN_UNTOUCHED'
           PY
       - name: Create exact-head artifact metadata
         shell: bash
@@ -153,6 +171,7 @@ jobs:
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-closure-audit'
           head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
           closure = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
+          audit = json.loads((root / 'closure' / 'closure_audit.json').read_text(encoding='utf-8'))
           files = {}
           for path in sorted(root.rglob('*')):
               if path.is_file():
@@ -165,6 +184,7 @@ jobs:
               'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
               'decision': closure['decision'],
               'audit_sha256': closure['audit_sha256'],
+              'registry_source_index_tree_sha256': audit['research_asset_registry_provenance']['source_index_tree_sha256'],
               'formal_weight': 0,
               'provider_network_used': False,
               'external_request_attempts': 0,
