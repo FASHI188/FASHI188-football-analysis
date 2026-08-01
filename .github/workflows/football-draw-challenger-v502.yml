@@ -5,17 +5,17 @@ on:
     branches: [research/draw-challenger-v502]
     paths:
       - "football-data/research/draw_challenger_*.py"
-      - "football-data/research/draw_signal_closure_audit_v502.py"
+      - "football-data/research/draw_signal_*.py"
       - "football-data/tests/test_draw_challenger_*.py"
-      - "football-data/tests/test_draw_signal_closure_audit_v502.py"
+      - "football-data/tests/test_draw_signal_*.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   pull_request:
     branches: [main]
     paths:
       - "football-data/research/draw_challenger_*.py"
-      - "football-data/research/draw_signal_closure_audit_v502.py"
+      - "football-data/research/draw_signal_*.py"
       - "football-data/tests/test_draw_challenger_*.py"
-      - "football-data/tests/test_draw_signal_closure_audit_v502.py"
+      - "football-data/tests/test_draw_signal_*.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   workflow_dispatch:
 
@@ -51,17 +51,27 @@ jobs:
           python -m py_compile \
             football-data/research/draw_challenger_inventory_v502.py \
             football-data/research/draw_signal_closure_audit_v502.py \
-            football-data/tests/test_draw_signal_closure_audit_v502.py
+            football-data/research/draw_signal_complete_ledger_v502.py \
+            football-data/tests/test_draw_signal_closure_audit_v502.py \
+            football-data/tests/test_draw_signal_complete_ledger_v502.py
           ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
             football-data/research/draw_challenger_inventory_v502.py \
             football-data/research/draw_signal_closure_audit_v502.py \
-            football-data/tests/test_draw_signal_closure_audit_v502.py
+            football-data/research/draw_signal_complete_ledger_v502.py \
+            football-data/tests/test_draw_signal_closure_audit_v502.py \
+            football-data/tests/test_draw_signal_complete_ledger_v502.py
           changed="$(git diff --name-only "$BASE_MAIN"...HEAD)"
           ! printf '%s\n' "$changed" | grep -E '(^|/)(models?|processed|team_strengths|config|CURRENT|formal_core_v460|oof_matrix_calibration_v461_status)'
       - name: Unit tests for audit logic
-        run: python -m unittest football-data/tests/test_draw_signal_closure_audit_v502.py -v
-      - name: Build read-only inventory and signal-closure audit
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python -m unittest football-data/tests/test_draw_signal_closure_audit_v502.py -v
+          python -m unittest football-data/tests/test_draw_signal_complete_ledger_v502.py -v
+      - name: Build complete read-only signal-closure audit
         shell: bash
+        env:
+          PYTHONPATH: football-data/research
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/draw-closure-audit"
@@ -70,6 +80,7 @@ jobs:
           mkdir -p "$inventory" "$closure"
           python football-data/research/draw_challenger_inventory_v502.py --output-dir "$inventory"
           python football-data/research/draw_signal_closure_audit_v502.py --output-dir "$closure"
+          python football-data/research/draw_signal_complete_ledger_v502.py --closure-dir "$closure"
           git status --short > "$root/git_status_after_audit.txt"
           python - <<'PY'
           import json, os, pathlib, subprocess
@@ -77,9 +88,10 @@ jobs:
           meta = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
           audit = json.loads((root / 'closure' / 'closure_audit.json').read_text(encoding='utf-8'))
           ledger = json.loads((root / 'closure' / 'experiment_ledger.json').read_text(encoding='utf-8'))
+          complete = json.loads((root / 'closure' / 'complete_research_file_ledger.json').read_text(encoding='utf-8'))
           features = json.loads((root / 'closure' / 'feature_difference.json').read_text(encoding='utf-8'))
           head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
-          assert meta['checkout_head'] == audit['head'] == ledger['head'] == head == os.environ['EVIDENCE_HEAD']
+          assert meta['checkout_head'] == audit['head'] == ledger['head'] == complete['head'] == head == os.environ['EVIDENCE_HEAD']
           assert meta['formal_weight'] == audit['formal_weight'] == 0
           assert meta['provider_network_used'] is False
           assert meta['external_request_attempts'] == 0
@@ -87,18 +99,18 @@ jobs:
           assert meta['model_training'] == 0
           assert audit['missing_required_version_prefixes'] == []
           assert audit['experiment_count'] >= 40
+          assert audit['all_draw_1x2_research_files_covered'] is True
+          assert ledger['all_draw_1x2_research_files_covered'] is True
+          assert complete['count'] == audit['complete_research_file_count'] == ledger['complete_research_file_count']
+          assert complete['count'] >= 170
+          assert all(row['formal_weight'] == 0 for row in complete['rows'])
           assert features['processed_csv_count'] > 0
           assert features['processed_total_rows_scanned'] > 0
-          assert meta['decision'] in {
-              'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING',
-              'PRE_REGISTRATION_REQUIRED_NO_TRAINING_YET',
-          }
-          if meta['decision'] == 'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING':
-              assert features['EXISTING_PIT_SAFE_UNTESTED_FEATURES'] == []
-              assert audit['preregistration'] is None
-          else:
-              assert features['EXISTING_PIT_SAFE_UNTESTED_FEATURES']
-              assert audit['preregistration']['status'] == 'PRE_REGISTERED_NOT_RUN'
+          assert features['field_classification_counts'].get('UNKNOWN_PIT_STATUS', 0) == 0
+          assert meta['decision'] == audit['decision'] == 'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING'
+          assert features['EXISTING_PIT_SAFE_UNTESTED_FEATURES'] == []
+          assert features['UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED'] == []
+          assert audit['preregistration'] is None
           PY
       - name: Create exact-head artifact metadata
         shell: bash
@@ -107,6 +119,7 @@ jobs:
           import hashlib, json, os, pathlib, subprocess
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-closure-audit'
           head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          closure = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
           files = {}
           for path in sorted(root.rglob('*')):
               if path.is_file():
@@ -117,6 +130,9 @@ jobs:
               'run_head': head,
               'workflow_run_id': os.environ['GITHUB_RUN_ID'],
               'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'decision': closure['decision'],
+              'audit_sha256': closure['audit_sha256'],
+              'complete_research_file_count': closure['complete_research_file_count'],
               'formal_weight': 0,
               'provider_network_used': False,
               'external_request_attempts': 0,
