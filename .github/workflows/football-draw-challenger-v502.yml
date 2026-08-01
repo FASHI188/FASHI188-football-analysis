@@ -1,0 +1,74 @@
+name: Football Draw Challenger V5.0.2 Research
+
+on:
+  push:
+    branches: [research/draw-challenger-v502]
+    paths:
+      - "football-data/research/draw_challenger_*.py"
+      - "football-data/tests/test_draw_challenger_*.py"
+      - "football-data/research/contracts/draw_challenger_*.json"
+      - ".github/workflows/football-draw-challenger-v502.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/research/draw_challenger_*.py"
+      - "football-data/tests/test_draw_challenger_*.py"
+      - "football-data/research/contracts/draw_challenger_*.json"
+      - ".github/workflows/football-draw-challenger-v502.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-draw-challenger-v502-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EVIDENCE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.EVIDENCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Exact head and no-provider static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EVIDENCE_HEAD"
+          python -m py_compile football-data/research/draw_challenger_inventory_v502.py
+          ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
+            football-data/research/draw_challenger_inventory_v502.py
+      - name: Build read-only repository inventory
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/draw-inventory"
+          python football-data/research/draw_challenger_inventory_v502.py --output-dir "$out"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-inventory'
+          meta = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
+          inv = json.loads((root / 'inventory.json').read_text(encoding='utf-8'))
+          head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          assert meta['checkout_head'] == inv['head'] == head == os.environ['EVIDENCE_HEAD']
+          assert meta['formal_weight'] == 0
+          assert meta['provider_network_used'] is False
+          assert meta['external_request_attempts'] == 0
+          assert meta['api_football_key_accessed'] is False
+          assert meta['model_training'] == 0
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-draw-inventory-v502-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/draw-inventory
+          retention-days: 30
+          if-no-files-found: error
