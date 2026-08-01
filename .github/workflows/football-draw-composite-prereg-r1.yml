@@ -8,6 +8,8 @@ on:
       - "football-data/research/draw_composite_*"
       - "football-data/research/validate_draw_auto_research_preflight_r1.py"
       - "football-data/research/test_draw_auto_research_r1.py"
+      - "football-data/research/validate_draw_auto_authorization_r1.py"
+      - "football-data/research/test_draw_auto_authorization_r1.py"
       - ".github/workflows/football-draw-composite-prereg-r1.yml"
   push:
     branches: ["research/draw-composite-prereg-r1"]
@@ -65,18 +67,29 @@ jobs:
             football-data/research/draw_auto_research_engine_r1.py \
             football-data/research/draw_auto_research_controller_r1.py \
             football-data/research/validate_draw_auto_research_preflight_r1.py \
-            football-data/research/test_draw_auto_research_r1.py
+            football-data/research/test_draw_auto_research_r1.py \
+            football-data/research/validate_draw_auto_authorization_r1.py \
+            football-data/research/test_draw_auto_authorization_r1.py
 
       - name: Run production and fail-closed tests
         env:
           PYTHONPATH: football-data/research
-        run: python -m unittest -v football-data/research/test_draw_auto_research_r1.py
+        run: |
+          python -m unittest -v \
+            football-data/research/test_draw_auto_research_r1.py \
+            football-data/research/test_draw_auto_authorization_r1.py
 
       - name: Run exact-HEAD zero-label preflight
         run: |
           python football-data/research/validate_draw_auto_research_preflight_r1.py \
             --mode "${{ steps.mode.outputs.mode }}" \
             --output /tmp/draw_auto_research_preflight.json
+
+      - name: Validate per-file authorization bindings before any label access
+        if: ${{ steps.mode.outputs.authorized == 'true' }}
+        run: |
+          python football-data/research/validate_draw_auto_authorization_r1.py \
+            --output /tmp/draw_auto_authorization_bindings.json
 
       - name: Assert zero-label boundary
         run: |
