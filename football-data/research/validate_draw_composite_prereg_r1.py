@@ -8,10 +8,12 @@ read result labels, access Provider/API/Secret, or modify formal assets.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import pathlib
 import subprocess
+import sys
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -64,6 +66,7 @@ def validate_documents() -> dict[str, Any]:
     prereg = load(FILES["prereg"])
     contract = load(FILES["contract"])
 
+    # Route universe.
     rows = route.get("rows") or []
     require(len(rows) == 42, f"route count mismatch: {len(rows)}")
     route_ids = [str(row.get("id")) for row in rows]
@@ -77,6 +80,7 @@ def validate_documents() -> dict[str, Any]:
     require(len(route.get("candidate_improvements") or []) == 6, "candidate list length mismatch")
     require(route.get("exhaustion_claim_allowed") is False, "exhaustion claim must remain prohibited")
 
+    # Raw-field universe and exclusions.
     groups = field.get("groups") or []
     require(sum(int(group["count"]) for group in groups) == 176, "raw-field count not 176")
     all_fields: list[str] = []
@@ -99,6 +103,7 @@ def validate_documents() -> dict[str, Any]:
     require(field.get("unknown_pit_policy") == "FAIL_CLOSED_EXCLUDE", "unknown PIT policy weakened")
     require(field.get("formal_promotion_authorized") is False, "formal promotion must be false")
 
+    # Primary candidate and comparison universe.
     require(prereg.get("recommended_challenger") == "C5_DRAW_COMPOSITE_PIT_R1_CORE",
             "recommended challenger changed")
     models = prereg.get("frozen_candidate_models") or []
@@ -123,6 +128,7 @@ def validate_documents() -> dict[str, Any]:
     require(prereg["holdout_status"]["formal_promotion_possible_from_next_run"] is False,
             "formal promotion cannot be possible")
 
+    # Supplemental contract binding.
     gap = prereg.get("gap_closure") or {}
     require(gap.get("execution_contract_path") ==
             "football-data/research/draw_composite_execution_contract_r1.json",
@@ -134,6 +140,7 @@ def validate_documents() -> dict[str, Any]:
     require(contract["base_main_sha"] == "605abf2d9f98c46f063106c7bd47193b96e588e4",
             "base main SHA changed")
 
+    # Dataset, fold and source identity.
     universe = contract["dataset_universe"]
     require(universe["manifest_total_rows"] == 27616, "manifest row count changed")
     require(len(universe["competitions"]) == 17, "competition count not 17")
@@ -148,6 +155,7 @@ def validate_documents() -> dict[str, Any]:
         require(str(item["path"]).startswith("football-data/"), f"{name}: invalid path")
         require(len(str(item["git_blob_sha"])) == 40, f"{name}: invalid blob SHA")
 
+    # PIT, feature, solver, calibration and support gates.
     order = contract["row_identity_and_order"]
     require(order["same_day_policy"].startswith("predict every match"), "same-day gate weakened")
     require(order["date_semantics"].startswith("date-only sources are gated conservatively"),
@@ -228,18 +236,52 @@ def validate_repository(contract: dict[str, Any]) -> dict[str, Any]:
     allowed = set(contract["source_tree_policy"]["allowed_post_base_paths"])
     unexpected = sorted(set(changed) - allowed)
     require(not unexpected, f"unexpected post-base paths: {unexpected}")
+
+    source_blobs = {}
     for name, item in contract["frozen_source_assets"].items():
         path = ROOT / item["path"]
         require(path.is_file(), f"{name}: source asset missing: {path}")
         blob = git("hash-object", str(path.relative_to(ROOT)))
         require(blob == item["git_blob_sha"],
                 f"{name}: blob mismatch expected {item['git_blob_sha']} got {blob}")
+        source_blobs[name] = blob
+
+    required_header = {
+        "competition_id", "season", "stage", "date", "home_team", "away_team",
+        "home_last5_gf", "home_last5_ga", "home_last5_ppg",
+        "away_last5_gf", "away_last5_ga", "away_last5_ppg",
+        "home_elo_pre_match", "away_elo_pre_match",
+        "elo_difference_with_home_advantage", "stage_unverified_flag",
+        "label_result",
+    }
+    dataset_checks = {}
+    for cid, item in contract["dataset_universe"]["competitions"].items():
+        path = ROOT / "football-data" / "training_datasets" / cid / "point_in_time.csv"
+        require(path.is_file(), f"{cid}: PIT dataset missing: {path}")
+        digest = sha256(path)
+        require(digest == item["sha256"],
+                f"{cid}: dataset SHA mismatch expected {item['sha256']} got {digest}")
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            first = handle.readline()
+        header = next(csv.reader([first]))
+        missing = sorted(required_header - set(header))
+        require(not missing, f"{cid}: required header columns missing: {missing}")
+        dataset_checks[cid] = {
+            "sha256": digest,
+            "header_column_count": len(header),
+            "rows_parsed": 0,
+            "labels_parsed": 0,
+        }
+
     require(not AUTH.exists(), "run authorization file exists before separate authorization")
     return {
         "exact_head": current_head,
         "frozen_base": base,
         "changed_paths": changed,
         "unexpected_paths": unexpected,
+        "source_blobs": source_blobs,
+        "dataset_checks": dataset_checks,
+        "dataset_count": len(dataset_checks),
         "authorization_file_present": AUTH.exists(),
     }
 
