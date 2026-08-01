@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +22,8 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
         self.assertEqual(module.classify_column("HS")[0], "POSTMATCH_FORBIDDEN")
         self.assertEqual(module.classify_column("Date")[0], "PIT_SAFE_STRUCTURAL")
         self.assertEqual(module.classify_column("AvgD")[0], "RETROSPECTIVE_MARKET_REFERENCE")
+        self.assertEqual(module.classify_column("1XBA")[0], "RETROSPECTIVE_MARKET_REFERENCE")
+        self.assertEqual(module.classify_column("BFCH")[0], "RETROSPECTIVE_MARKET_REFERENCE")
         self.assertEqual(module.classify_column("Referee")[0], "PIT_UNPROVEN_CONTEXT")
         self.assertEqual(module.classify_column("mystery_feature")[0], "UNKNOWN_PIT_STATUS")
 
@@ -33,6 +33,13 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
             {"file": "m.json", "json_path": "FULL_1X2.accuracy", "value": 0.52},
         ]
         self.assertEqual(module.choose_metric("accuracy", evidence), 0.52)
+
+    def test_metric_matching_uses_leaf_only(self):
+        evidence = module.collect_metric_evidence([(
+            "x.json",
+            {"best_draw_precision_diagnostic": {"hits": 975, "draw_precision": 0.339}},
+        )])
+        self.assertEqual([item["value"] for item in evidence["draw_precision"]], [0.339])
 
     def test_repeated_target_detection(self):
         objects = [("x.json", {"evaluation_set_status": {"not_a_final_blind_holdout": True, "reason": "repeatedly inspected"}})]
