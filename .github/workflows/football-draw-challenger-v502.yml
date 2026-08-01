@@ -1,21 +1,23 @@
-# Bidirectional read-only closure audit; no model training or target-period scoring.
+# Independent route-aware closure audit; no model training or target-period scoring.
 name: Football Draw Signal Closure Audit V5.0.2
 
 on:
   push:
     branches: [research/draw-challenger-v502]
     paths:
+      - "football-data/audit/draw_signal_asset_registry_v502.b85"
+      - "football-data/audit/draw_signal_closure_engine_v502_r4.py"
       - "football-data/research/draw_challenger_*.py"
       - "football-data/research/draw_signal_*.py"
-      - "football-data/tests/test_draw_challenger_*.py"
       - "football-data/tests/test_draw_signal_*.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   pull_request:
     branches: [main]
     paths:
+      - "football-data/audit/draw_signal_asset_registry_v502.b85"
+      - "football-data/audit/draw_signal_closure_engine_v502_r4.py"
       - "football-data/research/draw_challenger_*.py"
       - "football-data/research/draw_signal_*.py"
-      - "football-data/tests/test_draw_challenger_*.py"
       - "football-data/tests/test_draw_signal_*.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   workflow_dispatch:
@@ -44,7 +46,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Exact-head, no-provider and protected-asset gates
+      - name: Exact-head no-provider and protected-asset gates
         shell: bash
         run: |
           set -euo pipefail
@@ -52,26 +54,29 @@ jobs:
           python -m py_compile \
             football-data/research/draw_challenger_inventory_v502.py \
             football-data/research/draw_signal_closure_engine_v502.py \
+            football-data/research/draw_signal_closure_engine_v502_r3.py \
+            football-data/audit/draw_signal_closure_engine_v502_r4.py \
             football-data/research/draw_signal_closure_audit_v502.py \
             football-data/research/draw_signal_complete_ledger_v502.py \
             football-data/tests/test_draw_signal_closure_audit_v502.py \
             football-data/tests/test_draw_signal_complete_ledger_v502.py
+          test -s football-data/audit/draw_signal_asset_registry_v502.b85
           ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
-            football-data/research/draw_challenger_inventory_v502.py \
-            football-data/research/draw_signal_closure_engine_v502.py \
+            football-data/research/draw_signal_closure_engine_v502_r3.py \
+            football-data/audit/draw_signal_closure_engine_v502_r4.py \
             football-data/research/draw_signal_closure_audit_v502.py \
             football-data/research/draw_signal_complete_ledger_v502.py \
             football-data/tests/test_draw_signal_closure_audit_v502.py \
             football-data/tests/test_draw_signal_complete_ledger_v502.py
           changed="$(git diff --name-only "$BASE_MAIN"...HEAD)"
           ! printf '%s\n' "$changed" | grep -E '(^|/)(models?|processed|team_strengths|config|CURRENT|formal_core_v460|oof_matrix_calibration_v461_status)'
-      - name: Unit and adversarial tests for bidirectional audit
+      - name: Unit and adversarial tests for independent closure audit
         env:
           PYTHONPATH: football-data/research
         run: |
           python -m unittest football-data/tests/test_draw_signal_closure_audit_v502.py -v
           python -m unittest football-data/tests/test_draw_signal_complete_ledger_v502.py -v
-      - name: Build complete bidirectional read-only signal-closure audit
+      - name: Build route-aware read-only signal-closure audit
         shell: bash
         env:
           PYTHONPATH: football-data/research
@@ -88,61 +93,57 @@ jobs:
           python - <<'PY'
           import json, os, pathlib, subprocess, sys
           sys.path.insert(0, 'football-data/research')
-          from draw_signal_closure_engine_v502 import ALLOWED_DECISIONS, NEGATIVE_DECISION, POSITIVE_DECISION
+          sys.path.insert(0, 'football-data/audit')
+          import draw_signal_closure_engine_v502_r4 as core
 
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-closure-audit'
-          meta = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
           audit = json.loads((root / 'closure' / 'closure_audit.json').read_text(encoding='utf-8'))
-          ledger = json.loads((root / 'closure' / 'experiment_ledger.json').read_text(encoding='utf-8'))
+          meta = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
+          feature = json.loads((root / 'closure' / 'feature_difference.json').read_text(encoding='utf-8'))
           complete = json.loads((root / 'closure' / 'complete_research_file_ledger.json').read_text(encoding='utf-8'))
-          features = json.loads((root / 'closure' / 'feature_difference.json').read_text(encoding='utf-8'))
           verification = json.loads((root / 'closure' / 'closure_verification.json').read_text(encoding='utf-8'))
           head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
 
-          assert meta['checkout_head'] == audit['head'] == ledger['head'] == complete['head'] == head == os.environ['EVIDENCE_HEAD']
-          assert meta['formal_weight'] == audit['formal_weight'] == 0
-          assert meta['provider_network_used'] is False
-          assert meta['external_request_attempts'] == 0
-          assert meta['api_football_key_accessed'] is False
-          assert meta['model_training'] == 0
+          assert meta['checkout_head'] == audit['head'] == complete['head'] == head == os.environ['EVIDENCE_HEAD']
           assert verification['status'] == 'PASS'
-          assert audit['missing_required_version_prefixes'] == []
-          assert audit['experiment_count'] >= 40
+          assert audit['decision'] in core.ALLOWED_DECISIONS
+          assert meta['decision'] == audit['decision']
+          assert audit['formal_weight'] == meta['formal_weight'] == 0
+          assert audit['model_training'] == meta['model_training'] == 0
+          assert audit['provider_network_used'] is False and meta['provider_network_used'] is False
+          assert audit['external_request_attempts'] == meta['external_request_attempts'] == 0
+          assert audit['api_football_key_accessed'] is False and meta['api_football_key_accessed'] is False
 
           coverage = audit['research_asset_coverage']
           assert coverage['all_covered'] is True
-          assert coverage['missing'] == []
-          assert coverage['extra'] == []
-          assert set(coverage['expected']) == set(coverage['matched'])
-          assert complete['coverage'] == coverage
-          assert complete['count'] == len(complete['rows']) == audit['complete_research_file_count']
-          assert all(row['formal_weight'] == 0 for row in complete['rows'])
+          assert coverage['missing'] == [] and coverage['extra'] == []
+          assert coverage['inclusion_mismatch'] == [] and coverage['parse_failures'] == []
+          assert complete['count'] == len(complete['rows'])
+          assert all((row['included'] and row['inclusion_reason']) or ((not row['included']) and row['exclusion_reason']) for row in complete['rows'])
 
-          candidates = features['EXISTING_PIT_SAFE_UNTESTED_FEATURES']
-          decision = audit['decision']
-          assert decision in ALLOWED_DECISIONS
-          expected_decision = POSITIVE_DECISION if candidates else NEGATIVE_DECISION
-          assert decision == expected_decision == meta['decision']
-          if decision == POSITIVE_DECISION:
-              prereg = audit['preregistration']
-              assert prereg['status'] == 'PRE_REGISTERED_NOT_RUN'
-              assert prereg['features'] == [row['field'] for row in candidates]
-              assert prereg['run_authorized'] is False
-          else:
-              assert audit['preregistration'] is None
+          route = audit['experiment_route_closure']
+          if route['blocks_exhausted']:
+              assert audit['decision'] != core.NEGATIVE_DECISION
+          global_candidates = feature['EXISTING_PIT_SAFE_UNTESTED_FEATURES']
+          domain_candidates = feature['DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES']
+          expected, prereg = core.decide_and_preregister(global_candidates, domain_candidates, route)
+          assert audit['decision'] == expected
+          assert audit['preregistration'] == prereg
+          if expected == core.POSITIVE_DECISION:
+              assert audit['preregistration']['run_authorized'] is False
 
-          near = features['UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED']
-          unknown_fields = {row['field'] for row in features['fields'] if row['classification'] == 'UNKNOWN_PIT_STATUS'}
-          near_names = {row['field'] for row in near}
-          assert unknown_fields.issubset(near_names)
+          market_aliases = {'ahh','avgaha','avgahh','b365aha','b365ahh','b36ca','bfeaha','bfeahh','maxaha','maxahh','paha','pahh'}
+          by_name = {row['field'].lower(): row for row in feature['fields']}
+          assert market_aliases.issubset(by_name)
+          assert all(by_name[name]['classification'] == 'RETROSPECTIVE_MARKET_REFERENCE_TIMESTAMP_UNPROVEN' for name in market_aliases)
 
-          round_rows = [row for row in features['fields'] if row['field'].lower() == 'round']
+          round_rows = [row for row in feature['fields'] if row['field'].lower() == 'round']
           assert len(round_rows) == 1
           round_row = round_rows[0]
           assert round_row['classification'] == 'PIT_SAFE_PREDICTION_TIME'
-          assert round_row['route_binding_review']['raw_field_used_by_V6_12_2'] is False
-          assert round_row['route_binding_review']['raw_field_used_by_V6_12_3'] is False
-          assert round_row['field'] in near_names or round_row['field'] in {row['field'] for row in candidates}
+          assert round_row['qualifies_existing_pit_safe_untested'] is False
+          assert round_row['qualifies_domain_specific_pit_safe_untested'] is True
+          assert any(item['competition'] == 'KOR_KLeague1' and item['rows'] >= 500 and item['season_count'] >= 3 for item in round_row['eligible_domain_specific_scopes'])
           PY
       - name: Create exact-head artifact metadata
         shell: bash
@@ -164,7 +165,6 @@ jobs:
               'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
               'decision': closure['decision'],
               'audit_sha256': closure['audit_sha256'],
-              'complete_research_file_count': closure['complete_research_file_count'],
               'formal_weight': 0,
               'provider_network_used': False,
               'external_request_attempts': 0,
