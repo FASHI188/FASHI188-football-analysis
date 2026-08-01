@@ -15,7 +15,7 @@ spec.loader.exec_module(module)
 class DrawSignalClosureAuditTests(unittest.TestCase):
     def test_required_version_families_are_registered(self):
         versions = {row["version"] for row in module.EXPERIMENT_SPECS}
-        missing = [prefix for prefix in module.REQUIRED_VERSION_PREFIXES if not any(version.startswith(prefix) for version in versions)]
+        missing = [prefix for prefix in module.REQUIRED_VERSION_PREFIXES if not any(version.startswith(prefix) for v in versions)]
         self.assertEqual(missing, [])
 
     def test_synthetic_pit_safe_covered_untested_field_becomes_candidate_and_preregistration(self):
@@ -50,10 +50,28 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
             total_competitions=1,
             dataflow_index={},
         )
+        result = module.preserve_unknown_near_miss({
+            "fields": [row],
+            "UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED": [],
+        })
         self.assertEqual(row["classification"], "UNKNOWN_PIT_STATUS")
-        self.assertTrue(row["untested"])
-        self.assertTrue(row["substantive_predictive_candidate"])
-        self.assertFalse(row["qualifies_existing_pit_safe_untested"])
+        self.assertEqual([item["field"] for item in result["UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED"]], ["mystery_feature"])
+
+    def test_unknown_field_with_old_complete_dataflow_still_remains_near_miss(self):
+        row = module.assess_field_candidate(
+            "mystery_feature",
+            {"files": 1, "rows_in_files": 100, "nonempty": 100, "competitions": {"A"}, "sample_paths": ["a.csv"]},
+            all_columns={"mystery_feature"},
+            total_rows=100,
+            total_competitions=1,
+            dataflow_index={"mystery_feature": [{"complete_dataflow_chain": True}]},
+        )
+        self.assertFalse(row["untested"])
+        result = module.preserve_unknown_near_miss({
+            "fields": [row],
+            "UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED": [],
+        })
+        self.assertEqual([item["field"] for item in result["UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED"]], ["mystery_feature"])
 
     def test_round_is_prediction_time_limited_scope_and_not_bookmaker_alias(self):
         columns = {"round", "B365H", "B365D", "B365A"}
