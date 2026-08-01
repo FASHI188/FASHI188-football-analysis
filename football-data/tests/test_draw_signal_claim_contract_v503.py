@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,15 +26,56 @@ def base_record(**overrides):
     return row
 
 
+def sample_audit(head: str = "a" * 40):
+    return {
+        "head": head,
+        "audit_sha256": "b" * 64,
+        "decision": "PRE_REGISTRATION_REQUIRED_NO_TRAINING_YET",
+        "preregistration": {"holdout_status": "NOT_YET_PROVEN_UNTOUCHED"},
+        "research_asset_coverage": {
+            "expected_path_count": 1648, "actual_path_count": 1648, "missing": [], "extra": []
+        },
+        "experiment_route_closure": {
+            "unresolved": list(range(14)), "missing_result_evidence": list(range(4))
+        },
+        "feature_difference": {
+            "DOMAIN_SPECIFIC_RECONSTRUCTED_RESEARCH_CANDIDATES": [{
+                "field": "round",
+                "eligible_domain_specific_scopes": [{"competition": "KOR_KLeague1"}],
+            }]
+        },
+        "execution_boundary": {
+            "measurement_scope": "AUDIT_BUSINESS_CODE_ONLY",
+            "actual_steps": ["audit-object-built"],
+            "not_yet_executed_at_measurement": ["workflow-artifact-upload"],
+            "provider_request_attempts": 0,
+            "audit_code_external_request_attempts": 0,
+            "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
+        },
+    }
+
+
 class ClaimContractV503Tests(unittest.TestCase):
+    def _fixture(self):
+        temporary = tempfile.TemporaryDirectory()
+        root = Path(temporary.name)
+        rule = root / contract.RULE_PATH
+        rule.parent.mkdir(parents=True)
+        rule.write_text(f"# {contract.RULE_VERSION}\nCURRENT_AUTHORITATIVE_RULE\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text(f"Read `{contract.RULE_PATH}`.\n", encoding="utf-8")
+        closure = root / "closure"
+        closure.mkdir()
+        audit = sample_audit()
+        (closure / "closure_audit.json").write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
+        contract.write_claim_outputs(closure, audit, root)
+        return temporary, root, closure
+
     def test_rule_and_agents_exact_path(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            rule = root / contract.RULE_PATH
-            rule.parent.mkdir(parents=True)
-            rule.write_text(f"# {contract.RULE_VERSION}\nCURRENT_AUTHORITATIVE_RULE\n", encoding="utf-8")
-            (root / "AGENTS.md").write_text(f"Read `{contract.RULE_PATH}`.\n", encoding="utf-8")
+        temporary, root, _ = self._fixture()
+        try:
             self.assertTrue(contract.validate_rule_sources(root)["valid"])
+        finally:
+            temporary.cleanup()
 
     def test_evidence_status_enum_is_closed(self):
         with self.assertRaises(ValueError):
@@ -139,12 +182,87 @@ class ClaimContractV503Tests(unittest.TestCase):
             base_record(claim_id="u", evidence_status="UNPROVEN"),
             base_record(claim_id="n", evidence_status="NOT_AUTHORIZED", authorization_status="NOT_AUTHORIZED"),
         ]
-        report = contract.build_report(records, {"head": "a" * 40, "execution_boundary": {"actual_jobs": [], "skipped_jobs": []}})
-        self.assertTrue(all(row["evidence_status"] == "PROVEN" for row in report["directly_proven"]))
-        self.assertTrue(all(row["evidence_status"] == "COMPUTED" for row in report["program_computed"]))
-        self.assertTrue(all(row["evidence_status"] == "INFERRED" for row in report["inferences_and_candidates"]))
-        self.assertTrue(all(row["evidence_status"] == "UNPROVEN" for row in report["unproven"]))
-        self.assertTrue(all(row["evidence_status"] == "NOT_AUTHORIZED" for row in report["not_authorized"]))
+        report = contract.build_report(records, {"head": "a" * 40, "execution_boundary": {}})
+        contract._validate_report_section_purity(report)
+
+    def test_tampered_cold_conclusion_fails_existing_verification(self):
+        temporary, root, closure = self._fixture()
+        try:
+            report_path = closure / "claim_report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["cold_conclusion"] = "平局信号已经正式有效，可以立即训练、修改正式权重并合并PR。"
+            report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                contract.verify_existing(closure, root)
+        finally:
+            temporary.cleanup()
+
+    def test_tampered_inferred_claim_text_and_stale_sha_fails(self):
+        temporary, root, closure = self._fixture()
+        try:
+            path = closure / "claim_records.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            row = next(item for item in payload["records"] if item["claim_id"] == "round-candidate")
+            row["claim_text"] = "round已经确认是有效平局信号，可以立即训练并进入正式模型。"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                contract.verify_existing(closure, root)
+        finally:
+            temporary.cleanup()
+
+    def test_record_moved_to_wrong_report_section_fails(self):
+        temporary, root, closure = self._fixture()
+        try:
+            path = closure / "claim_report.json"
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["directly_proven"].append(report["inferences_and_candidates"].pop(0))
+            path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                contract.verify_existing(closure, root)
+        finally:
+            temporary.cleanup()
+
+    def test_tampered_records_sha_fails(self):
+        temporary, root, closure = self._fixture()
+        try:
+            path = closure / "claim_records.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["records_sha256"] = "0" * 64
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                contract.verify_existing(closure, root)
+        finally:
+            temporary.cleanup()
+
+    def test_tampered_markdown_fails(self):
+        temporary, root, closure = self._fixture()
+        try:
+            path = closure / "claim_report.md"
+            path.write_text(path.read_text(encoding="utf-8") + "\n扩大结论", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                contract.verify_existing(closure, root)
+        finally:
+            temporary.cleanup()
+
+    def test_clean_outputs_verify_and_bind_all_hashes(self):
+        temporary, root, closure = self._fixture()
+        try:
+            result = contract.verify_existing(closure, root)
+            self.assertEqual(result["status"], "PASS")
+            self.assertEqual(
+                set(result["bindings"]),
+                {
+                    "audit_head", "audit_sha256", "claim_records_sha256",
+                    "claim_records_object_sha256", "claim_report_json_sha256",
+                    "claim_report_markdown_sha256", "deterministic_renderer",
+                },
+            )
+        finally:
+            temporary.cleanup()
+
+    def test_utf8_git_output_decodes_windows_chinese_path(self):
+        expected = r"F:\足球项目维护\repo-pr77-aa03-audit"
+        self.assertEqual(contract.decode_git_stdout((expected + "\r\n").encode("utf-8")), expected)
 
 
 if __name__ == "__main__":

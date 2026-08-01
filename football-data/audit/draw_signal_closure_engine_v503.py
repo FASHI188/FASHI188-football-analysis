@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,10 +24,16 @@ PREVIOUS_EXACT_HEAD = claims.PREVIOUS_EXACT_HEAD
 FORMAL_WEIGHT = 0
 
 
+def _install_utf8_git_boundary() -> None:
+    """Keep V5.0.2 files unchanged while making the V5.0.3 entry UTF-8 safe."""
+    historical.base.git = claims.git_utf8
+
+
 def build_audit(root: Path) -> dict[str, Any]:
+    _install_utf8_git_boundary()
     audit = dict(historical.build_audit(root))
     rule_info = claims.validate_rule_sources(root)
-    audit["schema_version"] = "DRAW-SIGNAL-CLOSURE-AUDIT-V503-1.0"
+    audit["schema_version"] = "DRAW-SIGNAL-CLOSURE-AUDIT-V503-1.1"
     audit["rule_version"] = RULE_VERSION
     audit["authoritative_rule"] = rule_info
     audit["historical_relationship"] = {
@@ -40,22 +47,27 @@ def build_audit(root: Path) -> dict[str, Any]:
         "model_training": 0,
         "new_target_period_scoring": 0,
         "provider_network_used": False,
-        "external_request_attempts": 0,
+        "provider_request_attempts": 0,
+        "audit_code_external_request_attempts": 0,
         "api_football_key_accessed": False,
     })
+    audit.pop("external_request_attempts", None)
     audit["execution_boundary"] = {
-        "actual_jobs": [
-            "exact-head-no-provider-and-protected-asset-gates",
-            "V5.0.2-historical-tests",
-            "V5.0.3-claim-contract-counterexample-tests",
-            "route-aware-read-only-signal-closure-audit",
-            "structured-claim-validation",
-            "artifact-metadata-and-upload",
+        "measurement_scope": "AUDIT_BUSINESS_CODE_ONLY",
+        "measurement_phase": "AUDIT_OBJECT_BUILT_BEFORE_OUTPUT_WRITE",
+        "actual_steps": [
+            "historical-v502-audit-computation",
+            "v503-authoritative-rule-validation",
+            "v503-audit-wrapper-computation",
         ],
-        "skipped_jobs": [],
+        "not_yet_executed_at_measurement": [
+            "structured-claim-output-write-and-verification",
+            "workflow-artifact-upload",
+        ],
+        "provider_request_attempts": 0,
+        "audit_code_external_request_attempts": 0,
+        "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
         "mock_used": False,
-        "real_network_requests": 0,
-        "provider_accessed": False,
         "model_training": 0,
         "new_target_period_scoring": 0,
         "formal_asset_changes": 0,
@@ -65,51 +77,71 @@ def build_audit(root: Path) -> dict[str, Any]:
     return audit
 
 
-def _write_v503_claim_outputs(out: Path, audit: Mapping[str, Any], root: Path) -> dict[str, Any]:
-    """Write negative boundary records without presenting them as affirmative claims."""
-    rule_info = claims.validate_rule_sources(root)
-    records, contexts = claims.build_current_claims(audit, rule_info)
-    for record in records:
-        if record.get("claim_id") in {"round-predictive-value", "draw-signal-effectiveness"}:
-            record["claim_type"] = "SIGNAL_EFFECTIVENESS_STATUS"
-        elif record.get("claim_id") == "draw-problem-solved":
-            record["claim_type"] = "DRAW_PROBLEM_STATUS"
-    verification = claims.validate_claims(records, contexts)
-    report = claims.build_report(records, audit)
-    payloads = {
-        "claim_records.json": {
-            "schema_version": "DRAW-SIGNAL-CLAIM-RECORDS-V503-1.0",
-            "head": audit["head"],
-            "records": records,
-            "records_sha256": claims.canonical_sha(records),
-        },
-        "claim_contract_verification.json": verification,
-        "claim_report.json": report,
+def _write_execution_receipt(out: Path, audit: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = {
+        "schema_version": "DRAW-SIGNAL-V503-AUDIT-EXECUTION-RECEIPT-1.0",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "head": audit["head"],
+        "measurement_scope": "AUDIT_BUSINESS_CODE_ONLY",
+        "actual_completed_steps": [
+            "historical-v502-audit-computation",
+            "v503-authoritative-rule-validation",
+            "v503-audit-wrapper-computation",
+            "structured-claim-record-generation",
+            "claim-report-json-deterministic-render",
+            "claim-report-markdown-deterministic-render",
+            "claim-output-deterministic-verification",
+        ],
+        "not_executed_by_audit_code": [
+            "workflow-checkout",
+            "workflow-runtime-setup",
+            "workflow-artifact-upload",
+        ],
+        "provider_request_attempts": 0,
+        "audit_code_external_request_attempts": 0,
+        "workflow_infrastructure_network_used": "REPORTED_BY_WORKFLOW_METADATA_NOT_THIS_RECEIPT",
+        "artifact_upload_status": "NOT_EXECUTED_BY_AUDIT_CODE",
+        "model_training": 0,
+        "new_target_period_scoring": 0,
+        "formal_asset_changes": 0,
     }
-    for name, value in payloads.items():
-        (out / name).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (out / "claim_report.md").write_text(claims.report_markdown(report), encoding="utf-8")
-    return {"rule_info": rule_info, "verification": verification, "report": report, "records": records}
+    (out / "audit_execution_receipt.json").write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return receipt
 
 
 def write_audit(out: Path, audit: Mapping[str, Any], root: Path) -> None:
     historical.write_audit(out, audit)
-    claim_output = _write_v503_claim_outputs(out, audit, root)
+    claim_output = claims.write_claim_outputs(out, audit, root)
+    claims.verify_existing(out, root)
+    receipt = _write_execution_receipt(out, audit)
+
     metadata_path = out / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    binding = claim_output["verification"]["binding"]
     metadata.update({
-        "schema_version": "DRAW-SIGNAL-CLOSURE-METADATA-V503-1.0",
+        "schema_version": "DRAW-SIGNAL-CLOSURE-METADATA-V503-1.1",
         "rule_version": RULE_VERSION,
         "rule_path": claims.RULE_PATH,
         "rule_sha256": claim_output["rule_info"]["rule_sha256"],
-        "claim_records_sha256": claim_output["verification"]["records_sha256"],
+        "claim_records_sha256": binding["claim_records_sha256"],
+        "claim_records_object_sha256": binding["claim_records_object_sha256"],
+        "claim_report_json_sha256": binding["claim_report_json_sha256"],
+        "claim_report_markdown_sha256": binding["claim_report_markdown_sha256"],
         "claim_contract_status": claim_output["verification"]["status"],
+        "audit_execution_receipt_observed_at_utc": receipt["observed_at_utc"],
+        "provider_request_attempts": 0,
+        "audit_code_external_request_attempts": 0,
+        "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
         "new_target_period_scoring": 0,
         "model_diff": 0,
         "formal_data_diff": 0,
         "config_diff": 0,
         "current_diff": 0,
     })
+    metadata.pop("external_request_attempts", None)
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -117,7 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args(list(argv) if argv is not None else None)
-    root = Path(historical.base.git(Path.cwd(), "rev-parse", "--show-toplevel"))
+    root = Path(claims.git_utf8(Path.cwd(), "rev-parse", "--show-toplevel"))
     audit = build_audit(root)
     write_audit(args.output_dir, audit, root)
     print(json.dumps({
@@ -128,6 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model_training": 0,
         "new_target_period_scoring": 0,
         "provider_network_used": False,
+        "provider_request_attempts": 0,
+        "audit_code_external_request_attempts": 0,
     }, ensure_ascii=False))
     return 0
 
