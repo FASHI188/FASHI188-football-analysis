@@ -38,6 +38,12 @@ def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def canonical_json_sha256(path: pathlib.Path) -> str:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    raw = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def load(path: pathlib.Path) -> dict[str, Any]:
     require(path.is_file(), f"missing file: {path}")
     try:
@@ -258,7 +264,7 @@ def main() -> int:
             "formal_asset_changes": 0,
             "documents": document,
             "repository": repository,
-            "sha256": {key: sha256(path) for key, path in FILES.items()},
+            "canonical_json_sha256": {key: canonical_json_sha256(path) for key, path in FILES.items()},
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
