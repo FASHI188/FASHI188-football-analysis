@@ -73,6 +73,39 @@ EXPERIMENT_SPECS = [
     dict(id="V6.51.2-RANK-NB", version="V6.51.2", patterns=["v6_draw_rank_attack_nb_v6512", "v6_draw_problem_resolution_v6512"], family="NB rank attack/defence", method="rank attack/defence discrete Naive Bayes", source="team rank attack/defence and market/context bins", pit="REPEATED_2025_RESEARCH_SET"),
 ]
 
+MANUAL_SUMMARIES = {
+    "V6.50.7-NET-GAIN": {
+        "metric_scope": "no validation-positive draw rule; baseline shown only in raw evidence",
+        "metrics": {"accuracy": None, "macro_f1": None, "draw_precision": None, "draw_recall": None, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": None, "executed": None},
+        "draw_predictions": 0,
+    },
+    "V6.50.8-TRIAGE": {
+        "metric_scope": "triage/risk ranking only; no validated draw execution",
+        "metrics": {"accuracy": None, "macro_f1": None, "draw_precision": None, "draw_recall": None, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": None, "executed": None},
+        "draw_predictions": 0,
+    },
+    "V6.50.9-RISK-VETO": {
+        "metric_scope": "2025 repeated research set; selective H/A risk veto",
+        "metrics": {"accuracy": 0.707667731629393, "macro_f1": None, "draw_precision": None, "draw_recall": 0.0, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": 0.24500978473581214, "executed": 1252.0},
+        "draw_predictions": 0, "abstain": 359,
+    },
+    "V6.51.0-REENTRY": {
+        "metric_scope": "best relevant validation example; rejected",
+        "metrics": {"accuracy": None, "macro_f1": None, "draw_precision": 0.3043, "draw_recall": None, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": None, "executed": None},
+        "draw_predictions": 23, "draw_hits": 7,
+    },
+    "V6.51.1-DISCRETE-NB": {
+        "metric_scope": "best validation diagnostic; rejected",
+        "metrics": {"accuracy": 0.6852646638054364, "macro_f1": None, "draw_precision": 0.3125, "draw_recall": None, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": None, "executed": None},
+        "draw_predictions": 64, "draw_hits": 20,
+    },
+    "V6.51.2-RANK-NB": {
+        "metric_scope": "best validation diagnostic; rejected; target re-entry produced zero draws",
+        "metrics": {"accuracy": 0.6756756756756757, "macro_f1": None, "draw_precision": 0.3394495412844037, "draw_recall": None, "draw_f1": None, "log_loss": None, "brier": None, "rps": None, "coverage": None, "executed": 1443.0},
+        "draw_predictions": 109, "draw_hits": 37, "target_2025_draw_predictions": 0,
+    },
+}
+
 POSTMATCH_COLUMNS = {
     "fthg", "ftag", "ftr", "hthg", "htag", "htr", "hc", "ac", "hf", "af",
     "hr", "ar", "hs", "as", "hst", "ast", "hy", "ay", "full_time_home_goals",
@@ -157,10 +190,10 @@ def collect_metric_evidence(objects: list[tuple[str, Any]]) -> dict[str, list[di
         for path, value in recursive_items(obj):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
                 continue
-            npath = norm_key(path)
-            leaf = npath.split("_")[-1] if npath else ""
+            leaf_raw = re.sub(r"\[\d+\]$", "", path.split(".")[-1])
+            leaf = norm_key(leaf_raw)
             for metric, aliases in METRIC_ALIASES.items():
-                if any(alias in npath or leaf == alias for alias in aliases):
+                if any(leaf == alias or leaf.endswith("_" + alias) for alias in aliases):
                     evidence[metric].append({"file": file_path, "json_path": path, "value": float(value)})
     return evidence
 
@@ -255,6 +288,14 @@ def build_ledger(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
                     confusion.append({"file": file_path, "json_path": path, "value": value})
         text_join = "\n".join(text for _, text in script_texts).lower()
         feature_tokens = sorted(set(re.findall(r"['\"]([A-Za-z][A-Za-z0-9_<>.+/-]{1,50})['\"]", text_join)))
+        summary_metrics = {metric: choose_metric(metric, ev) for metric, ev in metrics_evidence.items()}
+        if summary_metrics.get("draw_f1") is None and summary_metrics.get("draw_precision") is not None and summary_metrics.get("draw_recall") is not None:
+            precision = float(summary_metrics["draw_precision"])
+            recall = float(summary_metrics["draw_recall"])
+            summary_metrics["draw_f1"] = (2.0 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+        manual = MANUAL_SUMMARIES.get(spec["id"], {})
+        if manual.get("metrics"):
+            summary_metrics.update(manual["metrics"])
         row = dict(spec)
         row.update({
             "files": [path.relative_to(root).as_posix() for path in files],
@@ -263,7 +304,9 @@ def build_ledger(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
             "train_validation_test_evidence": find_period_evidence(json_objects),
             "test_set_repeatedly_viewed": repeated,
             "test_reuse_evidence": repeated_evidence,
-            "metrics": {metric: choose_metric(metric, ev) for metric, ev in metrics_evidence.items()},
+            "metric_scope": manual.get("metric_scope", "best explicit holdout/test/candidate metric found in current manifest; see raw evidence"),
+            "metrics": summary_metrics,
+            "manual_summary_fields": {k: v for k, v in manual.items() if k not in {"metrics", "metric_scope"}},
             "metric_evidence": metrics_evidence,
             "confusion_matrix_evidence": confusion,
             "status": status,
@@ -351,7 +394,7 @@ def profile_fields(root: Path) -> dict[str, Any]:
         exact_tested = normalized in tested_tokens
         alias_families = [family for family, aliases in TESTED_FAMILY_ALIASES.items() if normalized in aliases]
         substantive = cls not in {"PIT_SAFE_STRUCTURAL", "POSTMATCH_FORBIDDEN"}
-        pit_safe = cls == "PIT_SAFE_PREDICTION_TIME"
+        pit_safe = cls in {"PIT_SAFE_PREDICTION_TIME", "PIT_SAFE_STRUCTURAL"}
         untested = not exact_tested and not alias_families
         fields.append({
             "field": col,
@@ -372,6 +415,7 @@ def profile_fields(root: Path) -> dict[str, Any]:
             "qualifies_existing_pit_safe_untested": pit_safe and substantive and untested and coverage >= MIN_COVERAGE,
         })
     untested = [row for row in fields if row["qualifies_existing_pit_safe_untested"]]
+    near_miss = [row for row in fields if row["untested"] and row["substantive_predictive_candidate"] and not row["qualifies_existing_pit_safe_untested"]]
     return {
         "processed_csv_count": len(files),
         "processed_total_rows_scanned": total_rows,
@@ -381,15 +425,16 @@ def profile_fields(root: Path) -> dict[str, Any]:
         "tested_feature_token_count": len(tested_tokens),
         "tested_feature_tokens_sha256": canonical_sha(sorted(tested_tokens)),
         "EXISTING_PIT_SAFE_UNTESTED_FEATURES": untested,
+        "UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED": near_miss,
     }
 
 
 def markdown_ledger(ledger: list[dict[str, Any]]) -> str:
-    lines = ["# 现有数据平局信号闭合审计｜实验总账", "", "仅研究态；formal_weight=0；未训练新模型。", "", "| 实验 | 特征家族 | PIT状态 | 方法 | Accuracy | Macro-F1 | Draw P/R/F1 | LogLoss | Brier | RPS | 状态 |", "|---|---|---|---|---:|---:|---|---:|---:|---:|---|"]
+    lines = ["# 现有数据平局信号闭合审计｜实验总账", "", "仅研究态；formal_weight=0；未训练新模型。", "", "| 实验 | 特征家族 | PIT状态 | 指标口径 | Accuracy | Macro-F1 | Draw P/R/F1 | LogLoss | Brier | RPS | 状态 |", "|---|---|---|---|---:|---:|---|---:|---:|---:|---|"]
     for row in ledger:
         m = row["metrics"]
         draw = "/".join("—" if m[k] is None else f"{m[k]:.4f}" for k in ("draw_precision", "draw_recall", "draw_f1"))
-        vals = [row["id"], row["family"], row["pit"], row["method"],
+        vals = [row["id"], row["family"], row["pit"], row["metric_scope"],
                 "—" if m["accuracy"] is None else f"{m['accuracy']:.4f}",
                 "—" if m["macro_f1"] is None else f"{m['macro_f1']:.4f}", draw,
                 "—" if m["log_loss"] is None else f"{m['log_loss']:.4f}",
@@ -409,6 +454,14 @@ def markdown_features(feature_audit: dict[str, Any], decision: str) -> str:
         lines += ["| 字段 | 覆盖率 | 联赛数 | PIT证明 | 未使用证明 |", "|---|---:|---:|---|---|"]
         for row in features:
             lines.append(f"| {row['field']} | {row['coverage_within_present_files']:.2%} | {row['competition_count']} | {row['classification_reason']} | exact/alias未命中 |")
+    lines += ["", "## 未测试但未通过PIT/覆盖门的字段", ""]
+    near = feature_audit.get("UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED", [])
+    if not near:
+        lines.append("无。")
+    else:
+        lines += ["| 字段 | 分类 | 覆盖率 | 排除原因 |", "|---|---|---:|---|"]
+        for row in near[:80]:
+            lines.append(f"| {row['field']} | {row['classification']} | {row['coverage_within_present_files']:.2%} | {row['classification_reason']} |")
     lines += ["", "## 排除规则", "", "- 比分、赛果、射门、角球、犯规、牌等为赛中/赛后字段。", "- 历史赔率和盘口缺原始报价时间戳，只能作为回顾性市场参考。", "- 联赛、赛季、日期、时间、主客队等是身份/切分字段，不是新的平局信号。", "- Referee等上下文字段缺`observed_at`，无法证明在统一预测冻结时点前可用。", "- 同义字段按特征家族去重，不能改名后重新计作新信息。", ""]
     return "\n".join(lines)
 
@@ -451,8 +504,18 @@ def main() -> int:
             },
             "formal_weight": 0,
         }
+    reference_scorecards = {
+        "strict_time_ordered_probability_diagnostics": {
+            "matches": 4786, "actual_draw_rate": 0.2566, "mean_predicted_draw_probability": 0.2479,
+            "mean_domain_draw_auc": 0.52218, "draw_probability_std": 0.01711,
+            "source": "user-supplied Codex read-only check on accepted main; retained as reconciliation baseline",
+        },
+        "full_1x2": {"count": 5110, "hits": 2645, "accuracy": 0.5176125244618396, "predicted_home_draw_away": [3532, 40, 1538]},
+        "selector": {"executed": 1611, "accuracy": 0.6710117939168219, "predicted_home_draw_away": [1252, 0, 359], "scope": "SELECTIVE; not full 1X2"},
+        "ha_risk_veto": {"executed": 1252, "accuracy": 0.707667731629393, "market_coverage": 0.24500978473581214, "draw_predictions": 0, "scope": "H/A/ABSTAIN; abstain is not draw"},
+    }
     audit = {
-        "schema_version": "DRAW-SIGNAL-CLOSURE-AUDIT-V502-1.0",
+        "schema_version": "DRAW-SIGNAL-CLOSURE-AUDIT-V502-1.1",
         "head": head,
         "base_main": "605abf2d9f98c46f063106c7bd47193b96e588e4",
         "formal_weight": 0,
@@ -468,6 +531,7 @@ def main() -> int:
         "audited_files": audited_files,
         "feature_difference": feature_audit,
         "preregistration": prereg,
+        "reference_scorecards": reference_scorecards,
         "known_codex_baseline": {
             "strict_time_ordered_matches": 4786,
             "actual_draw_rate": 0.2566,
