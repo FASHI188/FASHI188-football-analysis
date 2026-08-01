@@ -1,6 +1,6 @@
-# Composite PIT draw-signal research plan R1
+# Composite PIT draw-signal research plan R1.1
 
-Status: `FROZEN_PLAN_NOT_EXECUTED`
+Status: `FROZEN_PLAN_NOT_EXECUTED_GAPS_CLOSED`
 
 Base main: `605abf2d9f98c46f063106c7bd47193b96e588e4`
 
@@ -21,30 +21,88 @@ Market, AH, OU, multibook and movement routes are excluded for unproved PIT timi
 - S3 historical draw propensity;
 - S4 low-goal environment;
 - S5 exact rolling-OOF baseline probability uncertainty;
-- S6 league and stage interactions;
-- S7 lagged shot quality as a coverage-matched secondary ablation;
-- S8 KOR round interaction as a KOR-only secondary ablation.
+- S6 competition and verified-stage interactions.
 
-Raw bookmaker uncertainty is not included.
+Secondary only:
 
-## Unique recommended challenger
+- S7 lagged shot quality on a coverage-matched subset;
+- S8 KOR-only round interaction.
 
-`C5_DRAW_COMPOSITE_PIT_R1_CORE`
+## Unique challenger
 
-C5 combines S1-S6. It uses fixed interactions for closeness with draw propensity, low-goal environment and stage, plus draw propensity with low-goal environment. The frozen model is an L2=2.0 draw-residual logistic adjustment. It changes the draw logit, preserves the baseline H/A ratio, uses no randomness and permits no hyperparameter search.
+`C5_DRAW_COMPOSITE_PIT_R1_CORE` is the only recommended challenger. It is a deterministic fixed-L2 draw-residual logistic adjustment using S1-S6. It adjusts the draw logit while preserving the baseline H/A ratio. There is no random split, no hyperparameter search and no target-season refit.
 
-## Next comparison
+## R1.1 execution contract
 
-A single separately authorized experiment must report the current baseline, all six single-family candidates, five frozen combinations, C5 minus each family, a coverage-matched shot ablation and a KOR-only round interaction ablation. Every candidate must be reported.
+`draw_composite_execution_contract_r1.json` freezes the executable interpretation of this plan:
 
-Validation is rolling origin by competition and complete season. Random splits are prohibited. Each outer target season requires at least two strictly earlier complete seasons. Partial seasons are excluded. Same-time matches are predicted before any result from that timestamp updates history.
+- exact base tree and critical source-asset identities;
+- all 17 PIT dataset SHA-256 values and the five complete seasons used per competition;
+- exclusion of partial 2026 calendar-year seasons;
+- 51 expected rolling-origin outer folds;
+- global candidate training cutoff strictly before each target season starts;
+- date-only conservative PIT rule and same-date batch prediction before updates;
+- common core cohort and coverage-matched X1/X2 cohorts;
+- exact formulas for S1-S8;
+- outer-training-only imputation, scaling and categorical encoding;
+- deterministic duplicate removal and no label-based feature selection;
+- fixed IRLS/Newton solver, convergence and probability-conservation gates;
+- fixed metrics, ECE bins, calibration definitions, aggregation and bootstrap;
+- coverage, stability, calibration and numerical support gates;
+- a separate one-run authorization file that must not exist before later user authorization.
 
-Required metrics are Accuracy, Macro-F1, Draw Precision, Draw Recall, Draw F1, Log Loss, Brier, RPS, fixed-bin ECE, calibration intercept and slope, reliability tables, per-season results, per-league results and equal-season/equal-league summaries.
+The fail-closed validator is `validate_draw_composite_prereg_r1.py`. Its exact-HEAD GitHub workflow may hash complete files and read CSV headers only; it must parse zero data rows and zero labels.
 
-## Holdout conclusion
+## Frozen comparison
 
-2025 is viewed and must not be called blind. No completed existing result set can be certified as untouched because the repository has no immutable access ledger proving that status. Partial 2026 data are incomplete. Therefore the next execution can only return `RESEARCH_SUPPORT_ONLY_NO_PROMOTION` or `RESEARCH_NO_SUPPORT_NO_PROMOTION`. It cannot support formal promotion.
+The single later comprehensive run, if separately authorized, must report:
 
-## Frozen boundary
+- B0 current exact rolling-OOF baseline;
+- A1-A6 single families;
+- C1-C5 fixed combinations;
+- C5-minus-S1 through C5-minus-S6;
+- X1 core plus lagged shots on an identical coverage-matched subset;
+- X2 KOR core plus round on an identical KOR subset.
 
-This stage runs no experiment, performs no final blind test, collects no new data, uses no external provider, changes no formal model/data/config/CURRENT, keeps `formal_weight=0`, and authorizes neither Ready conversion nor merge. The next step is at most one separately authorized frozen comprehensive experiment.
+All candidates and exclusions must be reported. Cherry-picking is prohibited.
+
+## Validation and metrics
+
+Only complete-season rolling origin is allowed. Random splitting is prohibited. Every target row is `VIEWED_RESEARCH_EVALUATION_NOT_BLIND`.
+
+Required metrics:
+
+- Accuracy;
+- Macro-F1;
+- Draw Precision, Recall and F1;
+- Log Loss;
+- Brier;
+- RPS;
+- draw ECE and top-label multinomial ECE;
+- draw calibration intercept and slope;
+- fixed-bin reliability;
+- pooled, equal-fold and equal-league summaries;
+- per-fold and per-league stability;
+- paired outer-fold bootstrap intervals.
+
+## Holdout decision
+
+- 2025 / 2025-26: `VIEWED_NOT_BLIND`;
+- existing completed result data: `NO_PROVABLY_UNTOUCHED_EXISTING_RESULT_SET`;
+- partial 2026 seasons: excluded.
+
+A later passing run can only yield `RESEARCH_SUPPORT_ONLY_NO_PROMOTION`. A failing run yields `RESEARCH_NO_SUPPORT_NO_PROMOTION`. Neither permits formal promotion because there is no genuinely untouched holdout.
+
+## Authorization boundary
+
+Current state remains preregistration only:
+
+- experiment executed: 0;
+- label rows read by preregistration preflight: 0;
+- Provider/API/Secret access: 0;
+- new data collection: 0;
+- formal model/data/config/CURRENT changes: 0;
+- `formal_weight=0`;
+- Ready and merge unauthorized.
+
+The next experiment requires separate user authorization and a bound authorization file. Maximum comprehensive runs: one.
