@@ -1,19 +1,21 @@
-name: Football Draw Challenger V5.0.2 Research
+name: Football Draw Signal Closure Audit V5.0.2
 
 on:
   push:
     branches: [research/draw-challenger-v502]
     paths:
       - "football-data/research/draw_challenger_*.py"
+      - "football-data/research/draw_signal_closure_audit_v502.py"
       - "football-data/tests/test_draw_challenger_*.py"
-      - "football-data/research/contracts/draw_challenger_*.json"
+      - "football-data/tests/test_draw_signal_closure_audit_v502.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   pull_request:
     branches: [main]
     paths:
       - "football-data/research/draw_challenger_*.py"
+      - "football-data/research/draw_signal_closure_audit_v502.py"
       - "football-data/tests/test_draw_challenger_*.py"
-      - "football-data/research/contracts/draw_challenger_*.json"
+      - "football-data/tests/test_draw_signal_closure_audit_v502.py"
       - ".github/workflows/football-draw-challenger-v502.yml"
   workflow_dispatch:
 
@@ -21,16 +23,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: football-draw-challenger-v502-${{ github.ref }}
+  group: football-draw-closure-audit-v502-${{ github.ref }}
   cancel-in-progress: false
 
 env:
+  BASE_MAIN: 605abf2d9f98c46f063106c7bd47193b96e588e4
   EVIDENCE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  inventory:
+  closure-audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -40,68 +43,96 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Exact head and no-provider static gate
+      - name: Exact-head, no-provider and protected-asset gates
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EVIDENCE_HEAD"
-          python -m py_compile football-data/research/draw_challenger_inventory_v502.py
+          python -m py_compile \
+            football-data/research/draw_challenger_inventory_v502.py \
+            football-data/research/draw_signal_closure_audit_v502.py \
+            football-data/tests/test_draw_signal_closure_audit_v502.py
           ! grep -R -nE 'API_FOOTBALL_KEY|api-sports|v3\.football\.api-sports|requests\.|httpx|aiohttp|urllib\.request' \
-            football-data/research/draw_challenger_inventory_v502.py
-      - name: Build read-only repository inventory and source bundle
+            football-data/research/draw_challenger_inventory_v502.py \
+            football-data/research/draw_signal_closure_audit_v502.py \
+            football-data/tests/test_draw_signal_closure_audit_v502.py
+          changed="$(git diff --name-only "$BASE_MAIN"...HEAD)"
+          ! printf '%s\n' "$changed" | grep -E '(^|/)(models?|processed|team_strengths|config|CURRENT|formal_core_v460|oof_matrix_calibration_v461_status)'
+      - name: Unit tests for audit logic
+        run: python -m unittest football-data/tests/test_draw_signal_closure_audit_v502.py -v
+      - name: Build read-only inventory and signal-closure audit
+        shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/draw-inventory"
-          python football-data/research/draw_challenger_inventory_v502.py --output-dir "$out"
-          mkdir -p "$out/source_bundle"
-          files=(
-            DRAW_AUDIT_HANDOFF.md
-            football-data/validation/cache/v696_last_complete_season_1x2_rows.json
-            football-data/validation/cache/v6169_joint_ipf_selection_rows.json
-            football-data/benchmarks/v6_1x2_fixed1000_v6130.json
-            football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json
-            football-data/validation/diagnose_1x2_accuracy_v696.py
-            football-data/validation/evaluate_hierarchical_market_selector_v6474.py
-            football-data/validation/v6_fresh_market_forward_challengers_v6492.py
-            football-data/validation/v6_fullseason_2025_replay_v6506.py
-            football-data/validation/v6_draw_residual_override_v670.py
-            football-data/validation/v6_draw_triage_decision_v6508.py
-            football-data/validation/v6_draw_risk_operating_point_v6509.py
-            football-data/validation/validate_1x2_draw_risk_veto_v6130.py
-            football-data/validation/generate_joint_ipf_selection_rows_v6169.py
-            football-data/validation/evaluate_joint_ipf_selective_v6169.py
-            football-data/engine/build_training_dataset.py
-            football-data/engine/football_v460_engine.py
-            football-data/engine/oof_matrix_calibration.py
-            football-data/manifests/v6_draw_problem_resolution_v6510_status.json
-            football-data/manifests/v6_draw_problem_resolution_v6512_status.json
-            football-data/manifests/v6_draw_residual_override_v670_status.json
-            football-data/manifests/v6_draw_risk_operating_point_v6509_status.json
-            football-data/manifests/v6_1x2_accuracy_diagnostic_v696_status.json
-          )
-          for file in "${files[@]}"; do
-            test -f "$file"
-            mkdir -p "$out/source_bundle/$(dirname "$file")"
-            cp "$file" "$out/source_bundle/$file"
-          done
-          (cd "$out/source_bundle" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$out/source_bundle_sha256.txt"
+          root="$RUNNER_TEMP/draw-closure-audit"
+          inventory="$root/inventory"
+          closure="$root/closure"
+          mkdir -p "$inventory" "$closure"
+          python football-data/research/draw_challenger_inventory_v502.py --output-dir "$inventory"
+          python football-data/research/draw_signal_closure_audit_v502.py --output-dir "$closure"
+          git status --short > "$root/git_status_after_audit.txt"
           python - <<'PY'
           import json, os, pathlib, subprocess
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-inventory'
-          meta = json.loads((root / 'metadata.json').read_text(encoding='utf-8'))
-          inv = json.loads((root / 'inventory.json').read_text(encoding='utf-8'))
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-closure-audit'
+          meta = json.loads((root / 'closure' / 'metadata.json').read_text(encoding='utf-8'))
+          audit = json.loads((root / 'closure' / 'closure_audit.json').read_text(encoding='utf-8'))
+          ledger = json.loads((root / 'closure' / 'experiment_ledger.json').read_text(encoding='utf-8'))
+          features = json.loads((root / 'closure' / 'feature_difference.json').read_text(encoding='utf-8'))
           head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
-          assert meta['checkout_head'] == inv['head'] == head == os.environ['EVIDENCE_HEAD']
-          assert meta['formal_weight'] == 0
+          assert meta['checkout_head'] == audit['head'] == ledger['head'] == head == os.environ['EVIDENCE_HEAD']
+          assert meta['formal_weight'] == audit['formal_weight'] == 0
           assert meta['provider_network_used'] is False
           assert meta['external_request_attempts'] == 0
           assert meta['api_football_key_accessed'] is False
           assert meta['model_training'] == 0
-          assert len(list((root / 'source_bundle').rglob('*'))) >= 20
+          assert audit['missing_required_version_prefixes'] == []
+          assert audit['experiment_count'] >= 40
+          assert features['processed_csv_count'] > 0
+          assert features['processed_total_rows_scanned'] > 0
+          assert meta['decision'] in {
+              'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING',
+              'PRE_REGISTRATION_REQUIRED_NO_TRAINING_YET',
+          }
+          if meta['decision'] == 'EXISTING_DATA_DRAW_SIGNAL_EXHAUSTED_NO_NEW_TRAINING':
+              assert features['EXISTING_PIT_SAFE_UNTESTED_FEATURES'] == []
+              assert audit['preregistration'] is None
+          else:
+              assert features['EXISTING_PIT_SAFE_UNTESTED_FEATURES']
+              assert audit['preregistration']['status'] == 'PRE_REGISTERED_NOT_RUN'
+          PY
+      - name: Create exact-head artifact metadata
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'draw-closure-audit'
+          head = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          files = {}
+          for path in sorted(root.rglob('*')):
+              if path.is_file():
+                  files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+          metadata = {
+              'checkout_head': head,
+              'evidence_head': head,
+              'run_head': head,
+              'workflow_run_id': os.environ['GITHUB_RUN_ID'],
+              'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'formal_weight': 0,
+              'provider_network_used': False,
+              'external_request_attempts': 0,
+              'api_football_key_accessed': False,
+              'model_training': 0,
+              'model_diff': 0,
+              'formal_data_diff': 0,
+              'config_diff': 0,
+              'current_diff': 0,
+              'files': files,
+          }
+          (root / 'artifact_metadata.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: football-draw-inventory-v502-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/draw-inventory
+          name: football-draw-closure-audit-v502-${{ env.EVIDENCE_HEAD }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/draw-closure-audit
           retention-days: 30
           if-no-files-found: error
