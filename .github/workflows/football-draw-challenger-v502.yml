@@ -95,7 +95,7 @@ jobs:
           mkdir -p "$inventory" "$closure"
           python football-data/research/draw_challenger_inventory_v502.py --output-dir "$inventory"
           python football-data/audit/draw_signal_closure_engine_v503.py --output-dir "$closure"
-          python football-data/research/draw_signal_complete_ledger_v502.py --closure-dir "$closure"
+          python football-data/research/draw_signal_complete_ledger_v502.py --closure-dir "$closure" > "$root/ledger_verify_stdout.json"
           python football-data/audit/draw_signal_claim_contract_v503.py --closure-dir "$closure" --root . --verify-existing > "$root/claim_verify_stdout.json"
           git status --short > "$root/git_status_after_audit.txt"
           python - <<'PY'
@@ -105,6 +105,7 @@ jobs:
           audit = json.loads((closure / 'closure_audit.json').read_text(encoding='utf-8'))
           meta = json.loads((closure / 'metadata.json').read_text(encoding='utf-8'))
           verification = json.loads((closure / 'closure_verification.json').read_text(encoding='utf-8'))
+          ledger_stdout = json.loads((root / 'ledger_verify_stdout.json').read_text(encoding='utf-8'))
           claim_verification = json.loads((closure / 'claim_contract_verification.json').read_text(encoding='utf-8'))
           verify_stdout = json.loads((root / 'claim_verify_stdout.json').read_text(encoding='utf-8'))
           claim_records = json.loads((closure / 'claim_records.json').read_text(encoding='utf-8'))
@@ -117,7 +118,7 @@ jobs:
           assert audit['historical_relationship']['previous_version'] == 'Football Draw Signal Closure Audit V5.0.2'
           assert audit['historical_relationship']['previous_exact_head'] == os.environ['PREVIOUS_VALIDATED_HEAD']
           assert audit['historical_relationship']['silent_rewrite'] is False
-          assert verification['status'] == claim_verification['status'] == verify_stdout['status'] == 'PASS'
+          assert verification['status'] == ledger_stdout['status'] == claim_verification['status'] == verify_stdout['status'] == 'PASS'
           assert report['accurate_object']['exact_new_head'] == head
           assert report['accurate_object']['previous_head'] == os.environ['PREVIOUS_VALIDATED_HEAD']
           assert audit['decision'] == 'PRE_REGISTRATION_REQUIRED_NO_TRAINING_YET'
@@ -127,16 +128,20 @@ jobs:
           assert audit['formal_weight'] == meta['formal_weight'] == 0
           assert audit['model_training'] == meta['model_training'] == 0
           assert audit['new_target_period_scoring'] == meta['new_target_period_scoring'] == 0
-          assert audit['provider_request_attempts'] == meta['provider_request_attempts'] == 0
-          assert audit['audit_code_external_request_attempts'] == meta['audit_code_external_request_attempts'] == 0
+          for obj in (audit, meta):
+              assert obj['provider_request_attempts'] == 0
+              assert obj['audit_code_external_request_attempts'] == 0
+              assert obj['external_request_attempts'] == 0
+              assert obj['external_request_attempts'] == obj['provider_request_attempts'] + obj['audit_code_external_request_attempts']
+              assert obj['external_request_attempts_scope'].startswith('V5.0.2_LEDGER_COMPATIBILITY:')
           assert audit['api_football_key_accessed'] is False and meta['api_football_key_accessed'] is False
           assert meta['model_diff'] == meta['formal_data_diff'] == meta['config_diff'] == meta['current_diff'] == 0
           assert audit['execution_boundary']['measurement_scope'] == 'AUDIT_BUSINESS_CODE_ONLY'
           assert 'workflow-artifact-upload' in audit['execution_boundary']['not_yet_executed_at_measurement']
           assert audit['execution_boundary']['workflow_infrastructure_network_used'] == 'OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE'
           assert receipt['artifact_upload_status'] == 'NOT_EXECUTED_BY_AUDIT_CODE'
-          assert receipt['provider_request_attempts'] == 0
-          assert receipt['audit_code_external_request_attempts'] == 0
+          assert receipt['provider_request_attempts'] == receipt['audit_code_external_request_attempts'] == receipt['external_request_attempts'] == 0
+          assert receipt['external_request_attempts_scope'].startswith('V5.0.2_LEDGER_COMPATIBILITY:')
 
           binding = claim_verification['binding']
           assert binding == verify_stdout['bindings']
@@ -170,7 +175,7 @@ jobs:
               if path.is_file() and path.name != 'artifact_metadata.json':
                   files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
           artifact = {
-              'schema_version': 'DRAW-SIGNAL-CLOSURE-ARTIFACT-V503-1.1',
+              'schema_version': 'DRAW-SIGNAL-CLOSURE-ARTIFACT-V503-1.2',
               'observed_at_utc': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'checkout_head': head,
               'evidence_head': head,
@@ -182,12 +187,15 @@ jobs:
               'completed_before_metadata': [
                   'checkout', 'setup-python', 'exact-head-and-protected-asset-gates',
                   'historical-v502-tests', 'v503-production-counterexamples',
-                  'full-closure-build', 'deterministic-claim-verification',
+                  'full-closure-build', 'historical-v502-ledger-verification',
+                  'deterministic-claim-verification',
               ],
               'artifact_upload_status_at_observed_at': 'PENDING_NOT_CLAIMED_AS_ACTUAL',
               'artifact_upload_proof_source': 'GitHub Actions artifact API after upload step completion',
               'provider_request_attempts': 0,
               'audit_code_external_request_attempts': 0,
+              'external_request_attempts': 0,
+              'external_request_attempts_scope': meta['external_request_attempts_scope'],
               'workflow_infrastructure_network_used': True,
               'workflow_infrastructure_network_scope': ['actions/checkout', 'actions/setup-python', 'actions/upload-artifact'],
               'api_football_key_accessed': False,
@@ -220,6 +228,9 @@ jobs:
   windows-unicode-path-v503:
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -229,30 +240,83 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Full V5.0.3 audit in Windows Chinese path
+      - name: Full V5.0.3 audit in Windows Chinese path with native exit gates
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ((git rev-parse HEAD).Trim() -ne $env:EVIDENCE_HEAD) { throw 'exact HEAD mismatch' }
+          [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
+          function Invoke-CheckedNative {
+            param(
+              [Parameter(Mandatory=$true)][string]$Label,
+              [Parameter(Mandatory=$true)][scriptblock]$Command
+            )
+            & $Command
+            $code = $LASTEXITCODE
+            if ($null -eq $code) { throw "$Label did not expose a native exit code" }
+            if ($code -ne 0) { throw "$Label failed with exit code $code" }
+          }
+
+          $guardObserved = $false
+          try {
+            Invoke-CheckedNative -Label 'intentional native failure' -Command { python -X utf8 -c "import sys; sys.exit(1)" }
+          }
+          catch {
+            if ($_.Exception.Message -notmatch 'intentional native failure failed with exit code 1') { throw }
+            $guardObserved = $true
+          }
+          if (-not $guardObserved) { throw 'native exit-code guard counterexample did not fail closed' }
+
+          Invoke-CheckedNative -Label 'outer exact HEAD' -Command { git rev-parse HEAD | Out-Null }
+          $outerHead = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "outer exact HEAD read failed with exit code $LASTEXITCODE" }
+          if ($outerHead -ne $env:EVIDENCE_HEAD) { throw 'exact HEAD mismatch' }
+
           $unicodeRoot = Join-Path $env:RUNNER_TEMP '足球项目维护\repo-pr77-v503'
           $outputRoot = Join-Path $env:RUNNER_TEMP 'v503-windows-unicode-output'
           $inventory = Join-Path $outputRoot 'inventory'
           $closure = Join-Path $outputRoot 'closure'
           New-Item -ItemType Directory -Force -Path $outputRoot, $inventory, $closure | Out-Null
-          git worktree add --detach "$unicodeRoot" $env:EVIDENCE_HEAD
+          Invoke-CheckedNative -Label 'git worktree add' -Command { git worktree add --detach "$unicodeRoot" $env:EVIDENCE_HEAD }
           try {
             Push-Location $unicodeRoot
             $env:PYTHONPATH = 'football-data/research;football-data/audit'
-            python -m unittest football-data/tests/test_draw_signal_claim_contract_v503.py -v
-            python football-data/research/draw_challenger_inventory_v502.py --output-dir "$inventory"
-            python football-data/audit/draw_signal_closure_engine_v503.py --output-dir "$closure"
-            python football-data/research/draw_signal_complete_ledger_v502.py --closure-dir "$closure"
-            python football-data/audit/draw_signal_claim_contract_v503.py --closure-dir "$closure" --root . --verify-existing
+            Invoke-CheckedNative -Label 'V5.0.3 unit tests' -Command { python -X utf8 -m unittest football-data/tests/test_draw_signal_claim_contract_v503.py -v }
+            Invoke-CheckedNative -Label 'V5.0.2 inventory under UTF-8 runtime' -Command { python -X utf8 football-data/research/draw_challenger_inventory_v502.py --output-dir "$inventory" }
+            Invoke-CheckedNative -Label 'V5.0.3 closure build' -Command { python -X utf8 football-data/audit/draw_signal_closure_engine_v503.py --output-dir "$closure" }
+            Invoke-CheckedNative -Label 'V5.0.2 ledger compatibility verification' -Command { python -X utf8 football-data/research/draw_signal_complete_ledger_v502.py --closure-dir "$closure" | Set-Content -Encoding UTF8 (Join-Path $outputRoot 'ledger_verify_stdout.json') }
+            Invoke-CheckedNative -Label 'V5.0.3 claim verification' -Command { python -X utf8 football-data/audit/draw_signal_claim_contract_v503.py --closure-dir "$closure" --root . --verify-existing | Set-Content -Encoding UTF8 (Join-Path $outputRoot 'claim_verify_stdout.json') }
+
+            $inventoryPath = Join-Path $inventory 'inventory.json'
+            if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'inventory.json missing' }
+            $inventoryObject = Get-Content -Raw -Encoding UTF8 $inventoryPath | ConvertFrom-Json
+            if ($inventoryObject.head -ne $env:EVIDENCE_HEAD) { throw 'inventory HEAD mismatch' }
+
+            $closureVerificationPath = Join-Path $closure 'closure_verification.json'
+            if (-not (Test-Path -LiteralPath $closureVerificationPath -PathType Leaf)) { throw 'closure_verification.json missing' }
+            $closureVerification = Get-Content -Raw -Encoding UTF8 $closureVerificationPath | ConvertFrom-Json
+            if ($closureVerification.status -ne 'PASS') { throw 'closure verification is not PASS' }
+
+            $ledgerVerification = Get-Content -Raw -Encoding UTF8 (Join-Path $outputRoot 'ledger_verify_stdout.json') | ConvertFrom-Json
+            if ($ledgerVerification.status -ne 'PASS') { throw 'historical ledger verification is not PASS' }
+            $claimVerification = Get-Content -Raw -Encoding UTF8 (Join-Path $outputRoot 'claim_verify_stdout.json') | ConvertFrom-Json
+            if ($claimVerification.status -ne 'PASS') { throw 'claim verifier is not PASS' }
+
             $receipt = Get-Content -Raw -Encoding UTF8 (Join-Path $closure 'audit_execution_receipt.json') | ConvertFrom-Json
+            $audit = Get-Content -Raw -Encoding UTF8 (Join-Path $closure 'closure_audit.json') | ConvertFrom-Json
+            $metadata = Get-Content -Raw -Encoding UTF8 (Join-Path $closure 'metadata.json') | ConvertFrom-Json
             if ($receipt.head -ne $env:EVIDENCE_HEAD) { throw 'receipt HEAD mismatch' }
-            if ($receipt.provider_request_attempts -ne 0) { throw 'provider request count mismatch' }
+            foreach ($obj in @($audit, $metadata, $receipt)) {
+              if ($obj.provider_request_attempts -ne 0) { throw 'provider request count mismatch' }
+              if ($obj.audit_code_external_request_attempts -ne 0) { throw 'audit-code external request count mismatch' }
+              if ($obj.external_request_attempts -ne 0) { throw 'legacy compatibility request count mismatch' }
+              if ($obj.external_request_attempts_scope -notlike 'V5.0.2_LEDGER_COMPATIBILITY:*') { throw 'legacy compatibility scope missing' }
+            }
+            Set-Content -Encoding UTF8 -Path (Join-Path $outputRoot 'native_exit_guard_self_test.txt') -Value 'PASS: intermediate native exit 1 was converted into a terminating PowerShell failure.'
           }
           finally {
             Pop-Location
-            git worktree remove --force "$unicodeRoot"
+            Invoke-CheckedNative -Label 'git worktree remove' -Command { git worktree remove --force "$unicodeRoot" }
           }

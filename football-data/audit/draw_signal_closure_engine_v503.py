@@ -22,6 +22,10 @@ RULE_VERSION = claims.RULE_VERSION
 PREVIOUS_VERSION = claims.PREVIOUS_VERSION
 PREVIOUS_EXACT_HEAD = claims.PREVIOUS_EXACT_HEAD
 FORMAL_WEIGHT = 0
+LEGACY_EXTERNAL_REQUEST_ATTEMPTS_SCOPE = (
+    "V5.0.2_LEDGER_COMPATIBILITY: provider requests plus audit-business-code "
+    "external requests; excludes GitHub Actions workflow infrastructure network"
+)
 
 
 def _install_utf8_git_boundary() -> None:
@@ -29,11 +33,25 @@ def _install_utf8_git_boundary() -> None:
     historical.base.git = claims.git_utf8
 
 
+def _network_zero_fields() -> dict[str, Any]:
+    """Return scoped zero-request facts, including the V5.0.2 ledger alias."""
+    provider = 0
+    audit_code = 0
+    return {
+        "provider_network_used": False,
+        "provider_request_attempts": provider,
+        "audit_code_external_request_attempts": audit_code,
+        "external_request_attempts": provider + audit_code,
+        "external_request_attempts_scope": LEGACY_EXTERNAL_REQUEST_ATTEMPTS_SCOPE,
+        "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
+    }
+
+
 def build_audit(root: Path) -> dict[str, Any]:
     _install_utf8_git_boundary()
     audit = dict(historical.build_audit(root))
     rule_info = claims.validate_rule_sources(root)
-    audit["schema_version"] = "DRAW-SIGNAL-CLOSURE-AUDIT-V503-1.1"
+    audit["schema_version"] = "DRAW-SIGNAL-CLOSURE-AUDIT-V503-1.2"
     audit["rule_version"] = RULE_VERSION
     audit["authoritative_rule"] = rule_info
     audit["historical_relationship"] = {
@@ -46,12 +64,9 @@ def build_audit(root: Path) -> dict[str, Any]:
         "formal_weight": 0,
         "model_training": 0,
         "new_target_period_scoring": 0,
-        "provider_network_used": False,
-        "provider_request_attempts": 0,
-        "audit_code_external_request_attempts": 0,
+        **_network_zero_fields(),
         "api_football_key_accessed": False,
     })
-    audit.pop("external_request_attempts", None)
     audit["execution_boundary"] = {
         "measurement_scope": "AUDIT_BUSINESS_CODE_ONLY",
         "measurement_phase": "AUDIT_OBJECT_BUILT_BEFORE_OUTPUT_WRITE",
@@ -66,6 +81,8 @@ def build_audit(root: Path) -> dict[str, Any]:
         ],
         "provider_request_attempts": 0,
         "audit_code_external_request_attempts": 0,
+        "external_request_attempts": 0,
+        "external_request_attempts_scope": LEGACY_EXTERNAL_REQUEST_ATTEMPTS_SCOPE,
         "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
         "mock_used": False,
         "model_training": 0,
@@ -79,7 +96,7 @@ def build_audit(root: Path) -> dict[str, Any]:
 
 def _write_execution_receipt(out: Path, audit: Mapping[str, Any]) -> dict[str, Any]:
     receipt = {
-        "schema_version": "DRAW-SIGNAL-V503-AUDIT-EXECUTION-RECEIPT-1.0",
+        "schema_version": "DRAW-SIGNAL-V503-AUDIT-EXECUTION-RECEIPT-1.1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "head": audit["head"],
         "measurement_scope": "AUDIT_BUSINESS_CODE_ONLY",
@@ -99,6 +116,8 @@ def _write_execution_receipt(out: Path, audit: Mapping[str, Any]) -> dict[str, A
         ],
         "provider_request_attempts": 0,
         "audit_code_external_request_attempts": 0,
+        "external_request_attempts": 0,
+        "external_request_attempts_scope": LEGACY_EXTERNAL_REQUEST_ATTEMPTS_SCOPE,
         "workflow_infrastructure_network_used": "REPORTED_BY_WORKFLOW_METADATA_NOT_THIS_RECEIPT",
         "artifact_upload_status": "NOT_EXECUTED_BY_AUDIT_CODE",
         "model_training": 0,
@@ -122,7 +141,7 @@ def write_audit(out: Path, audit: Mapping[str, Any], root: Path) -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     binding = claim_output["verification"]["binding"]
     metadata.update({
-        "schema_version": "DRAW-SIGNAL-CLOSURE-METADATA-V503-1.1",
+        "schema_version": "DRAW-SIGNAL-CLOSURE-METADATA-V503-1.2",
         "rule_version": RULE_VERSION,
         "rule_path": claims.RULE_PATH,
         "rule_sha256": claim_output["rule_info"]["rule_sha256"],
@@ -132,16 +151,13 @@ def write_audit(out: Path, audit: Mapping[str, Any], root: Path) -> None:
         "claim_report_markdown_sha256": binding["claim_report_markdown_sha256"],
         "claim_contract_status": claim_output["verification"]["status"],
         "audit_execution_receipt_observed_at_utc": receipt["observed_at_utc"],
-        "provider_request_attempts": 0,
-        "audit_code_external_request_attempts": 0,
-        "workflow_infrastructure_network_used": "OUT_OF_SCOPE_NOT_MEASURED_BY_AUDIT_CODE",
+        **_network_zero_fields(),
         "new_target_period_scoring": 0,
         "model_diff": 0,
         "formal_data_diff": 0,
         "config_diff": 0,
         "current_diff": 0,
     })
-    metadata.pop("external_request_attempts", None)
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -162,6 +178,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "provider_network_used": False,
         "provider_request_attempts": 0,
         "audit_code_external_request_attempts": 0,
+        "external_request_attempts": 0,
+        "external_request_attempts_scope": LEGACY_EXTERNAL_REQUEST_ATTEMPTS_SCOPE,
     }, ensure_ascii=False))
     return 0
 
