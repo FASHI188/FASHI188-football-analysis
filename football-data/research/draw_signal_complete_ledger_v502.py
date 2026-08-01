@@ -27,10 +27,12 @@ def verify_decision_evidence(
     domain_candidates: Sequence[Mapping[str, Any]],
     route_closure: Mapping[str, Any],
     preregistration: Mapping[str, Any] | None,
+    reconstructed_candidates: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     if decision not in core.ALLOWED_DECISIONS:
         raise ValueError(f"unsupported decision: {decision}")
-    expected, expected_prereg = core.decide_and_preregister(global_candidates, domain_candidates, route_closure)
+    combined_domain = list(domain_candidates) + list(reconstructed_candidates)
+    expected, expected_prereg = core.decide_and_preregister(global_candidates, combined_domain, route_closure)
     if decision != expected:
         raise ValueError(f"decision/evidence mismatch: decision={decision} expected={expected}")
     if decision == core.POSITIVE_DECISION:
@@ -40,6 +42,8 @@ def verify_decision_evidence(
             raise ValueError("positive preregistration status mismatch")
         if preregistration.get("run_authorized") is not False:
             raise ValueError("audit may not authorize training")
+        if preregistration.get("formal_promotion_authorized") is not False:
+            raise ValueError("audit may not authorize formal promotion")
         expected_features = expected_prereg.get("features") if expected_prereg else None
         if preregistration.get("features") != expected_features:
             raise ValueError("preregistration features/scopes do not match candidates")
@@ -53,7 +57,8 @@ def verify_decision_evidence(
         "decision": decision,
         "expected_decision": expected,
         "global_candidate_count": len(global_candidates),
-        "domain_candidate_count": len(domain_candidates),
+        "strict_domain_candidate_count": len(domain_candidates),
+        "reconstructed_domain_candidate_count": len(reconstructed_candidates),
         "unresolved_route_count": len(route_closure.get("unresolved", [])),
         "consistent": True,
     }
@@ -118,13 +123,15 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
 
     route_check = verify_route_closure(audit.get("experiment_route_closure", {}), int(audit.get("experiment_count", -1)))
     global_candidates = feature.get("EXISTING_PIT_SAFE_UNTESTED_FEATURES", [])
-    domain_candidates = feature.get("DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES", [])
+    strict_domain_candidates = feature.get("DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES", [])
+    reconstructed_candidates = feature.get("DOMAIN_SPECIFIC_RECONSTRUCTED_RESEARCH_CANDIDATES", [])
     decision_check = verify_decision_evidence(
         str(audit.get("decision")),
         global_candidates,
-        domain_candidates,
+        strict_domain_candidates,
         audit.get("experiment_route_closure", {}),
         audit.get("preregistration"),
+        reconstructed_candidates,
     )
     if decision_obj.get("decision") != audit.get("decision") or metadata.get("decision") != audit.get("decision"):
         raise ValueError("decision differs across audit/decision/metadata")
@@ -141,6 +148,16 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
     if any(row.get("formal_weight") != 0 for row in actual_rows):
         raise ValueError("nonzero formal weight in research ledger")
 
+    provenance = audit.get("research_asset_registry_provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("registry provenance missing")
+    if provenance.get("source_index_tree_sha256") != core.SOURCE_INDEX_TREE_SHA256:
+        raise ValueError("registry source index SHA mismatch")
+    if provenance.get("source_index_tree_sha256_verified") is not True:
+        raise ValueError("registry source index SHA not verified")
+    if provenance.get("source_head_present") is not False:
+        raise ValueError("legacy source_head provenance remains active")
+
     market_aliases = {"ahh", "avgaha", "avgahh", "b365aha", "b365ahh", "b36ca", "bfeaha", "bfeahh", "maxaha", "maxahh", "paha", "pahh"}
     rows_by_name = {str(row.get("field", "")).lower(): row for row in feature.get("fields", [])}
     missing_aliases = sorted(market_aliases - set(rows_by_name))
@@ -152,6 +169,32 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
     )
     if bad_aliases:
         raise ValueError(f"Asian/market aliases misclassified: {bad_aliases}")
+
+    round_rows = [row for row in reconstructed_candidates if str(row.get("field", "")).lower() == "round"]
+    if len(round_rows) != 1:
+        raise ValueError("round must appear exactly once as reconstructed research candidate")
+    round_row = round_rows[0]
+    if round_row.get("classification") != core.RECONSTRUCTED_CLASSIFICATION:
+        raise ValueError("round classification is not reconstructed research-only")
+    if round_row.get("qualifies_domain_specific_pit_safe_untested") is not False:
+        raise ValueError("reconstructed round may not be labeled strict PIT candidate")
+    if round_row.get("qualifies_domain_specific_reconstructed_research_candidate") is not True:
+        raise ValueError("reconstructed round candidate gate missing")
+    if round_row.get("forward_pit_proof_required") is not True:
+        raise ValueError("round must require forward PIT proof")
+
+    prereg = audit.get("preregistration")
+    if not isinstance(prereg, Mapping):
+        raise ValueError("reconstructed candidate requires non-authorized preregistration")
+    round_features = [item for item in prereg.get("features", []) if str(item.get("field", "")).lower() == "round"]
+    if len(round_features) != 1 or round_features[0].get("scope") != core.RECONSTRUCTED_SCOPE:
+        raise ValueError("round preregistration scope mismatch")
+    if prereg.get("run_authorized") is not False or prereg.get("formal_promotion_authorized") is not False:
+        raise ValueError("reconstructed preregistration must not authorize run or promotion")
+    if prereg.get("forward_pit_proof_required") is not True:
+        raise ValueError("reconstructed preregistration must require forward PIT proof")
+    if prereg.get("holdout_status") != "NOT_YET_PROVEN_UNTOUCHED":
+        raise ValueError("holdout status mismatch")
 
     for obj in (audit, metadata):
         if obj.get("formal_weight") != 0:
@@ -170,6 +213,8 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
         "decision_check": decision_check,
         "route_closure_check": route_check,
         "asset_coverage_check": coverage_check,
+        "registry_provenance": dict(provenance),
+        "reconstructed_candidate_count": len(reconstructed_candidates),
         "near_miss_count": len(feature.get("UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED", [])),
         "formal_weight": 0,
         "model_training": 0,
