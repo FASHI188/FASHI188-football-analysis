@@ -1,0 +1,198 @@
+{
+  "schema_version": "KOR-ROUND-ABLATION-R1-1.0",
+  "status": "FROZEN_BEFORE_HOLDOUT_ACCESS",
+  "authorized_at": "2026-08-01T20:17:00+08:00",
+  "authorization_scope": "one research-only KOR_KLeague1 baseline versus baseline+round ablation",
+  "base_main_sha": "605abf2d9f98c46f063106c7bd47193b96e588e4",
+  "source_files": {
+    "official_results": {
+      "path": "football-data/processed/KOR_KLeague1/official_results.csv",
+      "git_blob_sha": "3543163707d89954c4a41740ca1ee63808c3a70d",
+      "byte_sha256": "c5b1e4af1faa3883e360570a928c422f7dbdfa57776015ce6743e6167c168063"
+    },
+    "point_in_time": {
+      "path": "football-data/training_datasets/KOR_KLeague1/point_in_time.csv",
+      "git_blob_sha": "cdbbb38c32e2efe004ae5663e06fad9628fa6707"
+    },
+    "request_manifest": {
+      "path": "football-data/raw/KOR_KLeague1/request_manifest.json",
+      "git_blob_sha": "81a564c6a8f6c50c263a72976e8a431e62248279"
+    },
+    "ingestion_adapter": {
+      "path": "football-data/engine/ingest_batch_002_kleague_adapter.py",
+      "git_blob_sha": "9baf866f8d86999469aed325ba31977e30bce861"
+    },
+    "official_ajax_contract": {
+      "path": "football-data/manifests/v6_kleague_ajax_contract_v6463b_status.json",
+      "git_blob_sha": "2b4890fdfe2669bde86ee02a06b05a282770f6ef"
+    }
+  },
+  "pit_contract": {
+    "classification": "RESEARCH_PIT_SAFE_SCHEDULE_FIELD",
+    "field": "round",
+    "source_semantics": "official K League schedule roundId; fixed before match and not derived from result",
+    "required_evidence": [
+      "official schedule endpoint identity getScheduleList.do",
+      "adapter direct access item.get('roundId')",
+      "official site AJAX contract exposes roundId",
+      "2026-07-27 repository request manifest has non-empty future 2026-08,09,10 responses with zero finished rows",
+      "official_results round coverage is complete for included seasons"
+    ],
+    "strict_failure": "any missing identity, hash, future-response evidence, mapping coverage, uniqueness or round range check fails closed"
+  },
+  "target": {
+    "column": "label_result",
+    "classes": [
+      "H",
+      "D",
+      "A"
+    ],
+    "draw_class": "D"
+  },
+  "time_split": {
+    "available_seasons": [
+      "2021",
+      "2022",
+      "2023",
+      "2024",
+      "2025",
+      "2026"
+    ],
+    "included_complete_seasons": [
+      "2021",
+      "2022",
+      "2023",
+      "2024",
+      "2025"
+    ],
+    "excluded_partial_season": "2026",
+    "rolling_evaluation": [
+      {
+        "train": [
+          "2021",
+          "2022"
+        ],
+        "evaluate": "2023",
+        "role": "development_report_only"
+      },
+      {
+        "train": [
+          "2021",
+          "2022",
+          "2023"
+        ],
+        "evaluate": "2024",
+        "role": "validation_report_only"
+      },
+      {
+        "train": [
+          "2021",
+          "2022",
+          "2023",
+          "2024"
+        ],
+        "evaluate": "2025",
+        "role": "blind_holdout"
+      }
+    ],
+    "holdout_season": "2025",
+    "holdout_policy": "no application-level row or label access before frozen contract and preflight PASS"
+  },
+  "baseline_features": {
+    "numeric": [
+      "home_history_matches",
+      "home_history_gf",
+      "home_history_ga",
+      "home_history_ppg",
+      "home_venue_matches",
+      "home_venue_gf",
+      "home_venue_ga",
+      "home_last5_matches",
+      "home_last5_gf",
+      "home_last5_ga",
+      "home_last5_ppg",
+      "away_history_matches",
+      "away_history_gf",
+      "away_history_ga",
+      "away_history_ppg",
+      "away_venue_matches",
+      "away_venue_gf",
+      "away_venue_ga",
+      "away_last5_matches",
+      "away_last5_gf",
+      "away_last5_ga",
+      "away_last5_ppg",
+      "home_elo_pre_match",
+      "away_elo_pre_match",
+      "elo_difference_with_home_advantage",
+      "cold_start_flag",
+      "stage_unverified_flag"
+    ],
+    "categorical": [
+      "home_team",
+      "away_team",
+      "stage"
+    ]
+  },
+  "round_features": [
+    "round_scaled",
+    "round_scaled_squared"
+  ],
+  "feature_processing": {
+    "numeric_missing": "training-fold median",
+    "numeric_scaling": "training-fold mean and population standard deviation",
+    "categorical_encoding": "training-fold one-hot; unknown category all-zero",
+    "round_scaled": "round / 38.0",
+    "no_post_outcome_features": true
+  },
+  "model": {
+    "name": "deterministic multiclass ridge-score softmax",
+    "fit": "three one-hot ridge least-squares targets solved by Gaussian elimination; scores converted by softmax",
+    "ridge_lambda": 10.0,
+    "intercept_unpenalized": true,
+    "randomness": "none",
+    "retuning_after_results": false
+  },
+  "metrics": [
+    "Accuracy",
+    "Macro-F1",
+    "Draw Precision",
+    "Draw Recall",
+    "Draw F1",
+    "Log Loss",
+    "Brier",
+    "RPS",
+    "per-season deltas"
+  ],
+  "pass_thresholds": {
+    "holdout_draw_f1_delta_min": 0.01,
+    "holdout_rps_delta_max": -0.002,
+    "holdout_accuracy_delta_min": -0.01,
+    "holdout_log_loss_delta_max": 0.005,
+    "holdout_brier_delta_max": 0.005,
+    "seasons_with_nonnegative_draw_f1_delta_min": 2,
+    "seasons_with_nonpositive_rps_delta_min": 2,
+    "overall_rule": "all thresholds must pass; otherwise research result is NO_PROMOTION"
+  },
+  "run_policy": {
+    "maximum_experiment_runs": 1,
+    "preflight_must_pass": true,
+    "holdout_access_after_preflight_only": true,
+    "api_football_requests": 0,
+    "secret_access": false,
+    "new_data_collection": false,
+    "formal_weight": 0,
+    "formal_promotion_authorized": false,
+    "merge_authorized": false
+  },
+  "metric_definitions": {
+    "Accuracy": "mean argmax correctness",
+    "Macro-F1": "unweighted mean one-vs-rest F1 across H,D,A",
+    "Draw Precision": "D true positives / all D predictions",
+    "Draw Recall": "D true positives / all actual D",
+    "Draw F1": "harmonic mean of draw precision and recall",
+    "Log Loss": "mean negative log probability of observed class with epsilon 1e-15",
+    "Brier": "mean sum of squared errors across H,D,A probabilities",
+    "RPS": "mean of squared cumulative probability errors at H and H+D, divided by 2"
+  }
+}
