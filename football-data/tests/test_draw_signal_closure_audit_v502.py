@@ -44,7 +44,7 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
                 field,
             )
 
-    def test_round_is_not_bookmaker_and_qualifies_domain_specific(self):
+    def test_round_is_reconstructed_not_strict_pit_and_qualifies_research_domain(self):
         columns = {"round", "B365H", "B365D", "B365A"}
         self.assertIsNone(module.bookmaker_triplet_key("round", columns))
         row = module.assess_field_candidate(
@@ -55,8 +55,11 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
             total_competitions=17,
             dataflow_index={},
         )
+        self.assertEqual(row["classification"], module.RECONSTRUCTED_CLASSIFICATION)
         self.assertFalse(row["qualifies_existing_pit_safe_untested"])
-        self.assertTrue(row["qualifies_domain_specific_pit_safe_untested"])
+        self.assertTrue(row["qualifies_domain_specific_reconstructed_research_candidate"])
+        self.assertTrue(row["forward_pit_proof_required"])
+        self.assertFalse(row["formal_promotion_authorized"])
         self.assertEqual(row["eligible_domain_specific_scopes"][0]["competition"], "KOR_KLeague1")
 
     def test_unknown_field_remains_near_miss(self):
@@ -146,7 +149,7 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
         self.assertEqual(decision, module.NEGATIVE_DECISION)
         self.assertIsNone(prereg)
 
-    def test_domain_candidate_creates_non_authorized_preregistration(self):
+    def test_reconstructed_domain_candidate_creates_non_authorized_preregistration(self):
         row = module.assess_field_candidate(
             "round",
             stat(rows=1260, nonempty=1260, competitions=("KOR_KLeague1",), seasons=("2021", "2022", "2023", "2024", "2025", "2026")),
@@ -159,7 +162,9 @@ class DrawSignalClosureAuditTests(unittest.TestCase):
         decision, prereg = module.decide_and_preregister([], [row], routes)
         self.assertEqual(decision, module.POSITIVE_DECISION)
         self.assertFalse(prereg["run_authorized"])
-        self.assertEqual(prereg["features"][0]["scope"], "DOMAIN_SPECIFIC")
+        self.assertFalse(prereg["formal_promotion_authorized"])
+        self.assertTrue(prereg["forward_pit_proof_required"])
+        self.assertEqual(prereg["features"][0]["scope"], module.RECONSTRUCTED_SCOPE)
         self.assertEqual(prereg["holdout_status"], "NOT_YET_PROVEN_UNTOUCHED")
 
 
