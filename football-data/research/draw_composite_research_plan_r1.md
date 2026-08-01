@@ -1,108 +1,31 @@
-# Composite PIT draw-signal research plan R1.1
+# Composite Draw Auto Research Plan R1.3
 
-Status: `FROZEN_PLAN_NOT_EXECUTED_GAPS_CLOSED`
+## Scope
 
-Base main: `605abf2d9f98c46f063106c7bd47193b96e588e4`
+This PR contains a real automatic research pipeline for the existing viewed development datasets. It does not claim a blind holdout, does not promote a formal model, does not change formal data/config/CURRENT, and keeps `formal_weight=0`.
 
-## Inventory result
+## Automatic loop
 
-The bound V5.0.3 ledger contains 42 canonical routes: 14 `UNRESOLVED`, four with missing result evidence, six with candidate-improvement flags, 18 PIT-blocked, seven previously rejected, two duplicates and one audit-only route. The complete route-by-route decision is stored in `draw_composite_route_inventory_r1.json`.
+One authorized workflow launch uses standard `ubuntu-latest` matrix slots with `max-parallel: 1`. Each active slot restores the newest checkpoint, evaluates the next part of the frozen 200-candidate catalog, records every success and failure, saves the checkpoint, and uploads a compact Artifact. Later slots continue without waiting for a user, GPT, or Codex message.
 
-The raw-field ledger covers all 176 fields. It excludes 139 retrospective market fields because original quote timestamps are unproved, excludes direct use of all 18 post-match fields, excludes `Referee` because availability timing is unproved, and limits `round` to a KOR-only secondary ablation. Selected result and shot fields may only feed strictly lagged derived features when every source match precedes the current kickoff. The complete field list is stored in `draw_composite_raw_field_pit_ledger_r1.json`.
+The serial matrix deliberately avoids cross-run self-dispatch and therefore does not require repository secrets or a workflow token with write permission. Duplicate workflow launches are serialized by concurrency with `cancel-in-progress: false`; they restore the latest checkpoint instead of starting from candidate 1.
 
-## Excluded routes
+## Candidate budget
 
-Market, AH, OU, multibook and movement routes are excluded for unproved PIT timing. Lineup, expected-XI, player-value and referee routes are excluded for incomplete PIT or execution evidence. Previously rejected routes are not reopened. Registry routes are duplicates. Missing-result routes remain excluded. H/A risk-veto routes are not draw-probability predictors. `round` failed its frozen single-field research gate and is not part of the core.
+The catalog is the deterministic product of ten feature profiles, five positive-class weights, and four draw-logit offsets: exactly 200 candidates. Every profile carries a frozen three-value L2 grid selected only inside the outer-training history.
 
-## Researchable families
+## Validation
 
-- S1 strength closeness;
-- S2 strictly lagged recent form and attack/defence differences;
-- S3 historical draw propensity;
-- S4 low-goal environment;
-- S5 exact rolling-OOF baseline probability uncertainty;
-- S6 competition and verified-stage interactions.
+Validation is competition-season rolling nested validation. For each competition, seasons three through five are outer evaluation folds. The latest prior season is inner validation and all earlier seasons are inner training. There is no random split.
 
-Secondary only:
+Missing indicators, imputation, standardization, near-zero-variance removal, and duplicate/high-correlation removal are fitted only on the relevant training rows. Outer evaluation rows are transformed only after those decisions are frozen.
 
-- S7 lagged shot quality on a coverage-matched subset;
-- S8 KOR-only round interaction.
+## Checkpoints and stopping
 
-## Unique challenger
+A complete batch is 20 attempted candidates. A checkpoint is also written after each candidate so a controlled timeout can continue the same incomplete batch. Every complete batch generates a Markdown summary, full ledger update, Top 5, and remaining candidate/time budget.
 
-`C5_DRAW_COMPOSITE_PIT_R1_CORE` is the only recommended challenger. It is a deterministic fixed-L2 draw-residual logistic adjustment using S1-S6. It adjusts the draw logit while preserving the baseline H/A ratio. There is no random split, no hyperparameter search and no target-season refit.
+The loop stops at 200 candidates, six cumulative research hours, three complete batches without the frozen minimum improvement, or any leakage/numerical/completeness/security failure.
 
-## R1.1 execution contract
+## Outputs
 
-`draw_composite_execution_contract_r1.json` freezes the executable interpretation of this plan:
-
-- exact base tree and critical source-asset identities;
-- all 17 PIT dataset SHA-256 values and the five complete seasons used per competition;
-- exclusion of partial 2026 calendar-year seasons;
-- 51 expected rolling-origin outer folds;
-- global candidate training cutoff strictly before each target season starts;
-- date-only conservative PIT rule and same-date batch prediction before updates;
-- common core cohort and coverage-matched X1/X2 cohorts;
-- exact formulas for S1-S8;
-- outer-training-only imputation, scaling and categorical encoding;
-- deterministic duplicate removal and no label-based feature selection;
-- fixed IRLS/Newton solver, convergence and probability-conservation gates;
-- fixed metrics, ECE bins, calibration definitions, aggregation and bootstrap;
-- coverage, stability, calibration and numerical support gates;
-- a separate one-run authorization file that must not exist before later user authorization.
-
-The fail-closed validator is `validate_draw_composite_prereg_r1.py`. Its exact-HEAD GitHub workflow may hash complete files and read CSV headers only; it must parse zero data rows and zero labels.
-
-## Frozen comparison
-
-The single later comprehensive run, if separately authorized, must report:
-
-- B0 current exact rolling-OOF baseline;
-- A1-A6 single families;
-- C1-C5 fixed combinations;
-- C5-minus-S1 through C5-minus-S6;
-- X1 core plus lagged shots on an identical coverage-matched subset;
-- X2 KOR core plus round on an identical KOR subset.
-
-All candidates and exclusions must be reported. Cherry-picking is prohibited.
-
-## Validation and metrics
-
-Only complete-season rolling origin is allowed. Random splitting is prohibited. Every target row is `VIEWED_RESEARCH_EVALUATION_NOT_BLIND`.
-
-Required metrics:
-
-- Accuracy;
-- Macro-F1;
-- Draw Precision, Recall and F1;
-- Log Loss;
-- Brier;
-- RPS;
-- draw ECE and top-label multinomial ECE;
-- draw calibration intercept and slope;
-- fixed-bin reliability;
-- pooled, equal-fold and equal-league summaries;
-- per-fold and per-league stability;
-- paired outer-fold bootstrap intervals.
-
-## Holdout decision
-
-- 2025 / 2025-26: `VIEWED_NOT_BLIND`;
-- existing completed result data: `NO_PROVABLY_UNTOUCHED_EXISTING_RESULT_SET`;
-- partial 2026 seasons: excluded.
-
-A later passing run can only yield `RESEARCH_SUPPORT_ONLY_NO_PROMOTION`. A failing run yields `RESEARCH_NO_SUPPORT_NO_PROMOTION`. Neither permits formal promotion because there is no genuinely untouched holdout.
-
-## Authorization boundary
-
-Current state remains preregistration only:
-
-- experiment executed: 0;
-- label rows read by preregistration preflight: 0;
-- Provider/API/Secret access: 0;
-- new data collection: 0;
-- formal model/data/config/CURRENT changes: 0;
-- `formal_weight=0`;
-- Ready and merge unauthorized.
-
-The next experiment requires separate user authorization and a bound authorization file. Maximum comprehensive runs: one.
+The final Artifact contains checkpoints, the complete ledger, every candidate result and failure, per-fold and per-league metrics, calibration, batch summaries, Top 5, the unique recommended challenger, the stop reason, and whether future untouched data validation is worth waiting for. Large training datasets are never copied into Artifacts.
