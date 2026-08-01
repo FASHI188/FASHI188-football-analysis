@@ -329,6 +329,8 @@ def classify_column(column: str) -> tuple[str, str]:
         return "PIT_UNPROVEN_CONTEXT", "repository has no observed_at proving pre-match availability"
     if any(hint in c for hint in MARKET_HINTS):
         return "RETROSPECTIVE_MARKET_REFERENCE", "odds/line without original quote timestamp"
+    if re.fullmatch(r"[0-9a-z]{2,12}c?[hda]", c):
+        return "RETROSPECTIVE_MARKET_REFERENCE", "bookmaker 1X2 alias without original quote timestamp"
     if re.fullmatch(r"[ha](c|f|r|s|st|y)", c):
         return "POSTMATCH_FORBIDDEN", "in-match statistic"
     return "UNKNOWN_PIT_STATUS", "no repository-wide timestamp contract proves prediction-time availability"
@@ -393,6 +395,8 @@ def profile_fields(root: Path) -> dict[str, Any]:
         normalized = col.lower().strip()
         exact_tested = normalized in tested_tokens
         alias_families = [family for family, aliases in TESTED_FAMILY_ALIASES.items() if normalized in aliases]
+        if cls == "RETROSPECTIVE_MARKET_REFERENCE" and not alias_families:
+            alias_families.append("generic_market_alias_already_tested")
         substantive = cls not in {"PIT_SAFE_STRUCTURAL", "POSTMATCH_FORBIDDEN"}
         pit_safe = cls in {"PIT_SAFE_PREDICTION_TIME", "PIT_SAFE_STRUCTURAL"}
         untested = not exact_tested and not alias_families
@@ -416,11 +420,13 @@ def profile_fields(root: Path) -> dict[str, Any]:
         })
     untested = [row for row in fields if row["qualifies_existing_pit_safe_untested"]]
     near_miss = [row for row in fields if row["untested"] and row["substantive_predictive_candidate"] and not row["qualifies_existing_pit_safe_untested"]]
+    classification_counts = dict(Counter(row["classification"] for row in fields))
     return {
         "processed_csv_count": len(files),
         "processed_total_rows_scanned": total_rows,
         "data_file_manifest": file_manifest,
         "field_count": len(fields),
+        "field_classification_counts": classification_counts,
         "fields": fields,
         "tested_feature_token_count": len(tested_tokens),
         "tested_feature_tokens_sha256": canonical_sha(sorted(tested_tokens)),
@@ -446,7 +452,7 @@ def markdown_ledger(ledger: list[dict[str, Any]]) -> str:
 
 
 def markdown_features(feature_audit: dict[str, Any], decision: str) -> str:
-    lines = ["# 现有字段差集", "", f"裁决：`{decision}`", "", f"扫描CSV：{feature_audit['processed_csv_count']}；行数：{feature_audit['processed_total_rows_scanned']}；唯一字段：{feature_audit['field_count']}。", "", "## EXISTING_PIT_SAFE_UNTESTED_FEATURES", ""]
+    lines = ["# 现有字段差集", "", f"裁决：`{decision}`", "", f"扫描CSV：{feature_audit['processed_csv_count']}；行数：{feature_audit['processed_total_rows_scanned']}；唯一字段：{feature_audit['field_count']}。", "", "字段分类：`" + json.dumps(feature_audit.get("field_classification_counts", {}), ensure_ascii=False, sort_keys=True) + "`", "", "## EXISTING_PIT_SAFE_UNTESTED_FEATURES", ""]
     features = feature_audit["EXISTING_PIT_SAFE_UNTESTED_FEATURES"]
     if not features:
         lines.append("空集。")
