@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Verify closure outputs without forcing either legal audit decision.
-
-This compatibility step is intentionally non-transforming. It checks that the decision,
-candidate list, preregistration and independently discovered research-asset coverage agree.
-It does not train, score, or rewrite the audit conclusion.
-"""
+"""Verify route-aware closure outputs without forcing a preselected decision."""
 from __future__ import annotations
 
 import argparse
@@ -14,50 +9,104 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+AUDIT = HERE.parent / "audit"
+for path in (HERE, AUDIT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
-import draw_signal_closure_engine_v502 as core
+import draw_signal_closure_engine_v502_r4 as core
 
 
 def _load(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def verify_decision_evidence(decision: str, candidates: Sequence[Mapping[str, Any]], preregistration: Mapping[str, Any] | None) -> dict[str, Any]:
+def verify_decision_evidence(
+    decision: str,
+    global_candidates: Sequence[Mapping[str, Any]],
+    domain_candidates: Sequence[Mapping[str, Any]],
+    route_closure: Mapping[str, Any],
+    preregistration: Mapping[str, Any] | None,
+) -> dict[str, Any]:
     if decision not in core.ALLOWED_DECISIONS:
         raise ValueError(f"unsupported decision: {decision}")
-    expected = core.POSITIVE_DECISION if candidates else core.NEGATIVE_DECISION
+    expected, expected_prereg = core.decide_and_preregister(global_candidates, domain_candidates, route_closure)
     if decision != expected:
         raise ValueError(f"decision/evidence mismatch: decision={decision} expected={expected}")
-    if candidates:
+    if decision == core.POSITIVE_DECISION:
         if not isinstance(preregistration, Mapping):
             raise ValueError("positive decision requires preregistration")
-        registered = list(preregistration.get("features", []))
-        candidate_names = [str(row["field"]) for row in candidates]
-        if registered != candidate_names:
-            raise ValueError("preregistration features do not match candidates")
         if preregistration.get("status") != "PRE_REGISTERED_NOT_RUN":
             raise ValueError("positive preregistration status mismatch")
         if preregistration.get("run_authorized") is not False:
             raise ValueError("audit may not authorize training")
+        expected_features = expected_prereg.get("features") if expected_prereg else None
+        if preregistration.get("features") != expected_features:
+            raise ValueError("preregistration features/scopes do not match candidates")
     elif preregistration is not None:
-        raise ValueError("negative decision requires null preregistration")
-    return {"decision": decision, "expected_decision": expected, "candidate_count": len(candidates), "consistent": True}
+        raise ValueError("non-positive decision requires null preregistration")
+    if decision == core.NEGATIVE_DECISION and route_closure.get("blocks_exhausted"):
+        raise ValueError("EXHAUSTED forbidden while experiment routes remain unresolved")
+    if decision == core.UNRESOLVED_DECISION and not route_closure.get("blocks_exhausted"):
+        raise ValueError("UNRESOLVED decision requires route blockers")
+    return {
+        "decision": decision,
+        "expected_decision": expected,
+        "global_candidate_count": len(global_candidates),
+        "domain_candidate_count": len(domain_candidates),
+        "unresolved_route_count": len(route_closure.get("unresolved", [])),
+        "consistent": True,
+    }
 
 
-def verify_asset_coverage(coverage: Mapping[str, Any]) -> dict[str, Any]:
-    expected = list(coverage.get("expected", []))
-    matched = list(coverage.get("matched", []))
-    missing = sorted(set(expected) - set(matched))
-    extra = sorted(set(matched) - set(expected))
-    claimed = bool(coverage.get("all_covered"))
-    actual = not missing and not extra
-    if claimed != actual:
-        raise ValueError("asset coverage flag does not match expected/matched sets")
+def verify_asset_coverage(coverage: Mapping[str, Any], actual_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    required = ("missing", "extra", "inclusion_mismatch", "parse_failures", "all_covered")
+    if any(key not in coverage for key in required):
+        raise ValueError("asset coverage fields missing")
+    actual = not any(coverage.get(key) for key in ("missing", "extra", "inclusion_mismatch", "parse_failures"))
+    if bool(coverage.get("all_covered")) != actual:
+        raise ValueError("asset coverage flag inconsistent")
     if not actual:
-        raise ValueError(f"research asset coverage incomplete: missing={missing[:10]} extra={extra[:10]}")
-    return {"expected_count": len(expected), "matched_count": len(matched), "missing": missing, "extra": extra, "all_covered": actual}
+        raise ValueError(
+            "research asset coverage incomplete: "
+            f"missing={coverage.get('missing', [])[:5]} extra={coverage.get('extra', [])[:5]} "
+            f"mismatch={coverage.get('inclusion_mismatch', [])[:5]} parse={coverage.get('parse_failures', [])[:5]}"
+        )
+    for row in actual_rows:
+        included = bool(row.get("included"))
+        if included and not row.get("inclusion_reason"):
+            raise ValueError(f"included asset lacks reason: {row.get('path')}")
+        if not included and not row.get("exclusion_reason"):
+            raise ValueError(f"excluded asset lacks reason: {row.get('path')}")
+    return {
+        "expected_path_count": coverage.get("expected_path_count"),
+        "actual_path_count": coverage.get("actual_path_count"),
+        "expected_included_count": coverage.get("expected_included_count"),
+        "actual_included_count": coverage.get("actual_included_count"),
+        "all_covered": True,
+    }
+
+
+def verify_route_closure(route_closure: Mapping[str, Any], experiment_count: int) -> dict[str, Any]:
+    rows = list(route_closure.get("rows", []))
+    if len(rows) != experiment_count:
+        raise ValueError("route closure row count mismatch")
+    illegal = [row for row in rows if row.get("closure_state") not in core.ROUTE_STATES]
+    if illegal:
+        raise ValueError("illegal route closure state")
+    unresolved = [row for row in rows if row.get("closure_state") == "UNRESOLVED"]
+    if route_closure.get("unresolved") != unresolved:
+        raise ValueError("unresolved route summary mismatch")
+    blocks = bool(unresolved or route_closure.get("candidate_improvements") or route_closure.get("missing_result_evidence"))
+    if bool(route_closure.get("blocks_exhausted")) != blocks:
+        raise ValueError("route closure blocker flag mismatch")
+    return {
+        "route_count": len(rows),
+        "unresolved_count": len(unresolved),
+        "candidate_improvement_count": len(route_closure.get("candidate_improvements", [])),
+        "missing_result_count": len(route_closure.get("missing_result_evidence", [])),
+        "blocks_exhausted": blocks,
+    }
 
 
 def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
@@ -67,20 +116,43 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
     complete = _load(closure_dir / "complete_research_file_ledger.json")
     metadata = _load(closure_dir / "metadata.json")
 
-    candidates = feature.get("EXISTING_PIT_SAFE_UNTESTED_FEATURES", [])
-    decision_check = verify_decision_evidence(str(audit.get("decision")), candidates, audit.get("preregistration"))
+    route_check = verify_route_closure(audit.get("experiment_route_closure", {}), int(audit.get("experiment_count", -1)))
+    global_candidates = feature.get("EXISTING_PIT_SAFE_UNTESTED_FEATURES", [])
+    domain_candidates = feature.get("DOMAIN_SPECIFIC_PIT_SAFE_UNTESTED_FEATURES", [])
+    decision_check = verify_decision_evidence(
+        str(audit.get("decision")),
+        global_candidates,
+        domain_candidates,
+        audit.get("experiment_route_closure", {}),
+        audit.get("preregistration"),
+    )
     if decision_obj.get("decision") != audit.get("decision") or metadata.get("decision") != audit.get("decision"):
         raise ValueError("decision differs across audit/decision/metadata")
+
     coverage = audit.get("research_asset_coverage")
     if not isinstance(coverage, Mapping):
         raise ValueError("research_asset_coverage missing")
-    coverage_check = verify_asset_coverage(coverage)
+    actual_rows = list(complete.get("rows", []))
+    coverage_check = verify_asset_coverage(coverage, actual_rows)
     if complete.get("coverage") != coverage:
         raise ValueError("complete ledger coverage differs from audit coverage")
-    if int(complete.get("count", -1)) != len(complete.get("rows", [])):
+    if int(complete.get("count", -1)) != len(actual_rows):
         raise ValueError("complete ledger count mismatch")
-    if any(row.get("formal_weight") != 0 for row in complete.get("rows", [])):
+    if any(row.get("formal_weight") != 0 for row in actual_rows):
         raise ValueError("nonzero formal weight in research ledger")
+
+    market_aliases = {"ahh", "avgaha", "avgahh", "b365aha", "b365ahh", "b36ca", "bfeaha", "bfeahh", "maxaha", "maxahh", "paha", "pahh"}
+    rows_by_name = {str(row.get("field", "")).lower(): row for row in feature.get("fields", [])}
+    missing_aliases = sorted(market_aliases - set(rows_by_name))
+    if missing_aliases:
+        raise ValueError(f"expected market aliases missing from field audit: {missing_aliases}")
+    bad_aliases = sorted(
+        field for field in market_aliases
+        if rows_by_name[field].get("classification") != "RETROSPECTIVE_MARKET_REFERENCE_TIMESTAMP_UNPROVEN"
+    )
+    if bad_aliases:
+        raise ValueError(f"Asian/market aliases misclassified: {bad_aliases}")
+
     for obj in (audit, metadata):
         if obj.get("formal_weight") != 0:
             raise ValueError("formal_weight must remain zero")
@@ -92,7 +164,17 @@ def verify_closure_outputs(closure_dir: Path) -> dict[str, Any]:
             raise ValueError("API key access is forbidden")
         if obj.get("model_training") != 0:
             raise ValueError("model training is forbidden")
-    return {"status": "PASS", "decision_check": decision_check, "asset_coverage_check": coverage_check, "near_miss_count": len(feature.get("UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED", [])), "formal_weight": 0, "model_training": 0, "provider_network_used": False}
+
+    return {
+        "status": "PASS",
+        "decision_check": decision_check,
+        "route_closure_check": route_check,
+        "asset_coverage_check": coverage_check,
+        "near_miss_count": len(feature.get("UNTESTED_BUT_NOT_PIT_SAFE_OR_COVERED", [])),
+        "formal_weight": 0,
+        "model_training": 0,
+        "provider_network_used": False,
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
