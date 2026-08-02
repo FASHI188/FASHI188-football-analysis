@@ -39,6 +39,7 @@ ALLOWED_PATHS = {
     "football-data/research/draw_auto_research_controller_r1.py",
     "football-data/research/draw_auto_research_run_wrapper_r1.py",
     "football-data/research/draw_auto_research_restore_r1.py",
+    "football-data/research/draw_auto_research_artifact_fallback_r1.py",
     "football-data/research/draw_auto_research_synthetic_evidence_r1.py",
     "football-data/research/draw_auto_research_synthetic_evidence_receipt_r1.json",
     "football-data/research/validate_draw_auto_research_preflight_r1.py",
@@ -130,14 +131,13 @@ def verify_workflow() -> dict[str, Any]:
         "group: draw-auto-research-r14-${{ github.workflow }}-${{ github.ref_name }}",
         "draw_auto_research_run_wrapper_r1.py",
         "draw_auto_research_restore_r1.py",
+        "draw_auto_research_artifact_fallback_r1.py",
         "actions/cache/restore@v4",
         "actions/cache/save@v4",
         "actions/upload-artifact@v4",
         "Restore original controller exit code",
         "slot: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]",
         "needs.zero-label-preflight.outputs.research_allowed == 'true'",
-        "NO_HISTORICAL_ARTIFACT_CONFIRMED",
-        "MATCHING_ARTIFACTS_FOUND_BUT_NONE_COMPATIBLE",
         "cross-platform-determinism",
         "windows-latest",
     ]
@@ -152,6 +152,10 @@ def verify_workflow() -> dict[str, Any]:
     forbidden = ["secrets.", "cancel-in-progress: true", "set +e"]
     if any(token.lower() in text.lower() for token in forbidden):
         raise ValueError("forbidden workflow token")
+    fallback_text = (HERE / "draw_auto_research_artifact_fallback_r1.py").read_text(encoding="utf-8")
+    for token in ("NO_HISTORICAL_ARTIFACT_CONFIRMED", "MATCHING_ARTIFACTS_FOUND_BUT_NONE_COMPATIBLE", "ARTIFACT_API_QUERY_FAILED", "ARTIFACT_DOWNLOAD_OR_EXTRACT_FAILED"):
+        if token not in fallback_text:
+            raise ValueError(f"artifact fallback missing status: {token}")
     combinations = {
         "push_authorized": resolve_workflow_event("push", "preflight", True),
         "dispatch_research_authorized": resolve_workflow_event("workflow_dispatch", "research", True),
