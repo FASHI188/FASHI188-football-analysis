@@ -43,7 +43,8 @@ def row(index: int, *, target: bool = False) -> MatchRow:
 
 
 def fingerprint(predictions: np.ndarray) -> str:
-    return hashlib.sha256(np.round(predictions, 12).tobytes(order="C")).hexdigest()
+    canonical = np.asarray(np.round(np.asarray(predictions, dtype=np.float64), 12), dtype="<f8")
+    return hashlib.sha256(canonical.tobytes(order="C")).hexdigest()
 
 
 def generate() -> dict[str, Any]:
@@ -88,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     result = generate()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
