@@ -45,6 +45,7 @@ ALLOWED_PATHS = {
     "football-data/research/validate_draw_auto_research_preflight_r1.py",
     "football-data/research/validate_draw_auto_research_preflight_impl_r1.py",
     "football-data/research/test_draw_auto_research_r1.py",
+    "football-data/research/test_draw_auto_artifact_fallback_r1.py",
     "football-data/research/test_draw_auto_research_impl_r1.py",
     "football-data/research/validate_draw_auto_authorization_r1.py",
     "football-data/research/test_draw_auto_authorization_r1.py",
@@ -107,6 +108,10 @@ def validate_workflow_reference(path: str) -> None:
 def verify_spec(spec: dict[str, Any]) -> None:
     if spec.get("status") != "GPT_REMEDIATED_PENDING_CODEX":
         raise ValueError("spec status mismatch")
+    if spec.get("failed_r14_verdict") != "CODEX_FULL_RECHECK_FAILED_R1_4_DO_NOT_AUTHORIZE":
+        raise ValueError("R1.4 Codex failure not frozen")
+    if spec.get("authorization_permitted_now") is not False:
+        raise ValueError("authorization boundary mismatch")
     if spec.get("data_status") != "VIEWED_DEVELOPMENT_DATA" or spec.get("formal_weight") != 0:
         raise ValueError("boundary mismatch")
     if spec["candidate_catalog"].get("candidate_count") != 200:
@@ -117,6 +122,32 @@ def verify_spec(spec: dict[str, Any]) -> None:
         raise ValueError("baseline contaminated")
     if len(spec.get("dataset_sha256") or {}) != 17:
         raise ValueError("dataset universe mismatch")
+    failure = spec.get("failure_contract") or {}
+    if not all(failure.get(key) is True for key in (
+        "controller_nonzero_writes_receipt",
+        "controller_nonzero_appends_ledger",
+        "existing_checkpoint_terminalized_atomically",
+        "probe_prioritizes_failure_receipt",
+        "manifest_regenerated_after_failure",
+        "exit_2_production_path_reachable",
+    )):
+        raise ValueError("failure contract incomplete")
+    recovery = spec.get("artifact_recovery") or {}
+    if not all(recovery.get(key) is True for key in (
+        "actual_file_universe_equals_manifest_files_plus_manifest",
+        "reject_unregistered_files",
+        "reject_missing_files",
+        "reject_absolute_paths",
+        "reject_parent_traversal",
+        "reject_duplicate_paths",
+        "reject_symbolic_links",
+        "validate_checkpoint_references",
+        "api_query_failure_is_terminal",
+        "download_or_extract_failure_is_terminal",
+        "matching_but_all_incompatible_is_terminal",
+        "integrity_failure_is_terminal",
+    )):
+        raise ValueError("artifact recovery contract incomplete")
 
 
 def verify_workflow() -> dict[str, Any]:
@@ -132,6 +163,7 @@ def verify_workflow() -> dict[str, Any]:
         "draw_auto_research_run_wrapper_r1.py",
         "draw_auto_research_restore_r1.py",
         "draw_auto_research_artifact_fallback_r1.py",
+        "test_draw_auto_artifact_fallback_r1.py",
         "actions/cache/restore@v4",
         "actions/cache/save@v4",
         "actions/upload-artifact@v4",
