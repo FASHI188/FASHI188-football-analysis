@@ -28,7 +28,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: draw-auto-research-r14-${{ github.ref_name }}-${{ github.sha }}
+  group: draw-auto-research-r14-${{ github.workflow }}-${{ github.ref_name }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -37,6 +38,8 @@ jobs:
     timeout-minutes: 25
     outputs:
       authorized: ${{ steps.mode.outputs.authorized }}
+      research_allowed: ${{ steps.mode.outputs.research_allowed }}
+      preflight_mode: ${{ steps.mode.outputs.preflight_mode }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@v4
@@ -48,17 +51,26 @@ jobs:
           python-version: "3.12"
       - name: Install deterministic numerical dependency
         run: python -m pip install --disable-pip-version-check "numpy==2.2.6"
-      - name: Determine authorization mode
+      - name: Determine event and authorization mode
         id: mode
         shell: bash
+        env:
+          PYTHONPATH: football-data/research
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_MODE: ${{ inputs.mode || 'preflight' }}
         run: |
-          if test -f football-data/research/draw_composite_run_authorization_r1.json; then
-            echo "authorized=true" >> "$GITHUB_OUTPUT"
-            echo "mode=authorized" >> "$GITHUB_OUTPUT"
-          else
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            echo "mode=preauth" >> "$GITHUB_OUTPUT"
-          fi
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from pathlib import Path
+          from validate_draw_auto_research_preflight_r1 import resolve_workflow_event
+          auth = Path('football-data/research/draw_composite_run_authorization_r1.json').is_file()
+          result = resolve_workflow_event(os.environ['EVENT_NAME'], os.environ['DISPATCH_MODE'], auth)
+          for key in ('authorized', 'research_allowed', 'preflight_mode'):
+              value = result[key]
+              if isinstance(value, bool):
+                  value = 'true' if value else 'false'
+              print(f'{key}={value}')
+          PY
       - name: Compile production execution path
         run: |
           python -m py_compile \
@@ -69,6 +81,7 @@ jobs:
             football-data/research/draw_auto_research_controller_r1.py \
             football-data/research/draw_auto_research_run_wrapper_r1.py \
             football-data/research/draw_auto_research_restore_r1.py \
+            football-data/research/draw_auto_research_artifact_fallback_r1.py \
             football-data/research/draw_auto_research_synthetic_evidence_r1.py \
             football-data/research/validate_draw_auto_research_preflight_r1.py \
             football-data/research/test_draw_auto_research_r1.py
@@ -79,18 +92,25 @@ jobs:
           python -m unittest -v \
             football-data/research/test_draw_auto_research_r1.py \
             football-data/research/test_draw_auto_authorization_r1.py
-      - name: Regenerate synthetic non-equivalence evidence
+      - name: Regenerate and compare canonical synthetic evidence
         env:
           PYTHONPATH: football-data/research
         run: |
           python football-data/research/draw_auto_research_synthetic_evidence_r1.py \
             --output /tmp/draw_auto_research_synthetic_evidence.json
-          cmp /tmp/draw_auto_research_synthetic_evidence.json \
-              football-data/research/draw_auto_research_synthetic_evidence_receipt_r1.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from draw_auto_research_math_r1 import canonical_json_sha256
+          generated=json.loads(Path('/tmp/draw_auto_research_synthetic_evidence.json').read_text(encoding='utf-8'))
+          registered=json.loads(Path('football-data/research/draw_auto_research_synthetic_evidence_receipt_r1.json').read_text(encoding='utf-8'))
+          assert generated == registered
+          assert canonical_json_sha256(generated) == canonical_json_sha256(registered)
+          PY
       - name: Run exact-HEAD production zero-label Preflight
         run: |
           python football-data/research/validate_draw_auto_research_preflight_r1.py \
-            --mode "${{ steps.mode.outputs.mode }}" \
+            --mode "${{ steps.mode.outputs.preflight_mode }}" \
             --output /tmp/draw_auto_research_preflight.json
       - name: Validate authorization bindings before labels
         if: ${{ steps.mode.outputs.authorized == 'true' }}
@@ -99,7 +119,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          v=json.load(open('/tmp/draw_auto_research_preflight.json'))
+          v=json.load(open('/tmp/draw_auto_research_preflight.json', encoding='utf-8'))
           assert v['status']=='PASS_ZERO_LABEL_PREFLIGHT'
           assert v['rows_parsed']==v['labels_parsed']==v['training_runs']==v['scoring_runs']==0
           assert v['experiment_executed'] is False and v['artifact_count']==0
@@ -117,8 +137,49 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  cross-platform-determinism:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check "numpy==2.2.6"
+      - name: Verify UTF-8 and canonical synthetic evidence
+        shell: bash
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/draw_auto_research_synthetic_evidence_r1.py --output synthetic-platform.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from draw_auto_research_math_r1 import canonical_json_sha256
+          generated=json.loads(Path('synthetic-platform.json').read_text(encoding='utf-8'))
+          registered=json.loads(Path('football-data/research/draw_auto_research_synthetic_evidence_receipt_r1.json').read_text(encoding='utf-8'))
+          assert generated == registered
+          digest=canonical_json_sha256(generated)
+          assert digest == canonical_json_sha256(registered)
+          Path('synthetic-platform.sha256').write_text(digest+'\n', encoding='utf-8', newline='\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draw-auto-r14-determinism-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: synthetic-platform.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   automatic-research-loop:
-    if: ${{ needs.zero-label-preflight.outputs.authorized == 'true' && github.event_name != 'pull_request' }}
+    if: ${{ needs.zero-label-preflight.outputs.research_allowed == 'true' }}
     needs: zero-label-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -143,11 +204,12 @@ jobs:
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
+          from pathlib import Path
           from draw_auto_research_math_r1 import canonical_json_sha256
-          base='football-data/research/'
-          auth=json.load(open(base+'draw_composite_run_authorization_r1.json'))
-          spec=json.load(open(base+'draw_auto_research_spec_r1.json'))
-          identity=json.load(open(base+'draw_auto_research_identity_r1.json'))
+          base=Path('football-data/research')
+          auth=json.loads((base/'draw_composite_run_authorization_r1.json').read_text(encoding='utf-8'))
+          spec=json.loads((base/'draw_auto_research_spec_r1.json').read_text(encoding='utf-8'))
+          identity=json.loads((base/'draw_auto_research_identity_r1.json').read_text(encoding='utf-8'))
           print('authorization_digest='+canonical_json_sha256(auth))
           print('frozen_code_head='+auth['frozen_code_head'])
           print('spec_digest='+canonical_json_sha256(spec))
@@ -160,36 +222,45 @@ jobs:
           key: draw-auto-r14-${{ github.sha }}-${{ github.run_id }}-${{ matrix.slot }}
           restore-keys: |
             draw-auto-r14-${{ github.sha }}-
-      - name: Restore latest compatible Artifact fallback
-        if: ${{ hashFiles('football-data/research/runtime/draw-auto-r1/checkpoint.json') == '' }}
+      - name: Validate restored cache or reject partial state
         env:
-          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: football-data/research
           AUTH_DIGEST: ${{ steps.identity.outputs.authorization_digest }}
           FROZEN_HEAD: ${{ steps.identity.outputs.frozen_code_head }}
           SPEC_DIGEST: ${{ steps.identity.outputs.spec_digest }}
           IDENTITY_DIGEST: ${{ steps.identity.outputs.identity_digest }}
         shell: bash
         run: |
-          set +e
-          mkdir -p /tmp/draw-artifacts
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.expired==false and (.name|startswith("draw-auto-r14-state-${{ github.sha }}-"))) | [.created_at,.id] | @tsv' \
-            | sort -r > /tmp/artifacts.tsv
-          while IFS=$'\t' read -r created artifact_id; do
-            test -n "$artifact_id" || continue
-            rm -rf /tmp/draw-artifacts/candidate /tmp/draw-artifact.zip
-            mkdir -p /tmp/draw-artifacts/candidate
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/draw-artifact.zip || continue
-            unzip -q /tmp/draw-artifact.zip -d /tmp/draw-artifacts/candidate || continue
-            PYTHONPATH=football-data/research python football-data/research/draw_auto_research_restore_r1.py \
-              --artifact-dir /tmp/draw-artifacts/candidate \
-              --state-dir football-data/research/runtime/draw-auto-r1 \
+          state=football-data/research/runtime/draw-auto-r1
+          if test -f "$state/checkpoint.json"; then
+            python football-data/research/draw_auto_research_restore_r1.py \
+              --validate-existing --state-dir "$state" \
               --authorization-digest "$AUTH_DIGEST" \
               --frozen-code-head "$FROZEN_HEAD" \
               --spec-digest "$SPEC_DIGEST" \
-              --identity-digest "$IDENTITY_DIGEST" && break
-          done < /tmp/artifacts.tsv
-          exit 0
+              --identity-digest "$IDENTITY_DIGEST"
+          elif test -d "$state" && test -n "$(find "$state" -mindepth 1 -print -quit)"; then
+            echo "partial cache without checkpoint" >&2
+            exit 20
+          fi
+      - name: Restore latest compatible Artifact fallback
+        if: ${{ hashFiles('football-data/research/runtime/draw-auto-r1/checkpoint.json') == '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AUTH_DIGEST: ${{ steps.identity.outputs.authorization_digest }}
+          FROZEN_HEAD: ${{ steps.identity.outputs.frozen_code_head }}
+          SPEC_DIGEST: ${{ steps.identity.outputs.spec_digest }}
+          IDENTITY_DIGEST: ${{ steps.identity.outputs.identity_digest }}
+        shell: bash
+        run: |
+          python football-data/research/draw_auto_research_artifact_fallback_r1.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --artifact-prefix "draw-auto-r14-state-${{ github.sha }}-" \
+            --state-dir football-data/research/runtime/draw-auto-r1 \
+            --authorization-digest "$AUTH_DIGEST" \
+            --frozen-code-head "$FROZEN_HEAD" \
+            --spec-digest "$SPEC_DIGEST" \
+            --identity-digest "$IDENTITY_DIGEST"
       - name: Probe checkpoint
         id: probe
         env:
@@ -200,7 +271,8 @@ jobs:
             --mode probe --state-dir football-data/research/runtime/draw-auto-r1 > /tmp/probe.json
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          v=json.load(open('/tmp/probe.json'));print('run='+('true' if v['should_continue'] else 'false'))
+          v=json.load(open('/tmp/probe.json', encoding='utf-8'))
+          print('run='+('true' if v['should_continue'] else 'false'))
           PY
       - name: Execute batch and capture original exit code
         if: ${{ steps.probe.outputs.run == 'true' }}
