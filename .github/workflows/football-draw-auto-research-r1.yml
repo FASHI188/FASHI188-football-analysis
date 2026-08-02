@@ -1,4 +1,4 @@
-name: Football Draw Auto Research R1.3 Independent
+name: Football Draw Auto Research R1.4
 
 on:
   pull_request:
@@ -18,15 +18,18 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "preflight or authorized research recovery"
         required: false
-        default: "preflight"
+        default: preflight
         type: choice
         options: [preflight, research]
 
 permissions:
   contents: read
+  actions: read
 
+concurrency:
+  group: draw-auto-research-r14-${{ github.ref_name }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   zero-label-preflight:
@@ -40,15 +43,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install deterministic numerical dependency
         run: python -m pip install --disable-pip-version-check "numpy==2.2.6"
-
       - name: Determine authorization mode
         id: mode
         shell: bash
@@ -60,18 +59,19 @@ jobs:
             echo "authorized=false" >> "$GITHUB_OUTPUT"
             echo "mode=preauth" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Compile execution path
+      - name: Compile production execution path
         run: |
           python -m py_compile \
             football-data/research/draw_auto_research_math_r1.py \
+            football-data/research/draw_auto_research_baseline_r1.py \
+            football-data/research/draw_auto_research_gate_r1.py \
             football-data/research/draw_auto_research_engine_r1.py \
             football-data/research/draw_auto_research_controller_r1.py \
+            football-data/research/draw_auto_research_run_wrapper_r1.py \
+            football-data/research/draw_auto_research_restore_r1.py \
+            football-data/research/draw_auto_research_synthetic_evidence_r1.py \
             football-data/research/validate_draw_auto_research_preflight_r1.py \
-            football-data/research/test_draw_auto_research_r1.py \
-            football-data/research/validate_draw_auto_authorization_r1.py \
-            football-data/research/test_draw_auto_authorization_r1.py
-
+            football-data/research/test_draw_auto_research_r1.py
       - name: Run production and fail-closed tests
         env:
           PYTHONPATH: football-data/research
@@ -79,50 +79,45 @@ jobs:
           python -m unittest -v \
             football-data/research/test_draw_auto_research_r1.py \
             football-data/research/test_draw_auto_authorization_r1.py
-
-      - name: Run exact-HEAD zero-label preflight
+      - name: Regenerate synthetic non-equivalence evidence
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/draw_auto_research_synthetic_evidence_r1.py \
+            --output /tmp/draw_auto_research_synthetic_evidence.json
+          cmp /tmp/draw_auto_research_synthetic_evidence.json \
+              football-data/research/draw_auto_research_synthetic_evidence_receipt_r1.json
+      - name: Run exact-HEAD production zero-label Preflight
         run: |
           python football-data/research/validate_draw_auto_research_preflight_r1.py \
             --mode "${{ steps.mode.outputs.mode }}" \
             --output /tmp/draw_auto_research_preflight.json
-
-      - name: Validate per-file authorization bindings before any label access
+      - name: Validate authorization bindings before labels
         if: ${{ steps.mode.outputs.authorized == 'true' }}
-        run: |
-          python football-data/research/validate_draw_auto_authorization_r1.py \
-            --output /tmp/draw_auto_authorization_bindings.json
-
+        run: python football-data/research/validate_draw_auto_authorization_r1.py --output /tmp/draw_auto_authorization_bindings.json
       - name: Assert zero-label boundary
         run: |
           python - <<'PY'
           import json
-          from pathlib import Path
-          value = json.loads(Path('/tmp/draw_auto_research_preflight.json').read_text())
-          assert value['status'] == 'PASS_ZERO_LABEL_PREFLIGHT'
-          assert value['data_status'] == 'VIEWED_DEVELOPMENT_DATA'
-          assert value['rows_parsed'] == 0
-          assert value['labels_parsed'] == 0
-          assert value['training_runs'] == 0
-          assert value['scoring_runs'] == 0
-          assert value['experiment_executed'] is False
-          assert value['repository_writeback'] == 0
-          assert value['formal_weight'] == 0
-          assert value['secret_context_references'] == 0
+          v=json.load(open('/tmp/draw_auto_research_preflight.json'))
+          assert v['status']=='PASS_ZERO_LABEL_PREFLIGHT'
+          assert v['rows_parsed']==v['labels_parsed']==v['training_runs']==v['scoring_runs']==0
+          assert v['experiment_executed'] is False and v['artifact_count']==0
+          assert v['formal_weight']==0 and v['repository_writeback']==0
           PY
+          find football-data/research -type d -name __pycache__ -prune -exec rm -rf {} +
           test -z "$(git status --porcelain)"
-
-      - name: Upload zero-label preflight receipt
+      - name: Upload exact-HEAD Preflight evidence
         uses: actions/upload-artifact@v4
         with:
-          name: draw-auto-preflight-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: /tmp/draw_auto_research_preflight.json
+          name: draw-auto-r14-preflight-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            /tmp/draw_auto_research_preflight.json
+            /tmp/draw_auto_research_synthetic_evidence.json
           if-no-files-found: error
           retention-days: 30
 
   automatic-research-loop:
-    concurrency:
-      group: draw-auto-research-r1-${{ github.ref_name }}
-      cancel-in-progress: false
     if: ${{ needs.zero-label-preflight.outputs.authorized == 'true' && github.event_name != 'pull_request' }}
     needs: zero-label-preflight
     runs-on: ubuntu-latest
@@ -133,90 +128,111 @@ jobs:
       matrix:
         slot: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     steps:
-      - name: Checkout authorized exact source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install deterministic numerical dependency
-        run: python -m pip install --disable-pip-version-check "numpy==2.2.6"
-
-      - name: Restore latest checkpoint
-        id: restore
+      - run: python -m pip install --disable-pip-version-check "numpy==2.2.6"
+      - name: Compute frozen recovery identity
+        id: identity
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from draw_auto_research_math_r1 import canonical_json_sha256
+          base='football-data/research/'
+          auth=json.load(open(base+'draw_composite_run_authorization_r1.json'))
+          spec=json.load(open(base+'draw_auto_research_spec_r1.json'))
+          identity=json.load(open(base+'draw_auto_research_identity_r1.json'))
+          print('authorization_digest='+canonical_json_sha256(auth))
+          print('frozen_code_head='+auth['frozen_code_head'])
+          print('spec_digest='+canonical_json_sha256(spec))
+          print('identity_digest='+canonical_json_sha256(identity))
+          PY
+      - name: Restore checkpoint cache
         uses: actions/cache/restore@v4
         with:
           path: football-data/research/runtime/draw-auto-r1
-          key: draw-auto-r1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}
+          key: draw-auto-r14-${{ github.sha }}-${{ github.run_id }}-${{ matrix.slot }}
           restore-keys: |
-            draw-auto-r1-${{ github.ref_name }}-
-
+            draw-auto-r14-${{ github.sha }}-
+      - name: Restore latest compatible Artifact fallback
+        if: ${{ hashFiles('football-data/research/runtime/draw-auto-r1/checkpoint.json') == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTH_DIGEST: ${{ steps.identity.outputs.authorization_digest }}
+          FROZEN_HEAD: ${{ steps.identity.outputs.frozen_code_head }}
+          SPEC_DIGEST: ${{ steps.identity.outputs.spec_digest }}
+          IDENTITY_DIGEST: ${{ steps.identity.outputs.identity_digest }}
+        shell: bash
+        run: |
+          set +e
+          mkdir -p /tmp/draw-artifacts
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired==false and (.name|startswith("draw-auto-r14-state-${{ github.sha }}-"))) | [.created_at,.id] | @tsv' \
+            | sort -r > /tmp/artifacts.tsv
+          while IFS=$'\t' read -r created artifact_id; do
+            test -n "$artifact_id" || continue
+            rm -rf /tmp/draw-artifacts/candidate /tmp/draw-artifact.zip
+            mkdir -p /tmp/draw-artifacts/candidate
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/draw-artifact.zip || continue
+            unzip -q /tmp/draw-artifact.zip -d /tmp/draw-artifacts/candidate || continue
+            PYTHONPATH=football-data/research python football-data/research/draw_auto_research_restore_r1.py \
+              --artifact-dir /tmp/draw-artifacts/candidate \
+              --state-dir football-data/research/runtime/draw-auto-r1 \
+              --authorization-digest "$AUTH_DIGEST" \
+              --frozen-code-head "$FROZEN_HEAD" \
+              --spec-digest "$SPEC_DIGEST" \
+              --identity-digest "$IDENTITY_DIGEST" && break
+          done < /tmp/artifacts.tsv
+          exit 0
       - name: Probe checkpoint
         id: probe
         env:
           PYTHONPATH: football-data/research
-        shell: bash
         run: |
           mkdir -p football-data/research/runtime/draw-auto-r1
           python football-data/research/draw_auto_research_controller_r1.py \
-            --mode probe \
-            --state-dir football-data/research/runtime/draw-auto-r1 > /tmp/probe.json
-          cat /tmp/probe.json
+            --mode probe --state-dir football-data/research/runtime/draw-auto-r1 > /tmp/probe.json
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          value = json.load(open('/tmp/probe.json'))
-          print('run=' + ('true' if value['should_dispatch_successor'] else 'false'))
+          v=json.load(open('/tmp/probe.json'));print('run='+('true' if v['should_continue'] else 'false'))
           PY
-
-      - name: Execute next automatic research batch
-        id: batch
+      - name: Execute batch and capture original exit code
         if: ${{ steps.probe.outputs.run == 'true' }}
-        continue-on-error: true
         env:
           PYTHONPATH: football-data/research
-        shell: bash
         run: |
-          set +e
-          python football-data/research/draw_auto_research_controller_r1.py \
-            --mode run-batch \
+          python football-data/research/draw_auto_research_run_wrapper_r1.py \
             --state-dir football-data/research/runtime/draw-auto-r1 \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --max-run-seconds 4800
-          code=$?
-          echo "$code" > /tmp/batch_exit_code
-          exit 0
-
-      - name: Save checkpoint for next serial slot or future recovery run
-        if: ${{ always() && hashFiles('football-data/research/runtime/draw-auto-r1/checkpoint.json') != '' }}
+            --exit-code-file /tmp/controller_exit_code -- \
+            python football-data/research/draw_auto_research_controller_r1.py \
+              --mode run-batch \
+              --state-dir football-data/research/runtime/draw-auto-r1 \
+              --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --max-run-seconds 4800
+      - name: Save checkpoint cache
+        if: ${{ always() && hashFiles('football-data/research/runtime/draw-auto-r1/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: football-data/research/runtime/draw-auto-r1
-          key: draw-auto-r1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}
-
-      - name: Upload compact checkpoint, ledger, summaries and results
-        if: ${{ always() && hashFiles('football-data/research/runtime/draw-auto-r1/checkpoint.json') != '' }}
+          key: draw-auto-r14-${{ github.sha }}-${{ github.run_id }}-${{ matrix.slot }}
+      - name: Upload compact state evidence
+        if: ${{ always() && hashFiles('football-data/research/runtime/draw-auto-r1/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: draw-auto-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}-slot-${{ matrix.slot }}
+          name: draw-auto-r14-state-${{ github.sha }}-${{ github.run_id }}-slot-${{ matrix.slot }}
           path: football-data/research/runtime/draw-auto-r1
           if-no-files-found: error
-          compression-level: 6
           retention-days: 30
-
-      - name: Preserve fail-closed status after evidence upload
-        if: ${{ always() && steps.batch.outcome == 'success' }}
+      - name: Restore original controller exit code
+        if: ${{ always() && steps.probe.outputs.run == 'true' }}
         shell: bash
         run: |
-          code=0
-          test ! -f /tmp/batch_exit_code || code="$(cat /tmp/batch_exit_code)"
-          if test "$code" -eq 2; then
-            echo "Permanent safety gate failure recorded; later matrix slots will read STOPPED state."
-            exit 1
-          fi
-          exit 0
+          test -f /tmp/controller_exit_code || exit 1
+          code="$(cat /tmp/controller_exit_code)"
+          exit "$code"

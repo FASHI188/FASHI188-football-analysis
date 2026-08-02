@@ -1,35 +1,17 @@
-# Composite Draw Auto Research Plan R1.3
+# Composite Draw Automatic Research R1.4
 
-## Scope
+R1.4 replaces the Codex-rejected R1.3 execution object. It remains a `VIEWED_DEVELOPMENT_DATA` research track with `formal_weight=0`.
 
-This PR contains a real automatic research pipeline for the existing viewed development datasets. It does not claim a blind holdout, does not promote a formal model, does not change formal data/config/CURRENT, and keeps `formal_weight=0`.
+The production Preflight directly references `.github/workflows/football-draw-auto-research-r1.yml`; no wrapper or monkeypatch changes the production path during tests.
 
-## Automatic loop
+The baseline is `INDEPENDENT_ELO_HISTORICAL_DRAW_BASELINE_R1`: Laplace-smoothed outer-training draw rate with pre-match Elo H/A allocation. It is candidate-independent and is not the current formal model. Therefore results may only claim improvement over this independent research baseline.
 
-One authorized workflow launch uses standard `ubuntu-latest` matrix slots with `max-parallel: 1`. Each active slot restores the newest checkpoint, evaluates the next part of the frozen 200-candidate catalog, records every success and failure, saves the checkpoint, and uploads a compact Artifact. Later slots continue without waiting for a user, GPT, or Codex message.
+The candidate catalog is a deterministic 10×5×4 product: ten feature profiles, five positive-class weights and four genuinely different nonlinear basis variants. The mathematically redundant `draw_logit_offset` dimension is deleted. Prediction fingerprints are recorded; equivalent predictions are ledgered but not counted as independent completed candidates.
 
-The serial matrix deliberately avoids cross-run self-dispatch and therefore does not require repository secrets or a workflow token with write permission. Duplicate workflow launches are serialized by concurrency with `cancel-in-progress: false`; they restore the latest checkpoint instead of starting from candidate 1.
+All preprocessing and inner selection use only outer-training history. The outer evaluation rows cannot determine missing indicators, imputation, standardization, near-zero-variance removal or duplicate/correlation removal.
 
-## Candidate budget
+The workflow uses standard `ubuntu-latest`, workflow-level concurrency with `cancel-in-progress: false`, and a 14-slot matrix with `max-parallel: 1`. The matrix jobs do not have job-level concurrency. Checkpoint restore first uses cache, then a real Artifact fallback that verifies manifest identity and every file hash; old frozen HEADs and wrong authorization digests are rejected.
 
-The catalog is the deterministic product of ten feature profiles, five positive-class weights, and four draw-logit offsets: exactly 200 candidates. Every profile carries a frozen three-value L2 grid selected only inside the outer-training history.
+Controller exit codes 1 and 2 remain failures. A wrapper creates a run-failure receipt and ledger record before evidence upload; after upload the workflow restores the original nonzero exit code. An exception before checkpoint creation is therefore auditable and stops continuation.
 
-## Validation
-
-Validation is competition-season rolling nested validation. For each competition, seasons three through five are outer evaluation folds. The latest prior season is inner validation and all earlier seasons are inner training. There is no random split.
-
-Missing indicators, imputation, standardization, near-zero-variance removal, and duplicate/high-correlation removal are fitted only on the relevant training rows. Outer evaluation rows are transformed only after those decisions are frozen.
-
-## Checkpoints and stopping
-
-A complete batch is 20 attempted candidates. A checkpoint is also written after each candidate so a controlled timeout can continue the same incomplete batch. Every complete batch generates a Markdown summary, full ledger update, Top 5, and remaining candidate/time budget.
-
-The loop stops at 200 candidates, six cumulative research hours, three complete batches without the frozen minimum improvement, or any leakage/numerical/completeness/security failure.
-
-## Outputs
-
-The final Artifact contains checkpoints, the complete ledger, every candidate result and failure, per-fold and per-league metrics, calibration, batch summaries, Top 5, the unique recommended challenger, the stop reason, and whether future untouched data validation is worth waiting for. Large training datasets are never copied into Artifacts.
-
-## Authorization identity
-
-After Codex accepts the frozen code HEAD, the authorization-only child commit must bind the identity Git blob and every frozen contract, runner, workflow, validator, test, preregistration, receipt and report-plan entry. Missing or altered bindings fail closed before any label access.
+Top 5 is ranking only. A unique challenger is emitted only after passing the frozen minimum-improvement, probability-quality and cross-league stability gate. If no candidate passes, the final output is `NO_CHALLENGER`.
