@@ -58,14 +58,14 @@ def generate() -> dict[str, Any]:
     pairwise: dict[str, float] = {}
     for left_index, left in enumerate(BASIS_VARIANTS):
         for right in BASIS_VARIANTS[left_index + 1:]:
-            pairwise[f"{left}__{right}"] = float(np.max(np.abs(predictions[left] - predictions[right])))
+            pairwise[f"{left}__{right}"] = round(float(np.max(np.abs(predictions[left] - predictions[right]))), 12)
     baseline_a, _, receipt_a = baseline_predictions(train, target)
     baseline_b, _, receipt_b = baseline_predictions(train, target)
     result = {
         "schema_version": "DRAW-AUTO-SYNTHETIC-EVIDENCE-R1.4",
         "basis_prediction_fingerprints": {basis: fingerprint(predictions[basis]) for basis in BASIS_VARIANTS},
         "pairwise_max_abs_prediction_difference": pairwise,
-        "minimum_pairwise_difference": min(pairwise.values()),
+        "minimum_pairwise_difference": round(min(pairwise.values()), 12),
         "all_basis_predictions_distinct": len({fingerprint(value) for value in predictions.values()}) == len(BASIS_VARIANTS),
         "baseline_identity": baseline_identity(),
         "baseline_fingerprint_a": fingerprint(baseline_a),
