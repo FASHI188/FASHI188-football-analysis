@@ -94,8 +94,8 @@ def _validate_checkpoint_references(root: pathlib.Path, files: dict[str, str], c
     status = str(checkpoint.get("status") or "")
     if status in {"FAILED_RUNTIME", "FAILED_SAFETY"} and "run_failure_receipt.json" not in files:
         raise ArtifactIntegrityError("terminal checkpoint missing registered run_failure_receipt.json")
-    if status != "RUNNING" and "final_report.md" not in files:
-        raise ArtifactIntegrityError("terminal checkpoint missing registered final_report.md")
+    if status == "STOPPED" and "final_report.md" not in files:
+        raise ArtifactIntegrityError("normally stopped checkpoint missing registered final_report.md")
     if "top5.json" in files:
         top5 = read_json(root / "top5.json")
         if not isinstance(top5.get("top5"), list):
