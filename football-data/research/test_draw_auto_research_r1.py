@@ -127,8 +127,9 @@ class WorkflowContractTests(unittest.TestCase):
             self.skipTest("full repository required")
         with tempfile.TemporaryDirectory() as temp:
             output = pathlib.Path(temp) / "preflight.json"
+            mode = "authorized" if (HERE / "draw_composite_run_authorization_r1.json").is_file() else "preauth"
             completed = subprocess.run(
-                [sys.executable, str(HERE / "validate_draw_auto_research_preflight_r1.py"), "--mode", "preauth", "--output", str(output)],
+                [sys.executable, str(HERE / "validate_draw_auto_research_preflight_r1.py"), "--mode", mode, "--output", str(output)],
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
