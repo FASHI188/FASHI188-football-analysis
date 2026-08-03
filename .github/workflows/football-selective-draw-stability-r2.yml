@@ -1,0 +1,145 @@
+name: Football Selective Draw Stability R2
+
+on:
+  push:
+    branches:
+      - research/gold1000-r1-data-audit
+    paths:
+      - '.github/workflows/football-selective-draw-stability-r2.yml'
+      - 'football-data/research/gold1000_r1/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/football-selective-draw-stability-r2.yml'
+      - 'football-data/research/gold1000_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selective-draw-stability-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  confirm-stable-gate-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind exact branch HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install frozen research dependency
+        run: python -m pip install --disable-pip-version-check --no-input scikit-learn==1.8.0
+      - name: Compile all stability scripts
+        run: |
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_sample_r1.py
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_p0_r1.py
+          python -m py_compile football-data/research/gold1000_r1/audit_football_data_main_r1.py
+          python -m py_compile football-data/research/gold1000_r1/audit_football_data_extra_r1.py
+          python -m py_compile football-data/research/gold1000_r1/select_gold1000_confirm_r1.py
+          python -m py_compile football-data/research/gold1000_r1/select_gold1000_confirm_b_r2.py
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_standard_master_r1.py
+          python -m py_compile football-data/research/gold1000_r1/run_selective_draw_gate_r1.py
+          python -m py_compile football-data/research/gold1000_r1/select_stable_draw_gate_r2.py
+          python -m py_compile football-data/research/gold1000_r1/evaluate_stable_draw_gate_confirm_b_r2.py
+      - name: Rebuild frozen development and reserve universe
+        run: |
+          rm -rf r2-work stable-r2-evidence
+          mkdir -p r2-work stable-r2-evidence
+          python football-data/research/gold1000_r1/build_gold1000_sample_r1.py \
+            --repo-root . \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out r2-work/base
+      - name: Select confirmation A and untouched confirmation B
+        run: |
+          python football-data/research/gold1000_r1/select_gold1000_confirm_r1.py \
+            --reserve r2-work/base/GOLD1000_R1_reserve_manifest.csv \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out r2-work/confirm-a
+          python football-data/research/gold1000_r1/select_gold1000_confirm_b_r2.py \
+            --reserve r2-work/base/GOLD1000_R1_reserve_manifest.csv \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out r2-work/confirm-b
+      - name: Build P0 features for development A and B
+        run: |
+          python football-data/research/gold1000_r1/build_gold1000_p0_r1.py --repo-root . --sample r2-work/base/GOLD1000_R1_random_manifest.csv --out r2-work/dev-p0
+          python football-data/research/gold1000_r1/build_gold1000_p0_r1.py --repo-root . --sample r2-work/confirm-a/GOLD1000_R1_confirm_latest_manifest.csv --out r2-work/a-p0
+          python football-data/research/gold1000_r1/build_gold1000_p0_r1.py --repo-root . --sample r2-work/confirm-b/GOLD1000_R2_confirm_b_latest_manifest.csv --out r2-work/b-p0
+      - name: Match development static market
+        run: |
+          python football-data/research/gold1000_r1/audit_football_data_main_r1.py --sample r2-work/base/GOLD1000_R1_random_manifest.csv --out r2-work/dev-main
+          python football-data/research/gold1000_r1/audit_football_data_extra_r1.py --sample r2-work/base/GOLD1000_R1_random_manifest.csv --out r2-work/dev-extra
+      - name: Match confirmation A static market
+        run: |
+          python football-data/research/gold1000_r1/audit_football_data_main_r1.py --sample r2-work/confirm-a/GOLD1000_R1_confirm_latest_manifest.csv --out r2-work/a-main
+          python football-data/research/gold1000_r1/audit_football_data_extra_r1.py --sample r2-work/confirm-a/GOLD1000_R1_confirm_latest_manifest.csv --out r2-work/a-extra
+      - name: Match untouched confirmation B static market
+        run: |
+          python football-data/research/gold1000_r1/audit_football_data_main_r1.py --sample r2-work/confirm-b/GOLD1000_R2_confirm_b_latest_manifest.csv --out r2-work/b-main
+          python football-data/research/gold1000_r1/audit_football_data_extra_r1.py --sample r2-work/confirm-b/GOLD1000_R2_confirm_b_latest_manifest.csv --out r2-work/b-extra
+      - name: Standardize development A and B masters
+        run: |
+          python football-data/research/gold1000_r1/build_gold1000_standard_master_r1.py --p0 r2-work/dev-p0/GOLD1000_R1_random_manifest_with_p0.csv --main-market r2-work/dev-main/GOLD1000_R1_football_data_main_enriched.csv --extra-market r2-work/dev-extra/GOLD1000_R1_football_data_extra_enriched.csv --out r2-work/dev-master
+          python football-data/research/gold1000_r1/build_gold1000_standard_master_r1.py --p0 r2-work/a-p0/GOLD1000_R1_random_manifest_with_p0.csv --main-market r2-work/a-main/GOLD1000_R1_football_data_main_enriched.csv --extra-market r2-work/a-extra/GOLD1000_R1_football_data_extra_enriched.csv --out r2-work/a-master
+          python football-data/research/gold1000_r1/build_gold1000_standard_master_r1.py --p0 r2-work/b-p0/GOLD1000_R1_random_manifest_with_p0.csv --main-market r2-work/b-main/GOLD1000_R1_football_data_main_enriched.csv --extra-market r2-work/b-extra/GOLD1000_R1_football_data_extra_enriched.csv --out r2-work/b-master
+      - name: Reproduce development candidate grid using confirmation A
+        run: |
+          python football-data/research/gold1000_r1/run_selective_draw_gate_r1.py \
+            --development r2-work/dev-master/GOLD1000_R1_standard_master.csv \
+            --confirmation r2-work/a-master/GOLD1000_R1_standard_master.csv \
+            --prereg football-data/research/gold1000_r1/selective_draw_gate_prereg_r1.json \
+            --out r2-work/r1-development-evidence
+      - name: Freeze unique cross-window stable gate before B label read
+        run: |
+          python football-data/research/gold1000_r1/select_stable_draw_gate_r2.py \
+            --candidate-grid r2-work/r1-development-evidence/SELECTIVE_DRAW_GATE_R1_candidate_grid.csv \
+            --prereg football-data/research/gold1000_r1/selective_draw_stability_prereg_r2.json \
+            --out r2-work/stable-selection
+      - name: Evaluate frozen stable gate on confirmation B
+        run: |
+          python football-data/research/gold1000_r1/evaluate_stable_draw_gate_confirm_b_r2.py \
+            --development r2-work/dev-master/GOLD1000_R1_standard_master.csv \
+            --confirmation-b r2-work/b-master/GOLD1000_R1_standard_master.csv \
+            --selection r2-work/stable-selection/SELECTIVE_DRAW_STABLE_R2_selection.json \
+            --prereg football-data/research/gold1000_r1/selective_draw_stability_prereg_r2.json \
+            --out stable-r2-evidence
+      - name: Assemble exact R2 evidence universe
+        env:
+          CHECKED_OUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_EVENT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          cp football-data/research/gold1000_r1/selective_draw_stability_prereg_r2.json stable-r2-evidence/
+          cp r2-work/stable-selection/SELECTIVE_DRAW_STABLE_R2_selection.json stable-r2-evidence/
+          cp r2-work/confirm-b/GOLD1000_R2_confirm_b_latest_manifest.csv stable-r2-evidence/
+          cp r2-work/confirm-b/GOLD1000_R2_confirm_b_latest_receipt.json stable-r2-evidence/
+          cp r2-work/r1-development-evidence/SELECTIVE_DRAW_GATE_R1_candidate_grid.csv stable-r2-evidence/development_candidate_grid.csv
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out=Path('stable-r2-evidence')
+          def hf(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          receipt={'schema_version':'SELECTIVE-DRAW-STABILITY-WORKFLOW-R2','status':'PASS_EXECUTION_RESEARCH_ONLY','event_name':os.environ['EVENT_NAME'],'checked_out_branch_head_sha':os.environ['CHECKED_OUT_SHA'],'workflow_event_sha':os.environ['WORKFLOW_EVENT_SHA'],'run_id':os.environ['RUN_ID'],'provider_api_calls':0,'static_http_downloads_only':True,'formal_weight':0,'formal_asset_writes':0,'confirmation_b_label_selection':0}
+          (out/'workflow_receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          manifest={'schema_version':'SELECTIVE-DRAW-STABILITY-ARTIFACT-MANIFEST-R2','files':{}}
+          for p in sorted(out.iterdir()):
+            if p.is_file() and p.name!='manifest.json':manifest['files'][p.name]={'sha256':hf(p),'bytes':p.stat().st_size}
+          (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False))
+          PY
+      - name: Upload stability confirmation B evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: selective-draw-stability-r2-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: stable-r2-evidence/
+          if-no-files-found: error
+          retention-days: 30
