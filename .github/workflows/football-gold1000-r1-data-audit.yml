@@ -38,6 +38,7 @@ jobs:
           python -m py_compile football-data/research/gold1000_r1/build_gold1000_p0_r1.py
           python -m py_compile football-data/research/gold1000_r1/audit_football_data_main_r1.py
           python -m py_compile football-data/research/gold1000_r1/audit_football_data_extra_r1.py
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_main_rolling_stats_r1.py
       - name: Build deterministic random sample and reserve pool
         run: |
           rm -rf gold1000-output
@@ -116,11 +117,25 @@ jobs:
           python football-data/research/gold1000_r1/audit_football_data_main_r1.py \
             --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
             --out football-data-audit
+      - name: Build PIT-safe rolling match-style features
+        run: |
+          rm -rf football-data-rolling-audit
+          python football-data/research/gold1000_r1/build_gold1000_main_rolling_stats_r1.py \
+            --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
+            --raw-dir football-data-audit/raw \
+            --out football-data-rolling-audit
       - name: Upload static Football-Data main-league evidence
         uses: actions/upload-artifact@v4
         with:
           name: gold1000-r1-football-data-main-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: football-data-audit/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload PIT-safe rolling match-style evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: gold1000-r1-main-rolling-stats-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: football-data-rolling-audit/
           if-no-files-found: error
           retention-days: 30
       - name: Audit static Football-Data extra-league coverage
