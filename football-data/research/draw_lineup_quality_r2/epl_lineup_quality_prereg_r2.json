@@ -1,0 +1,85 @@
+{
+  "schema_version": "EPL-LINEUP-QUALITY-DRAW-PREREG-R2",
+  "research_only": true,
+  "formal_weight": 0,
+  "formal_asset_writes": 0,
+  "external_football_api_credentials": 0,
+  "scope": "90-minute English Premier League H/D/A draw discrimination",
+  "source_seasons": ["2021/22", "2022/23", "2023/24", "2024/25", "2025/26"],
+  "rolling_oof_targets": ["2023/24", "2024/25", "2025/26"],
+  "minimum_prior_team_matches": 5,
+  "lineup_quality_features": [
+    "regular_absent_count",
+    "regular_absent_goalkeeper",
+    "regular_absent_defender",
+    "regular_absent_midfielder",
+    "regular_absent_forward",
+    "lineup_prior_minutes_10_sum",
+    "lineup_prior_starts_10_sum",
+    "lineup_prior_bps_per90_mean",
+    "lineup_prior_xgi_per90_sum",
+    "lineup_prior_xgc_per90_mean",
+    "lineup_prior_defensive_per90_sum",
+    "lineup_low_history_count",
+    "goalkeeper_prior_saves_per90",
+    "goalkeeper_prior_goals_conceded_per90"
+  ],
+  "market_features": [
+    "fair_home",
+    "fair_draw",
+    "fair_away",
+    "home_away_balance",
+    "draw_vs_side_margin",
+    "market_entropy"
+  ],
+  "models": {
+    "logistic": {
+      "C": 1.0,
+      "class_weight": "balanced",
+      "max_iter": 4000,
+      "random_state": 260803
+    },
+    "hist_gradient_boosting": {
+      "learning_rate": 0.05,
+      "max_iter": 250,
+      "max_leaf_nodes": 7,
+      "l2_regularization": 4.0,
+      "random_state": 260803
+    }
+  },
+  "ranking_metrics": ["draw_pr_auc", "draw_roc_auc", "log_loss", "brier"],
+  "paired_increment_gate": {
+    "minimum_oof_folds": 3,
+    "pr_auc_positive_folds": 2,
+    "minimum_median_pr_auc_increment": 0.005,
+    "minimum_worst_pr_auc_increment": -0.005,
+    "roc_auc_nonnegative_folds": 2,
+    "maximum_median_log_loss_increase": 0.005,
+    "maximum_median_brier_increase": 0.002
+  },
+  "forward_policy": {
+    "selection_coverage_levels": [0.1, 0.15],
+    "threshold_selection_data": "pooled historical rolling OOF only",
+    "future_test": "2026/27 matches frozen before result availability",
+    "minimum_future_test_matches": 200,
+    "minimum_future_draws": 40,
+    "future_gate": {
+      "minimum_precision": 0.35,
+      "minimum_recall": 0.1,
+      "minimum_f1": 0.15,
+      "minimum_selected": 20,
+      "maximum_complete_1x2_accuracy_loss": 0.01,
+      "minimum_pr_auc_increment_vs_market": 0.01,
+      "minimum_roc_auc_increment_vs_market": 0.0
+    }
+  },
+  "hard_boundaries": [
+    "all player performance features are shifted to matches strictly before the target fixture",
+    "same-fixture statistics and outcomes are never target inputs",
+    "first five team matches of each season are excluded from evaluation",
+    "malformed starting-XI counts are retained as evidence and excluded",
+    "2025/26 labels are historical development evidence only and cannot be described as untouched after PR81",
+    "GOLD1000 confirmation A and B are not reused",
+    "no model can be promoted before a new 2026/27 untouched forward batch passes"
+  ]
+}
