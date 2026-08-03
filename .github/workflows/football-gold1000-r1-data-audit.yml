@@ -1,0 +1,103 @@
+name: Football GOLD1000 R1 Data Audit
+
+on:
+  push:
+    branches:
+      - research/gold1000-r1-data-audit
+    paths:
+      - '.github/workflows/football-gold1000-r1-data-audit.yml'
+      - 'football-data/research/gold1000_r1/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/football-gold1000-r1-data-audit.yml'
+      - 'football-data/research/gold1000_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gold1000-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-gold1000:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile research scripts
+        run: |
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_sample_r1.py
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_p0_r1.py
+      - name: Build deterministic random sample and reserve pool
+        run: |
+          rm -rf gold1000-output
+          python football-data/research/gold1000_r1/build_gold1000_sample_r1.py \
+            --repo-root . \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out gold1000-output
+      - name: Build PIT-safe P0 features
+        run: |
+          python football-data/research/gold1000_r1/build_gold1000_p0_r1.py \
+            --repo-root . \
+            --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
+            --out gold1000-output
+      - name: Validate output universe and write manifest
+        env:
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+          GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import csv, hashlib, json, os
+          from pathlib import Path
+          out=Path('gold1000-output')
+          def hf(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          def rows(p):
+              with p.open(encoding='utf-8-sig',newline='') as f: return list(csv.DictReader(f))
+          random=rows(out/'GOLD1000_R1_random_manifest.csv')
+          reserve=rows(out/'GOLD1000_R1_reserve_manifest.csv')
+          p0=rows(out/'GOLD1000_R1_random_manifest_with_p0.csv')
+          coverage=rows(out/'GOLD1000_R1_p0_coverage.csv')
+          assert len(random)==1000
+          assert len(p0)==1000
+          assert len({r['match_identity'] for r in random})==1000
+          assert [r['match_identity'] for r in random]==[r['match_identity'] for r in p0]
+          assert len(coverage)==37
+          required={
+            'GOLD1000_R1_random_manifest.csv','GOLD1000_R1_reserve_manifest.csv',
+            'GOLD1000_R1_sampling_receipt.json','GOLD1000_R1_random_manifest_with_p0.csv',
+            'GOLD1000_R1_p0_coverage.csv','GOLD1000_R1_p0_receipt.json'
+          }
+          assert required=={p.name for p in out.iterdir() if p.is_file()}
+          receipt={
+            'schema_version':'GOLD1000-WORKFLOW-RECEIPT-R1',
+            'status':'PASS',
+            'head_sha':os.environ['GITHUB_SHA_VALUE'],
+            'run_id':os.environ['GITHUB_RUN_ID_VALUE'],
+            'provider_api_calls':0,
+            'training_runs':0,
+            'formal_weight':0,
+            'formal_asset_writes':0,
+            'selected_rows':len(random),
+            'reserve_rows':len(reserve),
+            'p0_feature_count':len(coverage),
+          }
+          (out/'GOLD1000_R1_workflow_receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          manifest={'schema_version':'GOLD1000-ARTIFACT-MANIFEST-R1','files':{}}
+          for p in sorted(out.iterdir()):
+            if p.is_file() and p.name!='manifest.json': manifest['files'][p.name]={'sha256':hf(p),'bytes':p.stat().st_size}
+          (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False))
+          PY
+      - name: Upload GOLD1000 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: gold1000-r1-${{ github.sha }}-${{ github.run_id }}
+          path: gold1000-output/
+          if-no-files-found: error
+          retention-days: 30
