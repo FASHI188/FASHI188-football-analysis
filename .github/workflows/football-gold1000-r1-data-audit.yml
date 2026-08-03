@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -49,9 +51,12 @@ jobs:
             --out gold1000-output
       - name: Validate output universe and write manifest
         env:
-          GITHUB_SHA_VALUE: ${{ github.sha }}
+          CHECKED_OUT_SHA_VALUE: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_SHA_VALUE: ${{ github.sha }}
           GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+          GITHUB_EVENT_NAME_VALUE: ${{ github.event_name }}
         run: |
+          test "$(git rev-parse HEAD)" = "$CHECKED_OUT_SHA_VALUE"
           python - <<'PY'
           import csv, hashlib, json, os
           from pathlib import Path
@@ -77,7 +82,9 @@ jobs:
           receipt={
             'schema_version':'GOLD1000-WORKFLOW-RECEIPT-R1',
             'status':'PASS',
-            'head_sha':os.environ['GITHUB_SHA_VALUE'],
+            'event_name':os.environ['GITHUB_EVENT_NAME_VALUE'],
+            'checked_out_branch_head_sha':os.environ['CHECKED_OUT_SHA_VALUE'],
+            'workflow_event_sha':os.environ['WORKFLOW_SHA_VALUE'],
             'run_id':os.environ['GITHUB_RUN_ID_VALUE'],
             'provider_api_calls':0,
             'training_runs':0,
@@ -97,7 +104,7 @@ jobs:
       - name: Upload GOLD1000 evidence
         uses: actions/upload-artifact@v4
         with:
-          name: gold1000-r1-${{ github.sha }}-${{ github.run_id }}
+          name: gold1000-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: gold1000-output/
           if-no-files-found: error
           retention-days: 30
