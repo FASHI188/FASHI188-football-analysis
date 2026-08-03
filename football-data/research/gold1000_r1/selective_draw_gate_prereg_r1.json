@@ -1,0 +1,59 @@
+{
+  "schema_version": "SELECTIVE-DRAW-GATE-PREREG-R1",
+  "status": "FROZEN_BEFORE_CONFIRMATION",
+  "formal_weight": 0,
+  "development_sample": "GOLD1000_R1_random_manifest",
+  "confirmation_sample": "first quota rows by selection_hash from the latest-season stratum of the frozen GOLD1000_R1 reserve manifest",
+  "development_split": {
+    "train": "earliest season in each competition",
+    "calibration": "chronological first half of middle season in each competition",
+    "policy_selection": "chronological second half of middle season in each competition",
+    "diagnostic_test": "latest season of development sample; never used for model or threshold selection"
+  },
+  "confirmation_rule": "latest-season reserve matches only; no model or threshold selection may use confirmation labels",
+  "feature_set": "market close structural features plus existing PIT and P0 features; no current-match event statistics",
+  "candidate_models": [
+    "market_score",
+    "logit_C0.1_cwnone", "logit_C0.1_cwbalanced",
+    "logit_C1.0_cwnone", "logit_C1.0_cwbalanced",
+    "logit_C10.0_cwnone", "logit_C10.0_cwbalanced",
+    "hgb_leaf3_l21.0", "hgb_leaf3_l24.0",
+    "hgb_leaf7_l21.0", "hgb_leaf7_l24.0",
+    "extratrees_leaf8", "extratrees_leaf16",
+    "ensemble_tree_mean", "ensemble_diverse_mean", "stacked_logit"
+  ],
+  "probability_calibration": "Platt calibration fitted only on the calibration subset; stacked_logit uses the calibration subset as its fixed meta-training set",
+  "coverage_grid": [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40],
+  "lanes": {
+    "conservative": {
+      "constraints": "policy coverage <= 0.15, precision >= 0.40, complete-1X2 accuracy delta >= -0.01",
+      "objective": "maximize policy Draw F1; tie-break precision then lower coverage"
+    },
+    "balanced": {
+      "constraints": "policy coverage <= 0.25, precision >= 0.35, complete-1X2 accuracy delta >= -0.02",
+      "objective": "maximize policy Draw F1; tie-break recall then precision"
+    },
+    "recall": {
+      "constraints": "policy coverage <= 0.40, precision >= 0.30, complete-1X2 accuracy delta >= -0.04",
+      "objective": "maximize policy Draw recall; tie-break F1 then precision"
+    },
+    "risk_control": {
+      "constraints": "policy coverage <= 0.30, selected >= 15, 90% Wilson lower precision bound >= 0.30, complete-1X2 accuracy delta >= -0.03",
+      "objective": "maximize policy coverage; tie-break precision then F1"
+    }
+  },
+  "primary_lane": "conservative",
+  "confirmation_metrics": [
+    "coverage", "Draw precision", "Draw recall", "Draw F1", "Draw PR-AUC", "ROC-AUC",
+    "complete-1X2 baseline accuracy", "complete-1X2 gate accuracy", "accuracy delta", "Brier", "LogLoss"
+  ],
+  "bootstrap": "1000 competition-cluster bootstrap replicates with 90% percentile intervals",
+  "hard_boundaries": [
+    "no external football API",
+    "no current-match event statistics",
+    "no confirmation-label model or threshold selection",
+    "no formal promotion",
+    "no merge or Ready conversion",
+    "no formal model/data/config/CURRENT modification"
+  ]
+}
