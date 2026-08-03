@@ -1,0 +1,56 @@
+name: Football Draw Forward Static Snapshot R1
+
+on:
+  push:
+    branches:
+      - research/draw-lineup-open-r1
+    paths:
+      - '.github/workflows/football-draw-forward-static-snapshot-r1.yml'
+      - 'football-data/research/draw_forward_2026_27/**'
+
+permissions:
+  contents: read
+
+jobs:
+  capture-static-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind exact research HEAD
+        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Compile collector
+        run: python -m py_compile football-data/research/draw_forward_2026_27/fpl_core_static_snapshot_r1.py
+      - name: Capture pinned public static snapshot
+        run: |
+          rm -rf forward-snapshot
+          python football-data/research/draw_forward_2026_27/fpl_core_static_snapshot_r1.py \
+            --source-commit 84d466f1e78f31076874e9d0aac0f8577131341a \
+            --source-commit-time 2026-08-02T08:18:22Z \
+            --out forward-snapshot
+      - name: Verify source-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('forward-snapshot/snapshot_receipt.json').read_text())
+          assert r['season']=='2026/27', r
+          assert r['finished_fixtures']==0, r
+          assert r['untouched_forward_batch_ready'] is False, r
+          assert r['formal_weight']==0, r
+          assert r['formal_model_data_config_current_writes']==[0,0,0,0], r
+          assert r['consumed_test_sets_reused']==[], r
+          print(r)
+          PY
+      - name: Upload exact forward snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: draw-forward-static-snapshot-r1-${{ github.sha }}-${{ github.run_id }}
+          path: forward-snapshot/
+          if-no-files-found: error
+          retention-days: 30
