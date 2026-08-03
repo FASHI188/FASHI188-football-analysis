@@ -1,0 +1,93 @@
+name: Football Draw Lineup Quality R2
+
+on:
+  push:
+    branches: [research/draw-lineup-open-r1]
+    paths:
+      - '.github/workflows/football-draw-lineup-quality-r2.yml'
+      - 'football-data/research/draw_lineup_quality_r2/**'
+  pull_request:
+    branches: [research/gold1000-r1-data-audit]
+    paths:
+      - '.github/workflows/football-draw-lineup-quality-r2.yml'
+      - 'football-data/research/draw_lineup_quality_r2/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draw-lineup-quality-r2-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  historical-quality-and-forward-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind exact research HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check --no-input scikit-learn==1.8.0
+      - name: Compile research engine
+        run: python -m py_compile football-data/research/draw_lineup_quality_r2/run_epl_lineup_quality_r2.py
+      - name: Run preregistered historical rolling OOF
+        run: |
+          rm -rf lineup-quality-evidence
+          python football-data/research/draw_lineup_quality_r2/run_epl_lineup_quality_r2.py \
+            --prereg football-data/research/draw_lineup_quality_r2/epl_lineup_quality_prereg_r2.json \
+            --out lineup-quality-evidence
+      - name: Verify research boundary and evidence universe
+        env:
+          CHECKED_OUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out=Path('lineup-quality-evidence')
+          receipt=json.loads((out/'EPL_LINEUP_QUALITY_R2_receipt.json').read_text())
+          selection=json.loads((out/'EPL_LINEUP_QUALITY_R2_selection.json').read_text())
+          assert receipt['dataset_audit']['usable_model_rows']>=1500, receipt
+          assert receipt['fold_metric_rows']==12, receipt
+          assert receipt['source_downloads']==10, receipt
+          assert receipt['consumed_test_sets_reused_for_selection']==[], receipt
+          assert receipt['2026_27_forward_required'] is True, receipt
+          assert receipt['formal_weight']==0, receipt
+          assert receipt['formal_model_data_config_current_writes']==[0,0,0,0], receipt
+          assert selection['promotion_allowed'] is False, selection
+          assert selection['future_test_required'] is True, selection
+          assert selection['status'] in {'HISTORICAL_LANE_FROZEN_PENDING_2026_27_FORWARD','NO_STABLE_HISTORICAL_LINEUP_QUALITY_LANE'}, selection
+          workflow={
+            'schema_version':'EPL-LINEUP-QUALITY-WORKFLOW-R2',
+            'status':'COMPLETED_RESEARCH_ONLY',
+            'checked_out_branch_head_sha':os.environ['CHECKED_OUT_SHA'],
+            'run_id':os.environ['RUN_ID'],
+            'external_football_api_credentials':0,
+            'formal_weight':0,
+            'formal_asset_writes':0,
+            'future_2026_27_confirmation_required':True,
+          }
+          (out/'workflow_receipt.json').write_text(json.dumps(workflow,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          manifest={'schema_version':'EPL-LINEUP-QUALITY-ARTIFACT-R2-FINAL','files':{}}
+          for path in sorted(out.iterdir()):
+            if path.is_file() and path.name!='final_manifest.json':
+              data=path.read_bytes()
+              manifest['files'][path.name]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+          (out/'final_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps({'receipt':receipt,'selection_status':selection['status']},ensure_ascii=False))
+          PY
+      - name: Upload lineup-quality evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: draw-lineup-quality-r2-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: lineup-quality-evidence/
+          if-no-files-found: error
+          retention-days: 30
