@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/workflows/football-draw-forward-static-snapshot-r1.yml'
       - 'football-data/research/draw_forward_2026_27/**'
+  pull_request:
+    branches:
+      - research/gold1000-r1-data-audit
+    paths:
+      - '.github/workflows/football-draw-forward-static-snapshot-r1.yml'
+      - 'football-data/research/draw_forward_2026_27/**'
 
 permissions:
   contents: read
@@ -18,12 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Bind exact research HEAD
-        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Compile collector
         run: python -m py_compile football-data/research/draw_forward_2026_27/fpl_core_static_snapshot_r1.py
       - name: Capture pinned public static snapshot
@@ -50,7 +58,7 @@ jobs:
       - name: Upload exact forward snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: draw-forward-static-snapshot-r1-${{ github.sha }}-${{ github.run_id }}
+          name: draw-forward-static-snapshot-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: forward-snapshot/
           if-no-files-found: error
           retention-days: 30
