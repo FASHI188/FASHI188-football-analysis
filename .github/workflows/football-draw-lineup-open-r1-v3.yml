@@ -1,0 +1,140 @@
+name: Football Draw Lineup Open R1 V3
+
+on:
+  push:
+    branches: [research/draw-lineup-open-r1]
+    paths:
+      - '.github/workflows/football-draw-lineup-open-r1-v3.yml'
+      - 'football-data/research/draw_lineup_open_r1/**'
+  pull_request:
+    branches: [research/gold1000-r1-data-audit]
+    paths:
+      - '.github/workflows/football-draw-lineup-open-r1-v3.yml'
+      - 'football-data/research/draw_lineup_open_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draw-lineup-open-r1-v3-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  audit-and-test-lineup-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind exact research HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check --no-input scikit-learn==1.8.0
+      - name: Compile scripts
+        run: |
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_sample_r1.py
+          python -m py_compile football-data/research/draw_lineup_open_r1/*.py
+      - name: Build frozen sample universe
+        run: |
+          rm -rf lineup-work lineup-evidence
+          mkdir -p lineup-work lineup-evidence
+          python football-data/research/gold1000_r1/build_gold1000_sample_r1.py \
+            --repo-root . \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out lineup-work/gold
+      - name: Audit StatsBomb static overlap
+        run: |
+          python football-data/research/draw_lineup_open_r1/statsbomb_open_lineup_audit_r1.py \
+            --sample lineup-work/gold/GOLD1000_R1_random_manifest.csv \
+            --out lineup-evidence/statsbomb
+      - name: Build FPL static lineup dataset
+        run: |
+          python football-data/research/draw_lineup_open_r1/fpl_static_lineup_dataset_r1.py \
+            --random lineup-work/gold/GOLD1000_R1_random_manifest.csv \
+            --reserve lineup-work/gold/GOLD1000_R1_reserve_manifest.csv \
+            --out lineup-work/fpl
+          python football-data/research/draw_lineup_open_r1/sanitize_fpl_season_boundaries_r1.py \
+            --input lineup-work/fpl/FPL_STATIC_LINEUP_R1_matches.csv \
+            --out lineup-work/fpl-sanitized
+      - name: Validate source universe before modeling
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          raw=json.loads(Path('lineup-work/fpl/FPL_STATIC_LINEUP_R1_receipt.json').read_text())
+          clean=json.loads(Path('lineup-work/fpl-sanitized/FPL_STATIC_LINEUP_R1_sanitizer_receipt.json').read_text())
+          assert raw['matches']==1140, raw
+          assert raw['matches_by_season']=={'2023/24':380,'2024/25':380,'2025/26':380}, raw
+          assert raw['gold1000_random_overlap']==66, raw
+          assert raw['gold1000_or_reserve_pool']==198, raw
+          assert raw['untouched_2025_26_test_eligible']==314, raw
+          assert raw['bad_home_starter_count']==1, raw
+          assert raw['bad_away_starter_count']==1, raw
+          assert clean['malformed_matches_excluded']==2, clean
+          assert clean['malformed_home_sides']==1, clean
+          assert clean['malformed_away_sides']==1, clean
+          assert clean['usable_rows']==1138, clean
+          print({'raw':raw,'sanitized':clean})
+          PY
+      - name: Run frozen lineup-confirmed increment test
+        run: |
+          python football-data/research/draw_lineup_open_r1/run_epl_lineup_draw_increment_r1.py \
+            --lineups lineup-work/fpl-sanitized/FPL_STATIC_LINEUP_R1_matches_sanitized.csv \
+            --prereg football-data/research/draw_lineup_open_r1/epl_lineup_draw_prereg_r1.json \
+            --out lineup-evidence/epl
+      - name: Copy source evidence
+        run: |
+          mkdir -p lineup-evidence/fpl-source
+          cp lineup-work/fpl/FPL_STATIC_LINEUP_R1_receipt.json lineup-evidence/fpl-source/
+          cp lineup-work/fpl/FPL_STATIC_LINEUP_R1_source_ledger.csv lineup-evidence/fpl-source/
+          cp lineup-work/fpl/FPL_STATIC_LINEUP_R1_gold1000_overlap.csv lineup-evidence/fpl-source/
+          cp lineup-work/fpl-sanitized/FPL_STATIC_LINEUP_R1_sanitizer_receipt.json lineup-evidence/fpl-source/
+          cp lineup-work/fpl-sanitized/FPL_STATIC_LINEUP_R1_malformed_start_counts.csv lineup-evidence/fpl-source/
+          cp football-data/research/draw_lineup_open_r1/epl_lineup_draw_prereg_r1.json lineup-evidence/
+      - name: Build exact artifact manifest
+        env:
+          CHECKED_OUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_EVENT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out=Path('lineup-evidence')
+          def hf(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          receipt={
+            'schema_version':'DRAW-LINEUP-OPEN-WORKFLOW-R1-V3',
+            'status':'COMPLETED_RESEARCH_ONLY',
+            'event_name':os.environ['EVENT_NAME'],
+            'checked_out_branch_head_sha':os.environ['CHECKED_OUT_SHA'],
+            'workflow_event_sha':os.environ['WORKFLOW_EVENT_SHA'],
+            'run_id':os.environ['RUN_ID'],
+            'external_football_api_credentials':0,
+            'static_http_downloads_only':True,
+            'formal_weight':0,
+            'formal_asset_writes':0,
+            'gold1000_confirmation_a_b_reused_for_selection':0
+          }
+          (out/'workflow_receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          manifest={'schema_version':'DRAW-LINEUP-OPEN-ARTIFACT-R1-V3','files':{}}
+          for p in sorted(out.rglob('*')):
+            if p.is_file() and p.name!='artifact_manifest.json':
+              rel=str(p.relative_to(out))
+              manifest['files'][rel]={'sha256':hf(p),'bytes':p.stat().st_size}
+          (out/'artifact_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False))
+          PY
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: draw-lineup-open-r1-v3-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: lineup-evidence/
+          if-no-files-found: error
+          retention-days: 30
