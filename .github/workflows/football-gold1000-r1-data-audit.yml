@@ -36,6 +36,7 @@ jobs:
         run: |
           python -m py_compile football-data/research/gold1000_r1/build_gold1000_sample_r1.py
           python -m py_compile football-data/research/gold1000_r1/build_gold1000_p0_r1.py
+          python -m py_compile football-data/research/gold1000_r1/audit_football_data_main_r1.py
       - name: Build deterministic random sample and reserve pool
         run: |
           rm -rf gold1000-output
@@ -49,7 +50,7 @@ jobs:
             --repo-root . \
             --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
             --out gold1000-output
-      - name: Validate output universe and write manifest
+      - name: Validate GOLD1000 output universe and write manifest
         env:
           CHECKED_OUT_SHA_VALUE: ${{ github.event.pull_request.head.sha || github.sha }}
           WORKFLOW_SHA_VALUE: ${{ github.sha }}
@@ -101,10 +102,23 @@ jobs:
           (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           print(json.dumps(receipt,ensure_ascii=False))
           PY
-      - name: Upload GOLD1000 evidence
+      - name: Upload GOLD1000 base evidence
         uses: actions/upload-artifact@v4
         with:
           name: gold1000-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: gold1000-output/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Audit static Football-Data main-league coverage
+        run: |
+          rm -rf football-data-audit
+          python football-data/research/gold1000_r1/audit_football_data_main_r1.py \
+            --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
+            --out football-data-audit
+      - name: Upload static Football-Data audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: gold1000-r1-football-data-main-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: football-data-audit/
           if-no-files-found: error
           retention-days: 30
