@@ -1,4 +1,4 @@
-name: Football Draw Forward Static Snapshot R1
+name: Football Draw Forward Static Snapshot R2
 
 on:
   push:
@@ -16,6 +16,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: draw-forward-static-r2-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
   capture-static-source:
@@ -44,21 +48,29 @@ jobs:
       - name: Verify source-only boundary
         run: |
           python - <<'PY'
-          import json
+          import csv,json
           from pathlib import Path
           r=json.loads(Path('forward-snapshot/snapshot_receipt.json').read_text())
+          assert r['schema_version']=='DRAW-FORWARD-FPL-CORE-SNAPSHOT-R2', r
           assert r['season']=='2026/27', r
+          assert r['players']>=500, r
+          assert r['teams']==20, r
+          assert r['prior_season_matched_players']>=300, r
+          assert r['prior_regular_players']>=150, r
           assert r['finished_fixtures']==0, r
           assert r['untouched_forward_batch_ready'] is False, r
           assert r['formal_weight']==0, r
           assert r['formal_model_data_config_current_writes']==[0,0,0,0], r
           assert r['consumed_test_sets_reused']==[], r
+          with Path('forward-snapshot/FPL_CORE_2026_27_team_availability_summary.csv').open(encoding='utf-8-sig',newline='') as f:
+              teams=list(csv.DictReader(f))
+          assert len(teams)==20, len(teams)
           print(r)
           PY
       - name: Upload exact forward snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: draw-forward-static-snapshot-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          name: draw-forward-static-snapshot-r2-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: forward-snapshot/
           if-no-files-found: error
           retention-days: 30
