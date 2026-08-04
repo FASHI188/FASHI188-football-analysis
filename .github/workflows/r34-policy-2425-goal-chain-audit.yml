@@ -1,0 +1,64 @@
+name: R34 policy 2024-25 goal-chain audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/research/build_epl2425_goal_event_chain.py"
+      - "tests/research/test_build_epl2425_goal_event_chain.py"
+      - "football-data/research/r34_policy_2425/**"
+      - ".github/workflows/r34-policy-2425-goal-chain-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hard-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile and run parser tests
+        run: |
+          python -m py_compile scripts/research/build_epl2425_goal_event_chain.py
+          python tests/research/test_build_epl2425_goal_event_chain.py
+
+      - name: Build and hard-audit complete policy-season chain
+        run: |
+          python scripts/research/build_epl2425_goal_event_chain.py \
+            --output-dir artifacts/r34_policy_2425_goal_chain
+
+      - name: Verify audit receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/r34_policy_2425_goal_chain/audit.json")
+          audit = json.loads(path.read_text(encoding="utf-8"))
+          assert audit["status"] == "PASS", audit
+          assert audit["research_only"] is True
+          assert audit["formal_weight"] == 0
+          assert audit["counts"]["matches"] == 380
+          assert audit["counts"]["unique_match_ids"] == 380
+          assert audit["counts"]["teams"] == 20
+          assert audit["counts"]["goal_events"] == audit["counts"]["total_goals_from_results"]
+          assert audit["counts"]["zero_zero_draws"] > 0
+          assert not audit["failed_checks"]
+          print(json.dumps(audit["counts"], indent=2))
+          PY
+
+      - name: Upload auditable chain
+        uses: actions/upload-artifact@v4
+        with:
+          name: r34-policy-2425-goal-chain
+          path: artifacts/r34_policy_2425_goal_chain
+          if-no-files-found: error
+          retention-days: 30
