@@ -6,11 +6,11 @@ export PYTHONUTF8=1
 
 python -m pip install --disable-pip-version-check -q PyYAML
 python -m py_compile \
-  scripts/governance/final_workflow_acceptance.py \
+  scripts/governance/v510_workflow_acceptance.py \
   scripts/governance/verify_consolidated_capabilities.py \
   scripts/governance/verify_powershell_acceptance_parity.py
 
-python scripts/governance/final_workflow_acceptance.py \
+python scripts/governance/v510_workflow_acceptance.py \
   --strict \
   --write-archive-blob-ledger
 
