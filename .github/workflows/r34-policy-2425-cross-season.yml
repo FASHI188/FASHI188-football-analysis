@@ -1,0 +1,112 @@
+name: R34 policy 2024-25 one-shot cross-season
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/research/r34_policy_2425_parts/**"
+      - "scripts/research/freeze_r34_policy_inputs.py"
+      - "scripts/research/build_epl2425_goal_event_chain.py"
+      - "football-data/research/r34_policy_2425/**"
+      - ".github/workflows/r34-policy-2425-cross-season.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-policy-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install fixed evaluation dependencies
+        run: python -m pip install --disable-pip-version-check pandas numpy scikit-learn
+
+      - name: Assemble and verify frozen evaluator source
+        run: |
+          mkdir -p artifacts/r34_policy_2425_cross_season
+          cat scripts/research/r34_policy_2425_parts/part_00.pyfrag \
+              scripts/research/r34_policy_2425_parts/part_01.pyfrag \
+              scripts/research/r34_policy_2425_parts/part_02.pyfrag \
+              scripts/research/r34_policy_2425_parts/part_03.pyfrag \
+              > artifacts/r34_policy_2425_cross_season/run_r34_policy_2425_cross_season.py
+          echo "83b673d7c20fce209e36356ed162a65b180761dea645645e1bf107948fef12a0  artifacts/r34_policy_2425_cross_season/run_r34_policy_2425_cross_season.py" | sha256sum -c -
+          python -m py_compile artifacts/r34_policy_2425_cross_season/run_r34_policy_2425_cross_season.py
+
+      - name: Freeze exact historical market and goal inputs
+        run: |
+          python scripts/research/freeze_r34_policy_inputs.py \
+            --output-dir artifacts/r34_policy_2425_input_freeze
+
+      - name: Build hard-audited 2024-25 policy event chain
+        run: |
+          python scripts/research/build_epl2425_goal_event_chain.py \
+            --output-dir artifacts/r34_policy_2425_goal_chain
+
+      - name: Run the one-shot frozen cross-season evaluation
+        run: |
+          python artifacts/r34_policy_2425_cross_season/run_r34_policy_2425_cross_season.py \
+            --goals-2324 artifacts/r34_policy_2425_input_freeze/goals_2324_raw.csv \
+            --market-2324 artifacts/r34_policy_2425_input_freeze/market_2324_E0.csv \
+            --market-2425 artifacts/r34_policy_2425_input_freeze/market_2425_E0.csv \
+            --policy-matches artifacts/r34_policy_2425_goal_chain/matches.csv \
+            --policy-events artifacts/r34_policy_2425_goal_chain/goal_events.csv \
+            --output-dir artifacts/r34_policy_2425_cross_season/results
+
+      - name: Verify reproduction, audit and frozen research verdict
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/r34_policy_2425_cross_season/results/r34_policy_2425_result.json")
+          result = json.loads(path.read_text(encoding="utf-8"))
+          assert result["status"] == "COMPLETED", result
+          assert result["formal_weight"] == 0
+          assert result["reproduction_gate"]["status"] == "PASS"
+          assert result["reproduction_gate"]["max_abs_numeric_difference"] < 5e-12
+          assert result["source_reconstruction_audit"]["goal_rows"] == 1246
+          assert result["source_reconstruction_audit"]["zero_zero_matches"] == 11
+          assert result["policy_chain_audit"]["matches"] == 380
+          assert result["policy_chain_audit"]["events"] == 1115
+          assert result["evaluation"]["matches"] == 380
+          assert result["evaluation"]["actual_draws"] == 93
+          assert result["evaluation"]["zero_zero_draws"] == 16
+          assert result["evaluation"]["coefficients_refit_on_policy"] is False
+          assert result["optimization_audit"]["all_converged"] is True
+          assert result["optimization_audit"]["probability_conservation_all"] is True
+          assert result["optimization_audit"]["total_lambda_cap_hits"] == 0
+          assert result["market"]["draw_calls"] == 0
+          assert result["r34"]["draw_calls"] == 0
+          assert result["verdict"] == "CROSS_SEASON_FAIL_NO_PROMOTION"
+          assert result["route_decision"] == "STOP_GOAL_TIME_SCORE_STATE_ONLY_PREMATCH_DRAW_ROUTE"
+          assert result["deltas_r34_minus_market"]["logloss"] > 0
+          assert result["bootstrap"]["logloss_delta_95"][0] > 0
+          assert result["formal_changes"] == {"model": 0, "formal_data": 0, "config": 0, "CURRENT": 0}
+          print(json.dumps({
+              "reproduction": result["reproduction_gate"]["status"],
+              "market": result["market"],
+              "r34": result["r34"],
+              "bootstrap": result["bootstrap"],
+              "verdict": result["verdict"],
+              "route_decision": result["route_decision"],
+          }, indent=2))
+          PY
+
+      - name: Upload complete frozen evaluation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r34-policy-2425-cross-season-result
+          path: |
+            artifacts/r34_policy_2425_cross_season
+            artifacts/r34_policy_2425_input_freeze/input_freeze_receipt.json
+            artifacts/r34_policy_2425_goal_chain/audit.json
+          if-no-files-found: error
+          retention-days: 30
