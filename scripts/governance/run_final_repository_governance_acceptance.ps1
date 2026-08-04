@@ -19,11 +19,11 @@ function Invoke-Python {
 
 Invoke-Python -m pip install --disable-pip-version-check -q PyYAML
 Invoke-Python -m py_compile `
-    scripts/governance/final_workflow_acceptance.py `
+    scripts/governance/v510_workflow_acceptance.py `
     scripts/governance/verify_consolidated_capabilities.py `
     scripts/governance/verify_powershell_acceptance_parity.py
 
-Invoke-Python scripts/governance/final_workflow_acceptance.py `
+Invoke-Python scripts/governance/v510_workflow_acceptance.py `
     --strict `
     --write-archive-blob-ledger
 
