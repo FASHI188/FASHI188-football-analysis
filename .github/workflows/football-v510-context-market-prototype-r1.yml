@@ -5,8 +5,10 @@ on:
   pull_request:
     paths:
       - "football-data/config/v510_context_market_prototype_r1.json"
+      - "football-data/config/v510_direct_draw_residual_r2.json"
       - "football-data/validation/audit_v510_pit_context_readiness_r1.py"
       - "football-data/validation/evaluate_v510_market_residual_1x2_r1.py"
+      - "football-data/validation/evaluate_v510_direct_draw_residual_r2.py"
       - "football-data/forward/v6_context_enriched_events_v6486.json"
       - "football-data/forward/inbox/market_first_results_v651.json"
       - "football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json"
@@ -32,15 +34,19 @@ jobs:
         run: |
           python -m py_compile \
             football-data/validation/audit_v510_pit_context_readiness_r1.py \
-            football-data/validation/evaluate_v510_market_residual_1x2_r1.py
+            football-data/validation/evaluate_v510_market_residual_1x2_r1.py \
+            football-data/validation/evaluate_v510_direct_draw_residual_r2.py
       - name: Run deterministic self-tests
         run: |
           python football-data/validation/audit_v510_pit_context_readiness_r1.py --self-test
           python football-data/validation/evaluate_v510_market_residual_1x2_r1.py --self-test
+          python football-data/validation/evaluate_v510_direct_draw_residual_r2.py --self-test
       - name: Audit existing prospective PIT context
         run: python football-data/validation/audit_v510_pit_context_readiness_r1.py
-      - name: Evaluate frozen market residual on neutral fixed1000
+      - name: Evaluate frozen three-class residual R1
         run: python football-data/validation/evaluate_v510_market_residual_1x2_r1.py
+      - name: Evaluate direct-draw residual R2
+        run: python football-data/validation/evaluate_v510_direct_draw_residual_r2.py
       - name: Show compact receipts
         run: |
           python - <<'PY'
@@ -49,16 +55,20 @@ jobs:
           for path in (
               Path('football-data/manifests/v510_pit_context_readiness_r1_status.json'),
               Path('football-data/manifests/v510_market_residual_1x2_r1_status.json'),
+              Path('football-data/manifests/v510_direct_draw_residual_r2_status.json'),
           ):
               x=json.loads(path.read_text(encoding='utf-8'))
               print(path)
               print(json.dumps({
                   'status':x.get('status'),
                   'counts':x.get('counts'),
+                  'benchmark_rows':x.get('benchmark_rows'),
+                  'market_unavailable_rows':x.get('market_unavailable_rows'),
                   'sample_count':x.get('sample_count'),
                   'fit_gate':x.get('fit_gate'),
                   'challenge_gate':x.get('challenge_gate'),
                   'delta_model_minus_market':x.get('delta_model_minus_market'),
+                  'draw_audit':x.get('draw_audit'),
               },ensure_ascii=False,indent=2))
           PY
       - name: Upload research receipts
@@ -68,6 +78,7 @@ jobs:
           path: |
             football-data/manifests/v510_pit_context_readiness_r1_status.json
             football-data/manifests/v510_market_residual_1x2_r1_status.json
+            football-data/manifests/v510_direct_draw_residual_r2_status.json
           if-no-files-found: error
           retention-days: 30
       - name: Confirm no repository persistence
