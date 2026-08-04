@@ -318,7 +318,7 @@ def build(payload: bytes, expected_blob_sha: str, output_dir: Path, source_url: 
         "event_count_equals_total_goals": len(event_rows) == total_goals,
         "all_scores_replayed": True,
         "zero_zero_included": zero_zero_count > 0,
-        "probability_or_model_files_touched": False,
+        "no_probability_or_model_files_touched": True,
     }
     failed_checks = sorted(name for name, passed in checks.items() if not passed)
 
