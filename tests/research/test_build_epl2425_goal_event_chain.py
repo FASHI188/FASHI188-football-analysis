@@ -40,7 +40,7 @@ class GoalChainParserTests(unittest.TestCase):
 
     def test_nonzero_score_without_events_fails(self) -> None:
         match = {"matchId": "fixture-bad", "goals": ["", ""]}
-        with self.assertRaisesRegex(ValueError, "non-zero final score"):
+        with self.assertRaisesRegex(ValueError, "event count 0 != final goals 1"):
             MODULE.parse_match_events(match, 1, 0)
 
     def test_invalid_two_goal_jump_fails(self) -> None:
