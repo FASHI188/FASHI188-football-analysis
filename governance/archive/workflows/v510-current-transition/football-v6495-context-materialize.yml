@@ -1,0 +1,43 @@
+name: Football V6.49.5 Direct Context Materialize MANUAL_ONLY
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6495-direct-context-materialize-manual
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile context chain
+        run: |
+          python -m py_compile football-data/validation/v6_context_enriched_forward_v6486.py
+          python -m py_compile football-data/validation/v6_context_enriched_forward_manual_v6489.py
+          python -m py_compile football-data/validation/v6_match_context_axes_forward_v6490.py
+          python -m py_compile football-data/validation/v6_manager_delta_from_verified_baseline_v6491.py
+          python -m py_compile football-data/validation/v6_context_conditioned_selector_forward_v6495.py
+          python -m py_compile football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Run manually approved context materialization in ephemeral checkout
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python football-data/validation/v6_context_enriched_forward_manual_v6489.py
+          python football-data/validation/v6_match_context_axes_forward_v6490.py
+          python football-data/validation/v6_manager_delta_from_verified_baseline_v6491.py
+          python football-data/validation/v6_context_conditioned_selector_forward_v6495.py
+          python football-data/validation/v6_context_priority_queue_v6493.py
+      - name: Confirm no repository persistence
+        run: git status --short
