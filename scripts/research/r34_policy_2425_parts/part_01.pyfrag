@@ -1,0 +1,240 @@
+        sh = sa = 0
+        for row in group.itertuples(index=False):
+            dh = row.gh_after - sh
+            da = row.ga_after - sa
+            if row.team_side == "H" and (dh, da) != (1, 0):
+                raise ValueError(f"{mid}: invalid home transition {sh}-{sa}->{row.gh_after}-{row.ga_after}")
+            if row.team_side == "A" and (dh, da) != (0, 1):
+                raise ValueError(f"{mid}: invalid away transition {sh}-{sa}->{row.gh_after}-{row.ga_after}")
+            sh, sa = row.gh_after, row.ga_after
+        target = manifest.set_index("local_match_id").loc[mid]
+        if (sh, sa) != (int(target.ft_home), int(target.ft_away)):
+            raise ValueError(f"{mid}: final reconstruction mismatch")
+
+    counts = {(mid, k): [0, 0] for mid in manifest.local_match_id for k in range(6)}
+    for row in events.itertuples(index=False):
+        k = interval_idx(row.minute_base)
+        side_idx = 0 if row.team_side == "H" else 1
+        counts[(row.local_match_id, k)][side_idx] += 1
+
+    reconstruction = pd.DataFrame([
+        {
+            "local_match_id": mid,
+            "event_home": sum(counts[(mid, k)][0] for k in range(6)),
+            "event_away": sum(counts[(mid, k)][1] for k in range(6)),
+        }
+        for mid in manifest.local_match_id
+    ])
+    check = manifest.merge(reconstruction, on="local_match_id", validate="one_to_one")
+    if not ((check.ft_home == check.event_home) & (check.ft_away == check.event_away)).all():
+        bad = check[(check.ft_home != check.event_home) | (check.ft_away != check.event_away)]
+        raise ValueError(f"2023/24 score reconstruction failures: {bad.to_dict(orient='records')[:3]}")
+
+    audit = {
+        "goal_rows": int(len(events)),
+        "scoring_matches": int(events.local_match_id.nunique()),
+        "zero_zero_matches": int(((manifest.ft_home == 0) & (manifest.ft_away == 0)).sum()),
+        "all_380_scores_reconstructed": True,
+    }
+    return counts, events, audit
+
+
+def build_static_and_training(
+    manifest: pd.DataFrame,
+    market: pd.DataFrame,
+    counts: dict[tuple[str, int], list[int]],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[str, Any]]:
+    team_stats: defaultdict[str, dict[str, Any]] = defaultdict(
+        lambda: {"matches": 0, "gf": np.zeros(6, dtype=float), "ga": np.zeros(6, dtype=float)}
+    )
+    domain = {"matches": 0, "home": np.zeros(6, dtype=float), "away": np.zeros(6, dtype=float)}
+    static_rows: list[dict[str, Any]] = []
+    market_by_id = market.set_index("local_match_id")
+
+    for dt, day in manifest.sort_values(["date", "local_match_id"]).groupby("date", sort=True):
+        for row in day.itertuples(index=False):
+            mid = row.local_match_id
+            h = row.home_team_local
+            a = row.away_team_local
+            hs = team_stats[h]
+            aas = team_stats[a]
+            for k in range(6):
+                dom_h = (domain["home"][k] + 0.25 * 8) / (domain["matches"] + 8)
+                dom_a = (domain["away"][k] + 0.25 * 8) / (domain["matches"] + 8)
+                h_for = (hs["gf"][k] + dom_h * 5) / (hs["matches"] + 5)
+                h_against = (hs["ga"][k] + dom_a * 5) / (hs["matches"] + 5)
+                a_for = (aas["gf"][k] + dom_a * 5) / (aas["matches"] + 5)
+                a_against = (aas["ga"][k] + dom_h * 5) / (aas["matches"] + 5)
+                static_rows.append({
+                    "local_match_id": mid,
+                    "date": dt,
+                    "home_team": h,
+                    "away_team": a,
+                    "interval_idx": k,
+                    "prior_completed_matches": domain["matches"],
+                    "domain_home_rate": dom_h,
+                    "domain_away_rate": dom_a,
+                    "home_for_rate": h_for,
+                    "home_against_rate": h_against,
+                    "away_for_rate": a_for,
+                    "away_against_rate": a_against,
+                    "same_date_frozen": True,
+                    "same_match_event_input": False,
+                })
+        for row in day.itertuples(index=False):
+            mid = row.local_match_id
+            h = row.home_team_local
+            a = row.away_team_local
+            hc = np.array([counts[(mid, k)][0] for k in range(6)], dtype=float)
+            ac = np.array([counts[(mid, k)][1] for k in range(6)], dtype=float)
+            domain["matches"] += 1
+            domain["home"] += hc
+            domain["away"] += ac
+            team_stats[h]["matches"] += 1
+            team_stats[h]["gf"] += hc
+            team_stats[h]["ga"] += ac
+            team_stats[a]["matches"] += 1
+            team_stats[a]["gf"] += ac
+            team_stats[a]["ga"] += hc
+
+    static = pd.DataFrame(static_rows)
+    if len(static) != 380 * 6:
+        raise ValueError("invalid 2023/24 static row count")
+    static_index = {(row.local_match_id, int(row.interval_idx)): row for row in static.itertuples(index=False)}
+
+    rows = []
+    for match in manifest.itertuples(index=False):
+        mid = match.local_match_id
+        mk = market_by_id.loc[mid]
+        sh = sa = 0
+        for k in range(6):
+            st = static_index[(mid, k)]
+            gh, ga = counts[(mid, k)]
+            rows.append({
+                "local_match_id": mid,
+                "date": match.date,
+                "home_team": match.home_team_local,
+                "away_team": match.away_team_local,
+                "interval_idx": k,
+                "pH": mk.pH,
+                "pD": mk.pD,
+                "pA": mk.pA,
+                "pO25": mk.pO25,
+                "market_edge": mk.market_edge,
+                "second_half": int(k >= 3),
+                "score_home": sh,
+                "score_away": sa,
+                "score_diff": sh - sa,
+                "score_total": sh + sa,
+                "is_tied": int(sh == sa),
+                "home_lead": int(sh > sa),
+                "away_lead": int(sa > sh),
+                "domain_home_rate": st.domain_home_rate,
+                "domain_away_rate": st.domain_away_rate,
+                "home_for_rate": st.home_for_rate,
+                "home_against_rate": st.home_against_rate,
+                "away_for_rate": st.away_for_rate,
+                "away_against_rate": st.away_against_rate,
+                "y_home_goals": gh,
+                "y_away_goals": ga,
+                "prior_completed_matches": st.prior_completed_matches,
+                "same_date_frozen": True,
+                "same_match_event_input": False,
+            })
+            sh += gh
+            sa += ga
+    interval_df = pd.DataFrame(rows)
+    return static, interval_df, domain, team_stats
+
+
+def simulate_with_static(
+    model_h: Any,
+    model_a: Any,
+    mk: pd.Series,
+    static_rows: dict[int, dict[str, float]],
+) -> tuple[float, float, float, float, int, int]:
+    dist = {(0, 0): 1.0}
+    cap_hits = 0
+    mass_residuals: list[float] = []
+    for k in range(6):
+        st = static_rows[k]
+        states = list(dist.keys())
+        masses = np.fromiter((dist[state] for state in states), dtype=float, count=len(states))
+        feat = pd.DataFrame({
+            "pH": mk.pH,
+            "pD": mk.pD,
+            "pA": mk.pA,
+            "pO25": mk.pO25,
+            "market_edge": mk.market_edge,
+            "interval_idx": k,
+            "second_half": int(k >= 3),
+            "score_home": [state[0] for state in states],
+            "score_away": [state[1] for state in states],
+            "score_diff": [state[0] - state[1] for state in states],
+            "score_total": [state[0] + state[1] for state in states],
+            "is_tied": [int(state[0] == state[1]) for state in states],
+            "home_lead": [int(state[0] > state[1]) for state in states],
+            "away_lead": [int(state[1] > state[0]) for state in states],
+            "domain_home_rate": st["domain_home_rate"],
+            "domain_away_rate": st["domain_away_rate"],
+            "home_for_rate": st["home_for_rate"],
+            "home_against_rate": st["home_against_rate"],
+            "away_for_rate": st["away_for_rate"],
+            "away_against_rate": st["away_against_rate"],
+        })[FEATURES]
+        lambdas_h = model_h.predict(feat)
+        lambdas_a = model_a.predict(feat)
+        cap_hits += int(np.sum(lambdas_h > LAMBDA_CAP) + np.sum(lambdas_a > LAMBDA_CAP))
+        next_dist: defaultdict[tuple[int, int], float] = defaultdict(float)
+        for j, (sh, sa) in enumerate(states):
+            ph = poisson_tail_pmf(float(lambdas_h[j]))
+            pa = poisson_tail_pmf(float(lambdas_a[j]))
+            outer = np.outer(ph, pa) * masses[j]
+            for gh in range(len(ph)):
+                for ga in range(len(pa)):
+                    value = float(outer[gh, ga])
+                    if value > 0:
+                        next_dist[(sh + gh, sa + ga)] += value
+        total_mass = sum(next_dist.values())
+        mass_residuals.append(abs(total_mass - 1.0))
+        if total_mass <= 0:
+            raise ValueError("zero probability mass")
+        dist = {
+            key: value / total_mass
+            for key, value in next_dist.items()
+            if value / total_mass > 1e-13
+        }
+    p_h = sum(value for (h, a), value in dist.items() if h > a)
+    p_d = sum(value for (h, a), value in dist.items() if h == a)
+    p_a = sum(value for (h, a), value in dist.items() if h < a)
+    total = p_h + p_d + p_a
+    return p_h / total, p_d / total, p_a / total, max(mass_residuals), cap_hits, len(dist)
+
+
+def metrics(predictions: pd.DataFrame, prefix: str) -> dict[str, float | int]:
+    classes = ["H", "D", "A"]
+    class_map = {value: index for index, value in enumerate(classes)}
+    y = np.array([class_map[value] for value in predictions.actual_result])
+    y_draw = (predictions.actual_result == "D").astype(int).values
+    prob = predictions[[f"{prefix}_pH", f"{prefix}_pD", f"{prefix}_pA"]].values
+    picks = predictions[f"{prefix}_pick"].values
+    one = np.eye(3)[y]
+    cumulative_p = np.cumsum(prob, axis=1)[:, :-1]
+    cumulative_y = np.cumsum(one, axis=1)[:, :-1]
+    draw_prob = predictions[f"{prefix}_pD"].values
+    draw_calls = picks == "D"
+    draw_hits = draw_calls & (predictions.actual_result.values == "D")
+    return {
+        "logloss": float(log_loss(y, prob, labels=[0, 1, 2])),
+        "brier_multiclass": float(np.mean(np.sum((prob - one) ** 2, axis=1))),
+        "rps": float(np.mean(np.sum((cumulative_p - cumulative_y) ** 2, axis=1) / 2)),
+        "accuracy": float(accuracy_score(predictions.actual_result, picks)),
+        "macro_f1": float(f1_score(predictions.actual_result, picks, labels=classes, average="macro", zero_division=0)),
+        "balanced_accuracy": float(balanced_accuracy_score(predictions.actual_result, picks)),
+        "draw_logloss": float(log_loss(y_draw, draw_prob, labels=[0, 1])),
+        "draw_brier": float(brier_score_loss(y_draw, draw_prob)),
+        "draw_roc_auc": float(roc_auc_score(y_draw, draw_prob)),
+        "draw_average_precision": float(average_precision_score(y_draw, draw_prob)),
+        "draw_probability_mean": float(np.mean(draw_prob)),
+        "draw_probability_std": float(np.std(draw_prob, ddof=0)),
+        "draw_calls": int(draw_calls.sum()),
