@@ -22,8 +22,10 @@ GOALS_2324_URL = (
 )
 GOALS_2324_EXPECTED_GIT_BLOB_SHA1 = "9b7d9c4428ab16b509c7de55eaf4c5f9720ff42a"
 MARKET_2324_URL = "https://www.football-data.co.uk/mmz4281/2324/E0.csv"
-MARKET_2324_EXPECTED_SHA256 = "760f6881175fba2ebccfb89c4a07acbd4172262daee6d07f3baf5dc379242333"
+MARKET_ARTIFACT_ID = 8843568061
+MARKET_2324_EXPECTED_SHA256 = "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3"
 MARKET_2425_URL = "https://www.football-data.co.uk/mmz4281/2425/E0.csv"
+MARKET_2425_EXPECTED_SHA256 = "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4"
 REQUIRED_MARKET_COLUMNS = {
     "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR",
     "AvgCH", "AvgCD", "AvgCA", "AvgC>2.5", "AvgC<2.5",
@@ -95,6 +97,7 @@ def main() -> int:
 
     actual_goals_blob = git_blob_sha1(goals)
     actual_market_2324_sha = sha256(market_2324)
+    actual_market_2425_sha = sha256(market_2425)
     if actual_goals_blob != GOALS_2324_EXPECTED_GIT_BLOB_SHA1:
         raise ValueError(
             f"2023/24 goals blob mismatch: expected {GOALS_2324_EXPECTED_GIT_BLOB_SHA1}, "
@@ -104,6 +107,12 @@ def main() -> int:
         raise ValueError(
             f"2023/24 market hash mismatch: expected {MARKET_2324_EXPECTED_SHA256}, "
             f"actual {actual_market_2324_sha}"
+        )
+
+    if actual_market_2425_sha != MARKET_2425_EXPECTED_SHA256:
+        raise ValueError(
+            f"2024/25 market hash mismatch: expected {MARKET_2425_EXPECTED_SHA256}, "
+            f"actual {actual_market_2425_sha}"
         )
 
     audit_2324 = audit_market(market_2324, "2023/24")
@@ -134,13 +143,16 @@ def main() -> int:
             "market_2324": {
                 "url": MARKET_2324_URL,
                 "expected_sha256": MARKET_2324_EXPECTED_SHA256,
+                "provenance_artifact_id": MARKET_ARTIFACT_ID,
                 "actual_sha256": actual_market_2324_sha,
                 "bytes": len(market_2324),
                 "audit": audit_2324,
             },
             "market_2425": {
                 "url": MARKET_2425_URL,
-                "actual_sha256": sha256(market_2425),
+                "provenance_artifact_id": MARKET_ARTIFACT_ID,
+                "expected_sha256": MARKET_2425_EXPECTED_SHA256,
+                "actual_sha256": actual_market_2425_sha,
                 "bytes": len(market_2425),
                 "audit": audit_2425,
             },
