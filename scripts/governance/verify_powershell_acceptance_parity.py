@@ -9,7 +9,7 @@ BASH = ROOT / "scripts" / "governance" / "run_final_repository_governance_accept
 POWERSHELL = ROOT / "scripts" / "governance" / "run_final_repository_governance_acceptance.ps1"
 
 REQUIRED_SHARED_TOKENS = [
-    "scripts/governance/final_workflow_acceptance.py",
+    "scripts/governance/v510_workflow_acceptance.py",
     "--strict",
     "--write-archive-blob-ledger",
     "scripts/governance/verify_consolidated_capabilities.py",
