@@ -1,0 +1,236 @@
+                    "away_against_rate": a_against,
+                }
+                frozen[row.local_match_id][k] = values
+                static_output.append({
+                    "local_match_id": row.local_match_id,
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "home_team": h,
+                    "away_team": a,
+                    "interval_idx": k,
+                    "prior_completed_matches": domain["matches"],
+                    "home_prior_matches": hs["matches"],
+                    "away_prior_matches": aas["matches"],
+                    "same_date_frozen": True,
+                    **values,
+                })
+        # Score every match on this date before any policy result updates history.
+        for row in day.itertuples(index=False):
+            mk = market_by_id.loc[row.local_match_id]
+            p_h, p_d, p_a, mass_residual, cap_hits, state_count = simulate_with_static(
+                model_h, model_a, mk, frozen[row.local_match_id]
+            )
+            actual = "H" if row.ft_home > row.ft_away else ("A" if row.ft_away > row.ft_home else "D")
+            predictions.append({
+                "local_match_id": row.local_match_id,
+                "date": row.date.strftime("%Y-%m-%d"),
+                "home_team": row.home_team_local,
+                "away_team": row.away_team_local,
+                "ft_home": int(row.ft_home),
+                "ft_away": int(row.ft_away),
+                "actual_result": actual,
+                "market_pH": float(mk.pH),
+                "market_pD": float(mk.pD),
+                "market_pA": float(mk.pA),
+                "market_pick": ["H", "D", "A"][int(np.argmax([mk.pH, mk.pD, mk.pA]))],
+                "r34_pH": p_h,
+                "r34_pD": p_d,
+                "r34_pA": p_a,
+                "r34_pick": ["H", "D", "A"][int(np.argmax([p_h, p_d, p_a]))],
+                "probability_mass_residual": mass_residual,
+                "lambda_cap_hits": cap_hits,
+                "final_state_count": state_count,
+                "prior_completed_matches": int(domain["matches"]),
+                "same_date_frozen": True,
+                "coefficients_refit": False,
+            })
+        # Only now update with the completed matches from this date.
+        for row in day.itertuples(index=False):
+            mid = row.local_match_id
+            h = row.home_team_local
+            a = row.away_team_local
+            hc = np.array([policy_counts[(mid, k)][0] for k in range(6)], dtype=float)
+            ac = np.array([policy_counts[(mid, k)][1] for k in range(6)], dtype=float)
+            domain["matches"] += 1
+            domain["home"] += hc
+            domain["away"] += ac
+            team_stats[h]["matches"] += 1
+            team_stats[h]["gf"] += hc
+            team_stats[h]["ga"] += ac
+            team_stats[a]["matches"] += 1
+            team_stats[a]["gf"] += ac
+            team_stats[a]["ga"] += hc
+
+    frame = pd.DataFrame(predictions)
+    static_frame = pd.DataFrame(static_output)
+    if len(frame) != 380 or len(static_frame) != 2280:
+        raise ValueError("invalid policy output row count")
+    if not np.allclose(frame[["r34_pH", "r34_pD", "r34_pA"]].sum(axis=1), 1, atol=1e-12):
+        raise ValueError("policy probability conservation failed")
+    return frame, static_frame
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--goals-2324", type=Path, required=True)
+    parser.add_argument("--market-2324", type=Path, required=True)
+    parser.add_argument("--market-2425", type=Path, required=True)
+    parser.add_argument("--policy-matches", type=Path, required=True)
+    parser.add_argument("--policy-events", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_audit = {
+        "market_2324_sha256": file_sha256(args.market_2324),
+        "market_2425_sha256": file_sha256(args.market_2425),
+        "goals_2324_git_blob_sha1": git_blob_sha1(args.goals_2324),
+    }
+    if input_audit["market_2324_sha256"] != MARKET_2324_SHA256:
+        raise ValueError("2023/24 market input hash mismatch")
+    if input_audit["market_2425_sha256"] != MARKET_2425_SHA256:
+        raise ValueError("2024/25 market input hash mismatch")
+    if input_audit["goals_2324_git_blob_sha1"] != GOALS_2324_GIT_BLOB_SHA1:
+        raise ValueError("2023/24 goal-source blob mismatch")
+
+    manifest_2324, market_2324 = load_market(args.market_2324, "ENG2324")
+    counts_2324, events_2324, source_audit = reconstruct_2324_counts(args.goals_2324, manifest_2324)
+    static_2324, interval_2324, historical_domain, historical_team_stats = build_static_and_training(
+        manifest_2324, market_2324, counts_2324
+    )
+    model_h, model_a, reproduction_predictions, reproduction = reproduce_original(
+        manifest_2324, market_2324, static_2324, interval_2324
+    )
+
+    # Policy labels are accessed only after the original model is fitted and the
+    # exact reproduction gate has passed.
+    manifest_2425_market, market_2425 = load_market(args.market_2425, "ENG2425")
+    policy_manifest, policy_counts, policy_chain_audit = load_policy_counts(
+        args.policy_matches, args.policy_events, manifest_2425_market
+    )
+    policy_predictions, policy_static = run_policy(
+        model_h, model_a, policy_manifest, market_2425, policy_counts,
+        historical_domain, historical_team_stats,
+    )
+
+    market_metrics = metrics(policy_predictions, "market")
+    r34_metrics = metrics(policy_predictions, "r34")
+    bootstrap = bootstrap_delta(policy_predictions)
+    logloss_better = r34_metrics["logloss"] < market_metrics["logloss"]
+    ci_entirely_below_zero = bootstrap["logloss_delta_95"][1] < 0
+    brier_nonworse = r34_metrics["brier_multiclass"] <= market_metrics["brier_multiclass"] + 1e-12
+    rps_nonworse = r34_metrics["rps"] <= market_metrics["rps"] + 1e-12
+    execution_pass = (
+        np.allclose(policy_predictions[["r34_pH", "r34_pD", "r34_pA"]].sum(axis=1), 1, atol=1e-12)
+        and int(policy_predictions.lambda_cap_hits.sum()) >= 0
+        and bool(policy_predictions.same_date_frozen.all())
+        and not bool(policy_predictions.coefficients_refit.any())
+    )
+    pass_conditions = {
+        "challenger_logloss_lower": bool(logloss_better),
+        "bootstrap_95_entirely_below_zero": bool(ci_entirely_below_zero),
+        "brier_strict_nonworsening": bool(brier_nonworse),
+        "rps_strict_nonworsening": bool(rps_nonworse),
+        "execution_audits_pass": bool(execution_pass),
+    }
+    verdict = (
+        "CROSS_SEASON_PASS"
+        if all(pass_conditions.values())
+        else "CROSS_SEASON_FAIL_NO_PROMOTION"
+    )
+
+    result = {
+        "version": "R34.0_POLICY_2425_V1",
+        "status": "COMPLETED",
+        "registration_status": "research/challenge only",
+        "formal_weight": 0,
+        "input_audit": {
+            **input_audit,
+            "market_provenance_artifact_id": MARKET_PROVENANCE_ARTIFACT_ID,
+            "policy_goal_source_expected_blob_sha1": POLICY_SOURCE_BLOB_SHA1,
+        },
+        "reproduction_gate": reproduction,
+        "source_reconstruction_audit": source_audit,
+        "policy_chain_audit": policy_chain_audit,
+        "evaluation": {
+            "matches": int(len(policy_predictions)),
+            "dates": int(policy_predictions.date.nunique()),
+            "start_date": policy_predictions.date.min(),
+            "end_date": policy_predictions.date.max(),
+            "actual_draws": int((policy_predictions.actual_result == "D").sum()),
+            "zero_zero_draws": int(((policy_predictions.ft_home == 0) & (policy_predictions.ft_away == 0)).sum()),
+            "training_matches": 150,
+            "coefficient_source": "2023/24 matches 1-150 only",
+            "coefficients_refit_on_policy": False,
+            "policy_history_initialized_from_complete_2023_24": True,
+            "same_date_freeze": True,
+        },
+        "design": {
+            "intervals": INTERVALS,
+            "features": FEATURES,
+            "alpha": ALPHA,
+            "tail_bucket_receipt_label": f"{POISSON_MAX_COUNT}+",
+            "implemented_poisson_cells": "0,1,2,3,4+ tail (preserved original code behavior)",
+            "lambda_cap": LAMBDA_CAP,
+            "bootstrap_seed": BOOTSTRAP_SEED,
+            "bootstrap_repetitions": BOOTSTRAP_REPS,
+            "strict_nonworsening_tolerance": 1e-12,
+        },
+        "market": market_metrics,
+        "r34": r34_metrics,
+        "deltas_r34_minus_market": {
+            "logloss": float(r34_metrics["logloss"] - market_metrics["logloss"]),
+            "brier_multiclass": float(r34_metrics["brier_multiclass"] - market_metrics["brier_multiclass"]),
+            "rps": float(r34_metrics["rps"] - market_metrics["rps"]),
+            "accuracy": float(r34_metrics["accuracy"] - market_metrics["accuracy"]),
+        },
+        "bootstrap": bootstrap,
+        "optimization_audit": {
+            "home_iterations": int(model_h.named_steps["poissonregressor"].n_iter_),
+            "away_iterations": int(model_a.named_steps["poissonregressor"].n_iter_),
+            "all_converged": bool(
+                model_h.named_steps["poissonregressor"].n_iter_ < 1000
+                and model_a.named_steps["poissonregressor"].n_iter_ < 1000
+            ),
+            "max_probability_mass_residual": float(policy_predictions.probability_mass_residual.max()),
+            "total_lambda_cap_hits": int(policy_predictions.lambda_cap_hits.sum()),
+            "probability_conservation_all": bool(
+                np.allclose(policy_predictions[["r34_pH", "r34_pD", "r34_pA"]].sum(axis=1), 1, atol=1e-12)
+            ),
+        },
+        "pass_conditions": pass_conditions,
+        "verdict": verdict,
+        "route_decision": (
+            "RESEARCH_EVIDENCE_ONLY_NO_PROMOTION"
+            if verdict == "CROSS_SEASON_PASS"
+            else "STOP_GOAL_TIME_SCORE_STATE_ONLY_PREMATCH_DRAW_ROUTE"
+        ),
+        "next_permitted_family": (
+            None
+            if verdict == "CROSS_SEASON_PASS"
+            else "shots/xG, red cards, substitutions, VAR, and score-state pressure"
+        ),
+        "formal_changes": {"model": 0, "formal_data": 0, "config": 0, "CURRENT": 0},
+    }
+
+    reproduction_predictions.to_csv(args.output_dir / "r34_2324_reproduction_predictions.csv", index=False)
+    events_2324.to_csv(args.output_dir / "r33_2324_reconstructed_goal_events.csv", index=False)
+    policy_manifest.to_csv(args.output_dir / "r34_policy_2425_linked_matches.csv", index=False)
+    policy_static.to_csv(args.output_dir / "r34_policy_2425_frozen_rates.csv", index=False)
+    policy_predictions.to_csv(args.output_dir / "r34_policy_2425_predictions.csv", index=False)
+    (args.output_dir / "r34_policy_2425_result.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    hashes = {
+        path.name: file_sha256(path)
+        for path in sorted(args.output_dir.iterdir())
+        if path.is_file() and path.name != "artifact_hashes.json"
+    }
+    (args.output_dir / "artifact_hashes.json").write_text(
+        json.dumps(hashes, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
