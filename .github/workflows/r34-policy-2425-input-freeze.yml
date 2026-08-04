@@ -1,0 +1,54 @@
+name: R34 policy 2024-25 input freeze
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/research/freeze_r34_policy_inputs.py"
+      - ".github/workflows/r34-policy-2425-input-freeze.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  freeze-inputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile input freezer
+        run: python -m py_compile scripts/research/freeze_r34_policy_inputs.py
+
+      - name: Freeze and audit external byte inputs
+        run: |
+          python scripts/research/freeze_r34_policy_inputs.py \
+            --output-dir artifacts/r34_policy_2425_input_freeze
+
+      - name: Verify no model scoring
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/r34_policy_2425_input_freeze/input_freeze_receipt.json")
+          r = json.loads(p.read_text(encoding="utf-8"))
+          assert r["status"] == "PASS", r
+          assert r["model_scoring_performed"] is False
+          assert r["sources"]["market_2324"]["audit"]["rows"] == 380
+          assert r["sources"]["market_2425"]["audit"]["rows"] == 380
+          print(r["sources"]["market_2425"]["actual_sha256"])
+          PY
+
+      - name: Upload frozen inputs and receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r34-policy-2425-input-freeze
+          path: artifacts/r34_policy_2425_input_freeze
+          if-no-files-found: error
+          retention-days: 30
