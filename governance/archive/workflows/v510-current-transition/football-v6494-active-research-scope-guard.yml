@@ -1,0 +1,43 @@
+name: Football V6.49.4 Active Research Scope Guard Read-Only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/v6_current_research_scope_v6494.json"
+      - "football-data/validation/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6494-active-research-scope-guard
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile scope guard
+        run: python -m py_compile football-data/validation/audit_current_research_scope_v6494.py
+      - name: Enforce active research scope in ephemeral checkout
+        run: python football-data/validation/audit_current_research_scope_v6494.py
+      - name: Print and enforce scope
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_current_research_scope_v6494_status.json')
+          if not p.exists(): raise SystemExit('scope receipt missing from local validation')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('status') != 'PASS': raise SystemExit(str(x))
+          print(json.dumps({'status':x.get('status'),'active_targets':x.get('active_prediction_targets_in_order')},ensure_ascii=False))
+          PY
+      - run: echo "Read-only scope validation; no receipt is persisted."
