@@ -1,0 +1,46 @@
+name: Football V6.49.4 Current State Audit Read-Only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "football-data/config/v6_current_research_scope_v6494.json"
+      - "football-data/manifests/v6_current_research_scope_v6494_status.json"
+      - "football-data/validation/audit_unified_forward_pipeline_v6482.py"
+      - ".github/workflows/football-v6494-current-state-audit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6494-current-state-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile current-state audit
+        run: python -m py_compile football-data/validation/audit_unified_forward_pipeline_v6482.py
+      - name: Rebuild current-only unified status locally
+        run: python football-data/validation/audit_unified_forward_pipeline_v6482.py
+      - name: Guard current-only presentation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_unified_forward_pipeline_v6482_status.json')
+          if not p.exists(): raise SystemExit('current-state receipt missing from local audit')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          if x.get('schema_version') != 'V6.49.4-unified-forward-pipeline-status-r3': raise SystemExit('old unified status schema still active')
+          if x.get('active_prediction_targets_in_order') != ['90m_1x2','direct_total_goals','exact_score_from_unified_matrix']: raise SystemExit('active target order drift')
+          if (x.get('governance') or {}).get('legacy_v6475_v6479_execution_authority') != 0: raise SystemExit('legacy execution authority not zero')
+          print(json.dumps({'status':x.get('status'),'active_targets':x.get('active_prediction_targets_in_order')},ensure_ascii=False))
+          PY
+      - run: echo "Read-only current-state audit; local status is not persisted."
