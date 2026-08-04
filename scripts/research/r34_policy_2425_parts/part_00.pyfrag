@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""One-shot cross-season evaluation of the frozen R34.0 structure.
+
+This is an isolated pure 1X2 research run with formal_weight=0. It first
+reconstructs the 2023/24 R33 goal-event chain from pinned source bytes and
+requires exact reproduction of the recorded R34.0 holdout metrics. Only after
+that gate passes does it score the independent 2024/25 policy season once,
+chronologically, with coefficients frozen and same-date history updates.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import PoissonRegressor
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    brier_score_loss,
+    f1_score,
+    log_loss,
+    roc_auc_score,
+)
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+INTERVALS = [(1, 15), (16, 30), (31, 45), (46, 60), (61, 75), (76, 90)]
+FEATURES = [
+    "pH", "pD", "pA", "pO25", "market_edge", "interval_idx", "second_half",
+    "score_home", "score_away", "score_diff", "score_total", "is_tied",
+    "home_lead", "away_lead", "domain_home_rate", "domain_away_rate",
+    "home_for_rate", "home_against_rate", "away_for_rate", "away_against_rate",
+]
+ALPHA = 1.0
+POISSON_MAX_COUNT = 3
+LAMBDA_CAP = 3.0
+BOOTSTRAP_SEED = 34001
+BOOTSTRAP_REPS = 5000
+
+MARKET_2324_SHA256 = "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3"
+MARKET_2425_SHA256 = "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4"
+GOALS_2324_GIT_BLOB_SHA1 = "9b7d9c4428ab16b509c7de55eaf4c5f9720ff42a"
+POLICY_SOURCE_BLOB_SHA1 = "af481cd91dc3d6033d74dc7531fa398ca8653248"
+MARKET_PROVENANCE_ARTIFACT_ID = 8843568061
+
+RECORDED_REPRODUCTION = {
+    "market_logloss": 0.9041782121480523,
+    "r34_logloss": 0.9595003758384484,
+    "market_brier": 0.5290320050336821,
+    "r34_brier": 0.5663167912595088,
+    "market_rps": 0.1785242357245839,
+    "r34_rps": 0.19546314073753604,
+    "market_accuracy": 0.6043478260869565,
+    "r34_accuracy": 0.5826086956521739,
+    "home_iterations": 11,
+    "away_iterations": 11,
+    "test_matches": 230,
+    "actual_draws": 53,
+}
+REPRO_TOL = 5e-12
+
+SOURCE_TO_LOCAL = {
+    "AFC Bournemouth": "Bournemouth",
+    "Arsenal FC": "Arsenal",
+    "Aston Villa": "Aston Villa",
+    "Brentford FC": "Brentford",
+    "Brighton & Hove Albion": "Brighton",
+    "Burnley FC": "Burnley",
+    "Chelsea FC": "Chelsea",
+    "Crystal Palace": "Crystal Palace",
+    "Everton FC": "Everton",
+    "Fulham FC": "Fulham",
+    "Liverpool FC": "Liverpool",
+    "Luton Town": "Luton",
+    "Manchester City": "Man City",
+    "Manchester United": "Man United",
+    "Newcastle United": "Newcastle",
+    "Nottingham Forest": "Nott'm Forest",
+    "Sheffield United": "Sheffield United",
+    "Tottenham Hotspur": "Tottenham",
+    "West Ham United": "West Ham",
+    "Wolverhampton Wanderers": "Wolves",
+}
+GAME_RE = re.compile(r"^(?P<home>.+?) vs\. (?P<away>.+?) (?P<h>\d+):(?P<a>\d+)$")
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def git_blob_sha1(path: Path) -> str:
+    payload = path.read_bytes()
+    return hashlib.sha1(f"blob {len(payload)}\0".encode("ascii") + payload).hexdigest()
+
+
+def interval_idx(minute_base: int) -> int:
+    m = int(minute_base)
+    if m <= 15:
+        return 0
+    if m <= 30:
+        return 1
+    if m <= 45:
+        return 2
+    if m <= 60:
+        return 3
+    if m <= 75:
+        return 4
+    return 5
+
+
+def minute_base(raw: Any) -> int:
+    text = str(raw).strip()
+    return int(text.split("+", 1)[0])
+
+
+def poisson_tail_pmf(lam: float, max_count: int = 4) -> np.ndarray:
+    # Preserve the exact original R34 behavior: exact 0..3 plus one 4+ tail cell,
+    # while the historical receipt labels the numerical tail as "3+".
+    lam = float(np.clip(lam, 1e-9, LAMBDA_CAP))
+    ps = [math.exp(-lam) * lam**k / math.factorial(k) for k in range(max_count)]
+    ps.append(max(0.0, 1.0 - sum(ps)))
+    arr = np.array(ps, dtype=float)
+    arr /= arr.sum()
+    return arr
+
+
+def load_market(path: Path, season_prefix: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    odds = pd.read_csv(path)
+    required = [
+        "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR",
+        "AvgCH", "AvgCD", "AvgCA", "AvgC>2.5", "AvgC<2.5",
+    ]
+    missing = [column for column in required if column not in odds.columns]
+    if missing:
+        raise ValueError(f"market file missing columns: {missing}")
+    if len(odds) != 380:
+        raise ValueError(f"expected 380 market rows, got {len(odds)}")
+    odds = odds.copy().reset_index(drop=True)
+    odds["date"] = pd.to_datetime(odds["Date"], dayfirst=True)
+    odds["local_match_id"] = [f"{season_prefix}_{i:03d}" for i in range(1, 381)]
+    odds["home_team_local"] = odds["HomeTeam"]
+    odds["away_team_local"] = odds["AwayTeam"]
+    odds["ft_home"] = odds["FTHG"].astype(int)
+    odds["ft_away"] = odds["FTAG"].astype(int)
+    manifest = odds[[
+        "local_match_id", "date", "home_team_local", "away_team_local", "ft_home", "ft_away"
+    ]].copy()
+    inv = np.column_stack([1 / odds.AvgCH, 1 / odds.AvgCD, 1 / odds.AvgCA])
+    probs = inv / inv.sum(axis=1, keepdims=True)
+    ou = np.column_stack([1 / odds["AvgC>2.5"], 1 / odds["AvgC<2.5"]])
+    ou = ou / ou.sum(axis=1, keepdims=True)
+    market = pd.DataFrame({
+        "local_match_id": odds.local_match_id,
+        "date": odds.date,
+        "home_team": odds.HomeTeam,
+        "away_team": odds.AwayTeam,
+        "pH": probs[:, 0],
+        "pD": probs[:, 1],
+        "pA": probs[:, 2],
+        "pO25": ou[:, 0],
+    })
+    market["market_edge"] = market.pH - market.pA
+    return manifest, market
+
+
+def reconstruct_2324_counts(
+    raw_goal_path: Path, manifest: pd.DataFrame
+) -> tuple[dict[tuple[str, int], list[int]], pd.DataFrame, dict[str, Any]]:
+    raw = pd.read_csv(raw_goal_path)
+    raw = raw[raw.season.astype(str).eq("2023-2024")].copy().reset_index()
+    if len(raw) != 1246:
+        raise ValueError(f"expected 1246 2023/24 goal rows, found {len(raw)}")
+    raw["date"] = pd.to_datetime(raw["date"])
+
+    parsed = []
+    for _, row in raw.iterrows():
+        match = GAME_RE.match(str(row.game))
+        if not match:
+            raise ValueError(f"unparseable source game: {row.game!r}")
+        source_home = match.group("home")
+        source_away = match.group("away")
+        if source_home not in SOURCE_TO_LOCAL or source_away not in SOURCE_TO_LOCAL:
+            raise ValueError(f"unmapped source teams: {source_home!r}, {source_away!r}")
+        home = SOURCE_TO_LOCAL[source_home]
+        away = SOURCE_TO_LOCAL[source_away]
+        final_home = int(match.group("h"))
+        final_away = int(match.group("a"))
+        scoring_team = SOURCE_TO_LOCAL.get(str(row.scoring_team))
+        if scoring_team is None:
+            raise ValueError(f"unmapped scoring team: {row.scoring_team!r}")
+        if scoring_team == home:
+            side = "H"
+        elif scoring_team == away:
+            side = "A"
+        else:
+            raise ValueError(f"credited team not in fixture: {row.game!r}, {row.scoring_team!r}")
+        parsed.append({
+            "source_line": int(row["index"]) + 2,
+            "date": row.date,
+            "home_team": home,
+            "away_team": away,
+            "final_home": final_home,
+            "final_away": final_away,
+            "minute_raw": str(row.time),
+            "minute_base": minute_base(row.time),
+            "team_side": side,
+            "gh_after": int(row.GH),
+            "ga_after": int(row.GA),
+            "game": str(row.game),
+        })
+    events = pd.DataFrame(parsed)
+
+    fixture_lookup = manifest.set_index(
+        ["date", "home_team_local", "away_team_local", "ft_home", "ft_away"]
+    )["local_match_id"]
+    local_ids = []
+    for row in events.itertuples(index=False):
+        key = (row.date, row.home_team, row.away_team, row.final_home, row.final_away)
+        try:
+            local_ids.append(fixture_lookup.loc[key])
+        except KeyError as exc:
+            raise ValueError(f"event fixture not found in market manifest: {key}") from exc
+    events["local_match_id"] = local_ids
+
+    # Source order is the event order. Audit every transition and final score.
+    for mid, group in events.groupby("local_match_id", sort=False):
+        group = group.sort_values("source_line")
