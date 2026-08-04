@@ -1,0 +1,240 @@
+        "draw_correct": int(draw_hits.sum()),
+        "draw_precision": float(draw_hits.sum() / max(1, draw_calls.sum())),
+        "draw_recall": float(draw_hits.sum() / max(1, y_draw.sum())),
+    }
+
+
+def bootstrap_delta(predictions: pd.DataFrame) -> dict[str, Any]:
+    classes = ["H", "D", "A"]
+    class_map = {value: index for index, value in enumerate(classes)}
+    y = np.array([class_map[value] for value in predictions.actual_result])
+    market = predictions[["market_pH", "market_pD", "market_pA"]].values
+    challenger = predictions[["r34_pH", "r34_pD", "r34_pA"]].values
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    dates = predictions.date.unique()
+    boot = []
+    for _ in range(BOOTSTRAP_REPS):
+        sampled_dates = rng.choice(dates, size=len(dates), replace=True)
+        idx = np.concatenate([np.flatnonzero(predictions.date.values == date) for date in sampled_dates])
+        yy = y[idx]
+        mm = market[idx]
+        rr = challenger[idx]
+        market_ll = -np.mean(np.log(np.clip(mm[np.arange(len(idx)), yy], 1e-15, 1)))
+        challenger_ll = -np.mean(np.log(np.clip(rr[np.arange(len(idx)), yy], 1e-15, 1)))
+        market_acc = np.mean(predictions.market_pick.values[idx] == predictions.actual_result.values[idx])
+        challenger_acc = np.mean(predictions.r34_pick.values[idx] == predictions.actual_result.values[idx])
+        boot.append((challenger_ll - market_ll, challenger_acc - market_acc))
+    array = np.array(boot)
+    return {
+        "seed": BOOTSTRAP_SEED,
+        "repetitions": BOOTSTRAP_REPS,
+        "logloss_delta_r34_minus_market_mean": float(array[:, 0].mean()),
+        "logloss_delta_95": [float(np.quantile(array[:, 0], 0.025)), float(np.quantile(array[:, 0], 0.975))],
+        "p_r34_logloss_better": float(np.mean(array[:, 0] < 0)),
+        "accuracy_delta_r34_minus_market_mean": float(array[:, 1].mean()),
+        "accuracy_delta_95": [float(np.quantile(array[:, 1], 0.025)), float(np.quantile(array[:, 1], 0.975))],
+        "p_r34_accuracy_nonnegative": float(np.mean(array[:, 1] >= 0)),
+    }
+
+
+def reproduce_original(
+    manifest: pd.DataFrame,
+    market: pd.DataFrame,
+    static: pd.DataFrame,
+    interval_df: pd.DataFrame,
+) -> tuple[Any, Any, pd.DataFrame, dict[str, Any]]:
+    train_ids = set(manifest.iloc[:150].local_match_id)
+    train = interval_df[interval_df.local_match_id.isin(train_ids)]
+    model_h = make_pipeline(StandardScaler(), PoissonRegressor(alpha=ALPHA, max_iter=1000, tol=1e-8))
+    model_a = make_pipeline(StandardScaler(), PoissonRegressor(alpha=ALPHA, max_iter=1000, tol=1e-8))
+    model_h.fit(train[FEATURES], train.y_home_goals)
+    model_a.fit(train[FEATURES], train.y_away_goals)
+    home_iterations = int(model_h.named_steps["poissonregressor"].n_iter_)
+    away_iterations = int(model_a.named_steps["poissonregressor"].n_iter_)
+    market_by_id = market.set_index("local_match_id")
+    static_by_match: dict[str, dict[int, dict[str, float]]] = defaultdict(dict)
+    for row in static.itertuples(index=False):
+        static_by_match[row.local_match_id][int(row.interval_idx)] = {
+            "domain_home_rate": row.domain_home_rate,
+            "domain_away_rate": row.domain_away_rate,
+            "home_for_rate": row.home_for_rate,
+            "home_against_rate": row.home_against_rate,
+            "away_for_rate": row.away_for_rate,
+            "away_against_rate": row.away_against_rate,
+        }
+    predictions = []
+    for match in manifest.iloc[150:].itertuples(index=False):
+        mk = market_by_id.loc[match.local_match_id]
+        p_h, p_d, p_a, mass_residual, cap_hits, state_count = simulate_with_static(
+            model_h, model_a, mk, static_by_match[match.local_match_id]
+        )
+        actual = "H" if match.ft_home > match.ft_away else ("A" if match.ft_away > match.ft_home else "D")
+        predictions.append({
+            "local_match_id": match.local_match_id,
+            "date": match.date.strftime("%Y-%m-%d"),
+            "home_team": match.home_team_local,
+            "away_team": match.away_team_local,
+            "ft_home": int(match.ft_home),
+            "ft_away": int(match.ft_away),
+            "actual_result": actual,
+            "market_pH": float(mk.pH),
+            "market_pD": float(mk.pD),
+            "market_pA": float(mk.pA),
+            "market_pick": ["H", "D", "A"][int(np.argmax([mk.pH, mk.pD, mk.pA]))],
+            "r34_pH": p_h,
+            "r34_pD": p_d,
+            "r34_pA": p_a,
+            "r34_pick": ["H", "D", "A"][int(np.argmax([p_h, p_d, p_a]))],
+            "probability_mass_residual": mass_residual,
+            "lambda_cap_hits": cap_hits,
+            "final_state_count": state_count,
+        })
+    frame = pd.DataFrame(predictions)
+    market_metrics = metrics(frame, "market")
+    r34_metrics = metrics(frame, "r34")
+    actual = {
+        "market_logloss": market_metrics["logloss"],
+        "r34_logloss": r34_metrics["logloss"],
+        "market_brier": market_metrics["brier_multiclass"],
+        "r34_brier": r34_metrics["brier_multiclass"],
+        "market_rps": market_metrics["rps"],
+        "r34_rps": r34_metrics["rps"],
+        "market_accuracy": market_metrics["accuracy"],
+        "r34_accuracy": r34_metrics["accuracy"],
+        "home_iterations": home_iterations,
+        "away_iterations": away_iterations,
+        "test_matches": int(len(frame)),
+        "actual_draws": int((frame.actual_result == "D").sum()),
+    }
+    differences = {}
+    for key, expected in RECORDED_REPRODUCTION.items():
+        value = actual[key]
+        if isinstance(expected, int):
+            differences[key] = int(value) - expected
+            if int(value) != expected:
+                raise ValueError(f"reproduction gate failed for {key}: expected {expected}, actual {value}")
+        else:
+            differences[key] = float(value) - expected
+            if abs(float(value) - expected) > REPRO_TOL:
+                raise ValueError(
+                    f"reproduction gate failed for {key}: expected {expected:.15f}, "
+                    f"actual {float(value):.15f}, diff {float(value)-expected:+.3e}"
+                )
+    receipt = {
+        "status": "PASS",
+        "tolerance": REPRO_TOL,
+        "recorded": RECORDED_REPRODUCTION,
+        "reproduced": actual,
+        "differences": differences,
+        "max_abs_numeric_difference": float(max(abs(float(v)) for v in differences.values())),
+        "market": market_metrics,
+        "r34": r34_metrics,
+        "max_probability_mass_residual": float(frame.probability_mass_residual.max()),
+        "lambda_cap_hits": int(frame.lambda_cap_hits.sum()),
+    }
+    return model_h, model_a, frame, receipt
+
+
+def load_policy_counts(
+    matches_path: Path, events_path: Path, market_manifest: pd.DataFrame
+) -> tuple[pd.DataFrame, dict[tuple[str, int], list[int]], dict[str, Any]]:
+    source_matches = pd.read_csv(matches_path)
+    source_events = pd.read_csv(events_path)
+    if len(source_matches) != 380 or len(source_events) != 1115:
+        raise ValueError("policy event-chain counts do not match hard-audited artifact")
+    source_matches["date_source"] = pd.to_datetime(source_matches.date_source)
+    policy = market_manifest.copy().reset_index(drop=True)
+    linked_ids = []
+    date_deltas = []
+    for row in policy.itertuples(index=False):
+        candidates = source_matches[
+            (source_matches.home_team == row.home_team_local)
+            & (source_matches.away_team == row.away_team_local)
+        ].copy()
+        candidates["date_delta"] = (candidates.date_source - row.date).dt.days.abs()
+        candidates = candidates[candidates.date_delta <= 1]
+        if len(candidates) != 1:
+            raise ValueError(
+                f"policy join not unique for {row.date.date()} {row.home_team_local}-{row.away_team_local}: "
+                f"{len(candidates)} candidates"
+            )
+        candidate = candidates.iloc[0]
+        if int(candidate.home_goals) != int(row.ft_home) or int(candidate.away_goals) != int(row.ft_away):
+            raise ValueError("policy market/event final score mismatch")
+        linked_ids.append(candidate.source_match_id)
+        date_deltas.append(int((candidate.date_source - row.date).days))
+    policy["source_match_id"] = linked_ids
+    policy["source_date_delta_days"] = date_deltas
+    if len(set(linked_ids)) != 380:
+        raise ValueError("policy source IDs not one-to-one")
+
+    counts = {(mid, k): [0, 0] for mid in policy.local_match_id for k in range(6)}
+    local_by_source = policy.set_index("source_match_id").local_match_id.to_dict()
+    for row in source_events.itertuples(index=False):
+        local_id = local_by_source[row.source_match_id]
+        k = interval_idx(int(row.minute_base))
+        side_idx = 0 if row.scoring_side == "H" else 1
+        counts[(local_id, k)][side_idx] += 1
+    for row in policy.itertuples(index=False):
+        home = sum(counts[(row.local_match_id, k)][0] for k in range(6))
+        away = sum(counts[(row.local_match_id, k)][1] for k in range(6))
+        if (home, away) != (int(row.ft_home), int(row.ft_away)):
+            raise ValueError(f"policy interval reconstruction mismatch for {row.local_match_id}")
+    audit = {
+        "matches": int(len(policy)),
+        "events": int(len(source_events)),
+        "zero_zero_draws": int(((policy.ft_home == 0) & (policy.ft_away == 0)).sum()),
+        "date_delta_counts": {str(k): int(v) for k, v in pd.Series(date_deltas).value_counts().sort_index().items()},
+        "unique_source_ids": int(len(set(linked_ids))),
+        "all_scores_reconstructed": True,
+    }
+    return policy, counts, audit
+
+
+def run_policy(
+    model_h: Any,
+    model_a: Any,
+    policy_manifest: pd.DataFrame,
+    policy_market: pd.DataFrame,
+    policy_counts: dict[tuple[str, int], list[int]],
+    historical_domain: dict[str, Any],
+    historical_team_stats: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    domain = {
+        "matches": int(historical_domain["matches"]),
+        "home": np.array(historical_domain["home"], dtype=float).copy(),
+        "away": np.array(historical_domain["away"], dtype=float).copy(),
+    }
+    team_stats: defaultdict[str, dict[str, Any]] = defaultdict(
+        lambda: {"matches": 0, "gf": np.zeros(6, dtype=float), "ga": np.zeros(6, dtype=float)}
+    )
+    for team, stat in historical_team_stats.items():
+        team_stats[team] = {
+            "matches": int(stat["matches"]),
+            "gf": np.array(stat["gf"], dtype=float).copy(),
+            "ga": np.array(stat["ga"], dtype=float).copy(),
+        }
+    market_by_id = policy_market.set_index("local_match_id")
+    predictions = []
+    static_output = []
+
+    for dt, day in policy_manifest.sort_values(["date", "local_match_id"]).groupby("date", sort=True):
+        frozen: dict[str, dict[int, dict[str, float]]] = defaultdict(dict)
+        for row in day.itertuples(index=False):
+            h = row.home_team_local
+            a = row.away_team_local
+            hs = team_stats[h]
+            aas = team_stats[a]
+            for k in range(6):
+                dom_h = (domain["home"][k] + 0.25 * 8) / (domain["matches"] + 8)
+                dom_a = (domain["away"][k] + 0.25 * 8) / (domain["matches"] + 8)
+                h_for = (hs["gf"][k] + dom_h * 5) / (hs["matches"] + 5)
+                h_against = (hs["ga"][k] + dom_a * 5) / (hs["matches"] + 5)
+                a_for = (aas["gf"][k] + dom_a * 5) / (aas["matches"] + 5)
+                a_against = (aas["ga"][k] + dom_h * 5) / (aas["matches"] + 5)
+                values = {
+                    "domain_home_rate": dom_h,
+                    "domain_away_rate": dom_a,
+                    "home_for_rate": h_for,
+                    "home_against_rate": h_against,
+                    "away_for_rate": a_for,
