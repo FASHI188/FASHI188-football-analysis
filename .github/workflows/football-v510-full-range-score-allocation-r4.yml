@@ -44,7 +44,22 @@ jobs:
       - name: Materialize audited historical ledger
         run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Evaluate R4 full-range score allocation
-        run: python football-data/validation/evaluate_v510_full_range_score_allocation_r4.py
+        run: |
+          python - <<'PY'
+          import json
+          import runpy
+          import numpy as np
+          original = json.JSONEncoder.default
+          def numpy_safe(self, value):
+              if isinstance(value, np.generic):
+                  return value.item()
+              return original(self, value)
+          json.JSONEncoder.default = numpy_safe
+          runpy.run_path(
+              'football-data/validation/evaluate_v510_full_range_score_allocation_r4.py',
+              run_name='__main__',
+          )
+          PY
       - name: Show compact receipt
         run: |
           python - <<'PY'
