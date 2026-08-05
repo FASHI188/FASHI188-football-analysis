@@ -58,19 +58,42 @@ def eligible_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return eligible, errors
 
 
-def select_draws(rows: list[dict[str, Any]], count: int, seed: int) -> list[dict[str, Any]]:
+def select_draws(rows: list[dict[str, Any]], count: int, seed: int, max_per_competition: int) -> list[dict[str, Any]]:
     by_competition: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if int(row["goal_difference"]) == 0:
             by_competition.setdefault(str(row["competition_id"]), []).append(row)
-    representatives: list[dict[str, Any]] = []
-    for competition, values in sorted(by_competition.items()):
+    for values in by_competition.values():
         values.sort(key=lambda row: (hash_rank(seed, row["identity"]), row["identity"]))
-        representatives.append(values[0])
-    representatives.sort(key=lambda row: (hash_rank(seed, f"competition|{row['competition_id']}"), row["competition_id"]))
-    if len(representatives) < count:
-        raise ScreenError(f"only {len(representatives)} competitions have eligible 1X2+OU draws; need {count}")
-    return representatives[:count]
+
+    competition_order = sorted(
+        by_competition,
+        key=lambda competition: (hash_rank(seed, f"competition|{competition}"), competition),
+    )
+    selected: list[dict[str, Any]] = [by_competition[competition][0] for competition in competition_order]
+    selected = selected[:count]
+    used = {row["identity"] for row in selected}
+    counts = {competition: 0 for competition in by_competition}
+    for row in selected:
+        counts[str(row["competition_id"])] += 1
+
+    extras = sorted(
+        (row for values in by_competition.values() for row in values if row["identity"] not in used),
+        key=lambda row: (hash_rank(seed, f"extra|{row['identity']}"), row["identity"]),
+    )
+    for row in extras:
+        if len(selected) >= count:
+            break
+        competition = str(row["competition_id"])
+        if counts[competition] >= max_per_competition:
+            continue
+        selected.append(row)
+        counts[competition] += 1
+    if len(selected) < count:
+        raise ScreenError(
+            f"only {len(selected)} eligible draws after competition cap {max_per_competition}; need {count}"
+        )
+    return selected
 
 
 def pair_cost(draw: dict[str, Any], win: dict[str, Any]) -> float:
@@ -136,7 +159,12 @@ def write_pairs(path: Path, pairs: list[dict[str, Any]]) -> None:
 def run(config: dict[str, Any], out_path: Path, pairs_path: Path) -> dict[str, Any]:
     rows, errors = eligible_rows()
     contract = config["sample_contract"]
-    draws = select_draws(rows, int(contract["draws"]), int(contract["seed"]))
+    draws = select_draws(
+        rows,
+        int(contract["draws"]),
+        int(contract["seed"]),
+        int(contract["max_draws_per_competition"]),
+    )
     pairs = make_pairs(draws, rows)
     wins = sum(row["pair_result"] == "win" for row in pairs)
     losses = sum(row["pair_result"] == "loss" for row in pairs)
