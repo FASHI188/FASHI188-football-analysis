@@ -1,0 +1,112 @@
+name: Football V5.1 Forward Freeze Contract R27
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_forward_freeze_capture_contract_r27.json"
+      - "football-data/schemas/v511_forward_freeze_event_r27.schema.json"
+      - "football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py"
+      - "football-data/validation/audit_v511_forward_freeze_repository_r27.py"
+      - "football-data/validation/build_v511_forward_pit_linkage_r26.py"
+      - "football-data/forward/**/*.json"
+      - ".github/workflows/football-v511-forward-freeze-contract-r27.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-forward-freeze-contract-r27-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install schema validator
+        run: python -m pip install --disable-pip-version-check jsonschema==4.25.1
+      - name: Compile R27 and R26 dependency
+        run: |
+          python -m py_compile football-data/validation/build_v511_forward_pit_linkage_r26.py
+          python -m py_compile football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py
+          python -m py_compile football-data/validation/audit_v511_forward_freeze_repository_r27.py
+      - name: Run R27 mutation self-test
+        run: python football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py --self-test
+      - name: Run repository event scan self-test
+        run: python football-data/validation/audit_v511_forward_freeze_repository_r27.py --self-test
+      - name: Validate sample against JSON Schema
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator, FormatChecker
+          script = Path('football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py')
+          spec = importlib.util.spec_from_file_location('r27', script)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          event, _ = module.valid_sample()
+          schema = json.loads(Path('football-data/schemas/v511_forward_freeze_event_r27.schema.json').read_text(encoding='utf-8'))
+          Draft202012Validator(schema, format_checker=FormatChecker()).validate(event)
+          print(json.dumps({'schema_validation': 'PASS', 'event_hash': event['event_hash']}, indent=2))
+          PY
+      - name: Scan all declared R27 forward events
+        run: python football-data/validation/audit_v511_forward_freeze_repository_r27.py
+      - name: Run R27 contract and legacy audit
+        run: python football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py
+      - name: Validate R27 ruling and hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/manifests/v511_forward_freeze_capture_contract_r27_status.json')
+          x = json.loads(p.read_text(encoding='utf-8'))
+          scan = json.loads(Path('football-data/manifests/v511_forward_freeze_repository_scan_r27_status.json').read_text(encoding='utf-8'))
+          assert x['status'] == 'PASS_R27_FUTURE_CAPTURE_CONTRACT_VALIDATED_LEGACY_REMAINS_INELIGIBLE'
+          assert x['classification'] == 'RESEARCH_FORWARD_CAPTURE_CONTRACT_AND_LEGACY_AUDIT'
+          assert x['formal_weight'] == 0
+          assert x['contract_gate']['passed'] is True
+          assert x['contract_gate']['schema_present_and_parseable'] is True
+          assert x['contract_gate']['valid_event_accepted'] is True
+          assert x['contract_gate']['valid_result_link_accepted'] is True
+          assert x['contract_gate']['all_required_negative_tests_rejected'] is True
+          assert x['legacy_audit']['rows'] == 67
+          assert x['legacy_audit']['draws'] == 18
+          assert x['legacy_audit']['zero_zero_draws'] == 6
+          assert x['legacy_audit']['rows_with_market_timestamp'] == 0
+          assert x['legacy_audit']['rows_with_complete_over_under'] == 0
+          assert x['legacy_audit']['strict_screen10_ready'] is False
+          assert x['future_capture_ruling']['legacy_rows_grandfathered_as_strict_pit'] is False
+          assert x['future_capture_ruling']['screen10_allowed_now'] is False
+          assert scan['status'] == 'PASS_R27_REPOSITORY_FORWARD_EVENTS_FAIL_CLOSED'
+          assert scan['all_declared_r27_events_valid'] is True
+          assert scan['invalid_declared_r27_events'] == 0
+          assert scan['forward_json_parse_errors'] == []
+          assert scan['ruling']['future_r27_events_are_scanned_on_every_forward_json_change'] is True
+          assert scan['ruling']['invalid_event_blocks_workflow'] is True
+          assert x['governance_ruling']['model_training_performed'] is False
+          assert x['governance_ruling']['probabilities_generated'] is False
+          assert x['governance_ruling']['provider_requests'] == 0
+          assert x['governance_ruling']['current_or_main_mutation'] is False
+          print(json.dumps({'contract': x, 'repository_scan': scan}, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload R27 contract audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-forward-freeze-contract-r27
+          path: |
+            football-data/manifests/v511_forward_freeze_capture_contract_r27_status.json
+            football-data/manifests/v511_forward_freeze_capture_contract_r27_legacy_gaps.csv
+            football-data/manifests/v511_forward_freeze_repository_scan_r27_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
