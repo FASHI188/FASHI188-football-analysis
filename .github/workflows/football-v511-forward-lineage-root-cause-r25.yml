@@ -1,0 +1,63 @@
+name: Football V5.1 Forward Lineage Root Cause R25
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/validation/audit_v511_forward_lineage_root_cause_r25.py"
+      - "football-data/forward/**/*.json"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v511-forward-lineage-root-cause-r25.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-forward-lineage-root-cause-r25-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic audit dependency
+        run: python -m pip install --disable-pip-version-check python-dateutil==2.9.0.post0
+      - name: Compile R25
+        run: python -m py_compile football-data/validation/audit_v511_forward_lineage_root_cause_r25.py
+      - name: Run R25 root-cause audit
+        run: python football-data/validation/audit_v511_forward_lineage_root_cause_r25.py
+      - name: Validate R25 governance and output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v511_forward_lineage_root_cause_r25_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='READ_ONLY_DATA_LINEAGE_ROOT_CAUSE_AUDIT'
+          assert x['formal_weight']==0
+          assert x['hard_limits']['model_training_performed'] is False
+          assert x['hard_limits']['provider_requests']==0
+          assert x['hard_limits']['formal_promotion_allowed'] is False
+          assert x['hard_limits']['current_match_probability_allowed'] is False
+          assert x['hard_limits']['unified_matrix_unlock_allowed'] is False
+          assert x['counts']['forward_result_receipts']==67
+          assert x['counts']['forward_context_packets']==32
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R25 result
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-forward-lineage-root-cause-r25
+          path: football-data/manifests/v511_forward_lineage_root_cause_r25_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
