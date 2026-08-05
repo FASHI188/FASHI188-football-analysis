@@ -1,0 +1,87 @@
+name: Football V5.1 Hierarchical 1X2 Draw First R20
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_hierarchical_1x2_draw_first_r20.json"
+      - "football-data/validation/evaluate_v510_hierarchical_1x2_draw_first_r20.py"
+      - "football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-hierarchical-1x2-draw-first-r20.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-hierarchical-1x2-draw-first-r20-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.16.3 scikit-learn==1.7.2
+      - name: Compile R20 and dependencies
+        run: |
+          python -m py_compile football-data/validation/evaluate_v510_hierarchical_1x2_draw_first_r20.py
+          python -m py_compile football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py
+          python -m py_compile football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Materialize audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run R20 hierarchical historical replay
+        run: python football-data/validation/evaluate_v510_hierarchical_1x2_draw_first_r20.py
+      - name: Validate R20 evidence identity and hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_hierarchical_1x2_draw_first_r20_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['data_identity']=={
+            'rows':26873,'competitions':16,'draws':6976,'zero_zero':1910,'tail_7plus':630
+          }
+          assert x['rolling_test_rows']==15639
+          assert x['rolling_test_unique_identities']==15639
+          assert x['gold_sample']['rows']==1000
+          assert x['gold_sample']['selection_uses_labels'] is False
+          assert x['ruling']['hierarchical_probability_mapping_audited'] is True
+          assert x['ruling']['manual_draw_probability_offset_used'] is False
+          assert x['ruling']['test_labels_used_for_selection'] is False
+          assert x['ruling']['current_match_probability_allowed'] is False
+          assert x['ruling']['formal_weight']==0
+          print(json.dumps({
+            'status':x['status'],
+            'gold_sample':x['gold_sample'],
+            'full_rolling':x['full_rolling'],
+            'ruling':x['ruling'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R20 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-hierarchical-1x2-draw-first-r20
+          path: |
+            football-data/manifests/v510_hierarchical_1x2_draw_first_r20_status.json
+            football-data/manifests/v510_hierarchical_1x2_draw_first_r20_gold.csv
+            football-data/manifests/v510_hierarchical_1x2_draw_first_r20_stability.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"
