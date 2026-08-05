@@ -1,4 +1,4 @@
-name: Football V5.1 Strict PIT Append R15
+name: Football V5.1 Legacy Strict PIT R15 Dry Run Only
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
       - "football-data/forward/inbox/v510_strict_pit_capture_r14.json"
       - "football-data/validation/audit_v510_strict_pit_capture_r14.py"
       - "football-data/validation/append_v510_strict_pit_capture_r15.py"
+      - "football-data/validation/append_v511_forward_persistence_r28.py"
       - ".github/workflows/football-v510-strict-pit-append-r15.yml"
 
 permissions:
@@ -18,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-builder:
+  validate-legacy-retirement:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -26,15 +27,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Compile R14 and R15
+      - name: Compile R14 and retired R15
         run: |
           python -m py_compile football-data/validation/audit_v510_strict_pit_capture_r14.py
           python -m py_compile football-data/validation/append_v510_strict_pit_capture_r15.py
-      - name: Run R15 chain, duplicate and atomic-write self-tests
+      - name: Run retired R15 self-test
         run: python football-data/validation/append_v510_strict_pit_capture_r15.py --self-test
-      - name: Record ledger hash before dry run
+      - name: Record legacy ledger hash before dry run
         run: sha256sum football-data/forward/inbox/v510_strict_pit_capture_r14.json > /tmp/ledger.before
-      - name: Create CI-only staging specimen
+      - name: Create CI-only legacy staging specimen
         run: |
           python - <<'PY'
           import json, sys
@@ -48,32 +49,40 @@ jobs:
               encoding='utf-8',
           )
           PY
-      - name: Build and audit candidate in dry-run mode
+      - name: Build legacy candidate in dry-run mode
         run: |
           python football-data/validation/append_v510_strict_pit_capture_r15.py \
             --staging /tmp/r15-staging.json \
             --receipt football-data/manifests/v510_strict_pit_append_r15_status.json \
             --event-out football-data/manifests/v510_strict_pit_append_r15_candidate.json
-      - name: Confirm dry run did not mutate ledger
+      - name: Confirm R15 append is hard blocked
+        run: |
+          if python football-data/validation/append_v510_strict_pit_capture_r15.py \
+            --staging /tmp/r15-staging.json --append; then
+            echo "R15 append unexpectedly succeeded" >&2
+            exit 1
+          fi
+      - name: Confirm dry run did not mutate legacy ledger
         run: |
           sha256sum football-data/forward/inbox/v510_strict_pit_capture_r14.json > /tmp/ledger.after
           diff -u /tmp/ledger.before /tmp/ledger.after
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('football-data/manifests/v510_strict_pit_append_r15_status.json')
-          x=json.loads(p.read_text(encoding='utf-8'))
-          assert x['status']=='PASS_R15_CANDIDATE_READY_TO_APPEND', x
+          x=json.loads(Path('football-data/manifests/v510_strict_pit_append_r15_status.json').read_text(encoding='utf-8'))
+          assert x['status']=='PASS_R15_DRY_RUN_ONLY_CANDIDATE_VALID', x
           assert x['dry_run'] is True
           assert x['append_requested'] is False
+          assert x['legacy_append_enabled'] is False
+          assert x['required_entry']=='validation/append_v511_forward_persistence_r28.py'
           assert x['probability_mutation'] is False
           assert x['provider_requests']==0
           print(json.dumps(x, ensure_ascii=False, indent=2))
           PY
-      - name: Upload R15 dry-run receipt
+      - name: Upload R15 retirement receipt
         uses: actions/upload-artifact@v4
         with:
-          name: v510-strict-pit-append-r15
+          name: v510-strict-pit-r15-retired
           path: |
             football-data/manifests/v510_strict_pit_append_r15_status.json
             football-data/manifests/v510_strict_pit_append_r15_candidate.json
