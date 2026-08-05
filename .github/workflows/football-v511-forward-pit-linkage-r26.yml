@@ -1,0 +1,70 @@
+name: Football V5.1 Forward PIT Linkage R26
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_forward_pit_linkage_r26.json"
+      - "football-data/validation/build_v511_forward_pit_linkage_r26.py"
+      - "football-data/forward/**/*.json"
+      - ".github/workflows/football-v511-forward-pit-linkage-r26.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-forward-pit-linkage-r26-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R26
+        run: python -m py_compile football-data/validation/build_v511_forward_pit_linkage_r26.py
+      - name: Run R26 self-test
+        run: python football-data/validation/build_v511_forward_pit_linkage_r26.py --self-test
+      - name: Build immutable forward PIT ledger
+        run: python football-data/validation/build_v511_forward_pit_linkage_r26.py
+      - name: Validate R26 build and governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          status = json.loads(Path('football-data/manifests/v511_forward_pit_linkage_r26_status.json').read_text(encoding='utf-8'))
+          assert status['classification'] == 'READ_ONLY_IMMUTABLE_FORWARD_PIT_LEDGER_BUILD'
+          assert status['formal_weight'] == 0
+          assert status['build_gate']['passed'] is True
+          assert status['build_gate']['actual_rows'] == 67
+          assert status['build_gate']['all_results_joined_by_prediction_event_hash'] is True
+          assert status['build_gate']['all_joined_fixtures_exact_identity_match'] is True
+          assert status['build_gate']['prediction_event_hash_unique_in_result_inbox'] is True
+          assert status['build_gate']['hash_chain_valid'] is True
+          assert status['counts']['result_receipts'] == 67
+          assert status['governance_ruling']['model_training_performed'] is False
+          assert status['governance_ruling']['probabilities_generated'] is False
+          assert status['governance_ruling']['provider_requests'] == 0
+          assert status['governance_ruling']['current_or_main_mutation'] is False
+          print(json.dumps(status, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload R26 ledger and audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-forward-pit-linkage-r26
+          path: |
+            football-data/manifests/v511_forward_pit_linkage_r26_status.json
+            football-data/manifests/v511_forward_pit_linkage_r26_ledger.jsonl
+            football-data/manifests/v511_forward_pit_linkage_r26_ledger.csv
+            football-data/manifests/v511_forward_pit_linkage_r26_gaps.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
