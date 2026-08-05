@@ -1,0 +1,70 @@
+name: Football V5.1 Event Sequence Coverage Audit R31
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/validation/audit_v511_event_sequence_coverage_r31.py"
+      - "football-data/processed/**"
+      - "football-data/forward/**"
+      - "football-data/research/**"
+      - "football-data/inbox/**"
+      - "football-data/raw/**"
+      - ".github/workflows/football-v511-event-sequence-coverage-r31.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-event-sequence-coverage-r31-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-event-sequence-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile audit
+        run: python -m py_compile football-data/validation/audit_v511_event_sequence_coverage_r31.py
+      - name: Run self-test
+        run: python football-data/validation/audit_v511_event_sequence_coverage_r31.py --self-test
+      - name: Audit existing data assets
+        run: python football-data/validation/audit_v511_event_sequence_coverage_r31.py
+      - name: Validate fail-closed ruling
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path=Path('football-data/manifests/v511_event_sequence_coverage_r31_status.json')
+          status=json.loads(path.read_text(encoding='utf-8'))
+          assert status['formal_weight']==0
+          assert status['hard_limits']['provider_requests']==0
+          assert status['files_scanned'] > 0
+          assert status['strict_event_sequence_file_count'] == len(status['strict_event_sequence_files'])
+          allowed=status['ruling']['equalizer_hazard_screen10_allowed']
+          if allowed:
+              assert status['status']=='PASS_R31_EQUALIZER_HAZARD_INPUT_AVAILABLE'
+              assert status['strict_event_sequence_file_count'] > 0
+          else:
+              assert status['status']=='FAIL_R31_EVENT_SEQUENCE_INPUT_UNAVAILABLE'
+              assert status['strict_event_sequence_file_count'] == 0
+          assert status['ruling']['aggregate_cards_or_shots_are_event_sequences'] is False
+          assert status['ruling']['minute_level_events_may_be_inferred_from_final_or_halftime_scores'] is False
+          print(json.dumps(status,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload coverage audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-event-sequence-coverage-r31
+          path: football-data/manifests/v511_event_sequence_coverage_r31_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
