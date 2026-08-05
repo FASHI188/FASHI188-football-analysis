@@ -1,0 +1,76 @@
+name: Football V5.1 Online Ensemble Ablation R7
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_online_ensemble_ablation_r7.json"
+      - "football-data/validation/evaluate_v510_online_ensemble_ablation_r7.py"
+      - "football-data/validation/evaluate_v510_nonlinear_continuation_boosting_r6.py"
+      - "football-data/validation/evaluate_v510_prequential_algorithm_challenge_r3.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-online-ensemble-ablation-r7.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-online-ensemble-ablation-r7-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile R7 evaluator
+        run: python -m py_compile football-data/validation/evaluate_v510_online_ensemble_ablation_r7.py
+      - name: Run R7 self-test
+        run: python football-data/validation/evaluate_v510_online_ensemble_ablation_r7.py --self-test
+      - name: Materialize audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Evaluate R7 online ensemble ablation
+        run: python football-data/validation/evaluate_v510_online_ensemble_ablation_r7.py
+      - name: Show compact receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_online_ensemble_ablation_r7_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps({
+            'status':x.get('status'),
+            'evidence_class':x.get('evidence_class'),
+            'pooled':x.get('pooled'),
+            'stability':x.get('stability'),
+            'ruling':x.get('ruling'),
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R7 receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-online-ensemble-ablation-r7
+          path: |
+            football-data/manifests/v510_online_ensemble_ablation_r7_status.json
+            football-data/manifests/v510_online_ensemble_ablation_r7_stability.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"
