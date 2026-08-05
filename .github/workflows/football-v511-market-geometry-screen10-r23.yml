@@ -1,0 +1,77 @@
+name: Football V5.1 Market Geometry Screen10 R23
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_market_geometry_screen10_r23.json"
+      - "football-data/validation/evaluate_v511_market_geometry_screen10_r23.py"
+      - "football-data/validation/evaluate_v511_market_draw_screen10_r22.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v511-market-geometry-screen10-r23.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-market-geometry-screen10-r23-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic screening dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 scipy==1.16.3
+      - name: Compile R23 and dependency
+        run: |
+          python -m py_compile football-data/validation/evaluate_v511_market_draw_screen10_r22.py
+          python -m py_compile football-data/validation/evaluate_v511_market_geometry_screen10_r23.py
+      - name: Run R23 self-test
+        run: python football-data/validation/evaluate_v511_market_geometry_screen10_r23.py --self-test
+      - name: Run fixed ten-pair geometry screen
+        run: python football-data/validation/evaluate_v511_market_geometry_screen10_r23.py
+      - name: Validate R23 hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v511_market_geometry_screen10_r23_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='VIEWED_RETROSPECTIVE_MARKET_GEOMETRY_SCREENING_RESEARCH'
+          assert x['formal_weight']==0
+          assert x['sample']['pairs']==10
+          assert x['sample']['competitions']>=8
+          assert x['sample_contract']['max_draws_per_competition']==2
+          assert x['sample']['pass_wins']==6
+          assert x['signal_contract']['outcome_tuned_weights'] is False
+          assert x['signal_contract']['draw_price_used'] is False
+          assert x['matching_contract']['under_probability_excluded_from_matching'] is True
+          assert x['ruling']['no_repeated_resampling_allowed'] is True
+          assert x['ruling']['model_training_performed'] is False
+          assert x['hard_limits']['repeat_with_new_seed_after_failure_allowed'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R23 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-market-geometry-screen10-r23
+          path: |
+            football-data/manifests/v511_market_geometry_screen10_r23_status.json
+            football-data/manifests/v511_market_geometry_screen10_r23_pairs.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
