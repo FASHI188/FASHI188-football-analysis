@@ -1,0 +1,75 @@
+name: Football V5.1 Market Entropy Screen10 R24
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_market_entropy_screen10_r24.json"
+      - "football-data/validation/evaluate_v511_market_entropy_screen10_r24.py"
+      - "football-data/validation/evaluate_v511_market_draw_screen10_r22.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v511-market-entropy-screen10-r24.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-market-entropy-screen10-r24-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic screening dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 scipy==1.16.3
+      - name: Compile R24 and dependency
+        run: |
+          python -m py_compile football-data/validation/evaluate_v511_market_draw_screen10_r22.py
+          python -m py_compile football-data/validation/evaluate_v511_market_entropy_screen10_r24.py
+      - name: Run R24 self-test
+        run: python football-data/validation/evaluate_v511_market_entropy_screen10_r24.py --self-test
+      - name: Run fixed ten-pair entropy screen
+        run: python football-data/validation/evaluate_v511_market_entropy_screen10_r24.py
+      - name: Validate R24 hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v511_market_entropy_screen10_r24_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='VIEWED_RETROSPECTIVE_MARKET_ENTROPY_SCREENING_RESEARCH'
+          assert x['formal_weight']==0
+          assert x['sample']['pairs']==10
+          assert x['sample']['competitions']==10
+          assert x['sample']['pass_wins']==6
+          assert x['signal_contract']['outcome_tuned_weights'] is False
+          assert x['matching_contract']['all_1x2_probabilities_excluded_from_matching'] is True
+          assert x['ruling']['no_repeated_resampling_allowed'] is True
+          assert x['ruling']['model_training_performed'] is False
+          assert x['hard_limits']['repeat_with_new_seed_after_failure_allowed'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R24 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-market-entropy-screen10-r24
+          path: |
+            football-data/manifests/v511_market_entropy_screen10_r24_status.json
+            football-data/manifests/v511_market_entropy_screen10_r24_pairs.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
