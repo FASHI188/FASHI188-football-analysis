@@ -1,0 +1,62 @@
+name: Football V5.1 First Forward Batch R18
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/forward/queues/v510_first_forward_batch_r18.json"
+      - "football-data/validation/audit_v510_first_forward_batch_r18.py"
+      - ".github/workflows/football-v510-first-forward-batch-r18.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-first-forward-batch-r18-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R18 auditor
+        run: python -m py_compile football-data/validation/audit_v510_first_forward_batch_r18.py
+      - name: Run R18 self-test
+        run: python football-data/validation/audit_v510_first_forward_batch_r18.py --self-test
+      - name: Audit real R18 queue
+        run: python football-data/validation/audit_v510_first_forward_batch_r18.py
+      - name: Confirm candidates do not inflate real sample counts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_first_forward_batch_r18_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['infrastructure_pass'] is True
+          assert x['counts']['candidate_unique_fixtures'] == 20
+          assert x['counts']['official_identity_confirmed'] == 20
+          assert x['counts']['r14_capture_eligible'] == 0
+          assert x['counts']['sample_count'] == 0
+          assert x['counts']['capture_event_count'] == 0
+          assert x['counts']['prediction_receipt_count'] == 0
+          assert x['ruling']['official_identity_alone_increments_sample'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R18 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-first-forward-batch-r18
+          path: |
+            football-data/manifests/v510_first_forward_batch_r18_status.json
+            football-data/forward/queues/v510_first_forward_batch_r18.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"
