@@ -289,8 +289,8 @@ def run(config: dict[str, Any], status_path: Path, public_json: Path, public_csv
         "public_candidates": sum(len(pair["candidates"]) for pair in pairs),
         "label_seal_sha256": seal,
         "public_packet_sha256": sha256(public_text),
-        "public_packet_contains_score_fields": "side_A_score" in public_text or "home_goals_90" in public_text,
-        "public_packet_contains_label_fields": "one_goal_win" in public_text or '"draw"' in public_text,
+        "public_packet_contains_score_fields": any(token in public_text for token in ("side_A_score", "side_B_score", "home_goals_90", "away_goals_90")),
+        "public_packet_contains_label_fields": any(token in public_text for token in ("side_A_label", "side_B_label", "one_goal_win", "actual_result")),
         "ruling": {
             "web_context_reconstruction_allowed": True,
             "hidden_labels_must_not_be_opened_before_predictions_frozen": True,
