@@ -1,0 +1,111 @@
+name: Football V5.1 Zero-Zero Two-Stage Screen10 R33
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_zero_zero_two_stage_screen10_r33.json"
+      - "football-data/validation/build_v511_zero_zero_two_stage_screen10_r33.py"
+      - "football-data/validation/score_v511_zero_zero_two_stage_blind_r33.py"
+      - "football-data/validation/build_v511_zero_zero_screen10_r32.py"
+      - "football-data/validation/build_v511_split_draw_mechanisms_screen10_r30.py"
+      - "football-data/validation/build_v511_historical_blind_context_screen10_r29.py"
+      - "football-data/validation/evaluate_v511_market_draw_screen10_r22.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v511-zero-zero-two-stage-screen10-r33.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-zero-zero-two-stage-screen10-r33-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-freeze-two-stage-zero-zero:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 scipy==1.16.3
+      - name: Compile R33 and dependencies
+        run: |
+          python -m py_compile football-data/validation/evaluate_v511_market_draw_screen10_r22.py
+          python -m py_compile football-data/validation/build_v511_historical_blind_context_screen10_r29.py
+          python -m py_compile football-data/validation/build_v511_split_draw_mechanisms_screen10_r30.py
+          python -m py_compile football-data/validation/build_v511_zero_zero_screen10_r32.py
+          python -m py_compile football-data/validation/build_v511_zero_zero_two_stage_screen10_r33.py
+          python -m py_compile football-data/validation/score_v511_zero_zero_two_stage_blind_r33.py
+      - name: Run builder and scorer self-tests
+        run: |
+          python football-data/validation/build_v511_zero_zero_two_stage_screen10_r33.py --self-test
+          python football-data/validation/score_v511_zero_zero_two_stage_blind_r33.py --self-test
+      - name: Build fixed blind packet and sealed labels
+        run: python football-data/validation/build_v511_zero_zero_two_stage_screen10_r33.py
+      - name: Freeze predictions without label access
+        run: python football-data/validation/score_v511_zero_zero_two_stage_blind_r33.py
+      - name: Validate isolation and prediction freeze
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          status=json.loads(Path('football-data/manifests/v511_zero_zero_two_stage_screen10_r33_status.json').read_text(encoding='utf-8'))
+          public=json.loads(Path('football-data/manifests/v511_zero_zero_two_stage_screen10_r33_public.json').read_text(encoding='utf-8'))
+          predictions=json.loads(Path('football-data/manifests/v511_zero_zero_two_stage_screen10_r33_blind_predictions.json').read_text(encoding='utf-8'))
+          assert status['status']=='PASS_R33_NEW_TWO_STAGE_ZERO_ZERO_BLIND_PACKET_BUILT'
+          assert status['formal_weight']==0
+          assert status['pairs']==10
+          assert status['r29_excluded_identity_count']==20
+          assert status['r30_excluded_identity_count']==40
+          assert status['r32_excluded_identity_count']==20
+          assert len(public['pairs'])==10
+          assert public['label_seal_sha256']==status['hidden_label_seal_sha256']
+          for pair in public['pairs']:
+              assert len(pair['candidates'])==2
+              for candidate in pair['candidates']:
+                  text=json.dumps(candidate,ensure_ascii=False).casefold()
+                  for token in ['final_score','home_goals_90','away_goals_90','side_a_role','side_b_role']:
+                      assert token not in text
+          assert predictions['status']=='PASS_R33_TWO_STAGE_BLIND_PREDICTIONS_FROZEN_BEFORE_LABEL_ACCESS'
+          assert predictions['pairs']==10
+          assert predictions['directional_predictions']+predictions['ties']==10
+          assert predictions['label_seal_sha256']==public['label_seal_sha256']
+          assert predictions['ruling']['hidden_labels_read'] is False
+          assert predictions['ruling']['current_match_rows_used'] is False
+          assert predictions['ruling']['same_day_rows_used'] is False
+          assert predictions['ruling']['minute_events_inferred'] is False
+          assert predictions['ruling']['smoothing_used'] is False
+          assert len(predictions['prediction_payload_sha256'])==64
+          print(json.dumps({'status':status,'predictions':predictions},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload public packet and frozen predictions
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-r33-zero-zero-two-stage-public
+          path: |
+            football-data/manifests/v511_zero_zero_two_stage_screen10_r33_status.json
+            football-data/manifests/v511_zero_zero_two_stage_screen10_r33_public.json
+            football-data/manifests/v511_zero_zero_two_stage_screen10_r33_public.csv
+            football-data/manifests/v511_zero_zero_two_stage_screen10_r33_blind_predictions.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload sealed labels separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-r33-zero-zero-two-stage-hidden-labels
+          path: football-data/manifests/v511_zero_zero_two_stage_screen10_r33_hidden_labels.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
