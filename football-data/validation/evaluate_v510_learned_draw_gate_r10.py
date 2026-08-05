@@ -333,14 +333,17 @@ def select_gate_candidate(
     if target_fit.nunique() != 2:
         raise ResearchError("gate-fit segment lacks draw and non-draw classes")
 
-    select_positions = [position[int(index)] for index in gate_select.index]
+    gate_select_core = gate_select[gate_select.total_goals_exact <= 6].copy()
+    if gate_select_core.empty:
+        raise ResearchError("policy gate selection core is empty")
+    select_positions = [position[int(index)] for index in gate_select_core.index]
     select_base = {
         total: probability[select_positions]
         for total, probability in policy_base_probabilities.items()
     }
-    base_realised = realised_probability_list(gate_select, select_base)
-    base_score = score_components(gate_select, base_realised)
-    base_result = result_components(gate_select, base_realised)
+    base_realised = realised_probability_list(gate_select_core, select_base)
+    base_score = score_components(gate_select_core, base_realised)
+    base_result = result_components(gate_select_core, base_realised)
     receipts = [{
         "name": "identity",
         "feature_set": "identity",
@@ -357,15 +360,15 @@ def select_gate_candidate(
             model.fit(full_design.loc[fit_even.index, features], target_fit)
             for alpha in config["draw_gate_contract"]["learned_blend_alpha_grid"]:
                 candidate_realised = apply_candidate_to_realised(
-                    gate_select,
+                    gate_select_core,
                     select_base,
                     model,
                     features,
                     float(alpha),
                     config,
                 )
-                candidate_score = score_components(gate_select, candidate_realised)
-                candidate_result = result_components(gate_select, candidate_realised)
+                candidate_score = score_components(gate_select_core, candidate_realised)
+                candidate_result = result_components(gate_select_core, candidate_realised)
                 receipts.append({
                     "name": f"{feature_set_name}_C{float(C):g}_A{float(alpha):g}",
                     "feature_set": feature_set_name,
@@ -392,6 +395,7 @@ def select_gate_candidate(
         **split_receipt,
         "gate_fit_rows": len(gate_fit),
         "gate_selection_rows": len(gate_select),
+        "gate_selection_core_rows": len(gate_select_core),
         "gate_fit_even_rows": len(fit_even),
         "gate_selection_even_rows": len(select_even),
         "gate_fit_draw_rate": float(target_fit.mean()),
@@ -558,7 +562,6 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
         fit = fold[fold.split.isin(["train", "policy"])]
         test = fold[fold.split == "test"].copy()
 
-        # Retained R7 three-expert direct-total distribution.
         flat_C, _ = select_C(train, policy, core_features, "total_class", classes, config)
         linear_C, _ = select_continuation_C(train, policy, core_features, config)
         flat_train = make_model(flat_C, config)
@@ -566,34 +569,21 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
         policy_flat = flat_probability(flat_train, policy, core_features, config)
         linear_train = continuation_models(train, core_features, linear_C, config)
         policy_linear = continuation_probability(linear_train, policy, core_features, config)
-        nonlinear_train = boosting_continuation_models(
-            train, core_features, nonlinear_candidate, config
-        )
-        policy_nonlinear = boosting_probability(
-            nonlinear_train, policy, core_features, config
-        )
-        eta_three, policy_weights_three, _ = select_eta(
-            policy, [policy_flat, policy_linear, policy_nonlinear], config
-        )
+        nonlinear_train = boosting_continuation_models(train, core_features, nonlinear_candidate, config)
+        policy_nonlinear = boosting_probability(nonlinear_train, policy, core_features, config)
+        eta_three, policy_weights_three, _ = select_eta(policy, [policy_flat, policy_linear, policy_nonlinear], config)
         flat_fit = make_model(flat_C, config)
         flat_fit.fit(fit[core_features], fit.total_class)
         test_flat = flat_probability(flat_fit, test, core_features, config)
         linear_fit = continuation_models(fit, core_features, linear_C, config)
         test_linear = continuation_probability(linear_fit, test, core_features, config)
-        nonlinear_fit = boosting_continuation_models(
-            fit, core_features, nonlinear_candidate, config
-        )
-        test_nonlinear = boosting_probability(
-            nonlinear_fit, test, core_features, config
-        )
+        nonlinear_fit = boosting_continuation_models(fit, core_features, nonlinear_candidate, config)
+        test_nonlinear = boosting_probability(nonlinear_fit, test, core_features, config)
         total_three, final_weights, updates = daily_mixture(
-            test,
-            [test_flat, test_linear, test_nonlinear],
-            eta_three,
+            test, [test_flat, test_linear, test_nonlinear], eta_three,
             initial_weights=policy_weights_three,
         )
 
-        # Freeze the retained R4 Beta-Binomial candidate on the outer policy season.
         train_nonzero = train[train.total_goals_exact >= 1]
         policy_nonzero = policy[policy.total_goals_exact >= 1]
         selected_mapping, mapping_receipts = select_full_range_candidate(
@@ -608,9 +598,7 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
             fit, test, mapping_features, mapping_hyper, config
         )
 
-        selected_gate, gate_grid, gate_split = select_gate_candidate(
-            policy, policy_base, config
-        )
+        selected_gate, gate_grid, gate_split = select_gate_candidate(policy, policy_base, config)
         gate_model, gate_features, gate_alpha, gate_fit_receipt = fit_final_gate(
             policy, policy_base, selected_gate, config
         )
@@ -635,12 +623,10 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
         gate_result = result_components(core_test, gate_realised)
 
         audit_maxima["base_joint_probability_sum_max_residual"] = max(
-            audit_maxima["base_joint_probability_sum_max_residual"],
-            float(audit_base["joint_probability_sum_max_residual"]),
+            audit_maxima["base_joint_probability_sum_max_residual"], float(audit_base["joint_probability_sum_max_residual"])
         )
         audit_maxima["gate_joint_probability_sum_max_residual"] = max(
-            audit_maxima["gate_joint_probability_sum_max_residual"],
-            float(audit_gate["joint_probability_sum_max_residual"]),
+            audit_maxima["gate_joint_probability_sum_max_residual"], float(audit_gate["joint_probability_sum_max_residual"])
         )
         audit_maxima["gate_conditional_score_sum_max_residual"] = max(
             audit_maxima["gate_conditional_score_sum_max_residual"],
@@ -648,25 +634,14 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
             float(gate_application["probability_sum_max_residual"]),
         )
         audit_maxima["gate_total_marginal_max_residual"] = max(
-            audit_maxima["gate_total_marginal_max_residual"],
-            float(audit_gate["total_marginal_max_residual"]),
+            audit_maxima["gate_total_marginal_max_residual"], float(audit_gate["total_marginal_max_residual"])
         )
-        audit_maxima["gate_legal_mapping_failures"] += int(
-            audit_gate["legal_mapping_failures"]
-        )
-        audit_maxima["gate_negative_probability_count"] += int(
-            audit_gate["negative_probability_count"]
-        )
+        audit_maxima["gate_legal_mapping_failures"] += int(audit_gate["legal_mapping_failures"])
+        audit_maxima["gate_negative_probability_count"] += int(audit_gate["negative_probability_count"])
 
         fold_receipts.append({
             "fold": str(test.fold.iloc[0]),
-            "rows": {
-                "train": len(train),
-                "policy": len(policy),
-                "fit": len(fit),
-                "test": len(test),
-                "core_test": len(core_test),
-            },
+            "rows": {"train": len(train), "policy": len(policy), "fit": len(fit), "test": len(test), "core_test": len(core_test)},
             "direct_total": {
                 "eta": eta_three,
                 "policy_weights": [float(value) for value in policy_weights_three],
@@ -710,8 +685,7 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
         all_result_base.append(base_result)
         all_result_gate.append(gate_result)
         all_core_frames.append(core_test[[
-            "competition_id", "season", "fold", "home_goals_exact",
-            "away_goals_exact", "total_goals_exact"
+            "competition_id", "season", "fold", "home_goals_exact", "away_goals_exact", "total_goals_exact"
         ]])
 
         for competition, indexes in test.groupby("competition_id").groups.items():
@@ -755,8 +729,7 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
     }
     subsets = {
         name: subset_receipt(
-            name, core_meta, core_frame, score_gate, score_base,
-            result_gate, result_base, mask, config
+            name, core_meta, core_frame, score_gate, score_base, result_gate, result_base, mask, config
         )
         for name, mask in subset_masks.items()
     }
@@ -770,46 +743,33 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
         "core_result_logloss": float(result_base.result_logloss.mean()),
         "draw_binary_brier": float(result_base.draw_binary_brier.mean()),
     }
-    reproduction_residuals = {
-        key: float(actual[key] - float(expected[key]))
-        for key in actual
-    }
+    reproduction_residuals = {key: float(actual[key] - float(expected[key])) for key in actual}
     reproduction_max = max(abs(value) for value in reproduction_residuals.values())
     reproduction_pass = reproduction_max <= float(expected["tolerance"])
 
     gates = config["pass_gates"]
     overall_joint_pass = all(
-        joint_boot[metric]["p95"] < 0
-        for metric in gates["overall_joint_metrics_must_robustly_improve"]
+        joint_boot[metric]["p95"] < 0 for metric in gates["overall_joint_metrics_must_robustly_improve"]
     )
     draw_pass = all(
         subsets["DRAW"]["score_bootstrap_90"][metric]["p95"] < 0
         for metric in gates["draw_score_metrics_must_robustly_improve"]
     )
-    draw_brier_pass = (
-        subsets["DRAW"]["result_bootstrap_90"]["draw_binary_brier"]["p95"] < 0
-    )
+    draw_brier_pass = subsets["DRAW"]["result_bootstrap_90"]["draw_binary_brier"]["p95"] < 0
     one_one_pass = subsets["DRAW_1_1"]["score_bootstrap_90"]["logloss"]["p95"] < 0
     two_two_pass = subsets["DRAW_2_2"]["score_bootstrap_90"]["logloss"]["p95"] < 0
     non_draw_pass = (
-        subsets["NON_DRAW"]["score_bootstrap_90"]["logloss"]["p95"]
-        <= float(gates["non_draw_logloss_noninferiority_margin"])
-        and subsets["NON_DRAW"]["score_bootstrap_90"]["brier"]["p95"]
-        <= float(gates["non_draw_brier_noninferiority_margin"])
+        subsets["NON_DRAW"]["score_bootstrap_90"]["logloss"]["p95"] <= float(gates["non_draw_logloss_noninferiority_margin"])
+        and subsets["NON_DRAW"]["score_bootstrap_90"]["brier"]["p95"] <= float(gates["non_draw_brier_noninferiority_margin"])
     )
     zero_zero_pass = (
-        subsets["DRAW_0_0"]["score_bootstrap_90"]["logloss"]["p95"]
-        <= float(gates["zero_zero_logloss_noninferiority_margin"])
-        and subsets["DRAW_0_0"]["score_bootstrap_90"]["brier"]["p95"]
-        <= float(gates["zero_zero_brier_noninferiority_margin"])
+        subsets["DRAW_0_0"]["score_bootstrap_90"]["logloss"]["p95"] <= float(gates["zero_zero_logloss_noninferiority_margin"])
+        and subsets["DRAW_0_0"]["score_bootstrap_90"]["brier"]["p95"] <= float(gates["zero_zero_brier_noninferiority_margin"])
     )
     audits_pass = (
-        audit_maxima["gate_joint_probability_sum_max_residual"]
-        <= float(config["model_contract"]["probability_sum_tolerance"])
-        and audit_maxima["gate_conditional_score_sum_max_residual"]
-        <= float(config["model_contract"]["probability_sum_tolerance"])
-        and audit_maxima["gate_total_marginal_max_residual"]
-        <= float(config["model_contract"]["probability_sum_tolerance"])
+        audit_maxima["gate_joint_probability_sum_max_residual"] <= float(config["model_contract"]["probability_sum_tolerance"])
+        and audit_maxima["gate_conditional_score_sum_max_residual"] <= float(config["model_contract"]["probability_sum_tolerance"])
+        and audit_maxima["gate_total_marginal_max_residual"] <= float(config["model_contract"]["probability_sum_tolerance"])
         and audit_maxima["gate_legal_mapping_failures"] == 0
         and audit_maxima["gate_negative_probability_count"] == 0
     )
@@ -880,11 +840,7 @@ def run(config: dict[str, Any], out_path: Path, stability_path: Path) -> dict[st
             "core_result_bootstrap_gate_vs_base_90": result_boot,
             "subsets": subsets,
         },
-        "pass_gates": {
-            "results": pass_map,
-            "all_pass": all(pass_map.values()),
-            "contract": gates,
-        },
+        "pass_gates": {"results": pass_map, "all_pass": all(pass_map.values()), "contract": gates},
         "audits": {
             **audit_maxima,
             "audits_pass": audits_pass,
