@@ -7,7 +7,8 @@ on:
       - "football-data/config/v510_historical_1x2_gold_replay_r19.json"
       - "football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py"
       - "football-data/validation/v510_historical_structure_features_r1.py"
-      - "football-data/manifests/v510_existing_score_market_pit_ledger_r1_rows.csv"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/processed/**/*.csv"
       - ".github/workflows/football-v510-historical-1x2-gold-replay-r19.yml"
 
 permissions:
@@ -20,16 +21,26 @@ concurrency:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install research dependencies
-        run: python -m pip install --disable-pip-version-check numpy pandas scikit-learn
-      - name: Compile R19 evaluator
-        run: python -m py_compile football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile R19 evaluator and ledger materializer
+        run: |
+          python -m py_compile football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py
+          python -m py_compile football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Materialize audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Run R19 historical training and replay
         run: python football-data/validation/evaluate_v510_historical_1x2_gold_replay_r19.py
       - name: Validate R19 evidence identity and hard limits
