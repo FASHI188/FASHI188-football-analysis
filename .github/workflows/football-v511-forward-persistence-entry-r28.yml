@@ -1,0 +1,134 @@
+name: Football V5.1 Forward Persistence Entry R28
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v511_forward_persistence_entry_r28.json"
+      - "football-data/config/v511_forward_freeze_capture_contract_r27.json"
+      - "football-data/schemas/v511_forward_freeze_event_r27.schema.json"
+      - "football-data/forward/inbox/v511_forward_freeze_events_r28.json"
+      - "football-data/forward/inbox/v511_forward_results_r28.json"
+      - "football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py"
+      - "football-data/validation/append_v511_forward_persistence_r28.py"
+      - "football-data/validation/append_v510_strict_pit_capture_r15.py"
+      - ".github/workflows/football-v511-forward-persistence-entry-r28.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-forward-persistence-entry-r28-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-persistence-entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R27, R28 and retired R15
+        run: |
+          python -m py_compile football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py
+          python -m py_compile football-data/validation/append_v511_forward_persistence_r28.py
+          python -m py_compile football-data/validation/append_v510_strict_pit_capture_r15.py
+      - name: Run R28 atomic persistence and negative self-tests
+        run: python football-data/validation/append_v511_forward_persistence_r28.py --self-test
+      - name: Validate repository ledgers are empty and structurally valid
+        run: |
+          python - <<'PY'
+          import importlib.util, json
+          from pathlib import Path
+          script=Path('football-data/validation/append_v511_forward_persistence_r28.py')
+          spec=importlib.util.spec_from_file_location('r28', script)
+          r28=importlib.util.module_from_spec(spec); spec.loader.exec_module(r28)
+          r27=r28.load_r27(); cfg=r28.load_json(r28.R27_CONFIG)
+          events=r28.load_json(Path('football-data/forward/inbox/v511_forward_freeze_events_r28.json'))
+          results=r28.load_json(Path('football-data/forward/inbox/v511_forward_results_r28.json'))
+          e=r28.validate_event_ledger(events, r27, cfg)
+          r=r28.validate_result_ledger(results, events, r27)
+          assert e['rows']==0 and e['last_event_hash']=='GENESIS'
+          assert r['rows']==0
+          print(json.dumps({'event_ledger': e['rows'], 'result_ledger': r['rows'], 'tip': e['last_event_hash']}, indent=2))
+          PY
+      - name: Create valid R27 staging event and result
+        run: |
+          python - <<'PY'
+          import importlib.util, json
+          from pathlib import Path
+          script=Path('football-data/validation/validate_v511_forward_freeze_capture_contract_r27.py')
+          spec=importlib.util.spec_from_file_location('r27', script)
+          r27=importlib.util.module_from_spec(spec); spec.loader.exec_module(r27)
+          event,result=r27.valid_sample()
+          Path('/tmp/r28-event.json').write_text(json.dumps({'event':event},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('/tmp/r28-result.json').write_text(json.dumps({'result':result},ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+      - name: Dry-run event through actual R28 entry
+        run: |
+          python football-data/validation/append_v511_forward_persistence_r28.py \
+            --event-staging /tmp/r28-event.json \
+            --receipt football-data/manifests/v511_forward_persistence_entry_r28_event_status.json \
+            --candidate-out football-data/manifests/v511_forward_persistence_entry_r28_event_candidate.json
+      - name: Confirm repository ledgers were not mutated
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          events=json.loads(Path('football-data/forward/inbox/v511_forward_freeze_events_r28.json').read_text(encoding='utf-8'))
+          results=json.loads(Path('football-data/forward/inbox/v511_forward_results_r28.json').read_text(encoding='utf-8'))
+          receipt=json.loads(Path('football-data/manifests/v511_forward_persistence_entry_r28_event_status.json').read_text(encoding='utf-8'))
+          assert events['events']==[] and results['results']==[]
+          assert receipt['status']=='PASS_R28_EVENT_READY_TO_APPEND'
+          assert receipt['dry_run'] is True and receipt['append_requested'] is False
+          assert receipt['r27_validation_passed'] is True
+          print(json.dumps(receipt,ensure_ascii=False,indent=2))
+          PY
+      - name: Confirm old R15 append cannot bypass R28
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'football-data/validation')
+          import append_v510_strict_pit_capture_r15 as r15
+          blocked=False
+          try:
+              r15.append_event({},Path('/tmp/unused'),{})
+          except r15.AppendError as exc:
+              blocked='R15 append authority is retired' in str(exc)
+          assert blocked is True
+          print('R15_APPEND_BYPASS_BLOCKED')
+          PY
+      - name: Validate R28 hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          cfg=json.loads(Path('football-data/config/v511_forward_persistence_entry_r28.json').read_text(encoding='utf-8'))
+          assert cfg['formal_weight']==0
+          assert cfg['event_contract']['append_requires_r27_pass'] is True
+          assert cfg['result_contract']['r27_result_link_validation_required'] is True
+          assert cfg['legacy_contract']['r15_append_enabled'] is False
+          assert cfg['persistence_contract']['atomic_replace_required'] is True
+          assert cfg['hard_limits']['provider_requests']==0
+          assert cfg['hard_limits']['model_training_performed'] is False
+          assert cfg['hard_limits']['probabilities_generated'] is False
+          assert cfg['hard_limits']['current_or_main_mutation_allowed'] is False
+          print(json.dumps(cfg,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R28 dry-run evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v511-forward-persistence-entry-r28
+          path: |
+            football-data/manifests/v511_forward_persistence_entry_r28_event_status.json
+            football-data/manifests/v511_forward_persistence_entry_r28_event_candidate.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
