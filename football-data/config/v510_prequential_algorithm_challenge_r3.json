@@ -1,0 +1,112 @@
+{
+  "schema_version": "v510_prequential_algorithm_challenge_r3.0",
+  "evidence_class": "VIEWED_HISTORICAL_DEVELOPMENT",
+  "input_ledger": "manifests/v510_existing_score_market_pit_ledger_r1_rows.csv",
+  "expected_data_identity": {
+    "rows": 26873,
+    "competitions": 16,
+    "draws": 6976,
+    "zero_zero": 1910,
+    "tail_7plus": 630
+  },
+  "replay_contract": {
+    "complete_seasons_per_competition": 5,
+    "rolling_test_positions_zero_based": [2, 3, 4],
+    "latest_season_completeness_ratio": 0.8,
+    "prediction_must_be_persisted_before_own_result_reveal": true,
+    "same_day_freeze_before_any_same_day_update": true,
+    "results_may_update_only_later_matches": true,
+    "repeated_historical_replay_allowed": true,
+    "independent_confirmation_claim_allowed": false
+  },
+  "phase_a_direct_total_candidates": {
+    "flat_multinomial_logistic": {
+      "role": "current linear structural baseline"
+    },
+    "continuation_ratio_logistic": {
+      "definition": "q_k(X)=P(T>=k|T>=k-1,X), k=1..7; reconstruct P(T=0..6,7+) by sequential survival",
+      "benefit": "ordered coherent mass, shared structure across adjacent totals"
+    },
+    "continuation_ratio_hist_gradient_boosting": {
+      "benefit": "nonlinear interactions without independently estimating eight unrelated class surfaces"
+    },
+    "distributional_stagewise_boosting": {
+      "benefit": "learn multiple distribution parameters with shrinkage and reduce vanishing-gradient failure"
+    }
+  },
+  "phase_b_conditional_score_candidates": {
+    "multinomial_goal_difference_given_total": {
+      "role": "current historical component baseline"
+    },
+    "bounded_beta_binomial_home_share": {
+      "definition": "H|T,X on support 0..T; A=T-H; D=2H-T",
+      "benefit": "legal score support by construction and parameter sharing across score cells"
+    },
+    "continuation_ratio_home_goals_given_total": {
+      "definition": "sequential bounded hazard for H=0..T conditioned on T",
+      "benefit": "ordinal structure and exact legal mapping"
+    },
+    "distributional_copula_challenger": {
+      "role": "research-only dependence challenger",
+      "benefit": "model marginal count distributions and dependence parameter jointly rather than assuming independence"
+    }
+  },
+  "phase_c_online_combination": {
+    "soft_bayes_logloss_expert_mixture": {
+      "experts": [
+        "flat_multinomial_logistic",
+        "continuation_ratio_logistic",
+        "continuation_ratio_hist_gradient_boosting",
+        "distributional_stagewise_boosting"
+      ],
+      "weight_update_time": "after all matches sharing a frozen date packet are completed",
+      "benefit": "track the best algorithm over non-stationary periods without selecting one permanent winner"
+    },
+    "competition_global_weight_shrinkage": {
+      "benefit": "allow competition adaptation while shrinking sparse competitions toward global weights"
+    }
+  },
+  "phase_d_calibration": {
+    "normalization_aware_multiclass_isotonic": {
+      "targets": ["P(T=0..6,7+)", "P(H=0..T|T)"],
+      "policy_only_fit": true
+    },
+    "online_conformal_prediction_sets": {
+      "targets": ["contiguous total-goal sets", "scoreline Top-k sets"],
+      "purpose": "uncertainty and abstention control; not a substitute for base probability quality"
+    }
+  },
+  "evaluation": {
+    "primary_metrics": ["logloss", "brier", "rps"],
+    "secondary_metrics": ["top1", "top2", "top3", "calibration_slope", "calibration_intercept", "cutoff_calibration_error"],
+    "joint_matrix_audits": [
+      "probability_sum_equals_one",
+      "total_goal_margin_consistency",
+      "result_margin_consistency",
+      "integer_nonnegative_score_support",
+      "T_D_parity_consistency",
+      "tail_probability_check",
+      "same_day_no_leakage",
+      "prediction_before_result_persistence"
+    ]
+  },
+  "promotion_policy": {
+    "research_only": true,
+    "formal_weight": 0,
+    "current_match_probability_allowed": false,
+    "unified_matrix_unlock_allowed": false,
+    "exact_score_allowed": false,
+    "ev_allowed": false,
+    "current_mutation_allowed": false,
+    "main_mutation_allowed": false
+  },
+  "priority_order": [
+    "bounded_beta_binomial_home_share",
+    "soft_bayes_logloss_expert_mixture",
+    "normalization_aware_multiclass_isotonic",
+    "continuation_ratio_hist_gradient_boosting",
+    "distributional_stagewise_boosting",
+    "distributional_copula_challenger",
+    "online_conformal_prediction_sets"
+  ]
+}
