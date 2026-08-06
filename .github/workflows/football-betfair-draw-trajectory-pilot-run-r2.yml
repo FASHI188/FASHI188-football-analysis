@@ -1,0 +1,120 @@
+name: Football Betfair Draw Trajectory Pilot One-Time Run R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_nonce:
+        description: Exact frozen one-time authorization nonce
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-draw-trajectory-pilot-one-time-r2
+  cancel-in-progress: false
+
+jobs:
+  one-time-frozen-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/betfair-draw-trajectory-pilot-run-r2
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Preflight one-time guards before external access
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          AUTHORIZATION_NONCE: ${{ inputs.authorization_nonce }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_NAME" = workflow_dispatch
+          test "$RUN_NUMBER" = 1
+          test "$RUN_ATTEMPT" = 1
+          test "$AUTHORIZATION_NONCE" = 57a9023352e24188bd2cbcd37bd896d8
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py
+          rm -rf artifacts/research/betfair_draw_trajectory_pilot_run_r2
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_run_r2
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py preflight \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --authorization football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json \
+            --consumed-marker football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json \
+            --event-name "$EVENT_NAME" \
+            --run-number "$RUN_NUMBER" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --authorization-nonce "$AUTHORIZATION_NONCE" \
+            --preflight-out artifacts/research/betfair_draw_trajectory_pilot_run_r2/preflight.json
+      - name: Checkout pinned public source without credentials
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          git -c credential.helper= clone --filter=blob:none --no-checkout \
+            https://github.com/marcosf63/bet.git source-public
+          git -C source-public checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C source-public rev-parse HEAD)" = 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+      - name: Lock synchronized identities then compare once
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          AUTHORIZATION_NONCE: ${{ inputs.authorization_nonce }}
+        run: |
+          set -euo pipefail
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py run \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --authorization football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json \
+            --consumed-marker football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json \
+            --event-name "$EVENT_NAME" \
+            --run-number "$RUN_NUMBER" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --authorization-nonce "$AUTHORIZATION_NONCE" \
+            --source-checkout source-public \
+            --lock-out artifacts/research/betfair_draw_trajectory_pilot_run_r2/identity_lock.json \
+            --final-out artifacts/research/betfair_draw_trajectory_pilot_run_r2/final.json
+      - name: Verify isolated research boundary and remove raw checkout
+        run: |
+          set -euo pipefail
+          rm -rf source-public
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          base='7db94eda443c4285343ffc9bc99de906190bf88a'
+          expected={
+            '.github/workflows/football-betfair-draw-trajectory-pilot-run-r2.yml',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py',
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          assert changed==expected,(changed,expected)
+          root=Path('artifacts/research/betfair_draw_trajectory_pilot_run_r2')
+          allowed={'preflight.json','identity_lock.json','final.json'}
+          assert {p.name for p in root.iterdir()}==allowed
+          final=json.loads((root/'final.json').read_text(encoding='utf-8'))
+          assert final['model_fits']==0
+          assert final['thresholds_selected']==0
+          assert final['formal_weight']==0
+          assert final['formal_model_changes']==0
+          assert final['formal_data_changes']==0
+          assert final['formal_config_changes']==0
+          assert final['CURRENT_changes']==0
+          assert final['rerun_allowed'] is False
+          assert final.get('raw_or_per_market_data_persisted_or_uploaded',False) is False
+          print(json.dumps(final,ensure_ascii=False,sort_keys=True))
+          PY
+      - name: Upload aggregate and identity-hash receipts only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-pilot-run-r2-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_run_r2
+          if-no-files-found: error
+          retention-days: 30
