@@ -1,0 +1,145 @@
+{
+  "schema_version": "BETFAIR-DRAW-TRAJECTORY-PILOT-PREREG-R1",
+  "registered_at_utc": "2026-08-06T09:45:00Z",
+  "status": "PRE_REGISTERED_NOT_AUTHORIZED_NOT_RUN",
+  "purpose": "Test whether fixed pre-match draw-price trajectory scores add draw ranking information beyond the T-15m no-vig draw probability in a small public Betfair sample.",
+  "upstream_evidence": {
+    "source_repository": "marcosf63/bet",
+    "source_commit": "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff",
+    "inventory_pr": 102,
+    "inventory_head": "c44dcfca5f94c016788fefda88740130bc8ece13",
+    "inventory_run": 31090041292,
+    "inventory_artifact": 8963032490,
+    "inventory_artifact_sha256": "6f97e9db294ab55c83b20a959da0702809a46d7ba298a1ba2ab18db6ae09993a",
+    "valid_markets": 319,
+    "complete_core_trajectory_markets": 65,
+    "settled_markets_all_valid": 316,
+    "settled_draws_all_valid": 74,
+    "model_screen_ready": false,
+    "exploratory_pilot_ready": true
+  },
+  "eligibility_contract": {
+    "event_type_id": "1",
+    "market_type": "MATCH_ODDS",
+    "exactly_three_runners": true,
+    "unique_draw_runner": true,
+    "required_cutoffs_minutes_before_kickoff": [1440, 360, 90, 15],
+    "complete_home_draw_away_ltp_required_at_each_cutoff": true,
+    "inplay_messages_excluded": true,
+    "eligibility_must_be_computed_without_winner_or_settlement_status": true,
+    "expected_eligible_market_count_from_inventory": 65,
+    "fail_if_eligible_count_differs": true
+  },
+  "identity_and_split_contract": {
+    "canonical_identity": "market_id|event_id|market_time_utc|normalized_home|normalized_away",
+    "canonical_identity_encoding": "utf-8",
+    "ordering": "ascending_sha256_of_canonical_identity",
+    "policy_fraction": 0.5,
+    "policy_assignment": "first_floor_n_over_2_after_hash_sort",
+    "confirmation_assignment": "remaining_rows_after_hash_sort",
+    "split_must_be_persisted_before_label_access": true,
+    "split_hash_must_be_persisted_before_label_access": true,
+    "same_market_must_not_cross_splits": true
+  },
+  "probability_contract": {
+    "no_vig_normalization": "q_i=(1/ltp_i)/sum_j(1/ltp_j)",
+    "minimum_ltp": 1.01,
+    "clip_scores_to": [0.000001, 0.999999],
+    "baseline": {
+      "id": "DRAW_FAIR_T15",
+      "formula": "qD_T15"
+    },
+    "fixed_candidates": [
+      {
+        "id": "DRAW_T15_PLUS_HALF_T90_MOVE",
+        "formula": "clip(qD_T15 + 0.5*(qD_T15-qD_T90))"
+      },
+      {
+        "id": "DRAW_T15_PLUS_HALF_T6H_MOVE",
+        "formula": "clip(qD_T15 + 0.5*(qD_T15-qD_T6H))"
+      },
+      {
+        "id": "DRAW_T15_PLUS_HALF_T24H_MOVE",
+        "formula": "clip(qD_T15 + 0.5*(qD_T15-qD_T24H))"
+      }
+    ],
+    "additional_features_or_models_allowed": false,
+    "coefficient_tuning_allowed": false,
+    "threshold_selection_allowed": false,
+    "class_weighting_allowed": false,
+    "model_fit_allowed": false
+  },
+  "policy_selection_contract": {
+    "primary_metric": "average_precision_draw_vs_non_draw",
+    "secondary_metric": "brier_draw_binary",
+    "candidate_selected_on_policy_only": true,
+    "selection_rule": "highest_average_precision_then_lowest_brier_then_fixed_candidate_order",
+    "baseline_is_not_eligible_for_candidate_selection": true,
+    "confirmation_labels_must_remain_unread_until_candidate_id_and_policy_metrics_are_persisted": true
+  },
+  "confirmation_metrics": {
+    "primary": "average_precision_delta_candidate_minus_baseline",
+    "secondary": [
+      "roc_auc_delta_candidate_minus_baseline",
+      "brier_delta_candidate_minus_baseline",
+      "logloss_delta_candidate_minus_baseline"
+    ],
+    "bootstrap": {
+      "unit": "market",
+      "repetitions": 5000,
+      "seed": 51103,
+      "interval": [0.05, 0.95]
+    }
+  },
+  "sample_gates": {
+    "minimum_total_eligible": 60,
+    "minimum_policy_rows": 28,
+    "minimum_confirmation_rows": 28,
+    "minimum_policy_draws": 5,
+    "minimum_confirmation_draws": 5,
+    "maximum_parse_or_identity_failures": 0
+  },
+  "research_pass_gate": {
+    "confirmation_average_precision_delta_strictly_positive": true,
+    "confirmation_average_precision_delta_bootstrap_p05_strictly_positive": true,
+    "confirmation_roc_auc_delta_nonnegative": true,
+    "confirmation_brier_delta_nonpositive": true,
+    "pass_meaning": "Only justify a larger independently licensed or official trajectory dataset. No formal promotion or current-match use."
+  },
+  "failure_actions": {
+    "sample_gate_failure": "STOP_NO_RESULT",
+    "research_gate_failure": "STOP_TRAJECTORY_PILOT_NO_INCREMENT",
+    "rerun_allowed": false,
+    "change_candidates_after_result_allowed": false,
+    "change_split_after_result_allowed": false,
+    "expand_to_incomplete_cutoffs_after_result_allowed": false
+  },
+  "authorization": {
+    "run_authorized": false,
+    "external_raw_data_access_authorized": false,
+    "winner_label_access_authorized": false,
+    "one_time_run_only": true
+  },
+  "evidence_boundary": {
+    "source_has_explicit_reusable_data_license": false,
+    "raw_files_may_be_transiently_read_only_after_authorization": true,
+    "raw_files_may_be_committed_or_uploaded": false,
+    "derived_per_market_identity_or_price_rows_may_be_uploaded": false,
+    "aggregate_metrics_and_hash_receipts_only": true,
+    "basic_ltp_is_executable_price": false,
+    "formal_ev_allowed": false
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_probability_allowed": false,
+    "current_match_direction_allowed": false,
+    "unified_score_matrix_allowed": false,
+    "exact_score_allowed": false,
+    "ev_allowed": false,
+    "provider_account_or_credentials_access": false,
+    "CURRENT_mutation_allowed": false,
+    "formal_model_data_config_mutation_allowed": false
+  }
+}
