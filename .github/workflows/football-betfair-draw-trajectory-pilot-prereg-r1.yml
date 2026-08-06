@@ -1,14 +1,147 @@
-name: Football Betfair Draw Trajectory Pilot Prereg R2 Edit Guard
+name: Football Betfair Draw Trajectory Pilot Prereg R2
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - research/betfair-public-inventory-audit-r1
+    paths:
+      - '.github/workflows/football-betfair-draw-trajectory-pilot-prereg-r1.yml'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/**'
 
 permissions:
   contents: read
 
+concurrency:
+  group: betfair-draw-trajectory-prereg-r2-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
-  edit-guard:
-    if: ${{ false }}
+  zero-label-preregistration:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - run: echo "Preregistration amendment in progress; no experiment or data access is permitted."
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile and validate frozen preregistration
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py \
+            football-data/research/betfair_draw_trajectory_pilot_r1/test_validate_preregistration.py
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json >/dev/null
+          rm -rf artifacts/research/betfair_draw_trajectory_pilot_prereg_r2
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_prereg_r2
+          python football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --out artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/receipt.json
+      - name: Run positive and tamper-negative validator tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover \
+            -s football-data/research/betfair_draw_trajectory_pilot_r1 \
+            -p 'test_validate_preregistration.py' \
+            -v 2>&1 | tee artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/negative_tests.txt
+          grep -q 'Ran 18 tests' artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/negative_tests.txt
+          grep -q '^OK$' artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/negative_tests.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/test_receipt.json').write_text(
+              json.dumps({
+                  'status': 'PASS_ALL_PREREGISTRATION_VALIDATOR_TESTS',
+                  'tests_run': 18,
+                  'positive_contract_tests_passed': 1,
+                  'tamper_negative_tests_passed': 17,
+                  'failures': 0,
+                  'errors': 0,
+                  'skipped': 0,
+                  'external_data_accessed': False,
+                  'winner_labels_read': 0,
+                  'model_fits': 0,
+                  'thresholds_selected': 0,
+              }, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+      - name: Prove zero access and frozen research boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/receipt.json').read_text(encoding='utf-8'))
+          assert receipt['status']=='PASS_ZERO_LABEL_SINGLE_CANDIDATE_PREREGISTRATION_FROZEN'
+          assert receipt['external_data_accessed'] is False
+          assert receipt['winner_labels_read']==0
+          assert receipt['model_fits']==0
+          assert receipt['thresholds_selected']==0
+          assert receipt['candidate_count']==1
+          assert receipt['policy_or_candidate_selection_allowed'] is False
+          assert receipt['run_authorized'] is False
+          assert receipt['formal_weight']==0
+          assert receipt['formal_model_changes']==0
+          assert receipt['formal_data_changes']==0
+          assert receipt['formal_config_changes']==0
+          assert receipt['CURRENT_changes']==0
+          assert receipt['negative_test_cases_expected']==17
+          print(json.dumps(receipt,ensure_ascii=False,sort_keys=True))
+          PY
+      - name: Confirm isolated diff against base and superseded HEAD
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          base='c44dcfca5f94c016788fefda88740130bc8ece13'
+          old='34f8ffdb9d1de39cc62e52b7e0886823c99224e4'
+          expected={
+            '.github/workflows/football-betfair-draw-trajectory-pilot-prereg-r1.yml',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/test_validate_preregistration.py',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py',
+          }
+          changed_from_base=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          changed_from_old=set(subprocess.check_output(['git','diff','--name-only',f'{old}...HEAD'],text=True).splitlines())
+          assert changed_from_base==expected,(changed_from_base,expected)
+          assert changed_from_old==expected,(changed_from_old,expected)
+          receipt=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/receipt.json').read_text(encoding='utf-8'))
+          test_receipt=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/test_receipt.json').read_text(encoding='utf-8'))
+          manifest={
+            'schema_version':'BETFAIR-DRAW-TRAJECTORY-PILOT-PREREG-R2-EVIDENCE',
+            'status':'PRE_REGISTERED_NOT_AUTHORIZED_NOT_RUN',
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+            'superseded_head':old,
+            'changed_files':sorted(expected),
+            'preregistration_sha256':receipt['preregistration_sha256'],
+            'validator_status':receipt['status'],
+            'test_status':test_receipt['status'],
+            'external_data_accessed':False,
+            'winner_labels_read':0,
+            'model_fits':0,
+            'thresholds_selected':0,
+            'formal_model_changes':0,
+            'formal_data_changes':0,
+            'formal_config_changes':0,
+            'CURRENT_changes':0,
+            'formal_weight':0,
+            'run_authorized':False,
+          }
+          Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r2/manifest.json').write_text(
+            json.dumps(manifest,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps(manifest,ensure_ascii=False,sort_keys=True))
+          PY
+      - name: Upload zero-label preregistration evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-prereg-r2-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_prereg_r2
+          if-no-files-found: error
+          retention-days: 30
