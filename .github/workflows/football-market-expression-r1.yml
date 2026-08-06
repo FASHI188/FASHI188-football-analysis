@@ -1,0 +1,131 @@
+name: Football Market Expression R1
+
+on:
+  push:
+    branches:
+      - research/market-expression-r1
+    paths:
+      - '.github/workflows/football-market-expression-r1.yml'
+      - 'football-data/research/market_expression_r1/**'
+  pull_request:
+    branches:
+      - research/gold1000-r1-data-audit
+    paths:
+      - '.github/workflows/football-market-expression-r1.yml'
+      - 'football-data/research/market_expression_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-expression-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  retrospective-market-expression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install fixed numerical dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.1.3 pandas==2.2.3
+      - name: Compile frozen builders and evaluator
+        run: |
+          python -m py_compile football-data/research/gold1000_r1/build_gold1000_sample_r1.py
+          python -m py_compile football-data/research/gold1000_r1/audit_football_data_main_r1.py
+          python -m py_compile football-data/research/market_expression_r1/run_market_expression_r1.py
+          python -m json.tool football-data/research/market_expression_r1/preregistration.json >/dev/null
+      - name: Rebuild frozen GOLD1000 sample
+        run: |
+          rm -rf gold1000-output
+          python football-data/research/gold1000_r1/build_gold1000_sample_r1.py \
+            --repo-root . \
+            --spec football-data/research/gold1000_r1/gold1000_spec_r1.json \
+            --out gold1000-output
+      - name: Rebuild static main-league market evidence
+        run: |
+          rm -rf football-data-audit
+          python football-data/research/gold1000_r1/audit_football_data_main_r1.py \
+            --sample gold1000-output/GOLD1000_R1_random_manifest.csv \
+            --out football-data-audit
+      - name: Verify frozen input identity and settlement self-test
+        run: |
+          test "$(sha256sum football-data-audit/GOLD1000_R1_football_data_main_enriched.csv | cut -d' ' -f1)" = "be047450f227e1bbfb9a5152ed87a636727f0345679383be8a6e7d61a289c41e"
+          python football-data/research/market_expression_r1/run_market_expression_r1.py \
+            --self-test \
+            --input football-data-audit/GOLD1000_R1_football_data_main_enriched.csv \
+            --prereg football-data/research/market_expression_r1/preregistration.json \
+            --out market-expression-output
+      - name: Run retrospective market-expression audit
+        env:
+          CHECKED_OUT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CHECKED_OUT_HEAD"
+          rm -rf market-expression-output
+          python football-data/research/market_expression_r1/run_market_expression_r1.py \
+            --input football-data-audit/GOLD1000_R1_football_data_main_enriched.csv \
+            --prereg football-data/research/market_expression_r1/preregistration.json \
+            --out market-expression-output
+      - name: Verify result boundary and exact frozen decision
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out=Path('market-expression-output')
+          result=json.loads((out/'market_expression_r1_status.json').read_text(encoding='utf-8'))
+          assert result['status'] in {
+              'PASS_RETROSPECTIVE_EXECUTION_LAYER_RESCUE_R1',
+              'FAIL_RETROSPECTIVE_EXECUTION_LAYER_RESCUE_R1',
+          }
+          assert result['input']['sha256']=='be047450f227e1bbfb9a5152ed87a636727f0345679383be8a6e7d61a289c41e'
+          assert result['input']['rows']==477
+          assert result['input']['competitions']==8
+          assert result['design']['test_is_new_blind_holdout'] is False
+          assert result['hard_limits']['formal_weight']==0
+          assert result['hard_limits']['formal_promotion'] is False
+          assert result['hard_limits']['current_match_use'] is False
+          assert result['hard_limits']['formal_ev_claim'] is False
+          assert result['hard_limits']['provider_api_calls']==0
+          assert result['ruling']['formal_weight']==0
+          assert result['ruling']['unified_score_matrix_used'] is False
+          assert set(p.name for p in out.iterdir())=={
+              'manifest.json',
+              'market_expression_r1_grid.csv',
+              'market_expression_r1_selected_rows.csv',
+              'market_expression_r1_status.json',
+          }
+          print(json.dumps({
+              'status': result['status'],
+              'selected_policy_candidate': result['selected_policy_candidate'],
+              'test_result': result['test_result'],
+          }, ensure_ascii=False))
+          PY
+      - name: Confirm only isolated research files changed
+        run: |
+          python - <<'PY'
+          import subprocess
+          base='fbbbd670f002fe084db84658502fd6cee9266b6b'
+          changed=subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines()
+          expected={
+              '.github/workflows/football-market-expression-r1.yml',
+              'football-data/research/market_expression_r1/preregistration.json',
+              'football-data/research/market_expression_r1/run_market_expression_r1.py',
+          }
+          assert set(changed)==expected, changed
+          print({'changed':changed,'formal_asset_changes':0})
+          PY
+      - name: Upload market-expression evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-market-expression-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: market-expression-output/
+          if-no-files-found: error
+          retention-days: 30
