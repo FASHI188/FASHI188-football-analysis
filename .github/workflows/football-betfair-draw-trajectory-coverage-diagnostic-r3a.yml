@@ -1,0 +1,73 @@
+name: Football Betfair Draw Trajectory Coverage Diagnostic R3A
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - research/betfair-draw-trajectory-pilot-run-r2
+
+permissions:
+  contents: read
+
+jobs:
+  no-label-coverage-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify no-label diagnostic boundary
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/diagnose_coverage_r3a.py
+          test "${{ github.event_name }}" = pull_request
+      - name: Checkout pinned public source without credentials
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git source-public
+          git -C source-public checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C source-public rev-parse HEAD)" = 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+      - name: Run pre-kickoff coverage diagnostic without labels
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/research/betfair_draw_trajectory_coverage_r3a
+          python football-data/research/betfair_draw_trajectory_pilot_r1/diagnose_coverage_r3a.py \
+            --source-checkout source-public \
+            --output artifacts/research/betfair_draw_trajectory_coverage_r3a/report.json
+      - name: Verify zero-label and zero-formal-change receipt
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf source-public
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('artifacts/research/betfair_draw_trajectory_coverage_r3a/report.json')
+          r=json.loads(p.read_text(encoding='utf-8'))
+          assert r['winner_labels_read']==0
+          assert r['post_kickoff_messages_parsed']==0
+          assert r['raw_names_prices_or_stream_messages_persisted'] is False
+          assert r['per_market_rows_persisted'] is False
+          assert r['model_fits']==0
+          assert r['thresholds_selected']==0
+          assert r['formal_weight']==0
+          assert r['formal_model_changes']==0
+          assert r['formal_data_changes']==0
+          assert r['formal_config_changes']==0
+          assert r['CURRENT_changes']==0
+          PY
+      - name: Upload aggregate diagnostic only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-coverage-diagnostic-r3a-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_coverage_r3a/report.json
+          if-no-files-found: error
+          retention-days: 30
