@@ -1,0 +1,216 @@
+name: Football Betfair Draw Trajectory Pilot One-Time Run R1
+
+on:
+  push:
+    branches:
+      - research/betfair-draw-trajectory-pilot-run-r1
+    paths:
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-draw-trajectory-pilot-one-time-r1
+  cancel-in-progress: false
+
+jobs:
+  eligibility-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile contracts and runner
+        run: |
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once.py
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json >/dev/null
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json >/dev/null
+      - name: Checkout pinned public source without credentials
+        run: |
+          rm -rf /tmp/betfair-draw-pilot-source
+          git -c http.https://github.com/.extraheader= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git /tmp/betfair-draw-pilot-source
+          git -C /tmp/betfair-draw-pilot-source -c http.https://github.com/.extraheader= checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C /tmp/betfair-draw-pilot-source rev-parse HEAD)" = "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff"
+      - name: Lock eligible identities and split before label access
+        run: |
+          rm -rf artifacts/research/betfair_draw_trajectory_pilot_run_r1
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_run_r1/lock
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once.py lock \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --authorization football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json \
+            --source-checkout /tmp/betfair-draw-pilot-source \
+            --out artifacts/research/betfair_draw_trajectory_pilot_run_r1/lock/lock_receipt.json
+      - name: Verify zero-label lock
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_run_r1/lock/lock_receipt.json').read_text(encoding='utf-8'))
+          assert value['status']=='PASS_ELIGIBILITY_AND_SPLIT_LOCKED_BEFORE_LABEL_ACCESS'
+          assert value['eligible_count']==65
+          assert value['policy_count']==32
+          assert value['confirmation_count']==33
+          assert value['execution_parse_or_identity_failures']==0
+          assert value['messages_at_or_after_kickoff_parsed']==0
+          assert value['winner_labels_read']==0
+          assert value['model_fits']==0
+          assert value['thresholds_selected']==0
+          assert value['per_market_rows_persisted_or_uploaded'] is False
+          assert value['formal_weight']==0
+          print(json.dumps(value,ensure_ascii=False,sort_keys=True))
+          PY
+          rm -rf /tmp/betfair-draw-pilot-source
+      - name: Upload aggregate lock receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: betfair-draw-pilot-lock-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_run_r1/lock/lock_receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  policy-selection:
+    needs: eligibility-lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: betfair-draw-pilot-lock-${{ github.run_id }}
+          path: /tmp/betfair-draw-pilot-receipts/lock
+      - name: Checkout pinned public source without credentials
+        run: |
+          rm -rf /tmp/betfair-draw-pilot-source
+          git -c http.https://github.com/.extraheader= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git /tmp/betfair-draw-pilot-source
+          git -C /tmp/betfair-draw-pilot-source -c http.https://github.com/.extraheader= checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C /tmp/betfair-draw-pilot-source rev-parse HEAD)" = "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff"
+      - name: Read policy labels and freeze one candidate
+        run: |
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_run_r1/policy
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once.py policy \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --authorization football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json \
+            --source-checkout /tmp/betfair-draw-pilot-source \
+            --lock-receipt /tmp/betfair-draw-pilot-receipts/lock/lock_receipt.json \
+            --out artifacts/research/betfair_draw_trajectory_pilot_run_r1/policy/policy_receipt.json
+      - name: Verify confirmation labels remain unread
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_run_r1/policy/policy_receipt.json').read_text(encoding='utf-8'))
+          assert value['status'] in {
+            'PASS_POLICY_CANDIDATE_FROZEN_BEFORE_CONFIRMATION_LABEL_ACCESS',
+            'STOP_NO_RESULT_POLICY_SAMPLE_GATE_FAILED'
+          }
+          assert value['policy_rows']<=32
+          assert value['policy_winner_labels_read']==value['policy_rows']
+          assert value['confirmation_winner_labels_read']==0
+          assert value['model_fits']==0
+          assert value['thresholds_selected']==0
+          assert value['per_market_rows_persisted_or_uploaded'] is False
+          assert value['formal_weight']==0
+          print(json.dumps(value,ensure_ascii=False,sort_keys=True))
+          PY
+          rm -rf /tmp/betfair-draw-pilot-source
+      - name: Upload aggregate policy receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: betfair-draw-pilot-policy-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_run_r1/policy/policy_receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  one-time-confirmation:
+    needs: policy-selection
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: betfair-draw-pilot-lock-${{ github.run_id }}
+          path: /tmp/betfair-draw-pilot-receipts/lock
+      - uses: actions/download-artifact@v4
+        with:
+          name: betfair-draw-pilot-policy-${{ github.run_id }}
+          path: /tmp/betfair-draw-pilot-receipts/policy
+      - name: Checkout pinned public source without credentials
+        run: |
+          rm -rf /tmp/betfair-draw-pilot-source
+          git -c http.https://github.com/.extraheader= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git /tmp/betfair-draw-pilot-source
+          git -C /tmp/betfair-draw-pilot-source -c http.https://github.com/.extraheader= checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C /tmp/betfair-draw-pilot-source rev-parse HEAD)" = "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff"
+      - name: Read confirmation labels exactly once
+        run: |
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_run_r1/final
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once.py confirm \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --authorization football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json \
+            --source-checkout /tmp/betfair-draw-pilot-source \
+            --lock-receipt /tmp/betfair-draw-pilot-receipts/lock/lock_receipt.json \
+            --policy-receipt /tmp/betfair-draw-pilot-receipts/policy/policy_receipt.json \
+            --out artifacts/research/betfair_draw_trajectory_pilot_run_r1/final/final_result.json
+      - name: Verify final research boundary and isolated diff
+        run: |
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          value=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_run_r1/final/final_result.json').read_text(encoding='utf-8'))
+          assert value['status'] in {
+            'PASS_TRAJECTORY_PILOT_INCREMENT_JUSTIFIES_LARGER_LICENSED_DATASET_ONLY',
+            'STOP_TRAJECTORY_PILOT_NO_INCREMENT',
+            'STOP_NO_RESULT_SAMPLE_GATE_FAILED'
+          }
+          assert value['model_fits']==0
+          assert value['thresholds_selected']==0
+          assert value['rerun_allowed'] is False
+          assert value['formal_weight']==0
+          if 'per_market_rows_persisted_or_uploaded' in value:
+              assert value['per_market_rows_persisted_or_uploaded'] is False
+          if 'current_match_use_allowed' in value:
+              assert value['current_match_use_allowed'] is False
+          if 'formal_ev_allowed' in value:
+              assert value['formal_ev_allowed'] is False
+          base='34f8ffdb9d1de39cc62e52b7e0886823c99224e4'
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          expected={
+            '.github/workflows/football-betfair-draw-trajectory-pilot-run-r1.yml',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization.json',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once.py',
+          }
+          assert changed==expected,(changed,expected)
+          assert not any('dados_historicos' in path for path in changed)
+          print(json.dumps({'final':value,'changed':sorted(changed),'formal_asset_changes':0},ensure_ascii=False,sort_keys=True))
+          PY
+          cp /tmp/betfair-draw-pilot-receipts/lock/lock_receipt.json artifacts/research/betfair_draw_trajectory_pilot_run_r1/final/
+          cp /tmp/betfair-draw-pilot-receipts/policy/policy_receipt.json artifacts/research/betfair_draw_trajectory_pilot_run_r1/final/
+          rm -rf /tmp/betfair-draw-pilot-source /tmp/betfair-draw-pilot-receipts
+      - name: Upload aggregate final evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-pilot-final-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_run_r1/final
+          if-no-files-found: error
+          retention-days: 30
