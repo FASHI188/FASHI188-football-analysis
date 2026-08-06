@@ -1,0 +1,100 @@
+{
+  "schema_version": "MARKET-EXPRESSION-PREREG-R1",
+  "registered_at_utc": "2026-08-06T01:25:00Z",
+  "classification": "RETROSPECTIVE_MARKET_EXPRESSION_AUDIT_NOT_STRICT_PIT",
+  "purpose": "Test whether high draw-risk matches are better expressed by direct draw, Under 2.5, or the closing underdog Asian handicap, without creating a new probability model.",
+  "input_contract": {
+    "source_builder": "football-data/research/gold1000_r1/audit_football_data_main_r1.py",
+    "expected_input_sha256": "be047450f227e1bbfb9a5152ed87a636727f0345679383be8a6e7d61a289c41e",
+    "expected_identity": {
+      "rows": 477,
+      "competitions": 8,
+      "season_rows": {
+        "2023/24": 159,
+        "2024/25": 159,
+        "2025/26": 159
+      }
+    },
+    "required_columns": [
+      "gold_sample_id",
+      "match_identity",
+      "competition_id",
+      "season",
+      "fd_FTHG",
+      "fd_FTAG",
+      "fd_AvgCH",
+      "fd_AvgCD",
+      "fd_AvgCA",
+      "fd_AvgC>2.5",
+      "fd_AvgC<2.5",
+      "fd_AHCh",
+      "fd_AvgCAHH",
+      "fd_AvgCAHA"
+    ],
+    "market_status": "RETROSPECTIVE_MARKET_REFERENCE_NO_ORIGINAL_ROW_LEVEL_QUOTE_TIMESTAMP"
+  },
+  "split_contract": {
+    "train_season": "2023/24",
+    "policy_season": "2024/25",
+    "test_season": "2025/26",
+    "test_is_new_blind_holdout": false,
+    "test_labels_previously_viewed_elsewhere_in_project": true
+  },
+  "selector_contract": {
+    "selectors": [
+      "score_draw_price",
+      "score_draw_under",
+      "score_draw_under_balance"
+    ],
+    "definitions": {
+      "score_draw_price": "no-vig closing draw probability",
+      "score_draw_under": "equal-weight mean of training-standardized no-vig draw and Under 2.5 probabilities",
+      "score_draw_under_balance": "equal-weight mean of training-standardized no-vig draw probability, Under 2.5 probability, and 1X2 balance"
+    },
+    "coverage_grid": [0.1, 0.2, 0.3, 0.4],
+    "cutoff_fitted_from": "policy score distribution only; labels not used"
+  },
+  "expression_contract": {
+    "expressions": ["draw", "under25", "underdog_ah"],
+    "draw_price": "fd_AvgCD",
+    "under25_price": "fd_AvgC<2.5",
+    "underdog_definition": "lower no-vig 1X2 probability",
+    "underdog_ah_line": "home uses fd_AHCh; away uses negative fd_AHCh",
+    "underdog_ah_price": "home uses fd_AvgCAHH; away uses fd_AvgCAHA",
+    "quarter_handicap_settlement": "split equally across adjacent half-goal lines",
+    "unavailable_expressions": ["double_chance_no_actual_price", "BTTS_no_actual_price"]
+  },
+  "policy_selection_gate": {
+    "minimum_matches": 15,
+    "minimum_leagues": 5,
+    "minimum_positive_leagues": 4,
+    "minimum_mean_return": 0.0,
+    "minimum_cluster_bootstrap_lower_bound": 0.0,
+    "selection_order": "highest policy mean return, then lower coverage, selector order, expression order"
+  },
+  "test_gate": {
+    "minimum_matches": 10,
+    "minimum_leagues": 4,
+    "minimum_positive_leagues": 3,
+    "minimum_mean_return": 0.0,
+    "minimum_cluster_bootstrap_lower_bound": 0.0
+  },
+  "bootstrap": {
+    "cluster": "competition_id",
+    "samples": 5000,
+    "seed": 51101,
+    "interval": [0.05, 0.95]
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion": false,
+    "current_match_use": false,
+    "formal_ev_claim": false,
+    "provider_api_calls": 0,
+    "secrets": 0,
+    "CURRENT_mutation": 0,
+    "formal_model_data_config_mutation": 0,
+    "unified_score_matrix_required_or_used": false
+  }
+}
