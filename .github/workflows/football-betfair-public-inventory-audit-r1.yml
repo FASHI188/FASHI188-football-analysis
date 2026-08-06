@@ -1,0 +1,110 @@
+name: Football Betfair Public Inventory Audit R1
+
+on:
+  push:
+    branches:
+      - research/betfair-public-inventory-audit-r1
+    paths:
+      - '.github/workflows/football-betfair-public-inventory-audit-r1.yml'
+      - 'football-data/research/betfair_public_inventory_audit_r1/**'
+  pull_request:
+    branches:
+      - research/betfair-public-sample-audit-r1
+    paths:
+      - '.github/workflows/football-betfair-public-inventory-audit-r1.yml'
+      - 'football-data/research/betfair_public_inventory_audit_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-public-inventory-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-transient-inventory-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile frozen audit
+        run: |
+          python -m py_compile football-data/research/betfair_public_inventory_audit_r1/audit_betfair_public_inventory_r1.py
+          python -m json.tool football-data/research/betfair_public_inventory_audit_r1/inventory_contract.json >/dev/null
+      - name: Checkout commit-pinned external source without credentials
+        run: |
+          rm -rf /tmp/betfair-public-inventory-r1
+          git -c http.https://github.com/.extraheader= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git /tmp/betfair-public-inventory-r1
+          git -C /tmp/betfair-public-inventory-r1 -c http.https://github.com/.extraheader= checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C /tmp/betfair-public-inventory-r1 rev-parse HEAD)" = "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff"
+          test -d /tmp/betfair-public-inventory-r1/data/dados_historicos/por_evento_id
+      - name: Run full inventory coverage audit
+        run: |
+          rm -rf artifacts/research/betfair_public_inventory_r1
+          mkdir -p artifacts/research/betfair_public_inventory_r1
+          python football-data/research/betfair_public_inventory_audit_r1/audit_betfair_public_inventory_r1.py \
+            --contract football-data/research/betfair_public_inventory_audit_r1/inventory_contract.json \
+            --source-checkout /tmp/betfair-public-inventory-r1 \
+            --out artifacts/research/betfair_public_inventory_r1/status.json
+      - name: Verify completed audit and evidence boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('artifacts/research/betfair_public_inventory_r1/status.json').read_text(encoding='utf-8'))
+          assert result['status'] in {
+            'PASS_PUBLIC_INVENTORY_READY_FOR_PREREGISTERED_MODEL_SCREEN',
+            'PASS_PUBLIC_INVENTORY_READY_FOR_EXPLORATORY_PILOT_ONLY',
+            'FAIL_PUBLIC_INVENTORY_TRAJECTORY_COVERAGE_INSUFFICIENT'
+          }
+          ruling=result['ruling']
+          assert ruling['audit_process_completed'] is True
+          assert ruling['raw_files_persisted_or_uploaded'] is False
+          assert ruling['raw_data_redistributed'] is False
+          assert ruling['model_fit_performed'] is False
+          assert ruling['threshold_selected'] is False
+          assert ruling['performance_claim_made'] is False
+          assert ruling['formal_weight']==0
+          assert ruling['formal_ev_allowed'] is False
+          assert result['counts']['candidate_match_odds_files'] == result['counts']['valid_markets'] + result['counts']['invalid_candidate_files']
+          print(json.dumps({
+            'audit_process':'PASS',
+            'status':result['status'],
+            'counts':result['counts'],
+            'cutoff_coverage':result['cutoff_coverage'],
+            'first_complete':result['first_complete_three_runner_minutes_before_kickoff'],
+            'readiness':result['readiness'],
+            'failures':result['failures']
+          },ensure_ascii=False))
+          PY
+      - name: Confirm isolated diff and remove external checkout
+        run: |
+          python - <<'PY'
+          import subprocess
+          base='22efa225bb7923db0f31df7bdb0ea5c87e1b7d85'
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          expected={
+            '.github/workflows/football-betfair-public-inventory-audit-r1.yml',
+            'football-data/research/betfair_public_inventory_audit_r1/README.md',
+            'football-data/research/betfair_public_inventory_audit_r1/audit_betfair_public_inventory_r1.py',
+            'football-data/research/betfair_public_inventory_audit_r1/inventory_contract.json',
+          }
+          assert changed==expected,(changed,expected)
+          assert not any('dados_historicos' in path for path in changed)
+          print({'changed':sorted(changed),'raw_data_in_git':False,'formal_asset_changes':0})
+          PY
+          rm -rf /tmp/betfair-public-inventory-r1
+      - name: Upload aggregate summary only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-public-inventory-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_public_inventory_r1/status.json
+          if-no-files-found: error
+          retention-days: 30
