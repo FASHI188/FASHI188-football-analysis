@@ -1,0 +1,82 @@
+name: Football Betfair Draw Trajectory Pilot Prereg R1
+
+on:
+  push:
+    branches:
+      - research/betfair-draw-trajectory-pilot-prereg-r1
+    paths:
+      - '.github/workflows/football-betfair-draw-trajectory-pilot-prereg-r1.yml'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/**'
+  pull_request:
+    branches:
+      - research/betfair-public-inventory-audit-r1
+    paths:
+      - '.github/workflows/football-betfair-draw-trajectory-pilot-prereg-r1.yml'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-draw-trajectory-prereg-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-preregistration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile and validate preregistration
+        run: |
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json >/dev/null
+          rm -rf artifacts/research/betfair_draw_trajectory_pilot_prereg_r1
+          python football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json \
+            --out artifacts/research/betfair_draw_trajectory_pilot_prereg_r1/receipt.json
+      - name: Prove zero external data and zero label access
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt=json.loads(Path('artifacts/research/betfair_draw_trajectory_pilot_prereg_r1/receipt.json').read_text(encoding='utf-8'))
+          assert receipt['status']=='PASS_ZERO_LABEL_PREREGISTRATION_FROZEN'
+          assert receipt['external_data_accessed'] is False
+          assert receipt['winner_labels_read']==0
+          assert receipt['model_fits']==0
+          assert receipt['thresholds_selected']==0
+          assert receipt['candidate_count']==3
+          assert receipt['expected_eligible_market_count']==65
+          assert receipt['run_authorized'] is False
+          assert receipt['formal_weight']==0
+          print(json.dumps(receipt,ensure_ascii=False))
+          PY
+      - name: Confirm isolated research diff
+        run: |
+          python - <<'PY'
+          import subprocess
+          base='c44dcfca5f94c016788fefda88740130bc8ece13'
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          expected={
+            '.github/workflows/football-betfair-draw-trajectory-pilot-prereg-r1.yml',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json',
+            'football-data/research/betfair_draw_trajectory_pilot_r1/validate_preregistration.py',
+          }
+          assert changed==expected,(changed,expected)
+          print({'changed':sorted(changed),'external_data_accessed':False,'formal_asset_changes':0})
+          PY
+      - name: Upload preregistration receipt only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-prereg-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_prereg_r1/receipt.json
+          if-no-files-found: error
+          retention-days: 30
