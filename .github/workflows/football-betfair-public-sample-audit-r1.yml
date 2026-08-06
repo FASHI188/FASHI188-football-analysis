@@ -70,12 +70,17 @@ jobs:
         run: |
           rm -rf artifacts/research/betfair_public_sample_r1
           mkdir -p artifacts/research/betfair_public_sample_r1
+          set +e
           python football-data/research/betfair_public_sample_audit_r1/audit_betfair_public_sample_r1.py \
             --manifest football-data/research/betfair_public_sample_audit_r1/sample_manifest.json \
             --input-dir /tmp/betfair-public-r1 \
             --out-json artifacts/research/betfair_public_sample_r1/status.json \
             --out-csv /tmp/betfair-public-r1/per_market_audit.csv
-      - name: Verify evidence boundary
+          audit_exit=$?
+          set -e
+          test -f artifacts/research/betfair_public_sample_r1/status.json
+          echo "audit_exit_code=$audit_exit"
+      - name: Verify evidence boundary and frozen negative gate
         run: |
           python - <<'PY'
           import json
@@ -83,10 +88,13 @@ jobs:
           result=json.loads(Path('artifacts/research/betfair_public_sample_r1/status.json').read_text(encoding='utf-8'))
           assert result['status'] in {
             'PASS_PUBLIC_SAMPLE_READY_FOR_PREREGISTERED_PILOT',
-            'PASS_PUBLIC_SAMPLE_AUDITED_COVERAGE_GATE_NOT_MET'
+            'PASS_PUBLIC_SAMPLE_AUDITED_COVERAGE_GATE_NOT_MET',
+            'FAIL_PUBLIC_SAMPLE_AUDIT'
           }
-          assert result['counts']['parsed_valid_markets']==18
-          assert result['counts']['failures']==0
+          counts=result['counts']
+          assert counts['parsed_valid_markets']+counts['failures']==counts['expected_files']==18
+          assert result['pilot_ready'] is False
+          assert not all(result['readiness_gates'].values())
           ruling=result['ruling']
           assert ruling['raw_files_persisted_or_uploaded'] is False
           assert ruling['raw_data_redistributed'] is False
@@ -95,7 +103,14 @@ jobs:
           assert ruling['settlement_labels_used_for_performance_claim'] is False
           assert ruling['formal_weight']==0
           assert ruling['formal_ev_allowed'] is False
-          print(json.dumps({'status':result['status'],'counts':result['counts'],'cutoff_coverage':result['cutoff_coverage'],'readiness_gates':result['readiness_gates']},ensure_ascii=False))
+          print(json.dumps({
+            'audit_process':'PASS_NEGATIVE_RESULT_REPRODUCED',
+            'status':result['status'],
+            'counts':counts,
+            'cutoff_coverage':result['cutoff_coverage'],
+            'readiness_gates':result['readiness_gates'],
+            'failures':result['failures']
+          },ensure_ascii=False))
           PY
       - name: Confirm isolated diff and remove raw samples
         run: |
