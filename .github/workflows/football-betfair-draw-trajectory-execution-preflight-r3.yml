@@ -1,0 +1,68 @@
+name: Football Betfair Draw Trajectory Execution Preflight R3
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - research/betfair-draw-trajectory-pilot-run-r2
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-execution-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen files and absence of authorization
+        run: |
+          set -euo pipefail
+          test ! -e football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r3.json
+          test ! -e football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r3.json
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r3.py
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          def csha(path):
+              value=json.loads(Path(path).read_text(encoding='utf-8'))
+              return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert csha('football-data/research/betfair_draw_trajectory_pilot_r1/preregistration_r3.json')=='6eea5dde15835bd0d8fcf2792d8e6915d8e526fb9f5c45dfae06e148a39222ec'
+          assert csha('football-data/research/betfair_draw_trajectory_pilot_r1/identity_lock_receipt_r3.json')=='33d572c4a3b7803e72b2839ba59c085b4bd6a2eafc053ca6e952c31b4b71c431'
+          PY
+      - name: Run metric and contract preflight without labels
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/research/betfair_draw_trajectory_execution_preflight_r3
+          python football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r3.py preflight \
+            --prereg football-data/research/betfair_draw_trajectory_pilot_r1/preregistration_r3.json \
+            --lock-receipt football-data/research/betfair_draw_trajectory_pilot_r1/identity_lock_receipt_r3.json \
+            --output artifacts/research/betfair_draw_trajectory_execution_preflight_r3/receipt.json
+      - name: Verify zero-access receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('artifacts/research/betfair_draw_trajectory_execution_preflight_r3/receipt.json').read_text(encoding='utf-8'))
+          assert r['status']=='PASS_R3_EXECUTION_CODE_PREFLIGHT_NO_LABEL_ACCESS'
+          assert r['authorization_file_present'] is False
+          assert r['consumed_marker_present'] is False
+          assert r['winner_labels_read']==0
+          assert r['post_kickoff_messages_parsed']==0
+          assert r['model_fits']==0 and r['thresholds_selected']==0 and r['formal_weight']==0
+          assert r['formal_model_changes']==r['formal_data_changes']==r['formal_config_changes']==r['CURRENT_changes']==0
+          PY
+      - name: Upload zero-label preflight receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-execution-preflight-r3-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_execution_preflight_r3/receipt.json
+          if-no-files-found: error
+          retention-days: 30
