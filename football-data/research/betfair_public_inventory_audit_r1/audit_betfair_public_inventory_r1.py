@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import shutil
 import statistics
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -35,7 +37,6 @@ def load_parser():
 
 def inspect_stream(path: Path, module: Any, parser_cfg: dict[str, Any]) -> dict[str, Any]:
     accepted = {str(value).casefold() for value in parser_cfg["input_contract"]["accepted_extensions"]}
-    accepted.add("")
     definition = None
     ltp: dict[int, float] = {}
     first_complete_minutes = None
@@ -93,8 +94,6 @@ def gate_pass(counts: dict[str, int], gate: dict[str, int]) -> bool:
 def run(contract_path: Path, source_checkout: Path, out_path: Path) -> dict[str, Any]:
     contract = load_json(contract_path)
     parser_cfg = load_json(PARSER_CONFIG)
-    parser_cfg = json.loads(json.dumps(parser_cfg))
-    parser_cfg["input_contract"]["accepted_extensions"].append("")
     module = load_parser()
     source_root = source_checkout / str(contract["source"]["root"])
     if not source_root.is_dir():
@@ -115,27 +114,34 @@ def run(contract_path: Path, source_checkout: Path, out_path: Path) -> dict[str,
     first_complete_values: list[float] = []
     complete_core = 0
     valid = 0
-    for path in candidates:
-        relative = path.relative_to(source_checkout).as_posix()
-        try:
-            parsed = module.parse_file(path, parser_cfg)
-            receipts = [row for row in parsed["market_receipts"] if row["valid_match_odds_definition"]]
-            if len(receipts) != 1:
-                raise RuntimeError(f"expected one valid market, found {len(receipts)}")
-            snapshots = {int(row["minutes_before_kickoff"]): row for row in parsed["snapshots"]}
-            for cutoff in cutoff_values:
-                if cutoff in snapshots:
-                    cutoff_coverage[cutoff] += 1
-            if all(cutoff in snapshots for cutoff in core_cutoffs):
-                complete_core += 1
-            stream = inspect_stream(path, module, parser_cfg)
-            if stream["outcome"]:
-                outcomes[stream["outcome"]] += 1
-            if stream["first_complete_three_runner_minutes_before_kickoff"] is not None:
-                first_complete_values.append(float(stream["first_complete_three_runner_minutes_before_kickoff"]))
-            valid += 1
-        except Exception as exc:
-            failures.append({"path": relative, "reason": f"{type(exc).__name__}: {exc}"})
+    with tempfile.TemporaryDirectory(prefix="betfair-inventory-r1-") as tmp:
+        temp_root = Path(tmp)
+        for index, path in enumerate(candidates):
+            relative = path.relative_to(source_checkout).as_posix()
+            try:
+                # Source market IDs such as 1.232827159 look like file extensions to pathlib.
+                # Copy each source byte-for-byte to an ephemeral .jsonl alias so the already
+                # validated PR #100 parser can enforce its frozen extension contract unchanged.
+                alias = temp_root / f"market_{index:06d}.jsonl"
+                shutil.copyfile(path, alias)
+                parsed = module.parse_file(alias, parser_cfg)
+                receipts = [row for row in parsed["market_receipts"] if row["valid_match_odds_definition"]]
+                if parsed["status"] != "PASS_BETFAIR_BASIC_TRAJECTORY_INGESTED" or len(receipts) != 1:
+                    raise RuntimeError(f"parser status/market count invalid: {parsed['status']} {len(receipts)}")
+                snapshots = {int(row["minutes_before_kickoff"]): row for row in parsed["snapshots"]}
+                for cutoff in cutoff_values:
+                    if cutoff in snapshots:
+                        cutoff_coverage[cutoff] += 1
+                if all(cutoff in snapshots for cutoff in core_cutoffs):
+                    complete_core += 1
+                stream = inspect_stream(alias, module, parser_cfg)
+                if stream["outcome"]:
+                    outcomes[stream["outcome"]] += 1
+                if stream["first_complete_three_runner_minutes_before_kickoff"] is not None:
+                    first_complete_values.append(float(stream["first_complete_three_runner_minutes_before_kickoff"]))
+                valid += 1
+            except Exception as exc:
+                failures.append({"path": relative, "reason": f"{type(exc).__name__}: {exc}"})
 
     counts = {
         "files_scanned": len(all_files),
@@ -181,6 +187,7 @@ def run(contract_path: Path, source_checkout: Path, out_path: Path) -> dict[str,
         "failures": failures,
         "ruling": {
             "audit_process_completed": len(candidates) == valid + len(failures),
+            "source_files_copied_only_to_ephemeral_jsonl_aliases": True,
             "raw_files_persisted_or_uploaded": False,
             "raw_data_redistributed": False,
             "model_fit_performed": False,
