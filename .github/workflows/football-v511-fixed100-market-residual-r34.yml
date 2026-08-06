@@ -67,19 +67,31 @@ jobs:
               'PROMISING_FIXED100_POINT_SIGNAL_EXPLORATION_ONLY',
               'NO_FIXED100_POINT_IMPROVEMENT_EXPLORATION_ONLY',
           }
-          assert result['source']['source_rows']==1000
-          assert result['source']['external_collection']==0
-          assert result['sample']['rows']==100
-          assert result['sample']['selection_uses_labels'] is False
-          assert result['sample']['no_resampling_after_result'] is True
-          assert result['execution']['prequential_predictions_over_all_source_rows'] is True
-          assert result['execution']['same_day_predictions_frozen_before_updates'] is True
-          assert result['execution']['candidate_catalog_fixed_before_scoring'] is True
+          source=result['source']
+          assert source['source_rows']==1000
+          assert source['market_complete_eligible_rows']>=100
+          assert (
+              source['market_complete_eligible_rows']
+              + sum(source['pre_result_exclusions'].values())
+              == source['source_rows']
+          )
+          assert source['external_collection']==0
+          sample=result['sample']
+          assert sample['rows']==100
+          assert sample['selection_uses_labels'] is False
+          assert sample['selection_frozen_before_any_label_parsing'] is True
+          assert sample['no_resampling_after_result'] is True
+          execution=result['execution']
+          assert execution['prequential_predictions_over_all_market_complete_rows'] is True
+          assert execution['prequential_prediction_rows']==source['market_complete_eligible_rows']
+          assert execution['same_day_predictions_frozen_before_updates'] is True
+          assert execution['candidate_catalog_fixed_before_scoring'] is True
+          assert execution['test_labels_used_to_remove_candidates'] is False
           assert set(result['metrics'])=={
               'market','full_residual','linear_residual_25','linear_residual_50',
               'linear_residual_75','log_pool_50','draw_only_full','draw_only_half',
           }
-          assert all(v['rows']==100 for v in result['metrics'].values())
+          assert all(value['rows']==100 for value in result['metrics'].values())
           hard=result['hard_limits']
           assert hard['formal_weight']==0
           assert hard['formal_promotion_allowed'] is False
@@ -94,12 +106,14 @@ jobs:
           assert hard['CURRENT_mutation']==0
           assert hard['formal_model_data_config_mutation']==0
           assert hard['main_mutation']==0
-          assert set(p.name for p in root.iterdir())=={
-              'status.json','candidate_summary.csv','fixed100_predictions.csv','manifest.json'
+          assert {path.name for path in root.iterdir()}=={
+              'status.json','candidate_summary.csv',
+              'fixed100_predictions.csv','manifest.json'
           }
           print(json.dumps({
               'status':result['status'],
-              'sample':result['sample'],
+              'source':source,
+              'sample':sample,
               'descriptive_best':result['descriptive_best'],
               'promising_point_candidates':result['promising_point_candidates'],
               'metrics':result['metrics'],
@@ -111,7 +125,10 @@ jobs:
           python - <<'PY'
           import subprocess
           base='5cea629865231fcadf7c2d6a64ab2a125628a3f6'
-          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          changed=set(subprocess.check_output(
+              ['git','diff','--name-only',f'{base}...HEAD'],
+              text=True,
+          ).splitlines())
           expected={
               '.github/workflows/football-v511-fixed100-market-residual-r34.yml',
               'football-data/config/v511_fixed100_market_residual_r34.json',
