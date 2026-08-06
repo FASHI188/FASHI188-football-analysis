@@ -6,8 +6,8 @@ import argparse
 import csv
 import importlib.util
 import json
-import math
 import statistics
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,7 @@ def load_module():
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot import Betfair parser")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -99,7 +100,6 @@ def run(manifest_path: Path, input_dir: Path, out_json: Path, out_csv: Path) -> 
             if parsed["status"] != "PASS_BETFAIR_BASIC_TRAJECTORY_INGESTED" or len(valid_receipts) != 1:
                 raise RuntimeError(f"parser status/market count invalid: {parsed['status']} {len(valid_receipts)}")
             snapshots = {int(row["minutes_before_kickoff"]): row for row in parsed["snapshots"]}
-            receipt = valid_receipts[0]
             settled = settlement(local, module, cfg)
             first_snapshot = min((module.parse_iso(row["snapshot_publish_time_utc"]) for row in snapshots.values()), default=None)
             market_time = module.parse_iso(next(iter(snapshots.values()))["market_time_utc"]) if snapshots else None
