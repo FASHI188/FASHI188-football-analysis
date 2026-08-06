@@ -1,0 +1,123 @@
+name: Football Betfair Public Sample Audit R1
+
+on:
+  push:
+    branches:
+      - research/betfair-public-sample-audit-r1
+    paths:
+      - '.github/workflows/football-betfair-public-sample-audit-r1.yml'
+      - 'football-data/research/betfair_public_sample_audit_r1/**'
+  pull_request:
+    branches:
+      - research/betfair-basic-trajectory-ingestion-r1
+    paths:
+      - '.github/workflows/football-betfair-public-sample-audit-r1.yml'
+      - 'football-data/research/betfair_public_sample_audit_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-public-sample-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  transient-public-sample-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile audit
+        run: |
+          python -m py_compile football-data/research/betfair_public_sample_audit_r1/audit_betfair_public_sample_r1.py
+          python -m json.tool football-data/research/betfair_public_sample_audit_r1/sample_manifest.json >/dev/null
+      - name: Download commit-pinned public samples transiently
+        run: |
+          rm -rf /tmp/betfair-public-r1
+          mkdir -p /tmp/betfair-public-r1
+          python - <<'PY'
+          import json, urllib.parse, urllib.request
+          from pathlib import Path
+          manifest=json.loads(Path('football-data/research/betfair_public_sample_audit_r1/sample_manifest.json').read_text(encoding='utf-8'))
+          source=manifest['source']
+          assert source['repository']=='marcosf63/bet'
+          commit=source['commit']
+          assert len(commit)==40 and all(ch in '0123456789abcdef' for ch in commit)
+          out=Path('/tmp/betfair-public-r1')
+          for path in manifest['paths']:
+              assert path.startswith('data/dados_historicos/por_evento_id/')
+              quoted='/'.join(urllib.parse.quote(part,safe='') for part in path.split('/'))
+              url=f'https://raw.githubusercontent.com/{source["repository"]}/{commit}/{quoted}'
+              request=urllib.request.Request(url,headers={'User-Agent':'football-research-readonly-r1'})
+              with urllib.request.urlopen(request,timeout=45) as response:
+                  assert response.status==200
+                  data=response.read()
+              assert b'"marketType":"MATCH_ODDS"' in data
+              assert b'"eventTypeId":"1"' in data
+              assert b'"The Draw"' in data
+              target=out/(Path(path).name+'.jsonl')
+              target.write_bytes(data)
+          assert len(list(out.glob('*.jsonl')))==manifest['audit_contract']['expected_files']
+          print({'downloaded':len(list(out.glob('*.jsonl'))),'raw_persisted_to_repo':False})
+          PY
+      - name: Run identity and cutoff coverage audit
+        run: |
+          rm -rf artifacts/research/betfair_public_sample_r1
+          mkdir -p artifacts/research/betfair_public_sample_r1
+          python football-data/research/betfair_public_sample_audit_r1/audit_betfair_public_sample_r1.py \
+            --manifest football-data/research/betfair_public_sample_audit_r1/sample_manifest.json \
+            --input-dir /tmp/betfair-public-r1 \
+            --out-json artifacts/research/betfair_public_sample_r1/status.json \
+            --out-csv /tmp/betfair-public-r1/per_market_audit.csv
+      - name: Verify evidence boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('artifacts/research/betfair_public_sample_r1/status.json').read_text(encoding='utf-8'))
+          assert result['status'] in {
+            'PASS_PUBLIC_SAMPLE_READY_FOR_PREREGISTERED_PILOT',
+            'PASS_PUBLIC_SAMPLE_AUDITED_COVERAGE_GATE_NOT_MET'
+          }
+          assert result['counts']['parsed_valid_markets']==18
+          assert result['counts']['failures']==0
+          ruling=result['ruling']
+          assert ruling['raw_files_persisted_or_uploaded'] is False
+          assert ruling['raw_data_redistributed'] is False
+          assert ruling['model_fit_performed'] is False
+          assert ruling['threshold_selected'] is False
+          assert ruling['settlement_labels_used_for_performance_claim'] is False
+          assert ruling['formal_weight']==0
+          assert ruling['formal_ev_allowed'] is False
+          print(json.dumps({'status':result['status'],'counts':result['counts'],'cutoff_coverage':result['cutoff_coverage'],'readiness_gates':result['readiness_gates']},ensure_ascii=False))
+          PY
+      - name: Confirm isolated diff and remove raw samples
+        run: |
+          python - <<'PY'
+          import subprocess
+          base='7e84703cdea577bae1f3e9600b6100e12c1e250a'
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          expected={
+            '.github/workflows/football-betfair-public-sample-audit-r1.yml',
+            'football-data/research/betfair_public_sample_audit_r1/README.md',
+            'football-data/research/betfair_public_sample_audit_r1/audit_betfair_public_sample_r1.py',
+            'football-data/research/betfair_public_sample_audit_r1/sample_manifest.json',
+          }
+          assert changed==expected,(changed,expected)
+          assert not any('dados_historicos' in path for path in changed)
+          print({'changed':sorted(changed),'raw_data_in_git':False,'formal_asset_changes':0})
+          PY
+          rm -rf /tmp/betfair-public-r1
+      - name: Upload summary only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-public-sample-r1-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_public_sample_r1/status.json
+          if-no-files-found: error
+          retention-days: 30
