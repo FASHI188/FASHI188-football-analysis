@@ -1,0 +1,141 @@
+name: Football Betfair Draw Trajectory Pilot R2 Execution Contract Preflight
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-draw-trajectory-pilot-prereg-r1
+    types: [opened]
+    paths:
+      - '.github/workflows/football-betfair-draw-trajectory-pilot-run-r2.yml'
+      - '.github/workflows/football-betfair-draw-trajectory-pilot-run-r2-preflight.yml'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json'
+      - 'football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight-no-external-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate execution contract without external data or labels
+        run: |
+          set -euo pipefail
+          rm -rf artifacts/research/betfair_draw_trajectory_pilot_run_r2_preflight
+          mkdir -p artifacts/research/betfair_draw_trajectory_pilot_run_r2_preflight
+          python -m py_compile football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/preregistration.json >/dev/null
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json >/dev/null
+          python -m json.tool football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json >/dev/null
+          python - <<'PY'
+          import hashlib
+          import importlib.util
+          import json
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          base='7db94eda443c4285343ffc9bc99de906190bf88a'
+          prereg_sha='033e345348f3f809dd0a5a9e5811e8608655dbeefef6e4f2725f945263dc969b'
+          auth_sha='7e4d298253f3752e88ce4ca38472287fdfae1306979344135269a4ae926e6f13'
+          nonce='57a9023352e24188bd2cbcd37bd896d8'
+          root=Path('football-data/research/betfair_draw_trajectory_pilot_r1')
+
+          def load(path):
+              return json.loads(Path(path).read_text(encoding='utf-8'))
+
+          def canonical_sha(value):
+              payload=json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
+              return hashlib.sha256(payload).hexdigest()
+
+          prereg=load(root/'preregistration.json')
+          authorization=load(root/'run_authorization_r2.json')
+          marker=load(root/'run_consumed_marker_r2.json')
+          assert canonical_sha(prereg)==prereg_sha
+          assert canonical_sha(authorization)==auth_sha
+          assert authorization['authorization_nonce']==nonce
+          assert authorization['preregistration_head']==base
+          assert authorization['preregistration_sha256']==prereg_sha
+          assert authorization['one_time_run_only'] is True
+          assert authorization['rerun_allowed'] is False
+          assert authorization['formal_weight']==0
+          assert marker['authorization_nonce']==nonce
+          assert marker['authorization_sha256']==auth_sha
+          assert marker['preregistration_sha256']==prereg_sha
+          assert marker['only_allowed_event']=='workflow_dispatch'
+          assert marker['only_allowed_run_number']==1
+          assert marker['only_allowed_run_attempt']==1
+          assert marker['rerun_allowed'] is False
+
+          runner_path=root/'run_pilot_once_r2.py'
+          spec=importlib.util.spec_from_file_location('run_pilot_once_r2_preflight',runner_path)
+          assert spec is not None and spec.loader is not None
+          module=importlib.util.module_from_spec(spec)
+          sys.modules[spec.name]=module
+          spec.loader.exec_module(module)
+          module.selftest()
+
+          workflow=Path('.github/workflows/football-betfair-draw-trajectory-pilot-run-r2.yml').read_text(encoding='utf-8')
+          assert re.search(r'(?m)^  workflow_dispatch:\s*$',workflow)
+          assert not re.search(r'(?m)^  push:\s*$',workflow)
+          assert not re.search(r'(?m)^  pull_request:\s*$',workflow)
+          assert 'test "$RUN_NUMBER" = 1' in workflow
+          assert 'test "$RUN_ATTEMPT" = 1' in workflow
+          assert nonce in workflow
+
+          expected={
+              '.github/workflows/football-betfair-draw-trajectory-pilot-run-r2.yml',
+              '.github/workflows/football-betfair-draw-trajectory-pilot-run-r2-preflight.yml',
+              'football-data/research/betfair_draw_trajectory_pilot_r1/run_authorization_r2.json',
+              'football-data/research/betfair_draw_trajectory_pilot_r1/run_consumed_marker_r2.json',
+              'football-data/research/betfair_draw_trajectory_pilot_r1/run_pilot_once_r2.py',
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          assert changed==expected,(changed,expected)
+
+          receipt={
+              'schema_version':'BETFAIR-DRAW-TRAJECTORY-PILOT-R2-EXECUTION-CONTRACT-PREFLIGHT',
+              'status':'PASS_R2_EXECUTION_CONTRACT_PREFLIGHT_NO_EXTERNAL_DATA',
+              'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+              'preregistration_head':base,
+              'preregistration_sha256':prereg_sha,
+              'authorization_sha256':auth_sha,
+              'authorization_nonce_sha256':hashlib.sha256(nonce.encode('utf-8')).hexdigest(),
+              'changed_files':sorted(expected),
+              'manual_dispatch_only':True,
+              'push_experiment_trigger_allowed':False,
+              'pull_request_experiment_trigger_allowed':False,
+              'external_data_accessed':False,
+              'winner_labels_read':0,
+              'model_fits':0,
+              'thresholds_selected':0,
+              'formal_weight':0,
+              'formal_model_changes':0,
+              'formal_data_changes':0,
+              'formal_config_changes':0,
+              'CURRENT_changes':0,
+              'experiment_run_started':False,
+          }
+          out=Path('artifacts/research/betfair_draw_trajectory_pilot_run_r2_preflight/receipt.json')
+          out.write_text(json.dumps(receipt,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False,sort_keys=True))
+          PY
+      - name: Upload zero-access execution-contract receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-draw-trajectory-pilot-run-r2-preflight-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_draw_trajectory_pilot_run_r2_preflight/receipt.json
+          if-no-files-found: error
+          retention-days: 30
