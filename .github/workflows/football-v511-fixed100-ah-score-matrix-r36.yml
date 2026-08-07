@@ -1,0 +1,161 @@
+name: Football V5.1 Fixed100 AH Score Matrix R36
+
+on:
+  push:
+    branches:
+      - research/v511-fixed100-ah-score-matrix-r36
+    paths:
+      - '.github/workflows/football-v511-fixed100-ah-score-matrix-r36.yml'
+      - 'football-data/config/v511_fixed100_ah_score_matrix_r36.json'
+      - 'football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py'
+  pull_request:
+    branches:
+      - research/v511-fixed100-score-matrix-r35
+    paths:
+      - '.github/workflows/football-v511-fixed100-ah-score-matrix-r36.yml'
+      - 'football-data/config/v511_fixed100_ah_score_matrix_r36.json'
+      - 'football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-fixed100-ah-score-matrix-r36-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixed100-ah-score-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen research inputs
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/validation/evaluate_v510_market_residual_1x2_r1.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_market_residual_r34.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_score_matrix_r35.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py
+          python -m json.tool football-data/config/v511_fixed100_ah_score_matrix_r36.json >/dev/null
+          test -f football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json
+      - name: Run deterministic AH settlement self-test
+        run: |
+          set -euo pipefail
+          python football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py --self-test
+      - name: Run fixed 100-match AH score-matrix exploration
+        run: |
+          set -euo pipefail
+          rm -rf r36-output
+          python football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py \
+            --config football-data/config/v511_fixed100_ah_score_matrix_r36.json \
+            --out-dir r36-output
+      - name: Verify result and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('r36-output')
+          result=json.loads((root/'status.json').read_text(encoding='utf-8'))
+          assert result['status'] in {
+              'STOP_INSUFFICIENT_SHALLOW_AH_SAMPLE_BEFORE_LABELS',
+              'PROMISING_AH_SCORE_MATRIX_SIGNAL_EXPLORATION_ONLY',
+              'NO_AH_SCORE_MATRIX_INCREMENT_FIXED100_EXPLORATION_ONLY',
+          }
+          assert result['source']['source_rows']==1000
+          assert result['source']['market_complete_rows']>=100
+          assert result['source']['external_collection']==0
+          assert result['source']['provider_requests']==0
+          hard=result['hard_limits']
+          assert hard['formal_weight']==0
+          assert hard['formal_promotion_allowed'] is False
+          assert hard['independent_confirmation_claim_allowed'] is False
+          assert hard['current_match_probability_allowed'] is False
+          assert hard['current_match_direction_allowed'] is False
+          assert hard['formal_unified_matrix_allowed'] is False
+          assert hard['formal_exact_score_allowed'] is False
+          assert hard['ev_allowed'] is False
+          assert hard['provider_requests']==0
+          assert hard['external_collection']==0
+          assert hard['CURRENT_mutation']==0
+          assert hard['formal_model_data_config_mutation']==0
+          assert hard['main_mutation']==0
+          if result['status'].startswith('STOP_'):
+              assert result['sample']['score_labels_parsed']==0
+              assert {p.name for p in root.iterdir()}=={'status.json','manifest.json'}
+          else:
+              sample=result['sample']
+              assert sample['rows']==100
+              assert sample['r34_overlap_rows']==0
+              assert sample['r35_overlap_rows']==0
+              assert sample['selection_uses_score_labels'] is False
+              assert sample['selection_frozen_before_score_label_parsing'] is True
+              assert sample['no_resampling_after_result'] is True
+              assert sample['max_abs_home_handicap']==0.5
+              architecture=result['architecture']
+              assert architecture['direct_total_goals_track'] is True
+              assert architecture['conditional_goal_difference_track'] is True
+              assert architecture['unified_score_lattice'] is True
+              assert architecture['shallow_ah_only_for_exact_tail_settlement'] is True
+              assert architecture['asian_handicap_fair_return_constraint'] is True
+              assert architecture['asian_quarter_line_split_settlement'] is True
+              assert architecture['poisson_used'] is False
+              assert architecture['manual_expected_goals_used'] is False
+              assert architecture['manual_draw_offset_used'] is False
+              config=json.loads(Path(
+                  'football-data/config/v511_fixed100_ah_score_matrix_r36.json'
+              ).read_text(encoding='utf-8'))
+              names={c['name'] for c in config['candidate_contract']['fixed_candidates']}
+              assert set(result['metrics'])=={'market'}|names
+              assert all(v['rows']==100 for v in result['metrics'].values())
+              audits=result['market_coordination']['audit']
+              assert set(audits)==names
+              assert all(v['all_sum_one'] for v in audits.values())
+              assert max(v['max_partition_residual'] for v in audits.values())<=1e-12
+              assert all(v['all_exact_ah_converged'] for v in audits.values())
+              assert max(v['max_exact_ah_home_ev_abs'] for v in audits.values())<=1e-10
+              assert max(v['max_exact_ah_away_ev_abs'] for v in audits.values())<=1e-10
+              assert {p.name for p in root.iterdir()}=={
+                  'status.json','candidate_summary.csv','fixed100_predictions.csv',
+                  'field_audit.csv','ah_line_audit.csv','manifest.json'
+              }
+          print(json.dumps({
+              'status':result['status'],
+              'field_availability':result.get('field_audit',{}).get('availability'),
+              'shallow_pool':result.get('field_audit',{}).get('shallow_ah_prelabel_pool'),
+              'sample':result.get('sample'),
+              'metrics':result.get('metrics'),
+              'promising_candidates':result.get('promising_candidates'),
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Confirm isolated research diff
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import subprocess
+          base='0081694f0f2694d9c2add3fe8af47f5b60a97cbf'
+          changed=set(subprocess.check_output(
+              ['git','diff','--name-only',f'{base}...HEAD'],text=True
+          ).splitlines())
+          expected={
+              '.github/workflows/football-v511-fixed100-ah-score-matrix-r36.yml',
+              'football-data/config/v511_fixed100_ah_score_matrix_r36.json',
+              'football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py',
+          }
+          assert changed==expected,(changed,expected)
+          print({'changed':sorted(changed),'formal_asset_changes':0})
+          PY
+      - name: Upload fixed100 AH score-matrix evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-v511-fixed100-ah-score-matrix-r36-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: r36-output/
+          if-no-files-found: error
+          retention-days: 30
