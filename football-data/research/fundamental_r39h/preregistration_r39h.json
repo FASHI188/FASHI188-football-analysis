@@ -1,0 +1,140 @@
+{
+  "schema_version": "r39h-lagged-fundamental-market-residual-v1",
+  "stage": "R39H_LAGGED_XG_MARKET_RESIDUAL_FIXED100",
+  "research_question": "Do strictly prior-match football fundamentals add stable draw-probability information after conditioning on the closing 1X2 market?",
+  "source_binding": {
+    "football_data": "official Football-Data historical CSVs, E0/D1/I1/SP1/F1",
+    "understat": "codytipton/understat-data game_stats.csv",
+    "mapping_run_id": 31323294729,
+    "mapping_artifact_id": 9040805105,
+    "mapping_artifact_sha256": "8f8a610a9b0c5ad9d6e94d4f5191a44bdf15863c42353ce3ad8c98db8a29ed59",
+    "matched_preholdout": 8858,
+    "history_eligible_preholdout": 8620,
+    "matched_2425_through_2024_09_29": 293,
+    "history_eligible_2425": 271,
+    "holdout_window_end": "2024-09-29",
+    "fixed100_seed": 51144,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "1c87503823f858e03c34ee42c2b3847460da466f59ee4ffa2dfac4628c6169eb",
+    "fixed100_labels_accessed_before_r39h_evaluation": 0
+  },
+  "target_and_offset": {
+    "target": "draw_vs_non_draw",
+    "market_probability": "de-vigged closing AvgCH/AvgCD/AvgCA",
+    "residual_form": "logit(Pdraw_model)=logit(Pdraw_market)+intercept+beta*X",
+    "market_draw_logit_coefficient": 1.0,
+    "threeway_mapping": "preserve closing market home:away non-draw ratio"
+  },
+  "strict_lag_contract": {
+    "current_match_understat_performance_excluded": true,
+    "future_understat_performance_excluded": true,
+    "history_filter": "Understat row date strictly earlier than target match Understat date",
+    "minimum_prior_matches_each_team": 10,
+    "rolling_windows": [5, 10],
+    "holdout_semantics": "walk-forward covariates may use completed matches earlier than each target date; coefficients and policy never update on holdout",
+    "audit_required": "max source date used must be strictly earlier than target date for every modeled row"
+  },
+  "market_context_baseline": {
+    "fixed_offset": "closing draw market logit",
+    "features": ["closing_abs_home_minus_away_probability", "closing_threeway_entropy"],
+    "l2_lambda": 1.0
+  },
+  "fundamental_features": {
+    "model_features_include_market_context": true,
+    "lagged_metrics": ["xG", "xGA", "npxG", "npxGA", "xpts", "npxGD", "ppda", "ppda_allowed", "deep", "deep_allowed"],
+    "per_metric_windows": [5, 10],
+    "per_metric_transform": "home rolling mean minus away rolling mean",
+    "additional_features": [
+      "home_xG5_plus_away_xG5",
+      "home_xGA5_plus_away_xGA5",
+      "home_xG10_plus_away_xG10",
+      "home_xGA10_plus_away_xGA10",
+      "home_npxGD5_std",
+      "away_npxGD5_std",
+      "home_minus_away_npxGD5_std",
+      "home_npxGD5_minus_npxGD10",
+      "away_npxGD5_minus_npxGD10",
+      "difference_of_npxGD_trends",
+      "absolute_npxGD10_strength_gap",
+      "npxGD10_closeness_times_total_xG10",
+      "home_rest_days_capped30",
+      "away_rest_days_capped30",
+      "absolute_rest_day_difference_capped30"
+    ],
+    "market_context_feature_count": 2,
+    "lagged_fundamental_feature_count": 35,
+    "total_model_feature_count": 37
+  },
+  "chronological_design": {
+    "eligible_preholdout_rows": 8620,
+    "order": "match_datetime_then_identity",
+    "fit_rows": 6034,
+    "validation_rows": 1293,
+    "policy_rows": 1293,
+    "all_2024_25_rows_forbidden_from_parameter_or_policy_selection": true
+  },
+  "model": {
+    "family": "deterministic L2 logistic with fixed market-logit offset",
+    "class_weighting": "none",
+    "standardization": "fit partition only; offset unstandardized",
+    "fundamental_l2_candidates": [1.0, 10.0, 100.0],
+    "selection_order": ["lowest validation HDA LogLoss", "lowest validation binary Draw LogLoss", "lower L2"],
+    "validation_gate_all_required": [
+      "fundamental HDA LogLoss strictly better than raw closing market",
+      "fundamental binary Draw LogLoss strictly better than raw closing market",
+      "fundamental HDA LogLoss strictly better than market-context residual baseline",
+      "fundamental binary Draw LogLoss strictly better than market-context residual baseline",
+      "fundamental Draw AUC strictly better than market-context residual baseline",
+      "fundamental per-division HDA LogLoss wins vs market-context residual baseline at least 3 of 5"
+    ],
+    "if_validation_gate_fails": "STOP_R39H_BEFORE_HOLDOUT_LABEL_ACCESS_FUNDAMENTAL_RESIDUAL_NO_INCREMENT"
+  },
+  "policy": {
+    "decision_score": "Pdraw_minus_max_Phome_Paway",
+    "coverage_candidates": [0.05, 0.10, 0.15, 0.20],
+    "threshold_source": "policy partition only",
+    "eligible_requires_accuracy_strictly_better_than_raw_market": true,
+    "draw_precision_over_policy_prevalence_min": 0.05,
+    "draw_f1_min": 0.15,
+    "selection_order": ["highest accuracy", "highest draw F1", "highest draw precision", "lower coverage"],
+    "if_no_lane": "STOP_R39H_BEFORE_HOLDOUT_LABEL_ACCESS_NO_POLICY_LANE"
+  },
+  "holdout": {
+    "fixed100": true,
+    "labels_read_only_after_model_and_policy_freeze": true,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 511440,
+    "gate": {
+      "decision_accuracy_strictly_better_than_raw_market": true,
+      "predicted_draw_min": 5,
+      "predicted_draw_max": 25,
+      "draw_precision_min": 0.35,
+      "draw_recall_min": 0.10,
+      "draw_f1_min": 0.15,
+      "HDA_LogLoss_nonworse_than_raw_market": true,
+      "HDA_LogLoss_strictly_better_than_market_context_baseline": true,
+      "binary_Draw_LogLoss_strictly_better_than_raw_market": true,
+      "Draw_AUC_strictly_better_than_market_context_baseline": true
+    },
+    "pass_status": "PASS_R39H_LAGGED_FUNDAMENTAL_RESIDUAL_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39H_LAGGED_FUNDAMENTAL_RESIDUAL_INCREMENT_FIXED100"
+  },
+  "label_order_contract": {
+    "training_labels_only_pre_2024_25": true,
+    "holdout_labels_before_model_and_policy_freeze": 0,
+    "holdout_labels_after_freeze_if_all_preholdout_gates_pass": 100,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
