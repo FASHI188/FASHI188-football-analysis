@@ -1,0 +1,110 @@
+{
+  "schema_version": "r39d-learned-draw-boundary-v1",
+  "stage": "R39D_TRAINING_ONLY_DRAW_BOUNDARY_FIXED100",
+  "research_question": "Can the R39C trajectory-residual draw ranking be converted into genuinely better Top-1 H/D/A decisions by a decision boundary learned only on earlier chronological data and tested once on a new untouched fixed100?",
+  "identity_binding": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "r39c_consumed_seed": 51139,
+    "r39c_consumed_identity_set_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "r39d_seed": 51140,
+    "r39d_rows": 100,
+    "r39d_identity_set_sha256": "df5871889f7dcf858d9adb7fa6d92c6e9ca4efa85074bddac3f5e82038ff6935",
+    "training_eligible_rows": 49511,
+    "holdout_eligible_rows": 10734,
+    "r39c_r39d_overlap_rows": 0
+  },
+  "features": [
+    "logit_draw_t1",
+    "draw_move_t24_to_t6",
+    "draw_move_t6_to_t1",
+    "draw_acceleration_per_hour",
+    "draw_book_std_t24",
+    "draw_book_std_t6",
+    "draw_book_std_t1",
+    "draw_book_std_change_t24_to_t1",
+    "home_away_gap_t24",
+    "home_away_gap_t1",
+    "home_away_gap_change",
+    "entropy_t24",
+    "entropy_t1",
+    "entropy_change",
+    "log_common_bookmaker_count"
+  ],
+  "probability_model": {
+    "target": "draw_vs_non_draw",
+    "model": "deterministic_l2_logistic_newton",
+    "l2_lambda": 1.0,
+    "class_weighting": "none",
+    "standardization": "fit_partition_only",
+    "max_iterations": 50,
+    "tolerance": 1e-8,
+    "threeway_mapping": "preserve_T1_market_home_to_away_non_draw_ratio",
+    "holdout_probability_model_refit_after_policy_selection": false
+  },
+  "chronological_policy_design": {
+    "ordering": "match_datetime_then_identity",
+    "fit_fraction": 0.8,
+    "fit_partition": "earliest_80_percent_of_pre_holdout_eligible_rows",
+    "policy_partition": "latest_20_percent_of_pre_holdout_eligible_rows",
+    "r39c_holdout_rows_allowed_in_fit_or_policy": false,
+    "r39d_holdout_rows_allowed_in_fit_or_policy": false
+  },
+  "decision_score": "trajectory_draw_probability_minus_max_trajectory_home_probability_trajectory_away_probability",
+  "candidate_target_coverages": [0.05, 0.1, 0.15, 0.2],
+  "candidate_threshold_rule": "for each target coverage, threshold is the deterministic policy-partition score cutoff selecting exactly ceil(coverage*N) highest decision scores with identity-order tie break",
+  "policy_selection": {
+    "eligible_lane_requirements": {
+      "accuracy_strictly_better_than_T1_market_argmax": true,
+      "draw_f1_strictly_positive": true,
+      "draw_precision_at_least_policy_draw_prevalence_plus": 0.05
+    },
+    "selection_order": [
+      "highest_full_1x2_accuracy",
+      "highest_draw_f1",
+      "highest_draw_precision",
+      "lowest_target_coverage"
+    ],
+    "if_no_eligible_lane": "STOP_R39D_BEFORE_HOLDOUT_LABEL_ACCESS_NO_TRAINING_POLICY_LANE"
+  },
+  "holdout_evaluation": {
+    "baseline": "de_vigged_multi_book_T1_HDA_consensus_argmax",
+    "probability_candidate": "frozen_fit_partition_trajectory_residual_logistic",
+    "decision_candidate": "frozen_policy_selected_draw_override_boundary",
+    "metrics": ["accuracy", "log_loss", "brier", "rps", "draw_auc", "draw_precision", "draw_recall", "draw_f1", "predicted_draw_count"],
+    "paired_bootstrap": {"samples": 5000, "seed": 511400, "quantiles": [0.05, 0.5, 0.95]},
+    "exploratory_pass_gate_all_required": {
+      "decision_accuracy_strictly_better_than_market": true,
+      "decision_draw_precision_min": 0.35,
+      "decision_draw_recall_min": 0.1,
+      "decision_draw_f1_min": 0.15,
+      "decision_predicted_draw_count_min": 5,
+      "decision_predicted_draw_count_max": 25,
+      "trajectory_log_loss_nonworse_than_market": true,
+      "trajectory_brier_nonworse_than_market": true,
+      "trajectory_rps_nonworse_than_market": true,
+      "trajectory_draw_auc_strictly_better_than_market": true
+    },
+    "pass_semantics": "exploratory_challenger_only_requires_new_independent_confirmation",
+    "failure_semantics": "close_this_training_only_draw_boundary_route_for_the_current_feature_family"
+  },
+  "label_order_contract": {
+    "training_labels_may_be_read_only_for_rows_strictly_before_holdout_start": true,
+    "all_holdout_period_labels_forbidden_before_model_and_policy_freeze": true,
+    "r39c_fixed100_labels_must_not_be_read": true,
+    "r39d_fixed100_labels_read_exactly_once_after_freeze": true,
+    "model_parameter_and_policy_threshold_sha_must_be_persisted_before_r39d_label_access": true,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0,
+    "promotion_authorized": false
+  }
+}

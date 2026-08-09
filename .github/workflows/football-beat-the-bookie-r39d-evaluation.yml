@@ -1,0 +1,152 @@
+name: Football Beat The Bookie R39D Evaluation
+
+on:
+  push:
+    branches: [research/beat-the-bookie-r39d-draw-boundary]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39d-evaluation.yml'
+  pull_request:
+    branches: [research/beat-the-bookie-timeseries-r39b]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39d-evaluation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-beat-the-bookie-r39d-evaluation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fixed100-evaluation:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+
+      - name: Verify exact preregistration before external or label access
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_learned_draw_boundary_r39d.py
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39d.json >/dev/null
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/preregistration_r39d.json')
+          r=json.loads(p.read_text())
+          assert r['identity_binding']['r39d_identity_set_sha256']=='df5871889f7dcf858d9adb7fa6d92c6e9ca4efa85074bddac3f5e82038ff6935'
+          assert r['identity_binding']['r39c_consumed_identity_set_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert r['identity_binding']['r39c_r39d_overlap_rows']==0
+          assert r['chronological_policy_design']['fit_fraction']==0.8
+          assert r['candidate_target_coverages']==[0.05,0.1,0.15,0.2]
+          assert r['label_order_contract']['all_holdout_period_labels_forbidden_before_model_and_policy_freeze'] is True
+          assert r['label_order_contract']['r39c_fixed100_labels_must_not_be_read'] is True
+          assert r['label_order_contract']['r39d_fixed100_labels_read_exactly_once_after_freeze'] is True
+          assert r['label_order_contract']['no_post_holdout_tuning'] is True
+          assert r['hard_limits']['formal_weight']==0
+          print({'prereg_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'contract':'PASS'})
+          PY
+          python football-data/research/beat_the_bookie_r39/evaluate_learned_draw_boundary_r39d.py --self-test
+
+      - name: Download independent Beat The Bookie source
+        run: |
+          set -euo pipefail
+          rm -rf r39d-original r39d-sanitized r39d-eval-output r39d-source.zip
+          mkdir -p r39d-original r39d-sanitized
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
+            -o r39d-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39d-source.zip')
+          wanted=('odds_series.csv.gz','odds_series_b.csv.gz')
+          names=set(z.namelist()); assert set(wanted)<=names
+          for n in wanted:z.extract(n,'r39d-original')
+          print({'extracted':wanted})
+          PY
+          rm r39d-source.zip
+
+      - name: Build score-free feature copies
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39d-original/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39d-sanitized/${base}_no_scores.csv.gz"
+          done
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+            p=f'r39d-sanitized/{base}_no_scores.csv.gz'
+            with gzip.open(p,'rt',encoding='utf-8-sig',newline='') as f:h=next(csv.reader(f))
+            assert h[:3]==['match_id','match_date','match_time']
+            assert 'score_home' not in h and 'score_away' not in h
+            assert len(h)==32*72*3+3
+          print('PASS_SCORE_FREE_FEATURE_INPUT')
+          PY
+
+      - name: Execute frozen model policy and unique R39D fixed100
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_learned_draw_boundary_r39d.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39d.json \
+            --sanitized-dir r39d-sanitized \
+            --original-dir r39d-original \
+            --out-dir r39d-eval-output
+
+      - name: Verify label order result and formal boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('r39d-eval-output/r39d_result.json'); assert p.exists()
+          r=json.loads(p.read_text())
+          allowed={
+            'STOP_R39D_BEFORE_HOLDOUT_LABEL_ACCESS_NO_TRAINING_POLICY_LANE',
+            'PASS_R39D_LEARNED_DRAW_BOUNDARY_EXPLORATORY_REQUIRES_NEW_CONFIRMATION',
+            'NO_R39D_LEARNED_DRAW_BOUNDARY_INCREMENT_FIXED100'
+          }
+          assert r['status'] in allowed
+          assert r['holdout_period_labels_accessed_before_freeze']==0
+          assert r['r39c_labels_accessed']==0
+          assert r['r39d_identity_set_sha256']=='df5871889f7dcf858d9adb7fa6d92c6e9ca4efa85074bddac3f5e82038ff6935'
+          if r['status'].startswith('STOP_R39D_BEFORE'):
+              assert r['r39d_holdout_labels_accessed']==0
+              assert not Path('r39d-eval-output/model_policy_freeze_receipt_r39d.json').exists()
+          else:
+              assert r['r39d_holdout_labels_accessed']==100
+              f=Path('r39d-eval-output/model_policy_freeze_receipt_r39d.json'); assert f.exists() and f.stat().st_size>0
+              fr=json.loads(f.read_text())
+              assert fr['holdout_period_labels_accessed_before_freeze']==0
+              assert fr['r39c_labels_accessed']==0
+              assert fr['r39d_identity_set_sha256']==r['r39d_identity_set_sha256']
+          h=r['hard_limits']
+          assert h['formal_weight']==0 and h['CURRENT_mutation']==0 and h['main_mutation']==0
+          assert h['formal_model_mutation']==0 and h['formal_data_mutation']==0 and h['config_mutation']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete raw source before artifact upload
+        if: always()
+        run: rm -rf r39d-original r39d-sanitized
+
+      - name: Upload R39D aggregate evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39d-evaluation-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: r39d-eval-output/
+          if-no-files-found: error
+          retention-days: 30
