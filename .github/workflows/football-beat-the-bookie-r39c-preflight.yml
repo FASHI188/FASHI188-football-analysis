@@ -1,0 +1,108 @@
+name: Football Beat The Bookie R39C Preflight
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39c-preflight.yml'
+      - 'football-data/research/beat_the_bookie_r39/preregistration_r39c.json'
+      - 'football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-beat-the-bookie-r39c-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+
+      - name: Verify frozen preregistration
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39c.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/preregistration_r39c.json')
+          r=json.loads(p.read_text())
+          assert r['status']=='PRE_REGISTERED_BEFORE_LABEL_ACCESS'
+          assert r['identity_binding']['identity_set_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert r['identity_binding']['locked_test_rows']==100
+          assert r['identity_binding']['training_eligible_rows']==49511
+          assert r['identity_binding']['holdout_eligible_rows']==10734
+          assert r['evaluation']['paired_bootstrap']=={'samples':5000,'seed':511390}
+          assert r['hard_limits']['formal_weight']==0
+          assert r['hard_limits']['CURRENT_mutation']==0
+          assert r['hard_limits']['main_mutation']==0
+          print('PASS_R39C_PREREG_BINDING')
+          PY
+
+      - name: Run synthetic math preflight only
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util
+          import math
+          import numpy as np
+          from pathlib import Path
+          path=Path('football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py')
+          spec=importlib.util.spec_from_file_location('r39c',path)
+          m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+
+          q=m.devig('2.0','3.5','4.0')
+          assert abs(float(q.sum())-1.0)<1e-12 and all(q>0)
+          p=m.threeway([0.50,0.25,0.25],0.30)
+          assert abs(float(p.sum())-1.0)<1e-12
+          assert abs(float(p[1])-0.30)<1e-12
+          assert abs(float(p[0]/p[2])-2.0)<1e-12
+
+          X=np.array([[-2.0],[-1.0],[-0.5],[0.5],[1.0],[2.0]],dtype=float)
+          y=np.array([0,0,0,1,1,1],dtype=float)
+          beta,diag=m.fit_logistic(X,y,l2=1.0,max_iter=50,tol=1e-8)
+          preds=m.predict_logistic(X,beta)
+          assert np.all(np.isfinite(beta))
+          assert np.all((preds>0)&(preds<1))
+          assert preds[-1]>preds[0]
+          assert diag['iterations']<=50
+
+          actual=[0,1,2]
+          probs=[np.array([.7,.2,.1]),np.array([.2,.6,.2]),np.array([.1,.2,.7])]
+          met=m.metrics(probs,actual)
+          assert met['rows']==3 and met['hits']==3 and abs(met['accuracy']-1.0)<1e-12
+          boot=m.bootstrap_accuracy(probs,probs,actual,100,123)
+          assert boot['p05']==0 and boot['p50']==0 and boot['p95']==0
+          print({'synthetic_preflight':'PASS','numpy':np.__version__,'fit_diag':diag})
+          PY
+
+      - name: Assert zero external and label access
+        run: |
+          set -euo pipefail
+          test ! -e r39c-output
+          echo '{"status":"PASS_R39C_EXECUTION_PREFLIGHT_NO_LABEL_ACCESS","external_dataset_downloaded":false,"training_labels_read":0,"holdout_labels_read":0,"formal_weight":0,"CURRENT_mutation":0,"main_mutation":0}' > r39c-preflight.json
+
+      - name: Upload zero-label preflight evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39c-preflight-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39c-preflight.json
+          if-no-files-found: error
+          retention-days: 30
