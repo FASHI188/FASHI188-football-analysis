@@ -41,6 +41,7 @@ jobs:
           assert r['understat']['performance_values_read_in_this_stage'] is False
           assert r['understat']['outcome_values_read_in_this_stage'] is False
           assert r['identity_lock']['labels_read']==0 and r['identity_lock']['seed']==51144
+          assert r['identity_lock']['holdout_window_end']=='2024-09-29'
           assert r['hard_limits']['formal_weight']==0
           print('PASS_R39H_IDENTITY_MAP_CONTRACT')
           PY
@@ -55,7 +56,7 @@ jobs:
           test "$header" = 'id,league,season,club_name,home_away,xG,xGA,npxG,npxGA,ppda,ppda_allowed,deep,deep_allowed,scored,missed,xpts,result,date,wins,draws,loses,pts,npxGD'
           unzip -p understat.zip game_stats.csv | cut -d',' -f1-5,18 > r39h-map/understat_identity.csv
           rm -f understat.zip
-      - name: Download Football-Data and physically keep identity plus closing 1X2 only
+      - name: Download Football-Data and persist only identity plus closing 1X2
         run: |
           set -euo pipefail
           for season in 1920 2021 2122 2223 2324 2425; do
@@ -64,16 +65,17 @@ jobs:
               raw="/tmp/${season}_${div}.csv"
               out="r39h-fd/${season}_${div}.csv"
               curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$url" -o "$raw"
-              idx=$(python - "$raw" <<'PY'
+              python - "$raw" "$out" "$season" <<'PY'
           import csv,sys
-          h=next(csv.reader(open(sys.argv[1],encoding='utf-8-sig',errors='replace')))
-          want=['Div','Date','Time','HomeTeam','AwayTeam','AvgCH','AvgCD','AvgCA']
-          missing=[x for x in want if x not in h]
-          if missing: raise SystemExit('missing '+repr(missing))
-          print(','.join(str(h.index(x)+1) for x in want))
+          src,dst,season=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgCH','AvgCD','AvgCA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f, open(dst,'w',encoding='utf-8',newline='') as g:
+              r=csv.DictReader(f); missing=[c for c in keep if c not in (r.fieldnames or [])]
+              if missing: raise SystemExit('missing '+repr(missing))
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in r:
+                  w.writerow({'Season':season,**{c:row.get(c,'') for c in keep}})
           PY
-              )
-              cut -d',' -f"$idx" "$raw" | awk -v s="$season" 'NR==1{print "Season,"$0;next}{print s","$0}' > "$out"
               rm -f "$raw"
             done
           done
