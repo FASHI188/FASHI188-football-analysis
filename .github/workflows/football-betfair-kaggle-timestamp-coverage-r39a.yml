@@ -1,0 +1,162 @@
+name: Football Betfair Kaggle Timestamp Coverage R39A
+
+on:
+  push:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-betfair-kaggle-timestamp-coverage-r39a.yml'
+      - 'football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json'
+      - 'football-data/research/betfair_timestamp_r39/diagnose_timestamp_coverage_r39a.py'
+  pull_request:
+    branches:
+      - research/v511-fixed100-market-reversion-r38
+    paths:
+      - '.github/workflows/football-betfair-kaggle-timestamp-coverage-r39a.yml'
+      - 'football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json'
+      - 'football-data/research/betfair_timestamp_r39/diagnose_timestamp_coverage_r39a.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-betfair-kaggle-timestamp-coverage-r39a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage-no-labels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen R39A registration and code
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json >/dev/null
+          python -m py_compile football-data/research/betfair_timestamp_r39/diagnose_timestamp_coverage_r39a.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          reg = json.loads(Path('football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json').read_text())
+          assert reg['no_label_contract']['winner_label_access_allowed'] is False
+          assert reg['no_label_contract']['score_result_access_allowed'] is False
+          assert reg['sample_gate']['minimum_for_next_stage'] == 100
+          assert reg['hard_limits']['formal_weight'] == 0
+          assert reg['hard_limits']['CURRENT_mutation'] == 0
+          assert reg['hard_limits']['main_mutation'] == 0
+          print('PASS_R39A_REGISTRATION')
+          PY
+
+      - name: Download independent public Betfair dataset
+        id: download
+        shell: bash
+        run: |
+          set +e
+          rm -rf r39a-source r39a-source.zip
+          mkdir -p r39a-source
+          URL='https://www.kaggle.com/api/v1/datasets/download/zygmunt/betfair-sports'
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            "$URL" -o r39a-source.zip
+          CURL_RC=$?
+          if [ "$CURL_RC" -ne 0 ]; then
+            echo "download_ok=false" >> "$GITHUB_OUTPUT"
+            echo "curl_rc=$CURL_RC" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path('r39a-source.zip')
+          if not zipfile.is_zipfile(path):
+              raise SystemExit(2)
+          with zipfile.ZipFile(path) as zf:
+              zf.extractall('r39a-source')
+              print({'files': zf.namelist()})
+          PY
+          UNZIP_RC=$?
+          if [ "$UNZIP_RC" -ne 0 ]; then
+            echo "download_ok=false" >> "$GITHUB_OUTPUT"
+            echo "curl_rc=0" >> "$GITHUB_OUTPUT"
+            echo "extract_rc=$UNZIP_RC" >> "$GITHUB_OUTPUT"
+            rm -rf r39a-source/*
+            exit 0
+          fi
+          echo "download_ok=true" >> "$GITHUB_OUTPUT"
+          echo "curl_rc=0" >> "$GITHUB_OUTPUT"
+          ls -lah r39a-source
+
+      - name: Run zero-label timestamp coverage diagnostic
+        run: |
+          set -euo pipefail
+          rm -rf r39a-output
+          python football-data/research/betfair_timestamp_r39/diagnose_timestamp_coverage_r39a.py \
+            --registration football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json \
+            --source-dir r39a-source \
+            --out-dir r39a-output
+
+      - name: Verify no-label and formal boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('r39a-output/status.json').read_text())
+          allowed = {
+              'STOP_SOURCE_DOWNLOAD_OR_EXTRACTION_UNAVAILABLE',
+              'STOP_R39A_TIMESTAMP_COVERAGE_BELOW_100_NO_LABELS',
+              'PASS_R39A_PROXY_TIMESTAMP_COVERAGE_AT_LEAST_100_NO_LABELS_STRICT_UNAVAILABLE',
+              'PASS_R39A_STRICT_TIMESTAMP_COVERAGE_AT_LEAST_100_NO_LABELS',
+          }
+          assert result['status'] in allowed, result['status']
+          audit = result['no_label_audit']
+          assert audit['winner_label_field_values_accessed'] == 0
+          assert audit['score_result_values_accessed'] == 0
+          assert audit['candidate_effect_metrics_computed'] == 0
+          hard = result['hard_limits']
+          assert hard['formal_weight'] == 0
+          assert hard['formal_promotion_allowed'] is False
+          assert hard['current_match_use_allowed'] is False
+          assert hard['ev_allowed'] is False
+          assert hard['formal_model_mutation'] == 0
+          assert hard['formal_data_mutation'] == 0
+          assert hard['formal_config_mutation'] == 0
+          assert hard['CURRENT_mutation'] == 0
+          assert hard['main_mutation'] == 0
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Confirm isolated research diff
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import subprocess
+          base = '421b27b6b70809c11a706386570bdf0eb32772ab'
+          changed = set(subprocess.check_output(
+              ['git', 'diff', '--name-only', f'{base}...HEAD'], text=True
+          ).splitlines())
+          expected = {
+              '.github/workflows/football-betfair-kaggle-timestamp-coverage-r39a.yml',
+              'football-data/research/betfair_timestamp_r39/coverage_registration_r39a.json',
+              'football-data/research/betfair_timestamp_r39/diagnose_timestamp_coverage_r39a.py',
+          }
+          assert changed == expected, (changed, expected)
+          print({'changed': sorted(changed), 'formal_asset_changes': 0})
+          PY
+
+      - name: Upload R39A zero-label evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-kaggle-timestamp-coverage-r39a-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: r39a-output/
+          if-no-files-found: error
+          retention-days: 30
