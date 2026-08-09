@@ -1,0 +1,89 @@
+name: Football Beat The Bookie Identity Lock R39B
+on:
+  push:
+    branches: [research/beat-the-bookie-timeseries-r39b]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-identity-lock-r39b.yml'
+      - 'football-data/research/beat_the_bookie_r39/identity_lock_registration_r39b.json'
+      - 'football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39b.py'
+  pull_request:
+    branches: [research/betfair-kaggle-timestamp-coverage-r39a]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-identity-lock-r39b.yml'
+      - 'football-data/research/beat_the_bookie_r39/identity_lock_registration_r39b.json'
+      - 'football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39b.py'
+permissions: {contents: read}
+concurrency:
+  group: football-beat-the-bookie-identity-lock-r39b-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  identity-lock-no-labels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with: {ref: "${{ github.event.pull_request.head.sha || github.sha }}", fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - name: Verify contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39b.py
+          python -m json.tool football-data/research/beat_the_bookie_r39/identity_lock_registration_r39b.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/identity_lock_registration_r39b.json').read_text())
+          assert r['holdout']['test_rows']==100
+          assert r['holdout']['window_days_from_latest_match_datetime']==60
+          assert r['next_stage']['model_preregistration_required_before_any_score_access'] is True
+          assert r['hard_limits']['formal_weight']==0
+          PY
+      - name: Download only odds-series source files
+        run: |
+          set -euo pipefail
+          rm -rf r39b-source r39b-sanitized r39b-source.zip
+          mkdir -p r39b-source r39b-sanitized
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39b-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39b-source.zip')
+          for n in ('odds_series.csv.gz','odds_series_b.csv.gz'): z.extract(n,'r39b-source')
+          PY
+      - name: Remove score columns before Python
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39b-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39b-sanitized/${base}_no_scores.csv.gz"
+          done
+          rm -rf r39b-source r39b-source.zip
+      - name: Freeze fixed100 identities without labels
+        run: |
+          set -euo pipefail
+          rm -rf r39b-lock-output
+          python football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39b.py \
+            --registration football-data/research/beat_the_bookie_r39/identity_lock_registration_r39b.json \
+            --source-dir r39b-sanitized --out-dir r39b-lock-output
+      - name: Verify lock
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          r=json.loads(Path('r39b-lock-output/identity_lock_receipt.json').read_text())
+          assert r['status']=='LOCKED_R39B_FIXED100_NO_LABELS'
+          assert r['locked_test_rows']==100
+          assert r['training_eligible_rows']>100
+          assert r['holdout_eligible_rows']>=100
+          n=r['no_label_audit']; assert n['score_values_accessed']==0 and n['result_values_accessed']==0 and n['matches_files_opened']==0 and n['prediction_metrics_computed']==0
+          with Path('r39b-lock-output/locked100.csv').open() as f: assert sum(1 for _ in csv.reader(f))-1==100
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload identity lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-identity-lock-r39b-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: r39b-lock-output/
+          if-no-files-found: error
+          retention-days: 30
