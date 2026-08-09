@@ -1,0 +1,173 @@
+{
+  "schema_version": "r39f-provider-calibration-leadlag-v1",
+  "stage": "R39F_PROVIDER_CALIBRATION_LEADLAG_FIXED100",
+  "research_question": "Does provider-slot-specific draw calibration plus cross-provider lead/lag propagation preserve incremental information that is lost when bookmaker paths are averaged before modeling?",
+  "source_and_audit_binding": {
+    "dataset": "austro/beat-the-bookie-worldwide-football-dataset",
+    "provider_identity_semantics": "anonymous stable provider slots b1..b32; no claim of brand-name identity",
+    "selected_coverage_lane": "STRICT_COMMON5_ALL72",
+    "provider_audit_run_id": 31321257131,
+    "provider_audit_artifact_id": 9040263489,
+    "provider_audit_artifact_sha256": "737596cae1aa1dd135eea341c18ba4aa5301acae874178011e1e6731eb14d754",
+    "provider_audit_status": "PASS_R39F_PROVIDER_SLOT_AUDIT_NO_LABELS",
+    "strict_lane_total_rows": 27199,
+    "strict_lane_training_rows": 22604,
+    "strict_lane_holdout_rows": 4595,
+    "slots_training_ge1000": 27,
+    "slots_training_ge3000": 26,
+    "audit_label_access": 0
+  },
+  "identity_binding": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "r39c_seed": 51139,
+    "r39c_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "r39d_seed": 51140,
+    "r39d_sha256": "df5871889f7dcf858d9adb7fa6d92c6e9ca4efa85074bddac3f5e82038ff6935",
+    "r39f_blind_seed": 51141,
+    "r39f_blind_rows": 100,
+    "r39f_blind_sha256": "1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5",
+    "strict_lane_training_rows": 22604,
+    "blind_labels_previously_accessed": 0
+  },
+  "time_horizon": {
+    "decision_freeze": "T-1h",
+    "used_hourly_indices": "0 through 70 inclusive",
+    "T1_index": 70,
+    "T0_index_71_excluded_from_all_R39F_features": true,
+    "reason": "avoid giving R39F information later than the T-1h market benchmark"
+  },
+  "chronological_design": {
+    "representation_fraction": 0.50,
+    "fit_fraction": 0.70,
+    "validation_fraction": 0.15,
+    "policy_fraction": 0.15,
+    "order": "match_datetime_then_identity",
+    "representation_partition": "earliest 50 percent of strict-lane pre-holdout rows; provider calibration and unlabeled lead scores only",
+    "model_fit_partition": "earliest 70 percent of strict-lane pre-holdout rows",
+    "validation_partition": "next 15 percent",
+    "policy_partition": "latest 15 percent",
+    "all_holdout_period_rows_forbidden_before_final_freeze": true
+  },
+  "provider_calibration": {
+    "target": "draw_vs_non_draw",
+    "input": "provider-specific T-1h de-vigged draw logit",
+    "model": "per-provider deterministic logistic intercept+slope",
+    "l2_lambda": 1.0,
+    "minimum_representation_rows_per_provider": 500,
+    "minimum_active_provider_slots": 20,
+    "provider_selection_uses_availability_count_only": true,
+    "class_weighting": "none"
+  },
+  "lead_lag": {
+    "labels_used": false,
+    "source_partition": "representation_partition_only",
+    "signal": "provider-specific de-vigged draw-logit hourly change through T-1h",
+    "lead_correlations": [1, 2, 3],
+    "definition": "for each provider slot, Pearson correlation between its current hourly draw-logit move and the mean move of other active providers 1/2/3 hours later",
+    "lead_score": "max(0, mean(corr_lag1,corr_lag2,corr_lag3))",
+    "match_weight": "normalize(lead_score + 0.01) across active common providers",
+    "top_leaders_per_match": 3
+  },
+  "micro_features": {
+    "count": 26,
+    "features": [
+      "ordinary_calibrated_consensus_draw_logit_T1",
+      "leader_weighted_calibrated_draw_logit_T1",
+      "leader_minus_ordinary_draw_probability_T1",
+      "ordinary_draw_net_move_start_to_T1",
+      "leader_draw_net_move_start_to_T1",
+      "ordinary_draw_move_T24_to_T1",
+      "leader_draw_move_T24_to_T1",
+      "ordinary_draw_move_T6_to_T1",
+      "leader_draw_move_T6_to_T1",
+      "top3_leaders_minus_rest_draw_T24",
+      "top3_leaders_minus_rest_draw_T6",
+      "top3_leaders_minus_rest_draw_T1",
+      "leader_rest_gap_change_T24_to_T1",
+      "provider_draw_dispersion_T24",
+      "provider_draw_dispersion_T6",
+      "provider_draw_dispersion_T1",
+      "provider_draw_dispersion_change_T24_to_T1",
+      "provider_direction_agreement_with_leader_T24_to_T1",
+      "provider_direction_agreement_with_leader_T6_to_T1",
+      "within_match_propagation_corr_lag1",
+      "within_match_propagation_corr_lag2",
+      "within_match_propagation_corr_lag3",
+      "leader_consensus_reversal_rate",
+      "log1p_active_provider_count",
+      "T1_market_home_away_probability_gap",
+      "T1_market_threeway_entropy"
+    ]
+  },
+  "benchmark15": {
+    "representation": "prior T-24h/T-6h/T-1h 15-feature draw family recomputed on the same strict-lane rows",
+    "l2_lambda": 1.0,
+    "fit_partition": "same earliest 70 percent used for the R39F second-stage model"
+  },
+  "micro_model": {
+    "target": "draw_vs_non_draw",
+    "model": "deterministic_L2_logistic_Newton",
+    "l2_candidates": [1.0, 10.0, 100.0],
+    "standardization": "fit_partition_only",
+    "class_weighting": "none",
+    "threeway_mapping": "preserve T-1h market home_to_away non-draw ratio",
+    "selection_order": ["lowest_validation_HDA_LogLoss", "lowest_validation_binary_draw_LogLoss", "lowest_L2"],
+    "validation_gate_all_required": [
+      "selected_micro_HDA_LogLoss_strictly_better_than_T1_market",
+      "selected_micro_HDA_LogLoss_strictly_better_than_benchmark15",
+      "selected_micro_Draw_AUC_strictly_better_than_benchmark15",
+      "selected_micro_binary_Draw_LogLoss_strictly_better_than_benchmark15"
+    ],
+    "if_validation_gate_fails": "STOP_R39F_BEFORE_BLIND_LABEL_ACCESS_PROVIDER_MICROSTRUCTURE_NO_INCREMENT"
+  },
+  "policy": {
+    "decision_score": "Pdraw_minus_max_Phome_Paway",
+    "coverages": [0.05, 0.10, 0.15, 0.20],
+    "threshold_source": "policy_partition_only",
+    "precision_over_prevalence_min": 0.05,
+    "draw_f1_min": 0.15,
+    "eligible_requires_accuracy_strictly_better_than_market": true,
+    "selection_order": ["highest_accuracy", "highest_draw_F1", "highest_draw_precision", "lowest_coverage"],
+    "if_no_lane": "STOP_R39F_BEFORE_BLIND_LABEL_ACCESS_NO_POLICY_LANE"
+  },
+  "holdout": {
+    "fixed100": true,
+    "reuse_unopened_R39E_identity_lock": true,
+    "labels_read_only_after_provider_calibration_lead_scores_model_and_policy_freeze": true,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 511420,
+    "gate": {
+      "draw_precision_min": 0.35,
+      "draw_recall_min": 0.10,
+      "draw_f1_min": 0.15,
+      "predicted_draw_min": 5,
+      "predicted_draw_max": 25,
+      "accuracy_strictly_better_than_market": true,
+      "HDA_LogLoss_nonworse_than_market": true,
+      "HDA_LogLoss_strictly_better_than_benchmark15": true,
+      "Draw_AUC_strictly_better_than_benchmark15": true
+    },
+    "pass_status": "PASS_R39F_PROVIDER_MICROSTRUCTURE_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39F_PROVIDER_MICROSTRUCTURE_INCREMENT_FIXED100"
+  },
+  "label_order_contract": {
+    "training_labels_only_before_holdout_start": true,
+    "R39C_labels_read_in_R39F": 0,
+    "R39D_labels_read_in_R39F": 0,
+    "blind_fixed100_labels_before_final_freeze": 0,
+    "blind_fixed100_labels_after_final_freeze_if_all_preholdout_gates_pass": 100,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}

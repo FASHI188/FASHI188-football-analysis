@@ -1,0 +1,39 @@
+name: Football Beat The Bookie R39F Monitor
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-r39e-full72h-trajectory]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39f-monitor.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query R39F evaluation workflow runs read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p monitor
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            'https://api.github.com/repos/FASHI188/FASHI188-football-analysis/actions/workflows/football-beat-the-bookie-r39f-evaluation.yml/runs?branch=research%2Fbeat-the-bookie-r39f-provider-leadlag&per_page=10' \
+            > monitor/runs.json
+          python - <<'PY'
+          import json
+          r=json.load(open('monitor/runs.json'))
+          slim=[{'id':x['id'],'event':x['event'],'status':x['status'],'conclusion':x['conclusion'],'head_sha':x['head_sha'],'run_number':x['run_number']} for x in r.get('workflow_runs',[])]
+          print(json.dumps(slim,indent=2))
+          open('monitor/slim.json','w').write(json.dumps(slim,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39f-monitor-${{ github.run_id }}
+          path: monitor/slim.json
+          retention-days: 7
