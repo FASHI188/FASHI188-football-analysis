@@ -1,0 +1,87 @@
+name: Football Beat The Bookie R39F Provider Slot Audit
+
+on:
+  push:
+    branches: [research/beat-the-bookie-r39f-provider-leadlag]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39f-provider-slot-audit.yml'
+      - 'football-data/research/beat_the_bookie_r39/provider_slot_audit_registration_r39f.json'
+      - 'football-data/research/beat_the_bookie_r39/audit_provider_slots_r39f.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-provider-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen audit contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/beat_the_bookie_r39/audit_provider_slots_r39f.py
+          python -m json.tool football-data/research/beat_the_bookie_r39/provider_slot_audit_registration_r39f.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/provider_slot_audit_registration_r39f.json').read_text())
+          assert r['r39e_blind_holdout_binding']['labels_accessed_in_r39e']==0
+          assert r['r39e_blind_holdout_binding']['must_remain_unread_in_this_stage'] is True
+          assert r['no_label_contract']['score_values_accessed']==0
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39F_PROVIDER_AUDIT_CONTRACT')
+          PY
+      - name: Download independent source
+        run: |
+          set -euo pipefail
+          rm -rf r39f-source r39f-sanitized r39f-output r39f-source.zip
+          mkdir -p r39f-source r39f-sanitized
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39f-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39f-source.zip')
+          wanted=('odds_series.csv.gz','odds_series_b.csv.gz')
+          names=set(z.namelist()); assert set(wanted)<=names
+          for n in wanted: z.extract(n,'r39f-source')
+          PY
+      - name: Strip score columns before Python
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39f-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39f-sanitized/${base}_no_scores.csv.gz"
+          done
+          rm -rf r39f-source r39f-source.zip
+      - name: Run zero-label provider slot audit
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/audit_provider_slots_r39f.py \
+            --registration football-data/research/beat_the_bookie_r39/provider_slot_audit_registration_r39f.json \
+            --source-dir r39f-sanitized --out-dir r39f-output
+      - name: Verify audit result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39f-output/provider_slot_audit_r39f.json').read_text())
+          assert r['status'] in {'PASS_R39F_PROVIDER_SLOT_AUDIT_NO_LABELS','STOP_R39F_PROVIDER_SLOT_IDENTITY_OR_COVERAGE_INSUFFICIENT'}
+          n=r['no_label_audit']
+          assert n['score_values_accessed']==0 and n['result_values_accessed']==0 and n['model_fit']==0 and n['blind_holdout_labels_accessed']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39f-provider-audit-${{ github.sha }}-${{ github.run_id }}
+          path: r39f-output/
+          if-no-files-found: error
+          retention-days: 30
