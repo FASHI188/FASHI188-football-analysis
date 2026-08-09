@@ -1,0 +1,170 @@
+name: Football Beat The Bookie R39C Evaluation
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39c-evaluation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixed100-evaluation:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+
+      - name: Verify frozen preregistration and execution code
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39c.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/preregistration_r39c.json').read_text())
+          assert r['status']=='PRE_REGISTERED_BEFORE_LABEL_ACCESS'
+          assert r['identity_binding']['identity_set_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert r['identity_binding']['holdout_start']=='2016-09-20T14:00:00'
+          assert r['identity_binding']['training_eligible_rows']==49511
+          assert r['identity_binding']['holdout_eligible_rows']==10734
+          assert r['identity_binding']['locked_test_rows']==100
+          assert r['models']['trajectory_residual']['l2_lambda']==1.0
+          assert len(r['features'])==15
+          assert r['evaluation']['paired_bootstrap']=={'samples':5000,'seed':511390}
+          assert r['hard_limits']['formal_weight']==0
+          assert r['hard_limits']['formal_promotion_allowed'] is False
+          print({'preregistration':'PASS','feature_count':len(r['features'])})
+          PY
+
+      - name: Synthetic execution check before any source download
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util,numpy as np
+          from pathlib import Path
+          path=Path('football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py')
+          spec=importlib.util.spec_from_file_location('r39c',path)
+          m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          X=np.array([[-2.],[-1.],[-.5],[.5],[1.],[2.]])
+          y=np.array([0.,0.,0.,1.,1.,1.])
+          b,d=m.fit_logistic(X,y,l2=1.0,max_iter=50,tol=1e-8)
+          p=m.predict_logistic(X,b)
+          assert p[-1]>p[0]
+          q=m.threeway([.5,.25,.25],.3)
+          assert abs(float(q.sum())-1)<1e-12
+          print({'synthetic':'PASS','fit':d})
+          PY
+
+      - name: Download bound odds-series files only
+        run: |
+          set -euo pipefail
+          rm -rf r39c-original r39c-sanitized r39c-source.zip r39c-output
+          mkdir -p r39c-original r39c-sanitized
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
+            -o r39c-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39c-source.zip')
+          wanted=('odds_series.csv.gz','odds_series_b.csv.gz')
+          for n in wanted:
+              assert n in z.namelist(), n
+              z.extract(n,'r39c-original')
+          print({'extracted':wanted})
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r39c-original/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r39c-original/odds_series_b.csv.gz' | sha256sum -c -
+          rm -f r39c-source.zip
+
+      - name: Build score-free feature inputs
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39c-original/${base}.csv.gz" \
+              | cut -d',' -f1-3,6- \
+              | gzip -c > "r39c-sanitized/${base}_no_scores.csv.gz"
+          done
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+              with gzip.open(f'r39c-sanitized/{base}_no_scores.csv.gz','rt',encoding='utf-8-sig',newline='') as f:
+                  h=next(csv.reader(f))
+              assert h[:3]==['match_id','match_date','match_time']
+              assert 'score_home' not in h and 'score_away' not in h
+              assert len(h)==6915
+          print('PASS_SCORE_FREE_FEATURE_INPUTS')
+          PY
+
+      - name: Execute frozen training then fixed100 holdout evaluation
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39c.json \
+            --sanitized-dir r39c-sanitized \
+            --original-dir r39c-original \
+            --out-dir r39c-output
+
+      - name: Verify frozen-model-before-holdout and formal boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('r39c-output')
+          s=json.loads((root/'status.json').read_text())
+          allowed={
+            'PASS_R39C_TRAJECTORY_CHALLENGER_EXPLORATION_ONLY',
+            'NO_R39C_TRAJECTORY_INCREMENT_FIXED100_EXPLORATION_ONLY'
+          }
+          assert s['status'] in allowed
+          assert s['identity_set_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert s['training']['rows']==49511
+          assert s['training']['holdout_period_labels_used_for_fitting']==0
+          assert s['model_freeze']['holdout_labels_accessed_before_freeze']==0
+          assert s['holdout']['rows']==100
+          assert s['holdout']['labels_accessed_after_model_freeze']==100
+          assert (root/'model_freeze_receipt.json').exists()
+          assert all(v['rows']==100 for v in s['metrics'].values())
+          h=s['hard_limits']
+          assert h['formal_weight']==0
+          assert h['formal_promotion_allowed'] is False
+          assert h['current_match_use_allowed'] is False
+          assert h['formal_unified_matrix_allowed'] is False
+          assert h['formal_exact_score_allowed'] is False
+          assert h['ev_allowed'] is False
+          assert h['formal_model_mutation']==0
+          assert h['formal_data_mutation']==0
+          assert h['formal_config_mutation']==0
+          assert h['CURRENT_mutation']==0
+          assert h['main_mutation']==0
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete source files before artifact upload
+        if: always()
+        run: rm -rf r39c-original r39c-sanitized
+
+      - name: Upload aggregate and fixed100 research evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39c-fixed100-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39c-output/
+          if-no-files-found: error
+          retention-days: 30
