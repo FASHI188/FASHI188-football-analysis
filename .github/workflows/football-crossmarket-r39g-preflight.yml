@@ -1,0 +1,68 @@
+name: Football Cross-Market R39G Preflight
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-r39f-provider-leadlag]
+    paths:
+      - '.github/workflows/football-crossmarket-r39g-preflight.yml'
+      - 'football-data/research/crossmarket_r39g/preregistration_r39g.json'
+      - 'football-data/research/crossmarket_r39g/evaluate_crossmarket_r39g.py'
+  push:
+    branches: [research/football-data-crossmarket-r39g]
+    paths:
+      - '.github/workflows/football-crossmarket-r39g-preflight.yml'
+      - 'football-data/research/crossmarket_r39g/preregistration_r39g.json'
+      - 'football-data/research/crossmarket_r39g/evaluate_crossmarket_r39g.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.2.6'
+      - name: Validate exact preregistration and code
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/crossmarket_r39g/evaluate_crossmarket_r39g.py
+          python -m json.tool football-data/research/crossmarket_r39g/preregistration_r39g.json >/dev/null
+          python football-data/research/crossmarket_r39g/evaluate_crossmarket_r39g.py --self-test
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/crossmarket_r39g/preregistration_r39g.json').read_text())
+          assert p['source_binding']['audit_label_access']==0
+          assert p['source_binding']['fixed100_identity_sha256']=='0e95f2b0234c125c440c2d2c87eca20c41270a22474ec4871282b51a56bfab62'
+          assert len(p['hda_only_features'])==9
+          assert len(p['cross_market_additional_features'])==14
+          assert p['model']['l2_candidates_for_each_representation']==[1.0,10.0,100.0]
+          assert p['label_order_contract']['fixed100_labels_before_final_freeze']==0
+          assert p['prior_beat_the_bookie_blind_set']['labels_accessed']==0 and p['prior_beat_the_bookie_blind_set']['used_in_r39g'] is False
+          assert p['hard_limits']['formal_weight']==0
+          print('PASS_R39G_ZERO_LABEL_PREFLIGHT')
+          PY
+      - name: Zero-access receipt
+        run: |
+          mkdir -p r39g-preflight
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out={'status':'PASS_R39G_ZERO_LABEL_PREFLIGHT','real_data_access':0,'training_labels_accessed':0,'holdout_labels_accessed':0,'model_fit_on_real_data':0,'threshold_selection':0}
+          Path('r39g-preflight/preflight_r39g.json').write_text(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-crossmarket-r39g-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39g-preflight/
+          if-no-files-found: error
+          retention-days: 30
