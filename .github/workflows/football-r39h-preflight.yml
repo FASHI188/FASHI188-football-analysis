@@ -1,0 +1,70 @@
+name: Football R39H Preflight
+
+on:
+  push:
+    branches: [research/fundamental-market-residual-r39h]
+    paths:
+      - '.github/workflows/football-r39h-preflight.yml'
+      - 'football-data/research/fundamental_r39h/preregistration_r39h.json'
+      - 'football-data/research/fundamental_r39h/evaluate_fundamental_residual_r39h.py'
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39h-preflight.yml'
+      - 'football-data/research/fundamental_r39h/preregistration_r39h.json'
+      - 'football-data/research/fundamental_r39h/evaluate_fundamental_residual_r39h.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Validate exact preregistration and code
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/fundamental_r39h/evaluate_fundamental_residual_r39h.py
+          python -m json.tool football-data/research/fundamental_r39h/preregistration_r39h.json >/dev/null
+          python football-data/research/fundamental_r39h/evaluate_fundamental_residual_r39h.py --self-test
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/fundamental_r39h/preregistration_r39h.json').read_text())
+          assert p['source_binding']['history_eligible_preholdout']==8620
+          assert p['source_binding']['history_eligible_2425']==271
+          assert p['source_binding']['fixed100_identity_sha256']=='1c87503823f858e03c34ee42c2b3847460da466f59ee4ffa2dfac4628c6169eb'
+          assert p['target_and_offset']['market_draw_logit_coefficient']==1.0
+          assert p['strict_lag_contract']['current_match_understat_performance_excluded'] is True
+          assert p['strict_lag_contract']['future_understat_performance_excluded'] is True
+          assert p['chronological_design']=={'eligible_preholdout_rows':8620,'order':'match_datetime_then_identity','fit_rows':6034,'validation_rows':1293,'policy_rows':1293,'all_2024_25_rows_forbidden_from_parameter_or_policy_selection':True}
+          assert p['fundamental_features']['total_model_feature_count']==37
+          assert p['model']['fundamental_l2_candidates']==[1.0,10.0,100.0]
+          assert p['label_order_contract']['holdout_labels_before_model_and_policy_freeze']==0
+          assert p['hard_limits']['formal_weight']==0 and p['hard_limits']['CURRENT_mutation']==0 and p['hard_limits']['main_mutation']==0
+          print('PASS_R39H_ZERO_LABEL_PREFLIGHT')
+          PY
+      - name: Zero-access receipt
+        run: |
+          mkdir -p r39h-preflight
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x={'status':'PASS_R39H_ZERO_LABEL_PREFLIGHT','external_real_data_access':0,'training_labels_accessed':0,'holdout_labels_accessed':0,'model_fit_on_real_data':0,'threshold_selection':0,'formal_weight':0}
+          Path('r39h-preflight/preflight_receipt_r39h.json').write_text(json.dumps(x,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39h-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39h-preflight/
+          retention-days: 30

@@ -1,0 +1,81 @@
+name: Football R39H Understat Source Inventory
+
+on:
+  push:
+    branches: [research/fundamental-market-residual-r39h]
+    paths:
+      - '.github/workflows/football-r39h-understat-inventory.yml'
+      - 'football-data/research/fundamental_r39h/source_inventory_registration_r39h.json'
+      - 'football-data/research/fundamental_r39h/inventory_understat_source_r39h.py'
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39h-understat-inventory.yml'
+      - 'football-data/research/fundamental_r39h/source_inventory_registration_r39h.json'
+      - 'football-data/research/fundamental_r39h/inventory_understat_source_r39h.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen inventory contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/fundamental_r39h/inventory_understat_source_r39h.py
+          python -m json.tool football-data/research/fundamental_r39h/source_inventory_registration_r39h.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/fundamental_r39h/source_inventory_registration_r39h.json').read_text())
+          assert r['target_market_universe']['existing_fixed100_labels_accessed']==0
+          assert r['inventory_contract']['read_outcome_values'] is False
+          assert r['inventory_contract']['read_xg_values'] is False
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39H_INVENTORY_CONTRACT')
+          PY
+      - name: Download Understat dataset archive
+        run: |
+          set -euo pipefail
+          rm -rf r39h-output understat.zip
+          mkdir -p r39h-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/codytipton/understat-data' -o understat.zip
+      - name: Inventory schema without outcome or xG values
+        run: |
+          set -euo pipefail
+          python football-data/research/fundamental_r39h/inventory_understat_source_r39h.py \
+            --zip understat.zip \
+            --registration football-data/research/fundamental_r39h/source_inventory_registration_r39h.json \
+            --out-dir r39h-output
+          rm -f understat.zip
+      - name: Verify zero-access result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39h-output/understat_inventory_r39h.json').read_text())
+          n=r['no_label_audit']
+          assert n['outcome_values_accessed']==0 and n['xg_values_accessed']==0
+          assert n['model_fit']==0 and n['threshold_selection']==0 and n['holdout_labels_accessed']==0
+          assert r['status'] in {'PASS_R39H_UNDERSTAT_INVENTORY_MATCH_TABLE_FOUND','STOP_R39H_UNDERSTAT_INVENTORY_NO_MATCH_TABLE'}
+          print(json.dumps({'status':r['status'],'candidate_match_tables':r['candidate_match_tables']},indent=2))
+          PY
+      - name: Upload inventory evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r39h-understat-inventory-${{ github.sha }}-${{ github.run_id }}
+          path: r39h-output/
+          if-no-files-found: error
+          retention-days: 30
