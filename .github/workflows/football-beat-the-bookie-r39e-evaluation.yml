@@ -1,0 +1,115 @@
+name: Football Beat The Bookie R39E Evaluation
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-r39d-draw-boundary]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39e-evaluation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-beat-the-bookie-r39e-eval-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  strict72-fixed100:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Verify exact frozen contract before external or label access
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39e.json >/dev/null
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/preregistration_r39e.json');r=json.loads(p.read_text())
+          assert r['selected_coverage_lane']=='STRICT_COMMON5_ALL72'
+          assert r['identity_binding']['r39e_sha256']=='1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5'
+          assert r['feature_representation']['total_features']==104
+          assert r['model']['l2_candidates']==[1.0,10.0,100.0]
+          assert r['policy']['coverages']==[0.05,0.10,0.15,0.20]
+          assert r['label_order_contract']['r39e_labels_before_freeze']==0
+          assert r['hard_limits']['formal_weight']==0
+          print({'prereg_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'contract':'PASS'})
+          PY
+          python football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py --self-test
+      - name: Download independent source
+        run: |
+          set -euo pipefail
+          rm -rf r39e-original r39e-sanitized r39e-eval r39e.zip
+          mkdir -p r39e-original r39e-sanitized
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39e.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39e.zip')
+          for n in ('odds_series.csv.gz','odds_series_b.csv.gz'):z.extract(n,'r39e-original')
+          PY
+          rm r39e.zip
+      - name: Build score-free market input
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39e-original/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39e-sanitized/${base}_no_scores.csv.gz"
+          done
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+            with gzip.open(f'r39e-sanitized/{base}_no_scores.csv.gz','rt',encoding='utf-8-sig',newline='') as f:h=next(csv.reader(f))
+            assert h[:3]==['match_id','match_date','match_time'];assert 'score_home' not in h and 'score_away' not in h;assert len(h)==32*72*3+3
+          print('PASS_SCORE_FREE_MARKET_INPUT')
+          PY
+      - name: Execute frozen R39E sequence
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39e.json \
+            --sanitized-dir r39e-sanitized --original-dir r39e-original --out-dir r39e-eval
+      - name: Verify label order and result boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('r39e-eval/r39e_result.json');assert p.exists();r=json.loads(p.read_text())
+          allowed={'STOP_R39E_BEFORE_HOLDOUT_LABEL_ACCESS_FULL72H_MODEL_NO_INCREMENT','STOP_R39E_BEFORE_HOLDOUT_LABEL_ACCESS_NO_POLICY_LANE','PASS_R39E_FULL72H_EXPLORATORY_REQUIRES_NEW_CONFIRMATION','NO_R39E_FULL72H_INCREMENT_FIXED100'}
+          assert r['status'] in allowed
+          assert r['holdout_labels_accessed_before_freeze']==0
+          assert r['consumed_holdout_labels_accessed']==0
+          assert r['r39e_identity_set_sha256']=='1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5'
+          stop=r['status'].startswith('STOP_R39E_BEFORE')
+          if stop:
+              assert r['r39e_holdout_labels_accessed']==0
+              assert not Path('r39e-eval/model_policy_freeze_receipt_r39e.json').exists()
+          else:
+              assert r['r39e_holdout_labels_accessed']==100
+              f=Path('r39e-eval/model_policy_freeze_receipt_r39e.json');assert f.exists() and f.stat().st_size>0
+              fr=json.loads(f.read_text());assert fr['holdout_labels_accessed_before_freeze']==0 and fr['consumed_holdout_labels_accessed']==0
+          h=r['hard_limits'];assert h['formal_weight']==0 and h['formal_model_mutation']==0 and h['formal_data_mutation']==0 and h['config_mutation']==0 and h['CURRENT_mutation']==0 and h['main_mutation']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Delete raw source before artifact
+        if: always()
+        run: rm -rf r39e-original r39e-sanitized
+      - name: Upload aggregate R39E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39e-evaluation-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39e-eval/
+          if-no-files-found: error
+          retention-days: 30

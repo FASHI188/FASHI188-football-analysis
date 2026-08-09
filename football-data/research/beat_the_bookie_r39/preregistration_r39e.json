@@ -1,0 +1,120 @@
+{
+  "schema_version": "r39e-strict72-shape-v1",
+  "stage": "R39E_STRICT_COMMON72_SHAPE_FIXED100",
+  "research_question": "Does a genuine 72-hour same-bookmaker trajectory shape representation provide stable incremental draw probability/ranking information and Top-1 draw decisions beyond the T-1h market and the prior three-cutoff 15-feature representation?",
+  "selected_coverage_lane": "STRICT_COMMON5_ALL72",
+  "coverage_binding": {
+    "run_id": 31312551118,
+    "artifact_id": 9037811107,
+    "artifact_sha256": "015f5d9d9b2e527c50ea5b98ecf37111f751e00f75af72db732f2d14cad4956a",
+    "eligible_total": 27199,
+    "eligible_holdout": 4595,
+    "labels_accessed": 0
+  },
+  "identity_binding": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "r39c_seed": 51139,
+    "r39c_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "r39d_seed": 51140,
+    "r39d_sha256": "df5871889f7dcf858d9adb7fa6d92c6e9ca4efa85074bddac3f5e82038ff6935",
+    "r39e_seed": 51141,
+    "r39e_rows": 100,
+    "r39e_sha256": "1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5",
+    "strict_lane_training_rows": 22604,
+    "strict_lane_holdout_after_consumed_exclusion": 4509,
+    "r39e_overlap_r39c": 0,
+    "r39e_overlap_r39d": 0
+  },
+  "feature_representation": {
+    "same_bookmakers_required_all_72_hours": true,
+    "minimum_common_bookmakers": 5,
+    "hourly_consensus": "mean of per-bookmaker de-vigged H/D/A probabilities over the same common bookmaker set",
+    "hourly_signals": ["draw_logit", "draw_bookmaker_std", "signed_home_minus_away_probability", "threeway_entropy"],
+    "blocks": 12,
+    "hours_per_block": 6,
+    "per_signal_per_block": ["mean", "least_squares_slope"],
+    "global_draw_shape": ["72h_net_move", "max_abs_hourly_move", "hourly_move_std", "sign_change_rate", "local_extrema_rate", "argmin_time_scaled", "argmax_time_scaled"],
+    "common_bookmaker_count_feature": "log1p(count)",
+    "total_features": 104,
+    "missing_value_imputation": "none"
+  },
+  "benchmark15": {
+    "representation": "the prior 15-feature T-24h/T-6h/T-1h movement/disagreement/balance/entropy family recomputed on the same strict common bookmaker set",
+    "l2_lambda": 1.0
+  },
+  "chronological_design": {
+    "fit_fraction": 0.70,
+    "validation_fraction": 0.15,
+    "policy_fraction": 0.15,
+    "order": "match_datetime_then_identity",
+    "fit": "earliest 70 percent of strict-lane pre-holdout rows",
+    "validation": "next 15 percent",
+    "policy": "latest 15 percent",
+    "all_holdout_period_rows_forbidden_from_fit_validation_policy": true
+  },
+  "model": {
+    "target": "draw_vs_non_draw",
+    "model": "deterministic_L2_logistic_Newton",
+    "l2_candidates": [1.0, 10.0, 100.0],
+    "standardization": "fit_partition_only",
+    "class_weighting": "none",
+    "selection_order": ["lowest_validation_HDA_LogLoss", "lowest_validation_binary_draw_LogLoss", "lowest_L2"],
+    "threeway_mapping": "preserve strict-lane T-1h market home_to_away non-draw ratio",
+    "validation_gate_all_required": [
+      "selected_full72_HDA_LogLoss_strictly_better_than_T1_market",
+      "selected_full72_HDA_LogLoss_strictly_better_than_benchmark15",
+      "selected_full72_Draw_AUC_strictly_better_than_benchmark15"
+    ],
+    "if_validation_gate_fails": "STOP_R39E_BEFORE_HOLDOUT_LABEL_ACCESS_FULL72H_MODEL_NO_INCREMENT"
+  },
+  "policy": {
+    "decision_score": "Pdraw_minus_max_Phome_Paway",
+    "coverages": [0.05, 0.10, 0.15, 0.20],
+    "threshold_source": "policy_partition_only",
+    "precision_over_prevalence_min": 0.05,
+    "draw_f1_min": 0.15,
+    "eligible_requires_accuracy_strictly_better_than_market": true,
+    "selection_order": ["highest_accuracy", "highest_draw_F1", "highest_draw_precision", "lowest_coverage"],
+    "if_no_lane": "STOP_R39E_BEFORE_HOLDOUT_LABEL_ACCESS_NO_POLICY_LANE"
+  },
+  "holdout": {
+    "fixed100": true,
+    "labels_read_only_after_model_and_policy_freeze": true,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 511410,
+    "gate": {
+      "draw_precision_min": 0.35,
+      "draw_recall_min": 0.10,
+      "draw_f1_min": 0.15,
+      "predicted_draw_min": 5,
+      "predicted_draw_max": 25,
+      "accuracy_strictly_better_than_market": true,
+      "HDA_LogLoss_nonworse_than_market": true,
+      "HDA_Brier_nonworse_than_market": true,
+      "HDA_RPS_nonworse_than_market": true,
+      "Draw_AUC_strictly_better_than_market": true
+    },
+    "pass_semantics": "research_challenger_only_requires_another_independent_confirmation",
+    "failure_semantics": "close_strict72_block_shape_v1_route"
+  },
+  "label_order_contract": {
+    "training_labels_only_before_holdout_start": true,
+    "r39c_labels_read": 0,
+    "r39d_labels_read": 0,
+    "r39e_labels_before_freeze": 0,
+    "r39e_labels_after_freeze_if_preholdout_gates_pass": 100,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}

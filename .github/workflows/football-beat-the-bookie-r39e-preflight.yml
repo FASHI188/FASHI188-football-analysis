@@ -1,0 +1,51 @@
+name: Football Beat The Bookie R39E Preflight
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-r39d-draw-boundary]
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39e-preflight.yml'
+      - 'football-data/research/beat_the_bookie_r39/preregistration_r39e.json'
+      - 'football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Validate exact preregistration and code
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39e.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/beat_the_bookie_r39/preregistration_r39e.json').read_text())
+          assert p['selected_coverage_lane']=='STRICT_COMMON5_ALL72'
+          assert p['identity_binding']['r39e_sha256']=='1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5'
+          assert p['feature_representation']['total_features']==104
+          assert p['feature_representation']['missing_value_imputation']=='none'
+          assert p['model']['l2_candidates']==[1.0,10.0,100.0]
+          assert p['policy']['coverages']==[0.05,0.10,0.15,0.20]
+          assert p['label_order_contract']['r39e_labels_before_freeze']==0
+          assert p['label_order_contract']['no_post_holdout_tuning'] is True
+          assert p['hard_limits']['formal_weight']==0
+          print('PASS_R39E_PREREG_CONTRACT')
+          PY
+          python football-data/research/beat_the_bookie_r39/evaluate_strict72h_shape_r39e.py --self-test
+      - name: Zero-access receipt
+        run: |
+          echo '{"external_dataset_downloaded":false,"training_labels_read":0,"holdout_labels_read":0,"r39c_labels_read":0,"r39d_labels_read":0,"model_fit_on_real_data":0,"policy_threshold_selected_on_real_data":0}'
