@@ -1,0 +1,148 @@
+name: Football V5.1 Fixed100 Market Reversion R38
+
+on:
+  push:
+    branches:
+      - research/v511-fixed100-market-reversion-r38
+    paths:
+      - '.github/workflows/football-v511-fixed100-market-reversion-r38.yml'
+      - 'football-data/config/v511_fixed100_market_reversion_r38.json'
+      - 'football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py'
+  pull_request:
+    branches:
+      - research/v511-fixed100-market-trajectory-r37
+    paths:
+      - '.github/workflows/football-v511-fixed100-market-reversion-r38.yml'
+      - 'football-data/config/v511_fixed100_market_reversion_r38.json'
+      - 'football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v511-fixed100-market-reversion-r38-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixed100-market-reversion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen research inputs
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/validation/evaluate_v510_market_residual_1x2_r1.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_market_residual_r34.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_score_matrix_r35.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_ah_score_matrix_r36.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_market_trajectory_r37.py
+          python -m py_compile football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py
+          python -m json.tool football-data/config/v511_fixed100_market_reversion_r38.json >/dev/null
+          test -f football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json
+
+      - name: Run deterministic reversion self-test
+        run: |
+          set -euo pipefail
+          python football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py --self-test
+
+      - name: Run fixed 100-match reversion exploration
+        run: |
+          set -euo pipefail
+          rm -rf r38-output
+          python football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py \
+            --config football-data/config/v511_fixed100_market_reversion_r38.json \
+            --out-dir r38-output
+
+      - name: Verify result and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('r38-output')
+          result = json.loads((root / 'status.json').read_text(encoding='utf-8'))
+          assert result['status'] in {
+              'STOP_INSUFFICIENT_REVERSION_SAMPLE_BEFORE_LABELS',
+              'PROMISING_MARKET_REVERSION_SIGNAL_EXPLORATION_ONLY',
+              'NO_MARKET_REVERSION_INCREMENT_FIXED100_EXPLORATION_ONLY',
+          }
+          assert result['source']['source_rows'] == 1000
+          assert result['source']['external_collection'] == 0
+          assert result['source']['provider_requests'] == 0
+          hard = result['hard_limits']
+          assert hard['formal_weight'] == 0
+          assert hard['formal_promotion_allowed'] is False
+          assert hard['current_match_probability_allowed'] is False
+          assert hard['current_match_direction_allowed'] is False
+          assert hard['formal_unified_matrix_allowed'] is False
+          assert hard['formal_exact_score_allowed'] is False
+          assert hard['ev_allowed'] is False
+          assert hard['CURRENT_mutation'] == 0
+          assert hard['formal_model_data_config_mutation'] == 0
+          assert hard['main_mutation'] == 0
+          if result['status'].startswith('STOP_'):
+              assert result['sample']['score_labels_parsed'] == 0
+              assert {p.name for p in root.iterdir()} == {'status.json', 'manifest.json'}
+          else:
+              sample = result['sample']
+              assert sample['rows'] == 100
+              assert sample['prior_overlap_rows'] == 0
+              assert sample['selection_uses_score_labels'] is False
+              assert sample['selection_frozen_before_score_label_parsing'] is True
+              assert sample['no_resampling_after_result'] is True
+              expected = {'market', 'opening'} | {
+                  f'{family}_{suffix}'
+                  for family in ('full_revert', 'draw_revert', 'matrix_revert')
+                  for suffix in ('0_25', '0_5', '0_75')
+              }
+              assert set(result['metrics']) == expected
+              assert all(v['rows'] == 100 for v in result['metrics'].values())
+              audit = result['coordination_audit']
+              assert audit['all_snapshot_projections_converged'] is True
+              assert audit['max_probability_sum_error'] <= 1e-12
+              assert audit['max_market_partition_residual'] <= 1e-11
+              assert {p.name for p in root.iterdir()} == {
+                  'status.json', 'candidate_summary.csv', 'fixed100_predictions.csv', 'manifest.json'
+              }
+          print(json.dumps({
+              'status': result['status'],
+              'sample': result.get('sample'),
+              'metrics': result.get('metrics'),
+              'draw_auc': result.get('post_result_draw_auc_diagnostic'),
+              'promising_candidates': result.get('promising_candidates'),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Confirm isolated research diff
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import subprocess
+          base = 'f8d180b9ecfdd71255ef5d2ece57cda8e22ebef1'
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', f'{base}...HEAD'], text=True).splitlines())
+          expected = {
+              '.github/workflows/football-v511-fixed100-market-reversion-r38.yml',
+              'football-data/config/v511_fixed100_market_reversion_r38.json',
+              'football-data/validation/evaluate_v511_fixed100_market_reversion_r38.py',
+          }
+          assert changed == expected, (changed, expected)
+          print({'changed': sorted(changed), 'formal_asset_changes': 0})
+          PY
+
+      - name: Upload fixed100 reversion evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-v511-fixed100-market-reversion-r38-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: r38-output/
+          if-no-files-found: error
+          retention-days: 30
