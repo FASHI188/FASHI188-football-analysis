@@ -1,0 +1,106 @@
+name: Football R39H Identity Mapping
+
+on:
+  push:
+    branches: [research/fundamental-market-residual-r39h]
+    paths:
+      - '.github/workflows/football-r39h-identity-map.yml'
+      - 'football-data/research/fundamental_r39h/identity_mapping_registration_r39h.json'
+      - 'football-data/research/fundamental_r39h/audit_identity_mapping_r39h.py'
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39h-identity-map.yml'
+      - 'football-data/research/fundamental_r39h/identity_mapping_registration_r39h.json'
+      - 'football-data/research/fundamental_r39h/audit_identity_mapping_r39h.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-identity-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen mapping contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/fundamental_r39h/audit_identity_mapping_r39h.py
+          python -m json.tool football-data/research/fundamental_r39h/identity_mapping_registration_r39h.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/fundamental_r39h/identity_mapping_registration_r39h.json').read_text())
+          assert r['understat']['performance_values_read_in_this_stage'] is False
+          assert r['understat']['outcome_values_read_in_this_stage'] is False
+          assert r['identity_lock']['labels_read']==0 and r['identity_lock']['seed']==51144
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39H_IDENTITY_MAP_CONTRACT')
+          PY
+      - name: Download Understat and physically keep identity columns only
+        run: |
+          set -euo pipefail
+          rm -rf r39h-map r39h-fd r39h-out understat.zip
+          mkdir -p r39h-map r39h-fd r39h-out
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/codytipton/understat-data' -o understat.zip
+          header="$(unzip -p understat.zip game_stats.csv | head -n1 | tr -d '\r')"
+          test "$header" = 'id,league,season,club_name,home_away,xG,xGA,npxG,npxGA,ppda,ppda_allowed,deep,deep_allowed,scored,missed,xpts,result,date,wins,draws,loses,pts,npxGD'
+          unzip -p understat.zip game_stats.csv | cut -d',' -f1-5,18 > r39h-map/understat_identity.csv
+          rm -f understat.zip
+      - name: Download Football-Data and physically keep identity plus closing 1X2 only
+        run: |
+          set -euo pipefail
+          for season in 1920 2021 2122 2223 2324 2425; do
+            for div in E0 D1 I1 SP1 F1; do
+              url="https://www.football-data.co.uk/mmz4281/${season}/${div}.csv"
+              raw="/tmp/${season}_${div}.csv"
+              out="r39h-fd/${season}_${div}.csv"
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$url" -o "$raw"
+              idx=$(python - "$raw" <<'PY'
+          import csv,sys
+          h=next(csv.reader(open(sys.argv[1],encoding='utf-8-sig',errors='replace')))
+          want=['Div','Date','Time','HomeTeam','AwayTeam','AvgCH','AvgCD','AvgCA']
+          missing=[x for x in want if x not in h]
+          if missing: raise SystemExit('missing '+repr(missing))
+          print(','.join(str(h.index(x)+1) for x in want))
+          PY
+              )
+              cut -d',' -f"$idx" "$raw" | awk -v s="$season" 'NR==1{print "Season,"$0;next}{print s","$0}' > "$out"
+              rm -f "$raw"
+            done
+          done
+      - name: Audit deterministic mapping and lock a new untouched fixed100
+        run: |
+          set -euo pipefail
+          python football-data/research/fundamental_r39h/audit_identity_mapping_r39h.py \
+            --registration football-data/research/fundamental_r39h/identity_mapping_registration_r39h.json \
+            --football-dir r39h-fd --understat-identity r39h-map/understat_identity.csv --out-dir r39h-out
+      - name: Verify no-label mapping result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39h-out/identity_mapping_and_lock_r39h.json').read_text())
+          n=r['no_label_audit']
+          assert all(v==0 for v in n.values())
+          assert r['status'] in {'PASS_R39H_IDENTITY_MAP_AND_FIXED100_LOCK_NO_LABELS','STOP_R39H_IDENTITY_MAPPING_OR_HISTORY_COVERAGE_INSUFFICIENT'}
+          if r['status'].startswith('PASS_'):
+              assert r['locked_fixed100_rows']==100 and r['locked_fixed100_identity_sha256']
+          print(json.dumps({k:r[k] for k in ('status','football_closing1x2_rows','understat_top5_matches','matched_preholdout','matched_2425','history_eligible_2425','locked_fixed100_rows','locked_fixed100_identity_sha256','unmatched_rows')},indent=2))
+          PY
+      - name: Upload mapping evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r39h-identity-map-${{ github.sha }}-${{ github.run_id }}
+          path: r39h-out/
+          if-no-files-found: error
+          retention-days: 30
