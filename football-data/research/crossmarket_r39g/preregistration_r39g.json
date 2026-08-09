@@ -1,0 +1,141 @@
+{
+  "schema_version": "r39g-crossmarket-draw-v1",
+  "stage": "R39G_FOOTBALL_DATA_CROSSMARKET_FIXED100",
+  "research_question": "Does synchronized-row 1X2 + over/under 2.5 + Asian-handicap structure add stable draw information beyond an equally tuned 1X2-only model?",
+  "source_binding": {
+    "provider": "Football-Data.co.uk",
+    "selected_lane": "OPEN_AND_CLOSE_CROSSMARKET_AVG",
+    "audit_run_id": 31322305282,
+    "audit_artifact_id": 9040527090,
+    "audit_artifact_sha256": "53ef743f51e51cce728a6ef655f8844915a05c0bdb3597634be83b194f38a01b",
+    "complete_total_rows": 10704,
+    "preholdout_rows": 8952,
+    "holdout_pool_rows": 1752,
+    "holdout_season": "2425",
+    "fixed100_seed": 51143,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "0e95f2b0234c125c440c2d2c87eca20c41270a22474ec4871282b51a56bfab62",
+    "audit_label_access": 0,
+    "snapshot_semantics": "same Football-Data row with pre-closing and closing averages; research-only historical snapshot, not a formal timestamped current-match snapshot"
+  },
+  "markets": {
+    "opening_1x2": ["AvgH", "AvgD", "AvgA"],
+    "closing_1x2": ["AvgCH", "AvgCD", "AvgCA"],
+    "opening_ou25": ["Avg>2.5", "Avg<2.5"],
+    "closing_ou25": ["AvgC>2.5", "AvgC<2.5"],
+    "opening_ah": ["AHh", "AvgAHH", "AvgAHA"],
+    "closing_ah": ["AHCh", "AvgCAHH", "AvgCAHA"],
+    "devig": "multiplicative inverse-odds normalization within each market",
+    "no_manual_probability_inputs": true
+  },
+  "chronological_design": {
+    "order": "match_datetime_then_identity",
+    "fit_fraction": 0.70,
+    "validation_fraction": 0.15,
+    "policy_fraction": 0.15,
+    "fit": "earliest 70 percent of complete pre-2425 rows",
+    "validation": "next 15 percent",
+    "policy": "latest 15 percent",
+    "all_2425_labels_forbidden_before_final_freeze": true,
+    "after_validation_gate": "refit chosen HDA-only and cross-market hyperparameters on fit+validation (earliest 85 percent), then select decision policy on latest 15 percent"
+  },
+  "hda_only_features": [
+    "opening_draw_logit",
+    "closing_draw_logit",
+    "draw_probability_move_open_to_close",
+    "opening_absolute_home_away_gap",
+    "closing_absolute_home_away_gap",
+    "home_away_gap_move_open_to_close",
+    "opening_threeway_entropy",
+    "closing_threeway_entropy",
+    "entropy_move_open_to_close"
+  ],
+  "cross_market_additional_features": [
+    "opening_over25_fair_probability",
+    "closing_over25_fair_probability",
+    "over25_probability_move_open_to_close",
+    "opening_home_asian_handicap_line",
+    "closing_home_asian_handicap_line",
+    "asian_handicap_line_move_open_to_close",
+    "opening_AH_home_fair_probability",
+    "closing_AH_home_fair_probability",
+    "AH_home_probability_move_open_to_close",
+    "opening_balance_times_under25_probability",
+    "closing_balance_times_under25_probability",
+    "absolute_closing_AH_line_times_under25_probability",
+    "closing_HDA_home_nondraw_share_minus_AH_home_probability",
+    "discrepancy_move_open_to_close"
+  ],
+  "model": {
+    "target": "draw_vs_non_draw",
+    "family": "deterministic_L2_logistic_Newton",
+    "l2_candidates_for_each_representation": [1.0, 10.0, 100.0],
+    "standardization": "fit_partition_only for validation selection; fit+validation only after gate for policy/final freeze",
+    "class_weighting": "none",
+    "threeway_mapping": "preserve closing 1X2 home_to_away non-draw ratio",
+    "candidate_selection": ["lowest_validation_HDA_LogLoss", "lowest_validation_binary_Draw_LogLoss", "lowest_L2"]
+  },
+  "validation_gate_all_required": {
+    "cross_HDA_LogLoss_strictly_better_than_closing_market": true,
+    "cross_HDA_LogLoss_strictly_better_than_selected_HDA_only": true,
+    "cross_binary_Draw_LogLoss_strictly_better_than_selected_HDA_only": true,
+    "cross_Draw_AUC_strictly_better_than_selected_HDA_only": true,
+    "cross_HDA_LogLoss_beats_HDA_only_in_at_least_divisions": 3,
+    "if_fail": "STOP_R39G_BEFORE_HOLDOUT_LABEL_ACCESS_CROSSMARKET_NO_INCREMENT"
+  },
+  "policy": {
+    "decision_score": "Pdraw_minus_max_Phome_Paway",
+    "coverages": [0.05, 0.10, 0.15, 0.20],
+    "threshold_source": "policy_partition_only after validation gate and fit+validation refit",
+    "eligible_requires_accuracy_strictly_better_than_closing_market": true,
+    "draw_precision_at_least_policy_draw_prevalence_plus": 0.05,
+    "draw_f1_min": 0.15,
+    "selection_order": ["highest_accuracy", "highest_draw_F1", "highest_draw_precision", "lowest_coverage"],
+    "if_no_lane": "STOP_R39G_BEFORE_HOLDOUT_LABEL_ACCESS_NO_POLICY_LANE"
+  },
+  "holdout": {
+    "fixed100": true,
+    "labels_read_only_after_model_and_policy_freeze": true,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 511430,
+    "gate_all_required": {
+      "decision_accuracy_strictly_better_than_closing_market": true,
+      "draw_precision_min": 0.35,
+      "draw_recall_min": 0.10,
+      "draw_f1_min": 0.15,
+      "predicted_draw_count_min": 5,
+      "predicted_draw_count_max": 25,
+      "cross_HDA_LogLoss_nonworse_than_closing_market": true,
+      "cross_HDA_LogLoss_strictly_better_than_HDA_only": true,
+      "cross_binary_Draw_LogLoss_strictly_better_than_HDA_only": true,
+      "cross_Draw_AUC_strictly_better_than_HDA_only": true
+    },
+    "pass_status": "PASS_R39G_CROSSMARKET_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39G_CROSSMARKET_INCREMENT_FIXED100"
+  },
+  "label_order_contract": {
+    "preholdout_labels_may_be_read": true,
+    "2425_nonfixed100_labels_may_not_be_read": true,
+    "fixed100_labels_before_final_freeze": 0,
+    "fixed100_labels_after_final_freeze_if_all_preholdout_gates_pass": 100,
+    "freeze_receipt_must_be_persisted_before_fixed100_label_access": true,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "prior_beat_the_bookie_blind_set": {
+    "sha256": "1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5",
+    "labels_accessed": 0,
+    "used_in_r39g": false
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
