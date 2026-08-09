@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse,bisect,csv,difflib,hashlib,json,math,random,re,unicodedata
-from collections import defaultdict,Counter
+from collections import defaultdict
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
 import numpy as np
@@ -64,7 +64,9 @@ def finite(v):
     except:return None
     return x if math.isfinite(x) else None
 
-# Exact identity-mapping semantics frozen in R39H v2.
+# Identity matching uses every identity-valid Understat row. Performance completeness
+# is checked only after the frozen mapping is reconstructed, so feature availability
+# cannot change the identity path or the fixed100 identity set.
 def build_understat(path,divmap):
     wanted={league_norm(v) for v in divmap.values()};rows=[];by_side=defaultdict(list);hist=defaultdict(list)
     with Path(path).open('r',encoding='utf-8-sig',newline='') as f:
@@ -76,8 +78,7 @@ def build_understat(path,divmap):
             side=str(r['home_away']).strip().lower()[:1]
             if side not in {'h','a'}:continue
             d=parse_us_date(r['date']);vals={m:finite(r[m]) for m in METRICS}
-            if any(v is None for v in vals.values()):continue
-            x={'row_key':f"{r['id']}|{r['date']}|{side}|{r['club_name']}",'club_id':r['id'],'league':lg,'date':d,'side':side,'club':r['club'],**vals} if 'club' in r else {'row_key':f"{r['id']}|{r['date']}|{side}|{r['club_name']}",'club_id':r['id'],'league':lg,'date':d,'side':side,'club':r['club_name'],**vals}
+            x={'row_key':f"{r['id']}|{r['date']}|{side}|{r['club_name']}",'club_id':r['id'],'league':lg,'date':d,'side':side,'club':r['club_name'],**vals}
             rows.append(x);by_side[(lg,d,side)].append(x);hist[(lg,clean_name(x['club']))].append(x)
     for k in hist:hist[k].sort(key=lambda z:(z['date'],z['row_key']))
     return rows,by_side,hist
@@ -118,20 +119,22 @@ def load_market_rows(market_dir,pre,by_side,hist):
                 out.append({'identity':ident,'season':r['Season'],'div':r['Div'],'dt':parse_dt(r['Date'],r['Time']),'target_date':h['date'],'home_club':h['club'],'away_club':a['club'],'league':lg,'home_hist':homehist[:hp],'away_hist':awayhist[:ap],'qclose':q.tolist(),'day_offset':off})
     return out,unmatched
 
-def mean_metric(xs,m,n):return float(np.mean([z[m] for z in xs[-n:]]))
-def std_metric(xs,m,n):return float(np.std([z[m] for z in xs[-n:]],ddof=0))
+def metric_values(xs,m,n):
+    vals=[z[m] for z in xs[-n:]]
+    if len(vals)!=n or any(v is None for v in vals):raise RuntimeError(f'lagged performance missing metric={m} n={n}')
+    return vals
+def mean_metric(xs,m,n):return float(np.mean(metric_values(xs,m,n)))
+def std_metric(xs,m,n):return float(np.std(metric_values(xs,m,n),ddof=0))
 def make_features(row):
     hh,ah=row['home_hist'],row['away_hist'];td=row['target_date'];maxdate=max(hh[-1]['date'],ah[-1]['date'])
     if not maxdate<td:raise RuntimeError('strict-lag violation')
-    q=np.asarray(row['qclose']);context=[abs(float(q[0]-q[2])),entropy(q)];fund=[]
-    cache={}
+    q=np.asarray(row['qclose']);context=[abs(float(q[0]-q[2])),entropy(q)];fund=[];cache={}
     for m in METRICS:
         for n in (5,10):
             hv=mean_metric(hh,m,n);av=mean_metric(ah,m,n);cache[(m,n,'h')]=hv;cache[(m,n,'a')]=av;fund.append(hv-av)
     fund += [cache[('xG',5,'h')]+cache[('xG',5,'a')],cache[('xGA',5,'h')]+cache[('xGA',5,'a')],cache[('xG',10,'h')]+cache[('xG',10,'a')],cache[('xGA',10,'h')]+cache[('xGA',10,'a')]]
     hs=std_metric(hh,'npxGD',5);as_=std_metric(ah,'npxGD',5);htrend=cache[('npxGD',5,'h')]-cache[('npxGD',10,'h')];atrend=cache[('npxGD',5,'a')]-cache[('npxGD',10,'a')]
-    gap=abs(cache[('npxGD',10,'h')]-cache[('npxGD',10,'a')]);totalxg=cache[('xG',10,'h')]+cache[('xG',10,'a')]
-    hr=min(30,max(0,(td-hh[-1]['date']).days));ar=min(30,max(0,(td-ah[-1]['date']).days))
+    gap=abs(cache[('npxGD',10,'h')]-cache[('npxGD',10,'a')]);totalxg=cache[('xG',10,'h')]+cache[('xG',10,'a')];hr=min(30,max(0,(td-hh[-1]['date']).days));ar=min(30,max(0,(td-ah[-1]['date']).days))
     fund += [hs,as_,hs-as_,htrend,atrend,htrend-atrend,gap,totalxg/(1+gap),float(hr),float(ar),float(abs(hr-ar))]
     if len(fund)!=35 or len(context+fund)!=37:raise RuntimeError(f'feature count {len(fund)}')
     row['context']=context;row['fundamental']=context+fund;row['max_source_date']=str(maxdate);return row
@@ -170,8 +173,7 @@ def per_div_ll(rows,probs,actual):
     return {d:probability_metrics([x[0] for x in v],[x[1] for x in v])['log_loss'] for d,v in sorted(g.items())}
 
 def read_labels(raw_dir,ids,holdout=False):
-    labels={};access=0
-    pats='2425_*.csv' if holdout else '*.csv'
+    labels={};access=0;pats='2425_*.csv' if holdout else '*.csv'
     for p in sorted(Path(raw_dir).glob(pats)):
         season=p.stem.split('_',1)[0]
         if not holdout and season=='2425':continue
@@ -187,7 +189,6 @@ def read_labels(raw_dir,ids,holdout=False):
 
 def model_predict(rows,key,b,mean,std):
     X=np.array([r[key] for r in rows],dtype=float);X=(X-mean)/std;off=np.array([logit(r['qclose'][1]) for r in rows]);pd=predict_offset(X,off,b);probs=[threeway(r['qclose'],p) for r,p in zip(rows,pd)];return pd,probs
-
 def fit_context(rows,labels):
     X=np.array([r['context'] for r in rows]);y=np.array([1. if labels[r['identity']]==1 else 0. for r in rows]);off=np.array([logit(r['qclose'][1]) for r in rows]);Xs,mean,std=standardize_fit(X);b,d=fit_offset(Xs,y,off,1.0);return b,d,mean,std
 def choose_fundamental(fit,val,labels,cands):
@@ -195,7 +196,6 @@ def choose_fundamental(fit,val,labels,cands):
     for l2 in cands:
         b,d=fit_offset(Xs,y,off,float(l2));pd,probs=model_predict(val,'fundamental',b,mean,std);out.append({'l2':float(l2),'beta':b,'diag':d,'mean':mean,'std':std,'HDA':probability_metrics(probs,actual),'binary_draw_log_loss':binary_ll(pd,actual),'draw_auc':auc(pd,actual)})
     best=sorted(out,key=lambda x:(x['HDA']['log_loss'],x['binary_draw_log_loss'],x['l2']))[0];return best,out
-
 def choose_policy(rows,probs,actual,cfg):
     market=[market_pred(r['qclose']) for r in rows];base=decision_metrics(market,actual);prev=sum(y==1 for y in actual)/len(actual);scores=[dscore(p) for p in probs];rank=sorted(range(len(rows)),key=lambda i:(-scores[i],rows[i]['identity']));cands=[]
     for cov in cfg['coverage_candidates']:
@@ -205,16 +205,16 @@ def bootstrap(base,cand,actual,n,seed):
     rnd=random.Random(seed);N=len(actual);v=[]
     for _ in range(n):
         s=0
-        for j in range(N):i=rnd.randrange(N);s+=int(cand[i]==actual[i])-int(base[i]==actual[i])
+        for _j in range(N):i=rnd.randrange(N);s+=int(cand[i]==actual[i])-int(base[i]==actual[i])
         v.append(s/N)
     v.sort();q=lambda x:v[min(len(v)-1,max(0,int(x*(len(v)-1))))];return {'mean':sum(v)/n,'p05':q(.05),'p50':q(.5),'p95':q(.95),'samples':n,'seed':seed}
 def self_test():
-    X=np.linspace(-2,2,30)[:,None];off=np.zeros(30);y=(X[:,0]>.2).astype(float);Xs,me,st=standardize_fit(X);b,d=fit_offset(Xs,y,off,1.0);assert d['converged'] and predict_offset(Xs,off,b)[0]<predict_offset(Xs,off,b)[-1];print('PASS_R39H_SELF_TEST')
+    X=np.linspace(-2,2,30)[:,None];off=np.zeros(30);y=(X[:,0]>.2).astype(float);Xs,_me,_st=standardize_fit(X);b,d=fit_offset(Xs,y,off,1.0);assert d['converged'] and predict_offset(Xs,off,b)[0]<predict_offset(Xs,off,b)[-1];print('PASS_R39H_SELF_TEST')
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--prereg',type=Path);ap.add_argument('--market-dir',type=Path);ap.add_argument('--raw-dir',type=Path);ap.add_argument('--understat',type=Path);ap.add_argument('--out-dir',type=Path);ap.add_argument('--self-test',action='store_true');a=ap.parse_args()
     if a.self_test:self_test();return
-    pre=json.loads(a.prereg.read_text());a.out_dir.mkdir(parents=True,exist_ok=True);divmap={'E0':'EPL','D1':'Bundesliga','I1':'Serie_A','SP1':'La_liga','F1':'Ligue_1'};usrows,by_side,hist=build_understat(a.understat,divmap);rows,unmatched=load_market_rows(a.market_dir,pre,by_side,hist);rows=[make_features(r) for r in rows]
+    pre=json.loads(a.prereg.read_text());a.out_dir.mkdir(parents=True,exist_ok=True);divmap={'E0':'EPL','D1':'Bundesliga','I1':'Serie_A','SP1':'La_liga','F1':'Ligue_1'};_usrows,by_side,hist=build_understat(a.understat,divmap);rows,unmatched=load_market_rows(a.market_dir,pre,by_side,hist);rows=[make_features(r) for r in rows]
     train=sorted([r for r in rows if r['season']!='2425'],key=lambda r:(r['dt'],r['identity']));hold=[r for r in rows if r['season']=='2425' and r['target_date']<=datetime.strptime(pre['source_binding']['holdout_window_end'],'%Y-%m-%d').date()]
     if len(train)!=pre['source_binding']['history_eligible_preholdout'] or len(hold)!=pre['source_binding']['history_eligible_2425']:raise RuntimeError(f'identity drift train={len(train)} hold={len(hold)}')
     fixed=sorted(hold,key=lambda r:htxt(f"{pre['source_binding']['fixed100_seed']}|{r['identity']}"))[:pre['source_binding']['fixed100_rows']];sha=set_sha([r['identity'] for r in fixed])
@@ -225,12 +225,12 @@ def main():
     if len(labels)!=len(train):raise RuntimeError(f'training label count {len(labels)}')
     actual_val=[labels[r['identity']] for r in val];market_probs=[np.asarray(r['qclose']) for r in val];market_pd=[r['qclose'][1] for r in val];market_val={'HDA':probability_metrics(market_probs,actual_val),'binary_draw_log_loss':binary_ll(market_pd,actual_val),'draw_auc':auc(market_pd,actual_val)}
     cb,cd,cm,cs=fit_context(fit,labels);cpd,cprobs=model_predict(val,'context',cb,cm,cs);context_val={'HDA':probability_metrics(cprobs,actual_val),'binary_draw_log_loss':binary_ll(cpd,actual_val),'draw_auc':auc(cpd,actual_val)}
-    best,cands=choose_fundamental(fit,val,labels,pre['model']['fundamental_l2_candidates']);fpd,fprobs=model_predict(val,'fundamental',best['beta'],best['mean'],best['std']);fd=per_div_ll(val,fprobs,actual_val);cdv=per_div_ll(val,cprobs,actual_val);wins=sum(fd[d]<cdv[d] for d in sorted(set(fd)&set(cdv)))
+    best,_cands=choose_fundamental(fit,val,labels,pre['model']['fundamental_l2_candidates']);_fpd,fprobs=model_predict(val,'fundamental',best['beta'],best['mean'],best['std']);fd=per_div_ll(val,fprobs,actual_val);cdv=per_div_ll(val,cprobs,actual_val);wins=sum(fd[d]<cdv[d] for d in sorted(set(fd)&set(cdv)))
     gates={'HDA_better_than_raw_market':best['HDA']['log_loss']<market_val['HDA']['log_loss'],'binary_draw_LL_better_than_raw_market':best['binary_draw_log_loss']<market_val['binary_draw_log_loss'],'HDA_better_than_context':best['HDA']['log_loss']<context_val['HDA']['log_loss'],'binary_draw_LL_better_than_context':best['binary_draw_log_loss']<context_val['binary_draw_log_loss'],'Draw_AUC_better_than_context':best['draw_auc']>context_val['draw_auc'],'per_division_HDA_wins_ge3':wins>=3};validation_pass=all(gates.values())
     freeze={'schema_version':pre['schema_version'],'prereg_sha256':hfile(a.prereg),'fixed100_identity_sha256':sha,'training_rows':len(train),'fit_rows':len(fit),'validation_rows':len(val),'policy_rows':len(policy),'training_labels_accessed':training_access,'holdout_labels_accessed_before_freeze':0,'selected_l2':best['l2'],'context_diag':cd,'fundamental_diag':best['diag'],'validation':{'raw_market':market_val,'context_baseline':context_val,'fundamental':{'HDA':best['HDA'],'binary_draw_log_loss':best['binary_draw_log_loss'],'draw_auc':best['draw_auc']},'per_division_fundamental':fd,'per_division_context':cdv,'per_division_wins':wins,'gates':gates,'passed':validation_pass},'strict_lag_audit':{'rows_checked':len(rows),'violations':sum(not (datetime.fromisoformat(r['max_source_date']).date()<r['target_date']) for r in rows)},'unmatched_market_rows':unmatched}
     if not validation_pass:
         result={'status':pre['model']['if_validation_gate_fails'],'freeze':freeze,'holdout_labels_accessed':0,'formal_weight':0};(a.out_dir/'freeze_receipt_r39h.json').write_text(json.dumps(freeze,indent=2));(a.out_dir/'r39h_result.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2));return
-    actual_pol=[labels[r['identity']] for r in policy];ppd,pprobs=model_predict(policy,'fundamental',best['beta'],best['mean'],best['std']);chosen,pcands,pbase,prev=choose_policy(policy,pprobs,actual_pol,pre['policy']);freeze['policy']={'prevalence':prev,'market':pbase,'candidates':pcands,'chosen':chosen}
+    actual_pol=[labels[r['identity']] for r in policy];_ppd,pprobs=model_predict(policy,'fundamental',best['beta'],best['mean'],best['std']);chosen,pcands,pbase,prev=choose_policy(policy,pprobs,actual_pol,pre['policy']);freeze['policy']={'prevalence':prev,'market':pbase,'candidates':pcands,'chosen':chosen}
     if chosen is None:
         result={'status':pre['policy']['if_no_lane'],'freeze':freeze,'holdout_labels_accessed':0,'formal_weight':0};(a.out_dir/'freeze_receipt_r39h.json').write_text(json.dumps(freeze,indent=2));(a.out_dir/'r39h_result.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2));return
     freeze['parameter_sha256']=canonical_sha({'context_beta':cb.tolist(),'context_mean':cm.tolist(),'context_std':cs.tolist(),'fund_beta':best['beta'].tolist(),'fund_mean':best['mean'].tolist(),'fund_std':best['std'].tolist(),'threshold':chosen['threshold'],'l2':best['l2']});(a.out_dir/'freeze_receipt_r39h.json').write_text(json.dumps(freeze,indent=2))
