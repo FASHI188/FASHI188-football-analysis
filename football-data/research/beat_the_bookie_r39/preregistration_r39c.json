@@ -1,0 +1,113 @@
+{
+  "schema_version": "beat-the-bookie-draw-residual-r39c.0",
+  "status": "PRE_REGISTERED_BEFORE_LABEL_ACCESS",
+  "classification": "VIEWED_HISTORICAL_CHRONOLOGICAL_FIXED100_CHALLENGE_FORMAL_WEIGHT_0",
+  "source_binding": {
+    "dataset_slug": "austro/beat-the-bookie-worldwide-football-dataset",
+    "odds_series_sha256": "cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722",
+    "odds_series_b_sha256": "3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5",
+    "label_contract": "source data card describes score as 90-minute score; use score_home/score_away only after preregistration"
+  },
+  "identity_binding": {
+    "identity_set_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "identity_lock_receipt_sha256": "838c371412993fc0b69777775d7e2b7ada5654438f501666ef6abb66a561bf75",
+    "locked100_csv_sha256": "7e08db7b25ad2f60456a72629078640e4858dd7b6c5f7759d4a93a7c26f5ea50",
+    "holdout_start": "2016-09-20T14:00:00",
+    "locked_test_rows": 100,
+    "training_eligible_rows": 49511,
+    "holdout_eligible_rows": 10734,
+    "embargo_rule": "no labels from any match at or after holdout_start may be used for fitting"
+  },
+  "market_probability_definition": {
+    "cutoffs_hours_before_kickoff": [24, 6, 1],
+    "minimum_common_bookies": 5,
+    "same_bookmakers_across_cutoffs": true,
+    "per_book_de_vig": "inverse decimal odds normalized over home/draw/away",
+    "consensus": "arithmetic mean of each common bookmaker's de-vig probabilities",
+    "baseline": "T-1h consensus H/D/A probability"
+  },
+  "features": [
+    "logit_draw_t1",
+    "draw_delta_t24_to_t6",
+    "draw_delta_t6_to_t1",
+    "draw_slope_acceleration_per_hour",
+    "draw_std_t24",
+    "draw_std_t6",
+    "draw_std_t1",
+    "draw_std_change_t24_to_t1",
+    "abs_home_away_gap_t24",
+    "abs_home_away_gap_t1",
+    "home_away_gap_change_t24_to_t1",
+    "entropy_t24",
+    "entropy_t1",
+    "entropy_change_t24_to_t1",
+    "log1p_common_bookmaker_count"
+  ],
+  "models": {
+    "market_baseline": "unmodified T-1h consensus H/D/A",
+    "calibration_only": {
+      "target": "draw vs non-draw",
+      "predictors": ["logit_draw_t1"],
+      "intercept": true,
+      "standardize_using_training_only": true,
+      "l2_lambda": 1.0,
+      "class_weight": "none"
+    },
+    "trajectory_residual": {
+      "target": "draw vs non-draw",
+      "predictors": "all preregistered features",
+      "intercept": true,
+      "standardize_using_training_only": true,
+      "l2_lambda": 1.0,
+      "class_weight": "none",
+      "optimizer": "Newton-Raphson logistic regression",
+      "maximum_iterations": 50,
+      "coefficient_delta_tolerance": 1e-8,
+      "probability_clip": [1e-8, 0.99999999]
+    },
+    "three_way_mapping": "candidate draw probability from binary model; remaining probability split home:away in the unmodified T-1h market consensus non-draw ratio"
+  },
+  "evaluation": {
+    "holdout_rows": 100,
+    "metrics": ["accuracy", "log_loss", "brier", "rps", "draw_auc", "draw_precision", "draw_recall", "draw_f1", "predicted_draw_count"],
+    "paired_bootstrap": {"samples": 5000, "seed": 511390},
+    "trajectory_challenge_gate": {
+      "accuracy_strictly_better_than_market_baseline": true,
+      "log_loss_nonworse_than_market_baseline": true,
+      "brier_nonworse_than_market_baseline": true,
+      "rps_nonworse_than_market_baseline": true,
+      "draw_auc_strictly_better_than_market_baseline": true,
+      "predicted_draw_count_at_least_one": true,
+      "bootstrap_accuracy_delta_p05_positive": true,
+      "log_loss_nonworse_than_calibration_only": true
+    }
+  },
+  "execution_order": [
+    "recompute score-free eligibility and locked100 identity SHA",
+    "build all score-free market features",
+    "read labels only for training matches strictly before holdout_start",
+    "fit and serialize calibration-only and trajectory models",
+    "write model-freeze receipt and model parameter SHA before holdout-label access",
+    "read score labels only for the locked100 holdout identities",
+    "evaluate the frozen models exactly once",
+    "write aggregate and per-match research evidence"
+  ],
+  "rerun_policy": {
+    "formula_or_hyperparameter_change_after_holdout_labels": "forbidden on this locked100",
+    "new_hypothesis_requires_new_holdout": true
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_use_allowed": false,
+    "formal_unified_matrix_allowed": false,
+    "formal_exact_score_allowed": false,
+    "ev_allowed": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "formal_config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
