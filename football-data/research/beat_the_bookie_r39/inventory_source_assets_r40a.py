@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse,csv,gzip,io,json,zipfile
+import argparse,csv,gzip,json,zipfile
 from datetime import datetime,timezone
 from pathlib import Path
+
+MAX_HEADER_BYTES=1024*1024
 
 
 def classify(columns:list[str])->dict[str,list[str]]:
@@ -34,18 +36,29 @@ def classify(columns:list[str])->dict[str,list[str]]:
     return {k:v for k,v in groups.items() if v}
 
 
-def header_from_member(z:zipfile.ZipFile,name:str)->list[str]|None:
+def decode_header_line(raw:bytes)->tuple[str,str]:
+    for enc in ('utf-8-sig','cp1252','latin-1'):
+        try:return raw.decode(enc),enc
+        except UnicodeDecodeError:pass
+    raise RuntimeError('header decode failed')
+
+
+def header_from_member(z:zipfile.ZipFile,name:str)->tuple[list[str],str]|None:
     lower=name.casefold()
     if lower.endswith('.csv.gz'):
-        with z.open(name,'r') as raw:
-            with gzip.GzipFile(fileobj=raw,mode='rb') as gz:
-                with io.TextIOWrapper(gz,encoding='utf-8-sig',newline='') as text:
-                    return next(csv.reader(text))
-    if lower.endswith('.csv'):
-        with z.open(name,'r') as raw:
-            with io.TextIOWrapper(raw,encoding='utf-8-sig',newline='') as text:
-                return next(csv.reader(text))
-    return None
+        with z.open(name,'r') as rawzip:
+            with gzip.GzipFile(fileobj=rawzip,mode='rb') as gz:
+                raw=gz.readline(MAX_HEADER_BYTES)
+    elif lower.endswith('.csv'):
+        with z.open(name,'r') as rawzip:
+            raw=rawzip.readline(MAX_HEADER_BYTES)
+    else:
+        return None
+    if not raw:raise RuntimeError(f'empty tabular member: {name}')
+    if len(raw)>=MAX_HEADER_BYTES and not raw.endswith((b'\n',b'\r')):raise RuntimeError(f'header exceeds safety bound: {name}')
+    text,encoding=decode_header_line(raw)
+    header=next(csv.reader([text]))
+    return header,encoding
 
 
 def main():
@@ -59,9 +72,9 @@ def main():
         for info in z.infolist():
             item={'name':info.filename,'compressed_size':info.compress_size,'uncompressed_size':info.file_size,'is_directory':info.is_dir()}
             if not info.is_dir():
-                header=header_from_member(z,info.filename)
-                if header is not None:
-                    headers_read+=1;item['csv_header']=header;item['column_count']=len(header);item['column_groups_from_names_only']=classify(header)
+                parsed=header_from_member(z,info.filename)
+                if parsed is not None:
+                    header,encoding=parsed;headers_read+=1;item['csv_header']=header;item['header_encoding']=encoding;item['column_count']=len(header);item['column_groups_from_names_only']=classify(header)
                     for group,cols in item['column_groups_from_names_only'].items():
                         candidate_groups.setdefault(group,[]).append({'member':info.filename,'columns':cols})
             members.append(item)
