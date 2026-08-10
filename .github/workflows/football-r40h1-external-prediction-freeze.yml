@@ -1,0 +1,123 @@
+name: Football R40H1 External Prediction Freeze
+
+on:
+  pull_request:
+    branches:
+      - research/beat-the-bookie-timeseries-r39b
+    paths:
+      - '.github/workflows/football-r40h1-external-prediction-freeze.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-prediction-freeze:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact R40H1 frozen prediction contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json)" = "47f05a9b49044799064605d83488f41a62b37f66"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py)" = "066437c4067a729607a9852d178f4e22e1ab214a"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json').read_text())
+          assert r['status']=='PRE_REGISTERED_EXTERNAL_ZERO_LABEL_PREDICTION_FREEZE'
+          assert r['parent_r40h']['verdict']=='STOP_R40H_CROSS_SOURCE_FREEZE'
+          assert r['parent_r40h0']['status']=='PASS_R40H0_ZERO_LABEL_CONFLICT_QUARANTINE'
+          assert r['parent_r40h0']['conflicted_match_ids_in_r40g_eligible']==0
+          assert r['hard_limits']['external_result_values_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          assert r['frozen_external_partition']['eligible_count']==21561
+          print('PASS_R40H1_FROZEN_CONTRACT')
+          PY
+
+      - name: Download exact independent archive
+        run: |
+          set -euo pipefail
+          rm -rf r40h1-source r40h1-output r40h1-archive.zip
+          mkdir -p r40h1-source r40h1-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o r40h1-archive.zip
+          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40h1-archive.zip' | sha256sum -c -
+
+      - name: Extract odds only; results forbidden
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import shutil,zipfile
+          from pathlib import PurePosixPath
+          z=zipfile.ZipFile('r40h1-archive.zip')
+          members=z.namelist()
+          odds=[m for m in members if PurePosixPath(m).name.casefold()=='matches_odds.csv']
+          results=[m for m in members if PurePosixPath(m).name.casefold()=='matches_results.csv']
+          assert len(odds)==1, odds
+          assert len(results)==1, results
+          with z.open(odds[0]) as src, open('r40h1-source/Matches_Odds.csv','wb') as dst:
+              shutil.copyfileobj(src,dst)
+          print('result member present but NOT extracted:',results[0])
+          PY
+          test -s r40h1-source/Matches_Odds.csv
+          test ! -e r40h1-source/Matches_Results.csv
+          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40h1-source/Matches_Odds.csv' | sha256sum -c -
+          rm -f r40h1-archive.zip
+
+      - name: Freeze unlabeled external predictions
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py \
+            --registration football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json \
+            --odds-csv r40h1-source/Matches_Odds.csv \
+            --out-dir r40h1-output
+
+      - name: Verify prediction freeze before result access
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('r40h1-output/external_prediction_freeze_status_r40h1.json').read_text())
+          assert s['status']=='PASS_R40H1_EXTERNAL_ZERO_LABEL_PREDICTION_FREEZE', s['status']
+          assert s['model']['core_model_sha256']=='7fba39fe1f155b19b5de55de28d0fbb393473269f99888917e4ee6b3fec7fb4d'
+          assert s['model']['model_fits_this_stage']==0
+          assert s['external']['eligible_count']==21561
+          assert s['external']['conflicted_match_ids_in_eligible']==0
+          assert s['gates']['external_identity_hashes_exact']
+          assert s['gates']['all_probability_vectors_sum_to_one']
+          assert s['external']['result_file_extracted'] is False
+          assert s['external']['result_values_accessed']==0
+          n=s['no_label_audit']
+          assert n['external_result_values_accessed']==0 and n['model_fits']==0 and n['prediction_metrics']==0
+          assert n['internal_fifth_fixed100_accessed']==0
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete source bytes before evidence upload
+        if: always()
+        run: rm -rf r40h1-source r40h1-archive.zip
+
+      - name: Upload R40H1 prediction-freeze evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40h1-external-prediction-freeze-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40h1-output/
+          if-no-files-found: error
+          retention-days: 30
