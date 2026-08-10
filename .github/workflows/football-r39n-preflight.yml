@@ -1,0 +1,115 @@
+name: Football R39N Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39n-preflight.yml'
+      - 'football-data/research/lineup_market_value_r39n/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39n-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify zero-label contracts
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/lineup_market_value_r39n/evaluate_snapshot_r39n.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/lineup_market_value_r39n/preregistration_r39n.json').read_text())
+          s=json.loads(Path('football-data/research/lineup_market_value_r39n/source_registration_r39n.json').read_text())
+          b=json.loads(Path('football-data/research/lineup_market_value_r39n/feature_snapshot_binding_r39n.json').read_text())
+          c=json.loads(Path('football-data/research/lineup_market_value_r39n/evaluator_contract_r39n.json').read_text())
+          assert p['preregistration_status']=='HYPOTHESIS_AND_FEATURE_ALGORITHM_FROZEN_BEFORE_TARGET_LABEL_ACCESS'
+          assert p['blind_binding']['fixed100_labels_accessed_before_r39n']==0
+          assert b['status']=='FROZEN_ZERO_LABEL_VALUATION_SNAPSHOT_BOUND_FOR_EVALUATION'
+          assert b['frozen_snapshot']['feature_eligible']=={'all':9434,'preholdout':8161,'holdout_2526':1273,'fixed100':100}
+          assert b['frozen_snapshot']['strict_valuation_lag_violations']==0
+          assert all(v==0 for v in b['frozen_snapshot']['zero_label_contract'].values())
+          assert c['frozen_before_real_target_label_evaluation'] is True
+          assert c['candidate']['L2_candidates']==[1.0,10.0,100.0]
+          assert c['benchmarks']['market_context']['L2']==100.0
+          assert c['benchmarks']['static_R39L']['L2']==1.0
+          assert all(v==0 for v in s['no_target_label_contract'].values())
+          print('PASS_R39N_ZERO_LABEL_CONTRACT')
+          PY
+      - name: Download and verify both frozen zero-label feature snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p r39n-input r39l-input
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050468369/zip" -o /tmp/r39n.zip
+          echo "02b018ac4587ce7237607a1ebe81558f059e4db298223a7e5f4e5088d7611d99  /tmp/r39n.zip" | sha256sum -c -
+          unzip -q /tmp/r39n.zip -d r39n-input
+          echo "fb304ad55d21ffcb53f7623c82ecfb3f13d4db838aa8788446c6eafc8abd5a18  r39n-input/feature_snapshot_r39n.csv" | sha256sum -c -
+          echo "444d6c55abe86fbdef28c1871c76173bcb65f70157055bcc9ca809b33e8cbc56  r39n-input/snapshot_receipt_r39n.json" | sha256sum -c -
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050139416/zip" -o /tmp/r39l.zip
+          echo "d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575  /tmp/r39l.zip" | sha256sum -c -
+          unzip -q /tmp/r39l.zip -d r39l-input
+          echo "da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4  r39l-input/feature_snapshot_r39m.csv" | sha256sum -c -
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          n=json.loads(Path('r39n-input/snapshot_receipt_r39n.json').read_text())
+          assert n['status']=='PASS_R39N_ZERO_LABEL_VALUATION_SNAPSHOT'
+          assert n['feature_eligible']=={'all':9434,'preholdout':8161,'holdout_2526':1273,'fixed100':100}
+          assert n['strict_valuation_lag_violations']==0 and all(v==0 for v in n['zero_label_contract'].values())
+          m=json.loads(Path('r39l-input/snapshot_receipt_r39m.json').read_text())
+          assert m['status']=='PASS_R39M_ZERO_LABEL_FROZEN_FEATURE_SNAPSHOT' and all(v==0 for v in m['zero_label_contract'].values())
+          print('PASS_R39N_EXACT_FROZEN_SNAPSHOT_INPUTS')
+          PY
+      - name: Run evaluator self-test and label-order audit
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_market_value_r39n/evaluate_snapshot_r39n.py --self-test
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('football-data/research/lineup_market_value_r39n/evaluate_snapshot_r39n.py').read_text()
+          fw=src.index("feature_freeze_receipt_r39n.json').write_text")
+          pl=src.index("labels=rl.load_labels(a.raw_dir")
+          ff=src.index("final_freeze_receipt_r39n.json').write_text",pl)
+          hl=src.index("hlabels=rl.load_labels(a.raw_dir,{'2526'}",ff)
+          assert fw < pl < ff < hl
+          print('PASS_R39N_LABEL_ORDER_AUDIT')
+          PY
+      - name: Persist zero-label preflight receipt with exact scientific blobs
+        run: |
+          set -euo pipefail
+          mkdir -p r39n-preflight
+          python - <<'PY'
+          import json,subprocess
+          from datetime import datetime,timezone
+          from pathlib import Path
+          files=['football-data/research/lineup_market_value_r39n/preregistration_r39n.json','football-data/research/lineup_market_value_r39n/source_registration_r39n.json','football-data/research/lineup_market_value_r39n/feature_snapshot_binding_r39n.json','football-data/research/lineup_market_value_r39n/evaluator_contract_r39n.json','football-data/research/lineup_market_value_r39n/evaluate_snapshot_r39n.py']
+          out={'status':'PASS_R39N_ZERO_LABEL_EVALUATOR_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'scientific_blobs':{p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files},'r39n_snapshot_artifact_id':9050468369,'r39n_snapshot_artifact_sha256':'02b018ac4587ce7237607a1ebe81558f059e4db298223a7e5f4e5088d7611d99','r39l_benchmark_snapshot_artifact_id':9050139416,'r39l_benchmark_snapshot_artifact_sha256':'d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575','real_target_labels_accessed':0,'model_fit_on_real_labels':0,'fixed100_labels_accessed':0,'formal_weight':0}
+          Path('r39n-preflight/preflight_receipt_r39n.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39n-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39n-preflight/
+          if-no-files-found: error
+          retention-days: 30
