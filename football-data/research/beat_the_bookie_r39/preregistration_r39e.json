@@ -1,0 +1,156 @@
+{
+  "schema_version": "beat-the-bookie-dense-sequence-dct-r39e-evaluation.0",
+  "status": "PRE_REGISTERED_BEFORE_R39E_THIRD100_LABEL_ACCESS",
+  "classification": "VIEWED_HISTORICAL_THIRD_FIXED100_DENSE_SEQUENCE_CHALLENGE_FORMAL_WEIGHT_0",
+  "model_registration_binding": {
+    "file": "football-data/research/beat_the_bookie_r39/model_registration_r39e.json",
+    "git_blob_sha": "9b5e2635875b042bccb47f9e103434d74977d727",
+    "representation_status": "MODEL_REPRESENTATION_FROZEN_BEFORE_THIRD100_IDENTITY_LOCK"
+  },
+  "source_binding": {
+    "dataset_slug": "austro/beat-the-bookie-worldwide-football-dataset",
+    "odds_series_sha256": "cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722",
+    "odds_series_b_sha256": "3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5"
+  },
+  "identity_binding": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "training_eligible_rows": 49511,
+    "holdout_eligible_rows": 10734,
+    "first100_identity_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "second100_identity_sha256": "739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4",
+    "third100_identity_sha256": "d6d97f0aef62a8eb6d7b8163e12852dcf7d85b88164ce6d29956b9f2bc082695",
+    "first200_third100_overlap": 0,
+    "lock_run_id": 31391512672,
+    "lock_artifact_id": 9063918202,
+    "lock_artifact_digest": "sha256:9fbb61c523acfb7a090992dbf1374e6a25650f1c66d6fc12aae7790a41d768e1",
+    "lock_receipt_file_sha256": "512a4c03bfcabc15c482031cffa86eddafc75e616dd1ae272490caa8f03df1e6",
+    "locked100_csv_sha256": "2581b640555e37076b6cd076526130b5b67b9aa9b5972df2d3cf9999ae404053",
+    "selection_rule": "same sha256('51139|' + identity) holdout ordering; third100 ranks [200,300)",
+    "old_first200_labels_allowed": false,
+    "third100_labels_allowed_before_parameter_freeze": false
+  },
+  "market_probability_definition": {
+    "cutoffs_hours_before_kickoff": [24, 6, 1],
+    "minimum_common_bookies": 5,
+    "same_bookmakers_across_cutoffs": true,
+    "per_book_de_vig": "inverse decimal odds normalized over H/D/A",
+    "consensus": "arithmetic mean of common bookmakers' de-vig probabilities",
+    "baseline": "T-1h consensus H/D/A probability"
+  },
+  "r39c_features": [
+    "logit_draw_t1",
+    "draw_delta_t24_to_t6",
+    "draw_delta_t6_to_t1",
+    "draw_slope_acceleration_per_hour",
+    "draw_std_t24",
+    "draw_std_t6",
+    "draw_std_t1",
+    "draw_std_change_t24_to_t1",
+    "abs_home_away_gap_t24",
+    "abs_home_away_gap_t1",
+    "home_away_gap_change_t24_to_t1",
+    "entropy_t24",
+    "entropy_t1",
+    "entropy_change_t24_to_t1",
+    "log1p_common_bookmaker_count"
+  ],
+  "dense_sequence": {
+    "suffix_start": 47,
+    "suffix_end": 70,
+    "hours": 24,
+    "T0_suffix_71_allowed": false,
+    "core_bookmakers": "intersection of complete H/D/A bookmakers over all suffixes 47..70; use entire set",
+    "minimum_core_bookmakers": 3,
+    "row_dropping": "forbidden",
+    "interpolation": "forbidden",
+    "channels": ["draw_logit", "home_away_log_ratio", "threeway_entropy", "draw_bookmaker_dispersion"],
+    "dct_type": "orthonormal DCT-II",
+    "dct_coefficients_per_channel": [0, 1, 2, 3, 4, 5],
+    "sequence_features": 24,
+    "static_sequence_feature": "log1p(core_bookmaker_count)",
+    "new_feature_count": 25
+  },
+  "models": {
+    "r39c": {
+      "features": 15,
+      "target": "draw vs non-draw",
+      "standardize_training_only": true,
+      "l2_lambda": 1.0,
+      "max_iterations": 50,
+      "tolerance": 1e-08,
+      "threeway_mapping": "predicted draw probability plus T-1h market H:A non-draw ratio"
+    },
+    "r39e": {
+      "features": 40,
+      "composition": "same 15 R39C features + 25 frozen dense sequence features",
+      "target": "draw vs non-draw",
+      "standardize_training_only": true,
+      "l2_lambda": 1.0,
+      "max_iterations": 50,
+      "tolerance": 1e-08,
+      "threeway_mapping": "predicted draw probability plus unchanged R39C T-1h market H:A non-draw ratio",
+      "decision_rule": "ordinary three-way argmax",
+      "threshold_selection": "forbidden"
+    }
+  },
+  "execution_order": [
+    "recompute score-free R39C eligibility and exact first/second/third identity SHAs",
+    "construct score-free R39C and dense T24-T1 sequence features; verify core bookmaker count >=3 for every eligible row",
+    "read score labels only for the 49,511 matches strictly before holdout_start",
+    "fit frozen R39C 15-feature comparator and R39E 40-feature challenger on exactly the same training labels",
+    "serialize both standardization vectors, coefficients, diagnostics and R39E representation metadata into parameter freeze receipt",
+    "verify parameter freeze exists and third100 label access count remains zero",
+    "read score labels only for the locked R39E third100 identities; first200 holdout labels remain unread",
+    "evaluate exactly once and write aggregate plus per-match evidence"
+  ],
+  "evaluation": {
+    "holdout_rows": 100,
+    "comparators": ["T-1h market", "R39C 15-feature trajectory", "R39E 40-feature dense sequence"],
+    "probability_metrics": ["log_loss", "brier", "rps", "draw_auc"],
+    "decision_metrics": ["accuracy", "predicted_draw_count", "draw_precision", "draw_recall", "draw_f1"],
+    "paired_discordance": true,
+    "cluster_bootstrap": {
+      "cluster": "match_date",
+      "samples": 5000,
+      "seed": 511392,
+      "metrics": ["R39E_accuracy_minus_market", "R39E_accuracy_minus_R39C"]
+    },
+    "probability_signal_gate": {
+      "r39e_log_loss_strictly_better_than_r39c": true,
+      "r39e_brier_strictly_better_than_r39c": true,
+      "r39e_rps_strictly_better_than_r39c": true,
+      "r39e_draw_auc_strictly_better_than_r39c": true
+    },
+    "decision_increment_gate": {
+      "r39e_accuracy_strictly_better_than_market": true,
+      "r39e_accuracy_strictly_better_than_r39c": true,
+      "r39e_predicted_draw_count_at_least_one": true,
+      "r39e_draw_f1_strictly_better_than_r39c": true
+    },
+    "strong_uncertainty_gate": {
+      "cluster_bootstrap_R39E_minus_market_accuracy_p05_positive": true
+    },
+    "overall_challenge_pass": "all probability signal, decision increment and strong uncertainty gates"
+  },
+  "rerun_policy": {
+    "formula_or_feature_change_after_third100_labels": "forbidden on this third100",
+    "hyperparameter_or_threshold_change_after_third100_labels": "forbidden on this third100",
+    "new_hypothesis_requires_new_holdout": true,
+    "first200_reuse_for_tuning": "forbidden",
+    "third100_replacement_or_seed_search": "forbidden"
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_use_allowed": false,
+    "formal_unified_matrix_allowed": false,
+    "formal_exact_score_allowed": false,
+    "ev_allowed": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "formal_config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}

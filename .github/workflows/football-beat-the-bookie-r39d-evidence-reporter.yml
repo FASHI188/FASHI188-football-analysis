@@ -1,0 +1,143 @@
+name: Football Beat The Bookie R39D Evidence Reporter
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39d-evidence-reporter.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recover-single-push-run-evidence:
+    if: ${{ github.run_attempt == 1 && github.run_number == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_SHA: f8180914f2884d857c2a9db9961887bb1363d521
+      TARGET_WORKFLOW: football-beat-the-bookie-r39d-evaluation.yml
+      TARGET_BRANCH: research/beat-the-bookie-timeseries-r39b
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Locate exact R39D push run and wait only for its completion
+        run: |
+          set -euo pipefail
+          rm -rf reporter-output recovered-evaluation
+          mkdir -p reporter-output recovered-evaluation
+          found=0
+          for _i in $(seq 1 60); do
+            gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${TARGET_WORKFLOW}/runs?branch=${TARGET_BRANCH}&event=push&per_page=20" \
+              > reporter-output/workflow_runs_snapshot.json
+            python - <<'PY' > reporter-output/selected_run.json
+          import json,os,sys
+          data=json.load(open('reporter-output/workflow_runs_snapshot.json'))
+          target=os.environ['TARGET_SHA']
+          xs=[r for r in data.get('workflow_runs',[]) if r.get('head_sha')==target]
+          if not xs:
+              sys.exit(3)
+          r=sorted(xs,key=lambda x:x.get('id',0),reverse=True)[0]
+          print(json.dumps({
+              'id':r.get('id'),
+              'name':r.get('name'),
+              'event':r.get('event'),
+              'status':r.get('status'),
+              'conclusion':r.get('conclusion'),
+              'run_number':r.get('run_number'),
+              'run_attempt':r.get('run_attempt'),
+              'head_branch':r.get('head_branch'),
+              'head_sha':r.get('head_sha'),
+              'created_at':r.get('created_at'),
+              'updated_at':r.get('updated_at'),
+              'html_url':r.get('html_url')
+          },indent=2))
+          PY
+            rc=$?
+            if [ "$rc" -eq 3 ]; then sleep 5; continue; fi
+            found=1
+            status=$(python - <<'PY'
+          import json
+          print(json.load(open('reporter-output/selected_run.json'))['status'])
+          PY
+            )
+            if [ "$status" = "completed" ]; then break; fi
+            sleep 5
+          done
+          test "$found" -eq 1
+          run_id=$(python - <<'PY'
+          import json
+          print(json.load(open('reporter-output/selected_run.json'))['id'])
+          PY
+          )
+          echo "$run_id" > reporter-output/evaluation_run_id.txt
+          gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
+            > reporter-output/evaluation_artifacts.json
+          cat reporter-output/selected_run.json
+          cat reporter-output/evaluation_artifacts.json
+
+      - name: Recover original evaluation artifact without recomputation
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,sys
+          r=json.load(open('reporter-output/selected_run.json'))
+          if r['status']!='completed':
+              raise SystemExit('target evaluation did not complete inside reporter window')
+          arts=json.load(open('reporter-output/evaluation_artifacts.json')).get('artifacts',[])
+          if not arts:
+              raise SystemExit('target evaluation produced no artifact')
+          print('target_conclusion=',r['conclusion'])
+          print('artifact_ids=',[a['id'] for a in arts])
+          PY
+          run_id=$(cat reporter-output/evaluation_run_id.txt)
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --dir recovered-evaluation
+          find recovered-evaluation -type f -maxdepth 4 -print
+          cp -R recovered-evaluation reporter-output/recovered-evaluation
+
+      - name: Write reporter integrity receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('reporter-output')
+          files=[]
+          for p in sorted((root/'recovered-evaluation').rglob('*')):
+              if p.is_file():
+                  h=hashlib.sha256(p.read_bytes()).hexdigest()
+                  files.append({'path':str(p.relative_to(root)),'sha256':h,'bytes':p.stat().st_size})
+          run=json.loads((root/'selected_run.json').read_text())
+          arts=json.loads((root/'evaluation_artifacts.json').read_text()).get('artifacts',[])
+          receipt={
+              'status':'RECOVERED_R39D_PUSH_EVALUATION_EVIDENCE_WITHOUT_RECOMPUTATION',
+              'target_head_sha':run['head_sha'],
+              'target_run_id':run['id'],
+              'target_run_status':run['status'],
+              'target_run_conclusion':run['conclusion'],
+              'artifact_metadata':arts,
+              'recovered_files':files,
+              'research_data_rows_read_by_reporter':0,
+              'result_labels_read_by_reporter':0,
+              'models_fit_by_reporter':0,
+              'formal_weight':0
+          }
+          (root/'reporter_receipt.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8')
+          print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Upload read-only recovered R39D evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39d-evidence-reporter-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: reporter-output/
+          if-no-files-found: error
+          retention-days: 30

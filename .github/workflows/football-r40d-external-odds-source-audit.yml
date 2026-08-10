@@ -1,0 +1,120 @@
+name: Football R40D External Odds Source Audit
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-r40d-external-odds-source-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-external-source-audit:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact R40D zero-label contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/external_odds_source_audit_registration_r40d.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/audit_external_odds_source_r40d.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/external_odds_source_audit_registration_r40d.json)" = "260c7c0f253d39cbf8d67168ed86c6a0c4ac9389"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_external_odds_source_r40d.py)" = "411aec8f0f41aa93db3b0693b682121fd9c14617"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/external_odds_source_audit_registration_r40d.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_EXTERNAL_ODDS_SOURCE_AUDIT'
+          assert r['hard_limits']['result_labels_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          assert r['hard_limits']['fifth_fixed100_authorized'] is False
+          print('PASS_R40D_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Anonymous download source archive
+        run: |
+          set -euo pipefail
+          rm -rf r40d-source r40d-output r40d-archive.zip r40d-members.json r40d-archive.sha256
+          mkdir -p r40d-source r40d-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o r40d-archive.zip
+          sha256sum r40d-archive.zip | awk '{print $1}' > r40d-archive.sha256
+          test -s r40d-archive.zip
+
+      - name: Extract odds file only and physically exclude result file
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, shutil, zipfile
+          from pathlib import Path, PurePosixPath
+          z=zipfile.ZipFile('r40d-archive.zip')
+          members=z.namelist()
+          Path('r40d-members.json').write_text(json.dumps(members,ensure_ascii=False,indent=2),encoding='utf-8')
+          odds=[m for m in members if PurePosixPath(m).name.casefold()=='matches_odds.csv']
+          results=[m for m in members if PurePosixPath(m).name.casefold()=='matches_results.csv']
+          assert len(odds)==1, odds
+          assert len(results)==1, results
+          with z.open(odds[0]) as src, open('r40d-source/Matches_Odds.csv','wb') as dst:
+              shutil.copyfileobj(src,dst)
+          print('archive members:', members)
+          print('extracted odds only:', odds[0])
+          print('result member present but not extracted:', results[0])
+          PY
+          test -s r40d-source/Matches_Odds.csv
+          test ! -e r40d-source/Matches_Results.csv
+          rm -f r40d-archive.zip
+
+      - name: Audit independent timestamped odds source with zero labels
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/audit_external_odds_source_r40d.py \
+            --registration football-data/research/beat_the_bookie_r39/external_odds_source_audit_registration_r40d.json \
+            --odds-csv r40d-source/Matches_Odds.csv \
+            --archive-sha256 "$(cat r40d-archive.sha256)" \
+            --archive-members-json r40d-members.json \
+            --out-dir r40d-output
+
+      - name: Verify no-label hard boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r40d-output/external_odds_source_audit_status_r40d.json').read_text())
+          n=r['no_label_audit']
+          assert n['result_file_extracted'] is False
+          assert n['result_values_accessed']==0
+          assert n['model_fits']==0 and n['prediction_metrics']==0
+          assert n['thresholds_selected']==0 and n['identity_locks_created']==0
+          assert n['fifth_fixed100_accessed']==0
+          assert r['hard_limits']['formal_weight']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete downloaded odds bytes before evidence upload
+        if: always()
+        run: rm -rf r40d-source r40d-archive.sha256 r40d-members.json r40d-archive.zip
+
+      - name: Upload aggregate R40D source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40d-external-odds-source-audit-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40d-output/
+          if-no-files-found: error
+          retention-days: 30

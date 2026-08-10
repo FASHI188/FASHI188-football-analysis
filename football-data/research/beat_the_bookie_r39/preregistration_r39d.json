@@ -1,0 +1,151 @@
+{
+  "schema_version": "beat-the-bookie-draw-decision-boundary-r39d.0",
+  "status": "PRE_REGISTERED_BEFORE_R39D_HOLDOUT_LABEL_ACCESS",
+  "classification": "VIEWED_HISTORICAL_CHRONOLOGICAL_SECOND_FIXED100_CHALLENGE_FORMAL_WEIGHT_0",
+  "research_question": "Does the R39C trajectory draw ranking become actionable when draw/non-draw is decided by an out-of-time threshold learned only before the holdout, while T-1h market retains the H/A split?",
+  "source_binding": {
+    "dataset_slug": "austro/beat-the-bookie-worldwide-football-dataset",
+    "odds_series_sha256": "cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722",
+    "odds_series_b_sha256": "3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5"
+  },
+  "parent_r39c_binding": {
+    "parent_head_before_r39d": "34be301dfebedcf98f5074a3965c3be8ff53b1c1",
+    "r39c_prereg_git_blob_sha": "5389672975952606e07679276a264ab19954cc98",
+    "r39c_evaluator_git_blob_sha": "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb",
+    "r39c_locked100_identity_set_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "r39c_locked100_labels_are_consumed": true,
+    "r39c_locked100_forbidden_for_threshold_selection": true,
+    "accidental_post_r39c_rerun_results_must_be_ignored": true
+  },
+  "identity_binding": {
+    "selection_lock_run_id": 31388761578,
+    "selection_lock_artifact_id": 9062836528,
+    "selection_lock_artifact_digest": "sha256:feee978e994b392627642057af2e6f10ce019451a6b64cd3990979dd605b3bae",
+    "identity_lock_receipt_file_sha256": "01ae49e59917cf56f32e35ae2ee18348cfefe0afe68b3495587a81f665df294a",
+    "locked100_csv_sha256": "3b47d954259d90364f758450838427d9c2f56a2b5d9691fbcfa994e96231ead3",
+    "identity_set_sha256": "739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4",
+    "excluded_r39c_identity_set_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "old_new_overlap": 0,
+    "holdout_start": "2016-09-20T14:00:00",
+    "training_eligible_rows": 49511,
+    "holdout_eligible_rows": 10734,
+    "locked_test_rows": 100,
+    "selection_rule": "same sha256('51139|' + identity) holdout ordering as R39C; R39D is zero-based ranks [100,200), after excluding consumed R39C ranks [0,100)",
+    "embargo_rule": "no label from any match at or after holdout_start may be used for probability fitting or threshold selection"
+  },
+  "market_probability_definition": {
+    "cutoffs_hours_before_kickoff": [24, 6, 1],
+    "minimum_common_bookies": 5,
+    "same_bookmakers_across_cutoffs": true,
+    "per_book_de_vig": "inverse decimal odds normalized over home/draw/away",
+    "consensus": "arithmetic mean of each common bookmaker's de-vig probabilities",
+    "baseline": "T-1h consensus H/D/A probability"
+  },
+  "features": [
+    "logit_draw_t1",
+    "draw_delta_t24_to_t6",
+    "draw_delta_t6_to_t1",
+    "draw_slope_acceleration_per_hour",
+    "draw_std_t24",
+    "draw_std_t6",
+    "draw_std_t1",
+    "draw_std_change_t24_to_t1",
+    "abs_home_away_gap_t24",
+    "abs_home_away_gap_t1",
+    "home_away_gap_change_t24_to_t1",
+    "entropy_t24",
+    "entropy_t1",
+    "entropy_change_t24_to_t1",
+    "log1p_common_bookmaker_count"
+  ],
+  "probability_model": {
+    "target": "draw vs non-draw",
+    "predictors": "same 15 frozen R39C features",
+    "intercept": true,
+    "standardize_using_fit_partition_only": true,
+    "l2_lambda": 1.0,
+    "class_weight": "none",
+    "optimizer": "Newton-Raphson logistic regression",
+    "maximum_iterations": 50,
+    "coefficient_delta_tolerance": 1e-08,
+    "probability_clip": [1e-08, 0.99999999],
+    "three_way_probability_mapping": "candidate draw probability; remaining mass split H:A in unmodified T-1h market non-draw ratio"
+  },
+  "policy_selection": {
+    "policy_window_days": 60,
+    "development_fit_partition": "all eligible matches strictly before holdout_start minus 60 days",
+    "policy_validation_partition": "all eligible matches from holdout_start minus 60 days inclusive to holdout_start exclusive",
+    "development_probability_model_fit": "fit the frozen 15-feature model only on development_fit_partition",
+    "threshold_candidates": "all unique out-of-time predicted draw probabilities observed in policy_validation_partition",
+    "two_stage_decision": "if predicted draw probability >= threshold choose D; otherwise choose H or A by the larger T-1h market H/A probability",
+    "feasibility_constraints": [
+      "predicted_draw_count >= 1",
+      "full_1x2_accuracy >= T-1h market argmax accuracy on policy_validation_partition",
+      "draw_f1 > 0"
+    ],
+    "selection_objective": "maximize draw_f1; tie-break by higher full_1x2_accuracy, higher draw_precision, fewer predicted draws, then higher threshold",
+    "no_feasible_candidate_rule": "stop before any R39D holdout label access",
+    "after_threshold_freeze": "refit the same probability model on all 49,511 pre-holdout training rows, serialize model plus threshold, then and only then read R39D new100 labels",
+    "r39c_old100_labels_allowed": false,
+    "r39d_holdout_labels_allowed_before_freeze": false
+  },
+  "evaluation": {
+    "holdout_rows": 100,
+    "comparators": [
+      "T-1h market argmax",
+      "same frozen trajectory probabilities with ordinary three-way argmax",
+      "R39D two-stage draw/non-draw threshold policy"
+    ],
+    "probability_metrics": ["log_loss", "brier", "rps", "draw_auc"],
+    "decision_metrics": ["accuracy", "draw_precision", "draw_recall", "draw_f1", "predicted_draw_count"],
+    "paired_discordance": true,
+    "cluster_bootstrap": {
+      "cluster": "match_date",
+      "samples": 5000,
+      "seed": 511391,
+      "metric": "R39D policy accuracy minus market argmax accuracy"
+    },
+    "challenge_gate": {
+      "policy_predicts_at_least_one_draw": true,
+      "policy_draw_f1_strictly_better_than_market": true,
+      "policy_accuracy_strictly_better_than_market": true,
+      "trajectory_log_loss_nonworse_than_market": true,
+      "trajectory_brier_nonworse_than_market": true,
+      "trajectory_rps_nonworse_than_market": true,
+      "trajectory_draw_auc_strictly_better_than_market": true,
+      "cluster_bootstrap_accuracy_delta_p05_positive": true
+    }
+  },
+  "execution_order": [
+    "recompute score-free eligibility and R39D identity SHA; prove zero overlap with consumed R39C100",
+    "build all score-free market features",
+    "read labels only for matches strictly before holdout_start",
+    "split pre-holdout training chronologically into development and 60-day policy validation",
+    "fit development probability model and select threshold only on policy validation",
+    "write policy-selection freeze receipt; if no feasible threshold stop without holdout labels",
+    "refit the identical probability model on all pre-holdout training rows",
+    "write final model-plus-policy freeze receipt and parameter SHA",
+    "read score labels only for the locked R39D new100 identities",
+    "evaluate exactly once and write aggregate plus per-match research evidence"
+  ],
+  "rerun_policy": {
+    "formula_feature_hyperparameter_or_threshold_rule_change_after_r39d_holdout_labels": "forbidden on this locked100",
+    "new_hypothesis_requires_new_holdout": true,
+    "r39c_old100_reuse_for_tuning": "forbidden",
+    "r39d_new100_replacement_or_seed_search": "forbidden"
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_use_allowed": false,
+    "formal_unified_matrix_allowed": false,
+    "formal_exact_score_allowed": false,
+    "ev_allowed": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "formal_config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "schema_version": "beat-the-bookie-dense-sequence-dct-r39e.0",
+  "status": "MODEL_REPRESENTATION_FROZEN_BEFORE_THIRD100_IDENTITY_LOCK",
+  "classification": "VIEWED_HISTORICAL_DENSE_T24_T1_SEQUENCE_CHALLENGE_FORMAL_WEIGHT_0",
+  "research_question": "Does the complete T-24h..T-1h shape of a fixed-bookmaker 1X2 trajectory add out-of-time draw ranking and ordinary argmax accuracy beyond the frozen R39C three-snapshot trajectory model?",
+  "evidence_binding": {
+    "sequence_coverage_run_id": 31390215828,
+    "sequence_coverage_artifact_id": 9063504606,
+    "sequence_coverage_artifact_digest": "sha256:3e54a320b9c10df45c4fabd2537047914d6f26c957444c98771a1c4e97770496",
+    "sequence_coverage_status": "PASS_R39E_FULL_PREMATCH_SEQUENCE_COVERAGE_NO_LABELS",
+    "bookmaker_continuity_run_id": 31390873687,
+    "bookmaker_continuity_artifact_id": 9063687995,
+    "bookmaker_continuity_artifact_digest": "sha256:46f4c0ff4f6ad7d30bd8e3c5e76412135604fc6373d7c9bbead333a41cf8fb0a",
+    "bookmaker_continuity_status": "PASS_R39E_BOOKMAKER_CONTINUITY_AUDIT_NO_LABELS",
+    "predeclared_representation_choice": "USE_ALL_HOURS_COMMON_BOOKMAKER_SET_MIN3"
+  },
+  "source_binding": {
+    "dataset_slug": "austro/beat-the-bookie-worldwide-football-dataset",
+    "odds_series_sha256": "cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722",
+    "odds_series_b_sha256": "3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5",
+    "score_columns_removed_for_feature_construction": true
+  },
+  "population": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "r39c_eligibility": "T-24h/T-6h/T-1h common complete bookmakers >=5",
+    "expected_training_rows": 49511,
+    "expected_holdout_rows": 10734,
+    "consumed_first100_identity_sha256": "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+    "consumed_second100_identity_sha256": "739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4",
+    "third100_selection_rule": "same sha256('51139|' + identity) ordering; zero-based ranks [200,300)",
+    "old_200_labels_allowed_for_model_or_hyperparameter_selection": false
+  },
+  "market_probability_definition": {
+    "cutoffs_hours_before_kickoff": [24, 6, 1],
+    "minimum_common_bookies": 5,
+    "same_bookmakers_across_cutoffs": true,
+    "per_book_de_vig": "inverse decimal odds normalized over home/draw/away",
+    "consensus": "arithmetic mean of each common bookmaker's de-vig probabilities",
+    "baseline": "T-1h consensus H/D/A probability"
+  },
+  "r39c_parent_model": {
+    "parent_evaluator_git_blob_sha": "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb",
+    "feature_count": 15,
+    "features_unchanged": [
+      "logit_draw_t1",
+      "draw_delta_t24_to_t6",
+      "draw_delta_t6_to_t1",
+      "draw_slope_acceleration_per_hour",
+      "draw_std_t24",
+      "draw_std_t6",
+      "draw_std_t1",
+      "draw_std_change_t24_to_t1",
+      "abs_home_away_gap_t24",
+      "abs_home_away_gap_t1",
+      "home_away_gap_change_t24_to_t1",
+      "entropy_t24",
+      "entropy_t1",
+      "entropy_change_t24_to_t1",
+      "log1p_common_bookmaker_count"
+    ],
+    "binary_target": "draw vs non-draw",
+    "l2_lambda": 1.0,
+    "optimizer": "Newton-Raphson logistic regression",
+    "class_weight": "none"
+  },
+  "dense_sequence": {
+    "hours_before_kickoff": "T-24h through T-1h inclusive",
+    "source_suffixes": "47 through 70 inclusive",
+    "T0_suffix_71_allowed": false,
+    "per_match_core_bookmakers": "intersection of bookmakers with complete valid H/D/A at every one of the 24 hours; use the entire intersection",
+    "minimum_core_bookmakers": 3,
+    "observed_audit_minimum_training": 4,
+    "observed_audit_minimum_holdout": 5,
+    "per_book_de_vig": "inverse decimal odds normalized over H/D/A at each hour",
+    "per_hour_consensus": "arithmetic mean over the fixed per-match core bookmaker set",
+    "missing_hour_interpolation": "forbidden and unnecessary",
+    "row_dropping": "forbidden"
+  },
+  "sequence_channels": [
+    {
+      "name": "draw_logit",
+      "formula": "log(q_draw/(1-q_draw)) with q_draw clipped to [1e-8,1-1e-8]"
+    },
+    {
+      "name": "home_away_log_ratio",
+      "formula": "log(q_home/q_away) with probabilities clipped to >=1e-8"
+    },
+    {
+      "name": "threeway_entropy",
+      "formula": "-sum(q_i*log(q_i))"
+    },
+    {
+      "name": "draw_bookmaker_dispersion",
+      "formula": "population standard deviation of per-book de-vig draw probabilities over the fixed core bookmaker set"
+    }
+  ],
+  "fixed_sequence_basis": {
+    "transform": "orthonormal DCT-II implemented directly with cosine basis",
+    "input_length": 24,
+    "coefficients_per_channel": [0, 1, 2, 3, 4, 5],
+    "coefficients_per_channel_count": 6,
+    "sequence_feature_count": 24,
+    "additional_static_feature": "log1p(core_bookmaker_count)",
+    "additional_static_feature_count": 1,
+    "new_feature_count": 25,
+    "hyperparameter_search": "none"
+  },
+  "candidate_model": {
+    "features": "15 frozen R39C features concatenated with 24 DCT coefficients and log1p(core bookmaker count)",
+    "feature_count": 40,
+    "standardize_using_pre_holdout_training_only": true,
+    "binary_target": "draw vs non-draw",
+    "intercept": true,
+    "l2_lambda": 1.0,
+    "optimizer": "same frozen Newton-Raphson implementation as R39C",
+    "maximum_iterations": 50,
+    "coefficient_delta_tolerance": 1e-08,
+    "threeway_mapping": "candidate draw probability; remaining mass split H:A in unmodified frozen R39C T-1h market non-draw ratio",
+    "decision_rule": "ordinary three-way argmax only",
+    "draw_threshold_selection": "forbidden"
+  },
+  "planned_evaluation": {
+    "comparators": ["T-1h market argmax/probabilities", "frozen R39C 15-feature model", "R39E 40-feature dense sequence model"],
+    "probability_metrics": ["log_loss", "brier", "rps", "draw_auc"],
+    "decision_metrics": ["accuracy", "predicted_draw_count", "draw_precision", "draw_recall", "draw_f1"],
+    "cluster_bootstrap": {"cluster": "match_date", "samples": 5000, "seed": 511392},
+    "probability_signal_gate": "R39E must strictly beat R39C on log_loss, brier, rps and draw_auc",
+    "decision_increment_gate": "R39E accuracy must strictly beat both market and R39C; predicted draws >=1; draw_f1 strictly beats R39C",
+    "strong_uncertainty_gate": "match-date cluster-bootstrap p05 of R39E minus market accuracy must be >0",
+    "overall_challenge_pass": "all probability, decision and strong uncertainty gates pass"
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_use_allowed": false,
+    "old_consumed_200_labels_allowed": false,
+    "third100_labels_allowed_before_model_parameter_freeze": false,
+    "threshold_tuning_allowed": false,
+    "seed_search_allowed": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "formal_config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
