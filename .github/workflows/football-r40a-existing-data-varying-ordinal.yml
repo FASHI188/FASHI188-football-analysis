@@ -1,0 +1,99 @@
+name: Football R40A Existing Data Varying Ordinal
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40a-existing-data-varying-ordinal.yml'
+      - 'football-data/research/existing_data_varying_ordinal_r40a/**'
+
+permissions:
+  contents: read
+
+jobs:
+  seventh-disjoint-fixed100-varying-ordinal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R40A preregistration and frozen dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_varying_ordinal_r40a/evaluate_r40a.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_varying_ordinal_r40a/preregistration_r40a.json').read_text())
+          assert p['schema_version']=='R40A-EXISTING-DATA-VARYING-ORDINAL-1.0'
+          assert p['sample']['size']==100
+          for k in ('r39u','r39v','r39w','r39x','r39y','r39z'):
+              assert p['sample'][f'required_overlap_with_{k}']==0
+          m=p['model']
+          assert m['optimizer']=='deterministic full-batch Adam'
+          assert m['learning_rate']==0.03 and m['max_iterations']==300
+          assert m['convergence_gradient_norm']==0.001
+          assert m['convergence_objective_delta']==1e-8 and m['convergence_patience']==8
+          assert m['location_l2']==10.0 and m['width_l2']==10.0
+          assert m['manual_draw_boost'] is False
+          assert m['class_weighting'] is False
+          assert m['candidate_grid'] is False
+          assert m['post_result_tuning'] is False
+          assert m['abstention'] is False
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R40A_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute R40A seventh disjoint fixed100
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r40a-output"
+          python football-data/research/existing_data_varying_ordinal_r40a/evaluate_r40a.py \
+            --prereg football-data/research/existing_data_varying_ordinal_r40a/preregistration_r40a.json \
+            --root . \
+            --out "$RUNNER_TEMP/r40a-output"
+
+      - name: Verify R40A output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r40a-output'
+          p=root/'r40a_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R40A_VARYING_ORDINAL_INCREMENT','FAIL_R40A_VARYING_ORDINAL_NO_INCREMENT'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['overlap']=={'r39u':0,'r39v':0,'r39w':0,'r39x':0,'r39y':0,'r39z':0}
+          assert len(r['fit_audit'])==100
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          assert r['convergence']['converged_count']<=100
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r40a_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'], 'passed':r['passed'],
+            'sample_sha':r['r40a_fixed100_identity_sha256'], 'overlap':r['overlap'],
+            'ordinal_metrics':r['ordinal_metrics'], 'baseline_metrics':r['baseline_metrics'],
+            'ordinal_draw_auc':r['ordinal_draw_auc'], 'baseline_draw_auc':r['baseline_draw_auc'],
+            'gate':r['gate'], 'convergence':r['convergence']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40a-existing-data-varying-ordinal-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40a-output
+          retention-days: 30
+          if-no-files-found: error
