@@ -28,7 +28,7 @@ def main():
     outdir=a.out_dir;outdir.mkdir(parents=True,exist_ok=True)
     base={'schema_version':pre['schema_version'],'generated_at_utc':datetime.now(timezone.utc).isoformat(),'source_counts':{'preholdout':len(pre_rows),'holdout_pool':len(hold)},'fixed100_origin':'pre-existing R39J blind set','fixed100_identity_sha256':sha,'regime_cutpoints_1920_market_only':cuts,'selected_half_lives':{'global':gsel['half_life_days'],'regime':rsel['half_life_days']},'candidate_leaderboards':{'global':gboard,'regime':rboard},'development':{'market':mdev,'global_online':gdev,'regime_online':rdev,'gate_pass':devpass},'training_labels_accessed':len(pre_rows),'holdout_labels_accessed':0,'hard_limits':pre['hard_limits']}
     if not devpass:
-        c.write_stop(outdir,base,pre['hyperparameter_selection']['development_gate_for_regime']['if_fail'],{'development_pass':False,'selected_half_lives':base['selected_half_lives'],'fixed100_identity_sha256':sha});return
+        c.write_stop(outdir,base,pre['hyperparameter_selection']['if_fail'],{'development_pass':False,'selected_half_lives':base['selected_half_lives'],'fixed100_identity_sha256':sha});return
     gp,gdiag,gstate=c.simulate(pre_rows,lab,cuts,gsel['half_life_days'],'global',pre);rp,rdiag,rstate=c.simulate(pre_rows,lab,cuts,rsel['half_life_days'],'regime',pre);mp=c.market_pred(pre_rows)
     val=[r for r in pre_rows if r['season']==pre['confirmation_windows']['validation_season']];pol=[r for r in pre_rows if r['season']==pre['confirmation_windows']['policy_season']]
     v=c.segment_gate(val,mp,gp,rp,rdiag,lab,pre['validation_gate_all_required']);base['validation']=v
