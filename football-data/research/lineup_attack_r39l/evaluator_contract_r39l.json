@@ -1,0 +1,79 @@
+{
+  "schema_version": "r39l-evaluator-contract-v1",
+  "frozen_before_real_target_label_evaluation": true,
+  "source_prereg_schema": "r39l-lineup-attack-quality-v1.2",
+  "feature_builder": "audit_lineup_attack_features_r39l.py current-XI-only 10-dimensional contract",
+  "feature_dimensions": {
+    "market_context": 2,
+    "full": 10
+  },
+  "binary_residual_model": {
+    "equation": "logit(Pdraw)=logit(Pdraw_market)+intercept+standardized_X @ beta",
+    "intercept": "included and unpenalized",
+    "market_draw_logit_coefficient": 1.0,
+    "standardization": "mean and population standard deviation from the model fit partition only; standard deviations below 1e-12 are replaced by 1",
+    "l2_candidates": [1.0, 10.0, 100.0],
+    "objective": "sum binary negative log likelihood + 0.5 * L2 * sum(beta_slopes^2)",
+    "intercept_penalty": 0.0,
+    "newton_max_iterations": 50,
+    "newton_parameter_tolerance": 1e-10,
+    "sigmoid_linear_predictor_clip": [-35.0, 35.0],
+    "linear_solver": "numpy.linalg.solve; numerical failure is fail-closed",
+    "class_weights": "none"
+  },
+  "threeway_mapping": "preserve the raw closing-market home:away non-draw probability ratio after replacing draw probability",
+  "chronology": {
+    "sort": ["target_date", "division", "identity"],
+    "preholdout_rows": 8161,
+    "fit_rows": 5712,
+    "validation_rows": 1224,
+    "policy_rows": 1225,
+    "fit_slice": [0, 5712],
+    "validation_slice": [5712, 6936],
+    "policy_slice": [6936, 8161]
+  },
+  "selection": {
+    "context_and_full_selected_separately": true,
+    "fit_candidates_on": "fit rows only",
+    "select_using": "validation rows",
+    "order": ["lowest HDA_LogLoss", "lowest binary_Draw_LogLoss", "lower L2"]
+  },
+  "validation": {
+    "gate_source": "preregistration_r39l.json validation_gate_all_required",
+    "failure_status": "STOP_R39L_BEFORE_POLICY_AND_HOLDOUT_LINEUP_ATTACK_NO_VALIDATION_INCREMENT"
+  },
+  "policy": {
+    "after_validation_pass": "refit each model with its frozen selected L2 on fit+validation rows using newly fitted standardization from fit+validation",
+    "gate_source": "preregistration_r39l.json policy_stress_gate_all_required",
+    "failure_status": "STOP_R39L_BEFORE_HOLDOUT_LINEUP_ATTACK_NO_POLICY_INCREMENT"
+  },
+  "blind_freeze": {
+    "after_policy_pass": "refit each model with its frozen selected L2 on all 8161 preholdout rows using preholdout standardization",
+    "write_freeze_receipt_before_any_fixed100_result_value": true,
+    "freeze_includes": ["selected L2 values", "standardization hashes", "coefficient hashes", "fixed100 identity SHA256", "feature builder blob SHA", "prereg blob SHA", "contract blob SHA"]
+  },
+  "label_access": {
+    "preholdout_seasons_allowed_before_freeze": ["1920", "2021", "2122", "2223", "2324", "2425"],
+    "2526_nonfixed_labels_allowed": false,
+    "fixed100_labels_before_freeze": 0,
+    "fixed100_labels_after_freeze_if_all_gates_pass": 100,
+    "no_post_holdout_refit_or_tuning": true
+  },
+  "blind_gate": {
+    "gate_source": "preregistration_r39l.json blind_holdout_gate_all_required",
+    "pass_status": "PASS_R39L_LINEUP_ATTACK_QUALITY_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39L_LINEUP_ATTACK_QUALITY_INCREMENT_FIXED100"
+  },
+  "metrics": ["HDA_LogLoss", "HDA_Brier", "RPS", "binary_Draw_LogLoss", "Draw_AUC", "Top1_accuracy", "Top1_draw_count", "actual_draw_count"],
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
