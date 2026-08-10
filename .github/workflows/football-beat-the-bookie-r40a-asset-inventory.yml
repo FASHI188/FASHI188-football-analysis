@@ -1,0 +1,79 @@
+name: Football Beat The Bookie R40A Asset Inventory
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r40a-asset-inventory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  archive-manifest-and-headers-only:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen zero-row contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/orthogonal_asset_inventory_registration_r40a.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/inventory_source_assets_r40a.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/orthogonal_asset_inventory_registration_r40a.json)" = "a23fdd4bc83891c1bc4db325dcbeb53caa679f2b"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/inventory_source_assets_r40a.py)" = "4928cfe056eeae0d0cc86770e7aa9ea637912c34"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/orthogonal_asset_inventory_registration_r40a.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ARCHIVE_MANIFEST_AND_HEADERS_ONLY_NO_DATA_ROWS'
+          assert r['allowed_operations']['read_any_csv_data_record'] is False
+          assert r['allowed_operations']['read_score_or_result_value'] is False
+          assert r['hard_limits']['formal_weight']==0
+          PY
+      - name: Download source archive without extracting data rows
+        run: |
+          set -euo pipefail
+          rm -rf r40a-output r40a-source.zip
+          mkdir -p r40a-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r40a-source.zip
+      - name: Inventory member names and CSV headers only
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/inventory_source_assets_r40a.py \
+            --registration football-data/research/beat_the_bookie_r39/orthogonal_asset_inventory_registration_r40a.json \
+            --archive r40a-source.zip --out-dir r40a-output
+      - name: Verify zero-row audit
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r40a-output/orthogonal_asset_inventory_r40a.json').read_text())
+          assert r['status']=='PASS_R40A_ZERO_ROW_SOURCE_ASSET_INVENTORY'
+          a=r['audit']
+          assert a['csv_data_records_parsed']==0
+          assert a['score_or_result_values_read']==0 and a['holdout_labels_read']==0 and a['holdout_identities_read']==0
+          assert a['models_fit']==0 and a['prediction_metrics_computed']==0 and a['identity_locks_created']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Delete source archive before evidence upload
+        if: always()
+        run: rm -f r40a-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football-beat-the-bookie-r40a-asset-inventory-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40a-output/
+          if-no-files-found: error
+          retention-days: 30
