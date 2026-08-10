@@ -1,0 +1,67 @@
+name: Football R40I0B Clean Fit Freeze
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-timeseries-r39b]
+    paths: ['.github/workflows/football-r40i0b-clean-fit-freeze.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-clean-fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify contract
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/result_fit_quarantine_registration_r40i0b.json)" = "131e47aa2b109ef08696e8221e6d561269e6ebca"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/freeze_clean_fit_result_ids_r40i0b.py)" = "545ed7a773c1c68425cb746d5b4c167ca79c548d"
+          python -m py_compile football-data/research/beat_the_bookie_r39/freeze_clean_fit_result_ids_r40i0b.py football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py
+      - name: Download and sanitize IDs only
+        run: |
+          set -euo pipefail
+          mkdir -p r40i0b-source r40i0b-output
+          curl --fail --location --retry 3 'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' -o r40i0b.zip
+          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40i0b.zip' | sha256sum -c -
+          unzip -p r40i0b.zip Matches_Odds.csv > r40i0b-source/Matches_Odds.csv
+          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40i0b-source/Matches_Odds.csv' | sha256sum -c -
+          unzip -p r40i0b.zip Matches_Results.csv | cut -d',' -f1 > r40i0b-result-ids.csv
+          test "$(head -n1 r40i0b-result-ids.csv | tr -d '\r')" = 'match_id'
+          rm -f r40i0b.zip
+      - name: Freeze clean fit identity
+        run: |
+          python football-data/research/beat_the_bookie_r39/freeze_clean_fit_result_ids_r40i0b.py \
+            --registration football-data/research/beat_the_bookie_r39/result_fit_quarantine_registration_r40i0b.json \
+            --parent-code football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py \
+            --odds-csv r40i0b-source/Matches_Odds.csv --result-id-file r40i0b-result-ids.csv --out-dir r40i0b-output
+      - name: Verify PASS and boundary
+        run: |
+          python - <<'PY'
+          import json
+          s=json.load(open('r40i0b-output/clean_fit_result_identity_status_r40i0b.json'))
+          assert s['status']=='PASS_R40I0B_ZERO_LABEL_CLEAN_FIT_FREEZE',s['status']
+          assert s['clean_partition']['fit_count']==12935
+          assert s['clean_partition']['policy_count']==4312 and s['clean_partition']['blind_count']==4313
+          assert s['no_label_audit']['score_or_outcome_values_accessed']==0
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Delete source bytes
+        if: always()
+        run: rm -rf r40i0b-source r40i0b-result-ids.csv
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40i0b-clean-fit-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40i0b-output/
+          if-no-files-found: error
+          retention-days: 30
