@@ -1,0 +1,81 @@
+{
+  "schema_version": "r39o-evaluator-contract-v1",
+  "frozen_before_real_target_label_evaluation": true,
+  "input_mode": "three hash-locked zero-label feature snapshots",
+  "binary_residual_model": {
+    "newton_max_iterations": 50,
+    "newton_parameter_tolerance": 1e-10,
+    "sigmoid_linear_predictor_clip": [-35.0, 35.0],
+    "offset": "logit closing-market draw probability, coefficient fixed at 1",
+    "intercept": "included and unpenalized",
+    "standardization": "fit partition only; population sd below 1e-12 replaced by 1",
+    "class_weights": "none",
+    "threeway_mapping": "preserve closing-market H:A non-draw ratio"
+  },
+  "benchmarks": {
+    "raw_market": true,
+    "market_context": {"dimensions": 2, "L2": 100.0, "source": "R39O snapshot x0:x2"},
+    "static_R39L": {"dimensions": 10, "L2": 1.0, "source": "R39M frozen snapshot s0:s10"},
+    "absolute_R39N": {"dimensions": 14, "L2": 100.0, "source": "R39N frozen snapshot x0:x14"}
+  },
+  "candidate": {
+    "R39O_dimensions": 14,
+    "L2_candidates": [1.0, 10.0, 100.0],
+    "absolute_value_levels_in_candidate": false
+  },
+  "rolling_folds": [
+    {"name": "fold_2223", "train_seasons": ["1920", "2021", "2122"], "test_season": "2223"},
+    {"name": "fold_2324", "train_seasons": ["1920", "2021", "2122", "2223"], "test_season": "2324"}
+  ],
+  "candidate_selection": {
+    "pooled_definition": "concatenate fold_2223 and fold_2324 test predictions from fold-specific fits",
+    "order": ["lowest pooled HDA_LogLoss", "lowest pooled binary_Draw_LogLoss", "larger L2"]
+  },
+  "rolling_gate": {
+    "selected_candidate_must_pass_each_fold_individually": true,
+    "gate_source": "preregistration_r39o.json rolling_design.each_fold_gate",
+    "failure_status": "STOP_R39O_BEFORE_POLICY_AND_HOLDOUT_LINEUP_SURPRISE_NO_ROLLING_INCREMENT"
+  },
+  "policy": {
+    "train_seasons": ["1920", "2021", "2122", "2223", "2324"],
+    "test_season": "2425",
+    "selected_R39O_L2_frozen_from_rolling": true,
+    "benchmark_L2_values_frozen": true,
+    "gate": "same as rolling individual-fold gate",
+    "failure_status": "STOP_R39O_BEFORE_HOLDOUT_LINEUP_SURPRISE_NO_POLICY_INCREMENT"
+  },
+  "blind": {
+    "only_after_rolling_and_policy_pass": true,
+    "refit_all_models_on_all_R39O_feature_eligible_preholdout_rows": true,
+    "write_final_freeze_before_any_fixed100_label": true,
+    "nonfixed_2526_labels_may_be_read": false,
+    "fixed100_labels_after_freeze": 100,
+    "gate": {
+      "R39O_HDA_LogLoss_strictly_better_than_raw_market": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_raw_market": true,
+      "R39O_HDA_Brier_nonworse_than_raw_market": true,
+      "R39O_RPS_nonworse_than_raw_market": true,
+      "R39O_HDA_LogLoss_strictly_better_than_market_context": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_market_context": true,
+      "R39O_HDA_LogLoss_strictly_better_than_R39L_static": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_R39L_static": true,
+      "R39O_HDA_LogLoss_strictly_better_than_R39N_absolute_value": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_R39N_absolute_value": true,
+      "R39O_Draw_AUC_strictly_better_than_R39N_absolute_value": true
+    },
+    "pass_status": "PASS_R39O_LINEUP_SURPRISE_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39O_LINEUP_SURPRISE_INCREMENT_FIXED100",
+    "no_post_holdout_refit_or_tuning": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
