@@ -1,0 +1,98 @@
+name: Football R39R PremierLeague Public-Web Forward Capture
+
+on:
+  push:
+    branches:
+      - research/premierleague-public-web-forward-r39r
+    paths:
+      - '.github/workflows/football-r39r-premierleague-public-web-forward.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r39r-premierleague-public-web-forward
+  cancel-in-progress: false
+
+jobs:
+  one-shot-public-web-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact no-API contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/premierleague_public_web_r39r/capture_public_web_r39r.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/premierleague_public_web_r39r/contract_r39r.json')
+          c=json.loads(p.read_text())
+          assert c['schema_version']=='R39R-PL-PUBLIC-WEB-FORWARD-1.0'
+          assert c['formal_weight']==0 and c['research_only'] is True
+          assert c['source']['allowed_host']=='www.premierleague.com'
+          assert c['fixture']['match_id']==2645195
+          assert c['fixture']['scheduled_kickoff_utc']=='2026-08-21T19:00:00Z'
+          assert len(c['targets'])==4
+          assert c['capture_rules']['max_requests']==4
+          b=c['hard_boundaries']
+          assert b['football_api_requests']==b['api_keys']==b['target_labels']==b['model_fits']==b['candidate_probabilities']==0
+          assert b['main_mutation'] is False and b['current_rule_mutation'] is False
+          print('PASS_R39R_ZERO_LABEL_NO_API_CONTRACT')
+          PY
+
+      - name: Capture official Premier League public web pages
+        run: |
+          set -euo pipefail
+          python football-data/research/premierleague_public_web_r39r/capture_public_web_r39r.py \
+            --contract football-data/research/premierleague_public_web_r39r/contract_r39r.json \
+            --output "$RUNNER_TEMP/r39r-capture"
+
+      - name: Verify capture receipt and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,re
+          from datetime import datetime,timezone
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39r-capture'
+          receipt_path=root/'capture_receipt_r39r.json'
+          raw=receipt_path.read_bytes()
+          r=json.loads(raw)
+          assert r['schema_version']=='R39R-CAPTURE-RECEIPT-1.0'
+          assert r['terminal']=='PASS_R39R_FIRST_PUBLIC_WEB_FORWARD_CAPTURE'
+          assert r['network_class']=='PUBLIC_WEB_NO_API_NO_CREDENTIAL'
+          assert r['request_count']==4
+          assert r['target_labels_accessed']==r['model_fits']==r['candidate_probabilities']==0
+          assert r['football_api_requests']==r['api_keys_used']==0
+          assert r['formal_weight']==0 and r['append_only_evidence'] is True
+          ko=datetime.fromisoformat(r['fixture']['scheduled_kickoff_utc'].replace('Z','+00:00'))
+          for row in r['captures']:
+              assert row['http_status']==200
+              assert re.fullmatch(r'[0-9a-f]{64}',row['sha256'])
+              p=root/row['raw_path']
+              assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==row['sha256']
+              if row['pre_kickoff_required']:
+                  obs=datetime.fromisoformat(row['observed_at_utc'].replace('Z','+00:00'))
+                  assert obs < ko
+          expected=(root/'capture_receipt_r39r.sha256').read_text().strip()
+          assert expected==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({'terminal':r['terminal'],'receipt_sha256':expected,'captures':[{'name':x['name'],'observed_at_utc':x['observed_at_utc'],'sha256':x['sha256'],'bytes':x['content_length_bytes']} for x in r['captures']]},sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39r-public-web-forward-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39r-capture
+          retention-days: 30
+          if-no-files-found: error
