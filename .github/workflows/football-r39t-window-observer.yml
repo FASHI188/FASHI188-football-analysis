@@ -1,0 +1,106 @@
+name: Football R39T Window Observer
+
+on:
+  pull_request:
+    types: [synchronize, reopened]
+    paths:
+      - 'football-data/research/premierleague_forward_windows_r39t/trigger_r39t.json'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe-r39t-window:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Observe exact window run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_WORKFLOW: football-r39t-forward-window-capture.yml
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r39t-window-observer"
+          python - <<'PY'
+          import json,os,time,urllib.parse,urllib.request
+          from pathlib import Path
+
+          root=Path('football-data/research/premierleague_forward_windows_r39t')
+          trigger=json.loads((root/'trigger_r39t.json').read_text())
+          mode=str(trigger.get('mode',''))
+          if mode=='PRECHECK':
+              receipt={
+                  'schema_version':'R39T-WINDOW-OBSERVER-1.0',
+                  'mode':'PRECHECK',
+                  'skipped':True,
+                  'reason':'PRECHECK_IS_AUDITED_BY_DEDICATED_PRECHECK_OBSERVER',
+                  'football_api_requests':0,
+                  'formal_weight':0,
+              }
+              out=Path(os.environ['RUNNER_TEMP'])/'r39t-window-observer/observer_receipt.json'
+              out.write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+              print(json.dumps(receipt,sort_keys=True))
+              raise SystemExit(0)
+          if mode not in {'T90','T60','T30','T15'}:
+              raise SystemExit('R39T_WINDOW_MODE_INVALID')
+
+          repo=os.environ['REPOSITORY']; token=os.environ['GH_TOKEN']; head=os.environ['HEAD_SHA']; wf=os.environ['TARGET_WORKFLOW']
+          base='https://api.github.com'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'FASHI188-r39t-window-observer'})
+              with urllib.request.urlopen(req,timeout=20) as r:return json.loads(r.read())
+          q=urllib.parse.urlencode({'branch':'research/premierleague-forward-windows-r39t','event':'push','per_page':20})
+          selected=None
+          for _ in range(90):
+              data=get('/repos/'+repo+'/actions/workflows/'+wf+'/runs?'+q)
+              matches=[r for r in data.get('workflow_runs',[]) if r.get('head_sha')==head]
+              if len(matches)==1:
+                  selected=matches[0]
+                  if selected.get('status')=='completed': break
+              elif len(matches)>1:
+                  raise SystemExit('R39T_DUPLICATE_PUSH_RUNS_FOR_HEAD')
+              time.sleep(5)
+          if selected is None: raise SystemExit('R39T_WINDOW_PUSH_RUN_NOT_FOUND')
+          rid=int(selected['id'])
+          jobs=get(f'/repos/{repo}/actions/runs/{rid}/jobs?per_page=100').get('jobs',[])
+          arts=get(f'/repos/{repo}/actions/runs/{rid}/artifacts?per_page=100').get('artifacts',[])
+          steps=[{'job_id':j.get('id'),'job_name':j.get('name'),'name':s.get('name'),'status':s.get('status'),'conclusion':s.get('conclusion'),'number':s.get('number')} for j in jobs for s in (j.get('steps') or [])]
+          failed=[s for s in steps if s.get('conclusion')=='failure']
+          rarts=[a for a in arts if str(a.get('name','')).startswith('football-r39t-forward-window-')]
+          receipt={
+              'schema_version':'R39T-WINDOW-OBSERVER-1.0',
+              'mode':mode,
+              'head_sha':head,
+              'capture_run_id':rid,
+              'run_status':selected.get('status'),
+              'run_conclusion':selected.get('conclusion'),
+              'first_failed_step':failed[0]['name'] if failed else None,
+              'artifact_count':len(rarts),
+              'artifacts':[{'id':a.get('id'),'name':a.get('name'),'digest':a.get('digest'),'size_in_bytes':a.get('size_in_bytes'),'expired':a.get('expired')} for a in rarts],
+              'capture_pass_claimed':selected.get('conclusion')=='success' and len(rarts)==1,
+              'football_api_requests':0,
+              'api_keys_used':0,
+              'formal_weight':0,
+          }
+          out=Path(os.environ['RUNNER_TEMP'])/'r39t-window-observer/observer_receipt.json'
+          out.write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'mode':mode,'run_id':rid,'status':receipt['run_status'],'conclusion':receipt['run_conclusion'],'artifact_count':receipt['artifact_count'],'capture_pass_claimed':receipt['capture_pass_claimed'],'first_failed_step':receipt['first_failed_step']},sort_keys=True))
+          if receipt['run_status']!='completed': raise SystemExit('R39T_WINDOW_RUN_NOT_TERMINAL')
+          if receipt['run_conclusion']!='success' or receipt['artifact_count']!=1: raise SystemExit('R39T_WINDOW_RUN_NOT_SUCCESS')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39t-window-observer-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39t-window-observer
+          retention-days: 30
+          if-no-files-found: error
