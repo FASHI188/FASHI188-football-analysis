@@ -1,0 +1,129 @@
+name: Football Beat The Bookie R39F Evaluation
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39f-evaluation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  market-offset-multinomial-fourth100:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Verify exact frozen files and label boundary contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/model_registration_r39f.json >/dev/null
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39f.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_market_offset_multinomial_r39f.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/model_registration_r39f.json)" = "da0318563d13f5c16cb651feea3c652ca2c8eb31"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/preregistration_r39f.json)" = "335e9772c9426c8bbc7df26b6c159e79ef698784"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_market_offset_multinomial_r39f.py)" = "a4b7e60e011d8931864a64af6eadc8f0006f0f11"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py)" = "e282b8ffd8f6b077451496d6e205428deb8e4926"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/preregistration_r39f.json').read_text())
+          assert r['status']=='PRE_REGISTERED_BEFORE_R39F_FOURTH100_LABEL_ACCESS'
+          assert r['identity_binding']['fourth100_identity_sha256']=='3f9e3db0b0933c30be941e78c94d4c6010246ef6ad11304a0f2d0d8f22e16dd3'
+          assert r['identity_binding']['first300_fourth100_overlap']==0
+          assert r['identity_binding']['lock_run_id']==31393447783
+          assert r['identity_binding']['lock_artifact_id']==9064681095
+          assert r['models']['r39f']['features']==25
+          assert r['models']['r39f']['l2_lambda']==1.0
+          assert r['models']['r39f']['threshold_selection']=='forbidden'
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39F_FINAL_PREREG')
+          PY
+      - name: Synthetic market-offset multinomial checks
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util,numpy as np
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/evaluate_market_offset_multinomial_r39f.py')
+          s=importlib.util.spec_from_file_location('r39f',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+          X=np.zeros((4,2));Z=np.column_stack([np.ones(4),X]);beta=np.zeros((2,3))
+          q=np.array([[.50,.25,.25],[.30,.40,.30],[.20,.20,.60],[.34,.33,.33]])
+          got=m.softmax_from_offsets(Z,beta,q)
+          assert np.max(np.abs(got-q))<1e-12
+          y=np.array([0,1,2,0])
+          b,d=m.fit_market_offset_multinomial(X,q,y,1.0,25,1e-8,1e-7,.5,.0009765625)
+          assert d['converged'] is True
+          assert d['final_objective']<=d['initial_objective']+1e-10
+          assert np.isfinite(b).all()
+          print('PASS_R39F_SYNTHETIC_MULTINOMIAL')
+          PY
+      - name: Download exact source and build score-free feature copy
+        run: |
+          set -euo pipefail
+          rm -rf r39f-source r39f-sanitized r39f-output r39f-source.zip
+          mkdir -p r39f-source r39f-sanitized r39f-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39f-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39f-source.zip')
+          for n in ('odds_series.csv.gz','odds_series_b.csv.gz'): z.extract(n,'r39f-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r39f-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r39f-source/odds_series_b.csv.gz' | sha256sum -c -
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39f-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39f-sanitized/${base}_no_scores.csv.gz"
+          done
+      - name: Execute frozen R39F exactly once
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_market_offset_multinomial_r39f.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39f.json \
+            --model-registration football-data/research/beat_the_bookie_r39/model_registration_r39f.json \
+            --sanitized-dir r39f-sanitized \
+            --original-dir r39f-source \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --sequence-code football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py \
+            --out-dir r39f-output
+      - name: Verify freeze, convergence and access audit
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out=Path('r39f-output');r=json.loads((out/'result_r39f.json').read_text())
+          assert r['status'] in {'PASS_R39F_MARKET_OFFSET_MULTINOMIAL_CHALLENGER_EXPLORATION_ONLY','NO_R39F_MARKET_OFFSET_MULTINOMIAL_INCREMENT_FOURTH100_EXPLORATION_ONLY'}
+          assert r['identity_set_sha256']=='3f9e3db0b0933c30be941e78c94d4c6010246ef6ad11304a0f2d0d8f22e16dd3'
+          a=r['access_audit'];assert a['training_labels_accessed']==49511
+          assert a['first300_holdout_labels_accessed']==0
+          assert a['fourth100_labels_accessed_before_parameter_freeze']==0
+          assert a['fourth100_labels_accessed_after_parameter_freeze']==100
+          assert (out/'model_parameter_freeze_r39f.json').exists() and (out/'per_match_r39f.json').exists()
+          assert r['r39f_optimizer_diagnostics']['converged'] is True
+          h=r['hard_limits'];assert h['formal_weight']==0 and h['formal_model_mutation']==0 and h['CURRENT_mutation']==0 and h['main_mutation']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Remove raw source before artifact upload
+        if: always()
+        run: rm -rf r39f-source r39f-sanitized r39f-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football-beat-the-bookie-r39f-evaluation-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39f-output/
+          if-no-files-found: error
+          retention-days: 30
