@@ -45,16 +45,6 @@ def rebuild_mapping(market_dir,games_path,lineups_path,covreg):
         mapped.append({'identity':identity(r),'season':r['Season'],'div':r['Div'],'target_date':g['date'],'tm_game_id':g['game_id'],'home_club_id':g['home_club_id'],'away_club_id':g['away_club_id'],'qclose':q,'pair_similarity':pair,'day_offset':off})
     return games,starters,complete,mapped,type_counts,lineup_rows
 
-def build_club_lineup_history(games,starters,complete):
-    hist=defaultdict(list)
-    for gid in complete:
-        g=games[gid]
-        for club in (g['home_club_id'],g['away_club_id']):
-            xi=starters.get((gid,club),set())
-            if len(xi)==11:hist[club].append((g['date'],gid,frozenset(xi)))
-    for club in hist:hist[club].sort(key=lambda z:(z[0],z[1]))
-    return hist
-
 def load_appearances(path,allowed_competitions):
     player=defaultdict(list);comp=defaultdict(list);rows=0;bad=0
     need={'appearance_id','game_id','player_id','player_club_id','date','competition_id','goals','assists','minutes_played'}
@@ -90,17 +80,10 @@ def player_rate(pid,d,target_comp,player_index,comp_index,pseudo):
     cg,cm,cd=before(comp_index,target_comp,d)
     if cm<=0:return None
     pg,pm,pd=before(player_index,pid,d)
-    prior=cg/cm
-    rate=90.0*(pg+prior*pseudo)/(pm+pseudo)
+    prior=cg/cm;rate=90.0*(pg+prior*pseudo)/(pm+pseudo)
     maxd=max([x for x in (cd,pd) if x is not None],default=None)
     if maxd is not None and not maxd<d:raise RuntimeError('appearance strict-lag violation')
     return float(rate),maxd
-
-def core_players(club,d,club_hist,window,min_prior,share):
-    h=club_hist.get(club,[]);dates=[x[0] for x in h];i=bisect.bisect_left(dates,d);prior=h[:i]
-    if len(prior)<min_prior:return None,None
-    w=prior[-window:];counts=Counter(p for _date,_gid,xi in w for p in xi);n=len(w);core={p for p,c in counts.items() if c/n>=share}
-    return core,w[-1][0]
 
 def score_set(players,d,target_comp,player_index,comp_index,pseudo):
     vals=[];mx=None
@@ -111,20 +94,15 @@ def score_set(players,d,target_comp,player_index,comp_index,pseudo):
         if md is not None and (mx is None or md>mx):mx=md
     return vals,mx
 
-def feature_row(m,starters,club_hist,player_index,comp_index,reg):
-    div_to_comp=reg['source']['competition_ids'];comp=div_to_comp[m['div']];d=m['target_date'];pseudo=float(reg['feature_contract']['eb_pseudo_minutes'])
+def feature_row(m,starters,player_index,comp_index,reg):
+    comp=reg['source']['competition_ids'][m['div']];d=m['target_date'];pseudo=float(reg['feature_contract']['eb_pseudo_minutes'])
     hxi=starters.get((m['tm_game_id'],m['home_club_id']),set());axi=starters.get((m['tm_game_id'],m['away_club_id']),set())
     if len(hxi)!=11 or len(axi)!=11:return None,'bad_current_xi'
-    hc,hld=core_players(m['home_club_id'],d,club_hist,int(reg['feature_contract']['prior_lineup_core_window']),int(reg['feature_contract']['minimum_prior_complete_lineups']),float(reg['feature_contract']['core_start_share']))
-    ac,ald=core_players(m['away_club_id'],d,club_hist,int(reg['feature_contract']['prior_lineup_core_window']),int(reg['feature_contract']['minimum_prior_complete_lineups']),float(reg['feature_contract']['core_start_share']))
-    if hc is None or ac is None:return None,'insufficient_prior_lineups'
-    if len(hc)<int(reg['feature_contract']['minimum_core_players']) or len(ac)<int(reg['feature_contract']['minimum_core_players']):return None,'insufficient_core_players'
-    hs=score_set(hxi,d,comp,player_index,comp_index,pseudo);as_=score_set(axi,d,comp,player_index,comp_index,pseudo);hcs=score_set(hc,d,comp,player_index,comp_index,pseudo);acs=score_set(ac,d,comp,player_index,comp_index,pseudo)
-    if any(z is None for z in (hs,as_,hcs,acs)):return None,'missing_comp_prior'
-    hv,hmx=hs;av,amx=as_;hcv,hcmx=hcs;acv,acmx=acs
-    hmean=float(np.mean(hv));amean=float(np.mean(av));htop=float(sum(sorted(hv,reverse=True)[:4]));atop=float(sum(sorted(av,reverse=True)[:4]));hcore=float(sum(sorted(hcv,reverse=True)[:4]));acore=float(sum(sorted(acv,reverse=True)[:4]));hd=htop-hcore;ad=atop-acore
-    q=m['qclose'];context=[abs(float(q[0]-q[2])),entropy(q)];attack=[hmean,amean,abs(hmean-amean),hmean+amean,htop,atop,abs(htop-atop),htop+atop,hd,ad,abs(hd-ad),hd+ad];x=context+attack
-    maxd=max([z for z in (hmx,amx,hcmx,acmx,hld,ald) if z is not None],default=None);violation=bool(maxd is not None and not maxd<d)
+    hs=score_set(hxi,d,comp,player_index,comp_index,pseudo);as_=score_set(axi,d,comp,player_index,comp_index,pseudo)
+    if hs is None or as_ is None:return None,'missing_comp_prior'
+    hv,hmx=hs;av,amx=as_;hmean=float(np.mean(hv));amean=float(np.mean(av));htop=float(sum(sorted(hv,reverse=True)[:4]));atop=float(sum(sorted(av,reverse=True)[:4]))
+    q=m['qclose'];x=[abs(float(q[0]-q[2])),entropy(q),hmean,amean,abs(hmean-amean),hmean+amean,htop,atop,abs(htop-atop),htop+atop]
+    maxd=max([z for z in (hmx,amx) if z is not None],default=None);violation=bool(maxd is not None and not maxd<d)
     if len(x)!=int(reg['feature_contract']['feature_dimension']):raise RuntimeError(f'feature dimension {len(x)}')
     if any(not math.isfinite(float(v)) for v in x):return None,'nonfinite_feature'
     return {'identity':m['identity'],'season':m['season'],'div':m['div'],'target_date':str(d),'x':x,'max_source_date':str(maxd) if maxd else None,'strict_lag_violation':violation},None
@@ -137,10 +115,10 @@ def main():
     if len(pre)!=hold['complete_preholdout_rows'] or len(hp)!=hold['complete_2526_rows']:raise RuntimeError(f'R39I lane drift pre={len(pre)} hold={len(hp)}')
     fixed=sorted(hp,key=lambda r:htxt(f"{hold['fixed100_seed']}|{r['identity']}"))[:hold['fixed100_rows']];sha=set_sha([r['identity'] for r in fixed])
     if sha!=hold['fixed100_identity_sha256']:raise RuntimeError(f'R39I fixed100 drift {sha}')
-    club_hist=build_club_lineup_history(games,starters,complete);pidx,cidx,app_rows,app_bad=load_appearances(a.appearances,set(reg['feature_contract']['eligible_appearance_competitions']))
+    pidx,cidx,app_rows,app_bad=load_appearances(a.appearances,set(reg['feature_contract']['eligible_appearance_competitions']))
     features={};reasons=Counter();violations=0
     for m in mapped:
-        z,reason=feature_row(m,starters,club_hist,pidx,cidx,reg)
+        z,reason=feature_row(m,starters,pidx,cidx,reg)
         if z is None:reasons[reason]+=1;continue
         features[z['identity']]=z;violations+=int(z['strict_lag_violation'])
     fpre=[features[m['identity']] for m in pre if m['identity'] in features];fixed_ids={x['identity'] for x in fixed};ffixed=[features[i] for i in fixed_ids if i in features]
