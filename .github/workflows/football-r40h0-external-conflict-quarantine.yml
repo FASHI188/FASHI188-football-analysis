@@ -1,0 +1,120 @@
+name: Football R40H0 External Conflict Quarantine
+
+on:
+  pull_request:
+    branches:
+      - research/beat-the-bookie-timeseries-r39b
+    paths:
+      - '.github/workflows/football-r40h0-external-conflict-quarantine.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-conflict-quarantine:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact R40H0 zero-label contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/external_conflict_quarantine_registration_r40h0.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/audit_external_conflict_quarantine_r40h0.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/external_conflict_quarantine_registration_r40h0.json)" = "ba9348190320defbbdba514bf4a68066930cae19"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_external_conflict_quarantine_r40h0.py)" = "76cb4cfed6e1dc5a5cd2774f6094fb36f3c95d78"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/external_conflict_quarantine_registration_r40h0.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_CONFLICT_QUARANTINE_AUDIT'
+          assert r['parent_r40h']['verdict']=='STOP_R40H_CROSS_SOURCE_FREEZE'
+          assert r['parent_r40h']['verdict_must_not_be_overridden'] is True
+          assert r['hard_limits']['external_result_values_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          print('PASS_R40H0_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Download exact independent archive
+        run: |
+          set -euo pipefail
+          rm -rf r40h0-source r40h0-output r40h0-archive.zip
+          mkdir -p r40h0-source r40h0-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o r40h0-archive.zip
+          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40h0-archive.zip' | sha256sum -c -
+
+      - name: Extract odds only; external results forbidden
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import shutil,zipfile
+          from pathlib import PurePosixPath
+          z=zipfile.ZipFile('r40h0-archive.zip')
+          members=z.namelist()
+          odds=[m for m in members if PurePosixPath(m).name.casefold()=='matches_odds.csv']
+          results=[m for m in members if PurePosixPath(m).name.casefold()=='matches_results.csv']
+          assert len(odds)==1, odds
+          assert len(results)==1, results
+          with z.open(odds[0]) as src, open('r40h0-source/Matches_Odds.csv','wb') as dst:
+              shutil.copyfileobj(src,dst)
+          print('result member present but NOT extracted:',results[0])
+          PY
+          test -s r40h0-source/Matches_Odds.csv
+          test ! -e r40h0-source/Matches_Results.csv
+          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40h0-source/Matches_Odds.csv' | sha256sum -c -
+          rm -f r40h0-archive.zip
+
+      - name: Audit no-replacement conflict quarantine
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/audit_external_conflict_quarantine_r40h0.py \
+            --registration football-data/research/beat_the_bookie_r39/external_conflict_quarantine_registration_r40h0.json \
+            --odds-csv r40h0-source/Matches_Odds.csv \
+            --out-dir r40h0-output
+
+      - name: Verify R40H0 hard boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('r40h0-output/external_conflict_quarantine_status_r40h0.json').read_text())
+          assert s['status']=='PASS_R40H0_ZERO_LABEL_CONFLICT_QUARANTINE', s['status']
+          assert s['parent_r40h_verdict_preserved']=='STOP_R40H_CROSS_SOURCE_FREEZE'
+          assert s['gates']['original_r40g_hashes_exact']
+          assert s['gates']['observed_conflicting_rows_exact']
+          assert s['gates']['no_replacement_or_rebalancing']
+          n=s['no_label_audit']
+          assert n['external_result_file_extracted'] is False
+          assert n['external_result_values_accessed']==0
+          assert n['model_fits']==0 and n['prediction_metrics']==0
+          assert n['thresholds_selected']==0
+          assert n['internal_fifth_fixed100_accessed']==0
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete source bytes before evidence upload
+        if: always()
+        run: rm -rf r40h0-source r40h0-archive.zip
+
+      - name: Upload R40H0 quarantine evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40h0-external-conflict-quarantine-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40h0-output/
+          if-no-files-found: error
+          retention-days: 30
