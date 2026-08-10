@@ -5,7 +5,9 @@ from datetime import datetime,timezone
 from pathlib import Path
 
 IDCOLS=['Season','Div','Date','Time','HomeTeam','AwayTeam']
-REQ=['AvgCH','AvgCD','AvgCA','AvgC>2.5','AvgC<2.5','AHCh','AvgCAHH','AvgCAHA']
+ODDS=['AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA','Avg>2.5','Avg<2.5','AvgC>2.5','AvgC<2.5','AvgAHH','AvgAHA','AvgCAHH','AvgCAHA']
+LINES=['AHh','AHCh']
+REQ=ODDS+LINES
 
 def htxt(s:str)->str:return hashlib.sha256(s.encode()).hexdigest()
 def set_sha(ids:list[str])->str:return htxt('\n'.join(sorted(ids))+'\n')
@@ -36,10 +38,11 @@ def main():
             for r in rd:
                 if r.get('Season')!='2526':continue
                 if not all(str(r.get(c,'')).strip() for c in IDCOLS):continue
-                if not all(valid_odd(r.get(c,'')) for c in ['AvgCH','AvgCD','AvgCA','AvgC>2.5','AvgC<2.5','AvgCAHH','AvgCAHA']):continue
-                if not valid_line(r.get('AHCh','')):continue
+                if not all(valid_odd(r.get(c,'')) for c in ODDS):continue
+                if not all(valid_line(r.get(c,'')) for c in LINES):continue
                 rows.append({'identity':ident(r),'date':parse_date(r['Date']),'div':r['Div'],'home':r['HomeTeam'],'away':r['AwayTeam']})
-    if len(rows)<300:raise RuntimeError(f'insufficient complete holdout rows {len(rows)}')
+    expected=reg['source']['expected_complete_2526_rows']
+    if len(rows)!=expected:raise RuntimeError(f'exact R39J lane count drift {len(rows)} != {expected}')
     seed=reg['prior_r39j']['fixed100_seed'];old=sorted(rows,key=lambda x:htxt(f"{seed}|{x['identity']}"))[:reg['prior_r39j']['fixed100_rows']]
     old_sha=set_sha([x['identity'] for x in old])
     if old_sha!=reg['prior_r39j']['fixed100_identity_sha256']:raise RuntimeError(f'R39J rederived SHA drift {old_sha}')
