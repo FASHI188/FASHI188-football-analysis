@@ -1,0 +1,121 @@
+name: Football Beat The Bookie R40C H2H Coverage
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r40c-h2h-coverage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-prior-h2h-coverage-no-labels:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Verify exact zero-label H2H contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/h2h_prior_coverage_registration_r40c.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/audit_h2h_prior_coverage_r40c.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/h2h_prior_coverage_registration_r40c.json)" = "7bc14a7588d2b83f87eb6271c2d49f220f9e3740"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_h2h_prior_coverage_r40c.py)" = "7dfa60ada344a76cac0046a6b900047e99b2a096"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/h2h_prior_coverage_registration_r40c.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_H2H_PRIOR_COVERAGE_AUDIT'
+          assert r['hard_limits']['result_labels_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          assert r['hard_limits']['fifth_fixed100_authorized'] is False
+          print('PASS_R40C_ZERO_LABEL_CONTRACT')
+          PY
+      - name: Download exact bound source members
+        run: |
+          set -euo pipefail
+          rm -rf r40c-source r40c-sanitized r40c-output r40c-source.zip
+          mkdir -p r40c-source r40c-sanitized r40c-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r40c-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r40c-source.zip')
+          wanted={'odds_series.csv.gz','odds_series_b.csv.gz','odds_series_matches.csv.gz','odds_series_b_matches.csv.gz'}
+          assert wanted <= set(z.namelist())
+          for name in wanted: z.extract(name,'r40c-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r40c-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r40c-source/odds_series_b.csv.gz' | sha256sum -c -
+      - name: Physically remove all score columns before research Python
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r40c-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r40c-sanitized/${base}_no_scores.csv.gz"
+          done
+          for base in odds_series_matches odds_series_b_matches; do
+            {
+              printf '%s\n' 'match_id,league,home_team,away_team,match_datetime'
+              gzip -dc "r40c-source/${base}.csv.gz" | tail -n +2 | cut -d',' -f1-4,7
+            } | gzip -c > "r40c-sanitized/${base}_no_scores.csv.gz"
+            gzip -dc "r40c-sanitized/${base}_no_scores.csv.gz" | awk -F',' 'NR>1 && NF!=5 {bad++} END {exit bad?1:0}'
+          done
+          rm -rf r40c-source r40c-source.zip
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+              with gzip.open(f'r40c-sanitized/{base}_no_scores.csv.gz','rt',encoding='utf-8-sig',newline='') as f: h=next(csv.reader(f))
+              assert h[:3]==['match_id','match_date','match_time'] and 'score_home' not in h and 'score_away' not in h
+          for base in ('odds_series_matches','odds_series_b_matches'):
+              with gzip.open(f'r40c-sanitized/{base}_no_scores.csv.gz','rt',encoding='latin-1',newline='') as f: h=next(csv.reader(f))
+              assert h==['match_id','league','home_team','away_team','match_datetime']
+          print('PASS_R40C_SCORE_COLUMNS_PHYSICALLY_REMOVED')
+          PY
+      - name: Audit strict-prior H2H coverage with zero labels
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/audit_h2h_prior_coverage_r40c.py \
+            --registration football-data/research/beat_the_bookie_r39/h2h_prior_coverage_registration_r40c.json \
+            --sanitized-dir r40c-sanitized \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --out-dir r40c-output
+      - name: Verify zero-label hard gates
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r40c-output/h2h_prior_coverage_status_r40c.json').read_text())
+          assert r['population']['training_eligible_rows']==49511
+          assert r['population']['holdout_eligible_rows']==10734
+          assert r['base_gates']['passed'] is True
+          n=r['no_label_audit']
+          assert n['score_values_accessed']==0 and n['result_values_accessed']==0
+          assert n['prediction_metrics_computed']==0 and n['model_fits']==0 and n['identity_locks_created']==0
+          assert 'FIFTH100_STILL_FORBIDDEN' in r['next_stage_authorization'] or r['next_stage_authorization']=='CLOSE_H2H_NO_MODEL_NO_FIFTH100'
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Delete sanitized source before evidence upload
+        if: always()
+        run: rm -rf r40c-sanitized
+      - name: Upload R40C zero-label aggregate H2H evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r40c-h2h-coverage-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40c-output/
+          if-no-files-found: error
+          retention-days: 30
