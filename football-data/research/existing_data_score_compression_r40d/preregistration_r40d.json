@@ -1,0 +1,83 @@
+{
+  "schema_version": "R40D-EXISTING-DATA-SCORE-COMPRESSION-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Test whether strictly-prior team score-compression and low-event history derived from existing score labels adds match-specific Draw information beyond the existing strength/balance representation, on a ninth deterministic 100-match sample disjoint from all previously consumed R39U-R40B samples.",
+  "schema_evidence": {
+    "source": "R40C header-only audit",
+    "required_fields": ["label_home_goals", "label_away_goals", "label_total_goals", "label_goal_difference", "label_result"],
+    "r40c_run": 31381910770,
+    "r40c_artifact": 9060187851,
+    "r40c_artifact_digest": "sha256:3362e93db9fb0bc7b8ed3f8bc34e4e56df0d35d80f9a68b16889f60adc4b8c61"
+  },
+  "sample": {
+    "seed": "R40D_SCORE_COMPRESSION_FIXED100_20260810",
+    "size": 100,
+    "minimum_strictly_prior_same_competition_rows": 200,
+    "required_overlap_with_r39u": 0,
+    "required_overlap_with_r39v": 0,
+    "required_overlap_with_r39w": 0,
+    "required_overlap_with_r39x": 0,
+    "required_overlap_with_r39y": 0,
+    "required_overlap_with_r39z": 0,
+    "required_overlap_with_r40a": 0,
+    "required_overlap_with_r40b": 0,
+    "status": "RETROSPECTIVE_DISJOINT_SCORE_HISTORY_CHALLENGER_NOT_BLIND"
+  },
+  "score_state": {
+    "scope": "strictly-prior same-competition score outcomes only; all matches on the same date are featurized before any same-date score updates team state",
+    "window": 10,
+    "empirical_bayes_prior_strength": 5.0,
+    "feature_row_eligibility": "at least one strictly-prior same-competition scored match must exist; zero-prior competition rows are excluded from model fitting",
+    "features": [
+      "home_team_last10_avg_total_goals_eb",
+      "away_team_last10_avg_total_goals_eb",
+      "home_team_last10_under_or_equal_2_rate_eb",
+      "away_team_last10_under_or_equal_2_rate_eb",
+      "home_team_last10_avg_absolute_goal_margin_eb",
+      "away_team_last10_avg_absolute_goal_margin_eb",
+      "home_team_last10_home_role_under_or_equal_2_rate_eb",
+      "away_team_last10_away_role_under_or_equal_2_rate_eb"
+    ],
+    "no_team_history_behavior": "after competition score prior exists, an empty team-specific window shrinks exactly to the strictly-prior competition mean/rate; no target/future score is used"
+  },
+  "model": {
+    "family": "binary Draw logistic from score-compression features + unchanged conditional H/A lane",
+    "draw_l2": 10.0,
+    "intercept_penalized": false,
+    "standardization": "median/IQR fitted on each target's strictly-prior feature-eligible same-competition training rows only",
+    "solver": "deterministic Newton/IRLS with backtracking line search",
+    "conditional_HA": "exact R39W conditional Home-vs-Away logistic on non-draws, L2=10",
+    "mapping": "P(D)=score-compression Draw logistic; remaining mass split by conditional H/A probability; exact H/D/A probability conservation",
+    "manual_draw_boost": false,
+    "class_weighting": false,
+    "candidate_grid": false,
+    "post_result_tuning": false,
+    "abstention": false,
+    "top1": "argmax H/D/A with no Draw tie preference"
+  },
+  "baseline": {
+    "name": "exact R39W two-stage linear balance/intensity Draw model plus conditional H/A lane",
+    "same_sample": true
+  },
+  "frozen_gate": {
+    "draw_auc": "score_draw_auc >= baseline_draw_auc + 0.02 AND score_draw_auc > 0.56",
+    "draw_f1": "score_draw_f1 >= 0.20 AND score_draw_f1 >= baseline_draw_f1 + 0.08",
+    "draw_recall": "score_draw_recall >= 0.15",
+    "proper_score_noninferiority": "score_log_loss <= baseline_log_loss + 0.01 AND score_brier <= baseline_brier + 0.01",
+    "accuracy_noninferiority": "score_accuracy >= baseline_accuracy - 0.02",
+    "all_required": true,
+    "if_pass": "Authorizes only time-ordered rolling evaluation of this exact score-compression architecture; no formal promotion.",
+    "if_fail": "Stop score-compression route; no post-result window/L2/threshold tuning on this sample."
+  },
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
