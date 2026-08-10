@@ -1,91 +1,17 @@
-name: Football R40I1 Fit Label Schema Audit
+name: Football R40I1 Fit Label Schema Audit FROZEN
 
 on:
-  pull_request:
-    branches: [research/beat-the-bookie-timeseries-r39b]
-    paths: ['.github/workflows/football-r40i1-fit-label-schema.yml']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  fit-only-label-schema:
+  frozen-passed-r40i1:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Verify frozen contract
-        run: |
-          set -euo pipefail
-          test "$(git hash-object football-data/research/beat_the_bookie_r39/fit_label_schema_registration_r40i1.json)" = "46c5d2e9f2c53f6de067e6d34b3885c4907a88f2"
-          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_fit_label_schema_r40i1.py)" = "6ab56a24b8d817bc672383eed29493aa31884221"
-          python -m py_compile football-data/research/beat_the_bookie_r39/audit_fit_label_schema_r40i1.py football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py
-      - name: Download exact source
-        run: |
-          set -euo pipefail
-          mkdir -p r40i1-source r40i1-output
-          curl --fail --location --retry 3 'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' -o r40i1.zip
-          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40i1.zip' | sha256sum -c -
-          unzip -p r40i1.zip Matches_Odds.csv > r40i1-source/Matches_Odds.csv
-          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40i1-source/Matches_Odds.csv' | sha256sum -c -
-          unzip -p r40i1.zip Matches_Results.csv | cut -d',' -f1 > r40i1-result-ids.csv
-          test "$(head -n1 r40i1-result-ids.csv | tr -d '\r')" = 'match_id'
-      - name: Rebuild clean-fit IDs using identity only
-        run: |
-          python - <<'PY'
-          import importlib.util
-          from pathlib import Path
-          p=Path('football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py')
-          s=importlib.util.spec_from_file_location('p',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
-          eligible,_=m.build_eligible(Path('r40i1-source/Matches_Odds.csv'))
-          _,counts=m.read_result_ids(Path('r40i1-result-ids.csv'))
-          d={x for x,n in counts.items() if n>1}
-          clean=[r for r in eligible[:12936] if r['match_id'] not in d]
-          assert len(clean)==12935
-          assert m.digest_rows(clean)=='454b8ae7ad45858160f49a8d963bce8a074fc6505cf0e9c86c2764252ac34fd2'
-          Path('r40i1-clean-fit-ids.txt').write_text('\n'.join(r['match_id'] for r in clean)+'\n')
-          PY
-      - name: Physically isolate clean-fit result values only
-        run: |
-          set -euo pipefail
-          awk 'BEGIN{FS=OFS=","} NR==FNR{ids[$1]=1;next} FNR==1{print;next} ($1 in ids){print}' \
-            r40i1-clean-fit-ids.txt <(unzip -p r40i1.zip Matches_Results.csv) > r40i1-clean-fit-results.csv
-          test "$(($(wc -l < r40i1-clean-fit-results.csv)-1))" -eq 12935
-          rm -f r40i1.zip
-      - name: Audit source-native HDA label schema on fit only
-        run: |
-          python football-data/research/beat_the_bookie_r39/audit_fit_label_schema_r40i1.py \
-            --registration football-data/research/beat_the_bookie_r39/fit_label_schema_registration_r40i1.json \
-            --parent-code football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py \
-            --odds-csv r40i1-source/Matches_Odds.csv --result-id-file r40i1-result-ids.csv \
-            --clean-fit-results r40i1-clean-fit-results.csv --out-dir r40i1-output
-      - name: Verify PASS and unopened policy/blind
-        run: |
-          python - <<'PY'
-          import json
-          s=json.load(open('r40i1-output/fit_label_schema_status_r40i1.json'))
-          assert s['status']=='PASS_R40I1_FIT_ONLY_LABEL_SCHEMA_AUDIT',s['status']
-          assert s['access_audit']['clean_fit_result_values_accessed']==12935
-          assert s['access_audit']['policy_result_values_accessed']==0
-          assert s['access_audit']['blind_result_values_accessed']==0
-          assert s['access_audit']['model_predictions_accessed']==0
-          assert s['source_native_label_schema']['bijection']
-          print(json.dumps(s,indent=2))
-          PY
-      - name: Delete all source and label bytes
-        if: always()
-        run: rm -rf r40i1-source r40i1.zip r40i1-result-ids.csv r40i1-clean-fit-ids.txt r40i1-clean-fit-results.csv
-      - name: Upload aggregate schema evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: football-r40i1-fit-label-schema-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
-          path: r40i1-output/
-          if-no-files-found: error
-          retention-days: 30
+      - run: |
+          echo 'R40I1 authoritative run 31407797299 passed.'
+          echo 'Clean-fit source-native mapping is frozen: 1=H, x=D, 2=A. Fit labels accessed 12,935; policy/blind labels accessed 0.'
+          echo 'Settlement scope remains source-native; formal 90-minute semantics are not established.'
