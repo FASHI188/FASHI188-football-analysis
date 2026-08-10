@@ -1,0 +1,115 @@
+name: Football R40G External Odds Split Freeze
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-r40g-external-odds-split-freeze.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-split-freeze:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact R40G zero-label contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/external_odds_split_registration_r40g.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/freeze_external_odds_split_r40g.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/external_odds_split_registration_r40g.json)" = "60696514ed259e9064451002d82a27002dde8d17"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/freeze_external_odds_split_r40g.py)" = "137cedff0e491d4537f3872d2207509c3b34d179"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/external_odds_split_registration_r40g.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_EXTERNAL_ODDS_CHRONOLOGICAL_SPLIT_FREEZE'
+          assert r['parent_r40f']['status']=='PASS_R40F_ZERO_LABEL_EXTERNAL_ODDS_QUARANTINE'
+          assert r['hard_limits']['result_labels_allowed'] is False
+          assert r['hard_limits']['result_file_extraction_allowed'] is False
+          assert r['split_contract']['blind_labels_must_remain_unread_until_candidate_is_frozen'] is True
+          print('PASS_R40G_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Download exact independent archive
+        run: |
+          set -euo pipefail
+          rm -rf r40g-source r40g-output r40g-archive.zip
+          mkdir -p r40g-source r40g-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o r40g-archive.zip
+          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40g-archive.zip' | sha256sum -c -
+
+      - name: Extract odds only; result file forbidden
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import shutil, zipfile
+          from pathlib import PurePosixPath
+          z=zipfile.ZipFile('r40g-archive.zip')
+          members=z.namelist()
+          odds=[m for m in members if PurePosixPath(m).name.casefold()=='matches_odds.csv']
+          results=[m for m in members if PurePosixPath(m).name.casefold()=='matches_results.csv']
+          assert len(odds)==1, odds
+          assert len(results)==1, results
+          with z.open(odds[0]) as src, open('r40g-source/Matches_Odds.csv','wb') as dst:
+              shutil.copyfileobj(src,dst)
+          print('result member present but not extracted:', results[0])
+          PY
+          test -s r40g-source/Matches_Odds.csv
+          test ! -e r40g-source/Matches_Results.csv
+          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40g-source/Matches_Odds.csv' | sha256sum -c -
+          rm -f r40g-archive.zip
+
+      - name: Freeze deterministic chronological identities and hashes
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/freeze_external_odds_split_r40g.py \
+            --registration football-data/research/beat_the_bookie_r39/external_odds_split_registration_r40g.json \
+            --odds-csv r40g-source/Matches_Odds.csv \
+            --out-dir r40g-output
+
+      - name: Verify R40G hard boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r40g-output/external_odds_split_status_r40g.json').read_text())
+          n=r['no_label_audit']
+          assert n['result_file_extracted'] is False
+          assert n['result_values_accessed']==0
+          assert n['model_fits']==0 and n['prediction_metrics']==0
+          assert n['thresholds_selected']==0
+          assert n['fifth_fixed100_accessed']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete downloaded odds bytes before evidence upload
+        if: always()
+        run: rm -rf r40g-source r40g-archive.zip
+
+      - name: Upload aggregate R40G split evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40g-external-odds-split-freeze-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40g-output/
+          if-no-files-found: error
+          retention-days: 30
