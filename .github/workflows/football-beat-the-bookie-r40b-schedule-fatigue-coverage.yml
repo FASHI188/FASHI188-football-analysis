@@ -1,0 +1,144 @@
+name: Football Beat The Bookie R40B Schedule Fatigue Coverage
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r40b-schedule-fatigue-coverage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  strict-prior-schedule-coverage-no-labels:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+
+      - name: Verify exact zero-label audit contract
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/schedule_fatigue_coverage_registration_r40b.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/audit_schedule_fatigue_coverage_r40b.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/schedule_fatigue_coverage_registration_r40b.json)" = "df13da99ea365e426f645a8750f62e63f5b7c042"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_schedule_fatigue_coverage_r40b.py)" = "abbe4ce98b21016b70f20a960e377a33ef11a592"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/schedule_fatigue_coverage_registration_r40b.json').read_text())
+          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_SCHEDULE_FATIGUE_COVERAGE_AUDIT'
+          assert r['hard_limits']['result_labels_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          assert r['hard_limits']['fifth_fixed100_authorized'] is False
+          assert r['population_binding']['fifth_fixed100_lock_allowed_in_this_stage'] is False
+          print('PASS_R40B_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Download exact bound source members
+        run: |
+          set -euo pipefail
+          rm -rf r40b-source r40b-sanitized r40b-output r40b-source.zip
+          mkdir -p r40b-source r40b-sanitized r40b-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
+            -o r40b-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r40b-source.zip')
+          wanted={
+            'odds_series.csv.gz','odds_series_b.csv.gz',
+            'odds_series_matches.csv.gz','odds_series_b_matches.csv.gz'
+          }
+          assert wanted <= set(z.namelist())
+          for name in wanted: z.extract(name,'r40b-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r40b-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r40b-source/odds_series_b.csv.gz' | sha256sum -c -
+
+      - name: Physically remove all score columns before research Python
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r40b-source/${base}.csv.gz" \
+              | cut -d',' -f1-3,6- \
+              | gzip -c > "r40b-sanitized/${base}_no_scores.csv.gz"
+          done
+          for base in odds_series_matches odds_series_b_matches; do
+            gzip -dc "r40b-source/${base}.csv.gz" \
+              | cut -d',' -f1-4,7 \
+              | gzip -c > "r40b-sanitized/${base}_no_scores.csv.gz"
+          done
+          rm -rf r40b-source r40b-source.zip
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+              with gzip.open(f'r40b-sanitized/{base}_no_scores.csv.gz','rt',encoding='utf-8-sig',newline='') as f:
+                  h=next(csv.reader(f))
+              assert h[:3]==['match_id','match_date','match_time']
+              assert 'score_home' not in h and 'score_away' not in h
+              assert len(h)==32*72*3+3
+          for base in ('odds_series_matches','odds_series_b_matches'):
+              with gzip.open(f'r40b-sanitized/{base}_no_scores.csv.gz','rt',encoding='latin-1',newline='') as f:
+                  h=next(csv.reader(f))
+              assert h==['match_id','league','home_team','away_team','match_datetime'], h
+              assert 'score' not in h and 'detailed_score' not in h
+          print('PASS_R40B_SCORE_COLUMNS_PHYSICALLY_REMOVED')
+          PY
+
+      - name: Audit strict-prior schedule coverage with zero labels
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/audit_schedule_fatigue_coverage_r40b.py \
+            --registration football-data/research/beat_the_bookie_r39/schedule_fatigue_coverage_registration_r40b.json \
+            --sanitized-dir r40b-sanitized \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --out-dir r40b-output
+
+      - name: Verify zero-label hard gates
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r40b-output/schedule_fatigue_coverage_status_r40b.json').read_text())
+          assert r['status']=='PASS_R40B_ZERO_LABEL_SCHEDULE_FATIGUE_COVERAGE'
+          assert r['population']['training_eligible_rows']==49511
+          assert r['population']['holdout_eligible_rows']==10734
+          assert r['gates']['passed'] is True
+          n=r['no_label_audit']
+          assert n['score_values_accessed']==0 and n['result_values_accessed']==0
+          assert n['prediction_metrics_computed']==0 and n['model_fits']==0
+          assert n['thresholds_selected']==0 and n['identity_locks_created']==0
+          assert n['holdout_individual_identities_output']==0
+          assert r['next_stage_authorization']=='COVERAGE_ONLY_NO_MODEL_OR_FIFTH100_AUTHORIZATION'
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete sanitized source before evidence upload
+        if: always()
+        run: rm -rf r40b-sanitized
+
+      - name: Upload R40B zero-label aggregate schedule evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r40b-schedule-fatigue-coverage-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40b-output/
+          if-no-files-found: error
+          retention-days: 30
