@@ -1,0 +1,90 @@
+name: Football Beat The Bookie R39E Identity Lock
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39e-identity-lock.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  third-fixed100-zero-label-lock:
+    if: ${{ github.run_attempt == 1 && github.run_number == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Verify frozen model and lock identities
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/model_registration_r39e.json >/dev/null
+          python -m json.tool football-data/research/beat_the_bookie_r39/identity_lock_registration_r39e.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39e.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/model_registration_r39e.json)" = "9b5e2635875b042bccb47f9e103434d74977d727"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/identity_lock_registration_r39e.json)" = "b4a7cf67bdd78822e07ac5eb6779b23fd7a1a3d6"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39e.py)" = "c69905743a9ff6c154773e3f798c1da290db37ca"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+      - name: Download exact source and physically remove scores
+        run: |
+          set -euo pipefail
+          rm -rf r39e-source r39e-sanitized r39e-output r39e-source.zip
+          mkdir -p r39e-source r39e-sanitized r39e-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39e-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39e-source.zip')
+          for n in ('odds_series.csv.gz','odds_series_b.csv.gz'): z.extract(n,'r39e-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r39e-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r39e-source/odds_series_b.csv.gz' | sha256sum -c -
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39e-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39e-sanitized/${base}_no_scores.csv.gz"
+          done
+          rm -rf r39e-source r39e-source.zip
+      - name: Lock third fixed100 after representation freeze
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/freeze_identity_lock_r39e.py \
+            --registration football-data/research/beat_the_bookie_r39/identity_lock_registration_r39e.json \
+            --model-registration football-data/research/beat_the_bookie_r39/model_registration_r39e.json \
+            --source-dir r39e-sanitized \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --out-dir r39e-output
+      - name: Verify zero-label lock
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39e-output/identity_lock_receipt_r39e.json').read_text())
+          assert r['status']=='LOCKED_R39E_THIRD_FIXED100_NO_LABELS'
+          assert r['training_eligible_rows']==49511 and r['holdout_eligible_rows']==10734
+          assert r['first100_identity_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert r['second100_identity_sha256']=='739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4'
+          assert r['first200_third100_overlap']==0
+          n=r['no_label_audit'];assert all(n[k]==0 for k in n)
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Delete source before artifact upload
+        if: always()
+        run: rm -rf r39e-sanitized
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football-beat-the-bookie-r39e-identity-lock-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39e-output/
+          if-no-files-found: error
+          retention-days: 30
