@@ -20,6 +20,11 @@ def valid_line(v)->bool:
     except:return False
     return math.isfinite(x)
 def identity(r,fields):return '|'.join(str(r.get(c,'')).strip() for c in fields)
+def parse_date(s):
+    for f in ('%d/%m/%Y','%d/%m/%y','%Y-%m-%d'):
+        try:return datetime.strptime(str(s).strip(),f).date()
+        except:pass
+    raise ValueError(s)
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--registration',type=Path,required=True);ap.add_argument('--market-dir',type=Path,required=True);ap.add_argument('--out-dir',type=Path,required=True);a=ap.parse_args()
@@ -36,7 +41,7 @@ def main():
                 if not all(str(r.get(c,'')).strip() for c in ids):continue
                 if not all(valid_odd(r.get(c,'')) for c in ODDS):continue
                 if not all(valid_line(r.get(c,'')) for c in LINES):continue
-                x={'identity':identity(r,ids),'season':r['Season'],'div':r['Div'],'date':r['Date']}
+                x={'identity':identity(r,ids),'season':r['Season'],'div':r['Div'],'date':r['Date'],'date_obj':parse_date(r['Date'])}
                 rows.append(x);by_season[r['Season']]+=1;by_div[r['Div']]+=1
     if bad_headers:raise RuntimeError(f'forbidden label headers present: {bad_headers}')
     pre_rows=[x for x in rows if x['season'] in pre];hold_rows=[x for x in rows if x['season']==hold]
@@ -53,7 +58,8 @@ def main():
       'complete_total_rows':len(rows),'complete_preholdout_rows':len(pre_rows),'complete_holdout_rows':len(hold_rows),
       'complete_by_season':dict(sorted(by_season.items())),'complete_by_division':dict(sorted(by_div.items())),
       'fixed100_rows':len(fixed),'fixed100_seed':reg['identity']['fixed100_seed'],'fixed100_identity_sha256':sha,
-      'fixed100_min_date':min((x['date'] for x in fixed),default=None),'fixed100_max_date':max((x['date'] for x in fixed),default=None),
+      'fixed100_min_date':str(min((x['date_obj'] for x in fixed),default=None)) if fixed else None,
+      'fixed100_max_date':str(max((x['date_obj'] for x in fixed),default=None)) if fixed else None,
       'audit_access':{'score_values':0,'result_labels':0,'model_fit':0,'regime_threshold_selection':0,'holdout_labels':0},
       'prior_research_separation':reg['prior_research_separation'],'hard_limits':reg['hard_limits']
     }
