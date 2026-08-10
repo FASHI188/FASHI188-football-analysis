@@ -1,0 +1,130 @@
+name: Football R39L Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39l-preflight.yml'
+      - 'football-data/research/lineup_attack_r39l/preregistration_r39l.json'
+      - 'football-data/research/lineup_attack_r39l/source_registration_r39l.json'
+      - 'football-data/research/lineup_attack_r39l/evaluator_contract_r39l.json'
+      - 'football-data/research/lineup_attack_r39l/audit_lineup_attack_features_r39l.py'
+      - 'football-data/research/lineup_attack_r39l/evaluate_lineup_attack_r39l.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39l-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+
+      - name: Verify frozen scientific contract and coverage evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/lineup_attack_r39l/audit_lineup_attack_features_r39l.py \
+            football-data/research/lineup_attack_r39l/evaluate_lineup_attack_r39l.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/lineup_attack_r39l/preregistration_r39l.json').read_text())
+          s=json.loads(Path('football-data/research/lineup_attack_r39l/source_registration_r39l.json').read_text())
+          c=json.loads(Path('football-data/research/lineup_attack_r39l/evaluator_contract_r39l.json').read_text())
+          assert p['preregistration_status']=='FEATURE_COVERAGE_PASSED_MODEL_FROZEN_BEFORE_TARGET_LABEL_EVALUATION'
+          b=p['source_binding']
+          assert b['final_feature_coverage_audit_status']=='PASS_R39L_ZERO_TARGET_LABEL_FEATURE_COVERAGE'
+          assert b['final_feature_coverage_run_id']==31352627898
+          assert b['final_feature_coverage_artifact_id']==9049502297
+          assert b['final_feature_coverage_artifact_sha256']=='36763191e0cc6097799b60cfbb13c9515069790be31ab58a30679f13ca8efd1c'
+          assert b['feature_eligible_preholdout_rows']==8161 and b['feature_eligible_2526_rows']==1273 and b['feature_eligible_fixed100_rows']==100
+          assert b['fixed100_identity_sha256']=='f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc'
+          assert b['fixed100_labels_accessed_before_r39l']==0 and b['feature_audit_target_labels_accessed']==0 and b['strict_lag_violations']==0
+          assert p['full_feature_dimension']==10 and c['feature_dimensions']=={'market_context':2,'full':10}
+          assert c['chronology']['fit_rows']==5712 and c['chronology']['validation_rows']==1224 and c['chronology']['policy_rows']==1225
+          assert c['label_access']['2526_nonfixed_labels_allowed'] is False and c['label_access']['fixed100_labels_before_freeze']==0
+          assert all(v==0 for v in s['no_target_label_contract'].values())
+          assert p['hard_limits']['formal_weight']==0 and p['hard_limits']['current_match_use'] is False
+          print('PASS_R39L_FROZEN_CONTRACT_ZERO_LABEL')
+          PY
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31352627898" -o /tmp/cov-run.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31352627898/artifacts" -o /tmp/cov-art.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/cov-run.json').read_text());a=json.loads(Path('/tmp/cov-art.json').read_text())
+          assert r['status']=='completed' and r['conclusion']=='success'
+          assert r['head_sha']=='3a95d5360e0f598188666b176d16a5dec0582822'
+          arts=a.get('artifacts',[]);assert len(arts)==1
+          x=arts[0];assert x['id']==9049502297
+          assert x.get('digest')=='sha256:36763191e0cc6097799b60cfbb13c9515069790be31ab58a30679f13ca8efd1c'
+          print('PASS_R39L_BOUND_COVERAGE_ARTIFACT')
+          PY
+
+      - name: Run evaluator synthetic tests and label-order source audit
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_attack_r39l/evaluate_lineup_attack_r39l.py --self-test
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          p=Path('football-data/research/lineup_attack_r39l/evaluate_lineup_attack_r39l.py')
+          src=p.read_text();ast.parse(src)
+          feature_write=src.index("feature_freeze_receipt_r39l.json")
+          pre_label=src.index("labels=load_labels(a.raw_dir")
+          final_write=src.index("final_freeze_receipt_r39l.json').write_text",feature_write)
+          hold_label=src.index("hlab=load_labels(a.raw_dir,{'2526'}")
+          assert feature_write < pre_label
+          assert final_write < hold_label
+          assert "load_labels(a.raw_dir,{'2526'}" in src
+          print('PASS_R39L_LABEL_ORDER_STATIC_AUDIT')
+          PY
+
+      - name: Persist zero-label preflight receipt
+        run: |
+          set -euo pipefail
+          mkdir -p r39l-preflight
+          python - <<'PY'
+          import json,subprocess
+          from datetime import datetime,timezone
+          from pathlib import Path
+          files=[
+            'football-data/research/lineup_attack_r39l/preregistration_r39l.json',
+            'football-data/research/lineup_attack_r39l/source_registration_r39l.json',
+            'football-data/research/lineup_attack_r39l/evaluator_contract_r39l.json',
+            'football-data/research/lineup_attack_r39l/audit_lineup_attack_features_r39l.py',
+            'football-data/research/lineup_attack_r39l/evaluate_lineup_attack_r39l.py']
+          blobs={p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files}
+          out={'status':'PASS_R39L_ZERO_LABEL_EVALUATOR_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'scientific_blobs':blobs,'coverage_run_id':31352627898,'coverage_artifact_id':9049502297,'coverage_artifact_sha256':'36763191e0cc6097799b60cfbb13c9515069790be31ab58a30679f13ca8efd1c','real_football_data_accessed':0,'real_target_labels_accessed':0,'model_fit_on_real_labels':0,'fixed100_labels_accessed':0,'formal_weight':0}
+          Path('r39l-preflight/preflight_receipt_r39l.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39l-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39l-preflight/
+          if-no-files-found: error
+          retention-days: 30
