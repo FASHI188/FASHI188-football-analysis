@@ -1,0 +1,87 @@
+name: Football R39U Existing Data Fixed100
+
+on:
+  push:
+    branches:
+      - research/existing-data-analog-r39u
+    paths:
+      - '.github/workflows/football-r39u-existing-data-fixed100.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  existing-data-fixed100:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify existing-data-only preregistration
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_analog_r39u/evaluate_analog_r39u.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_analog_r39u/preregistration_r39u.json').read_text())
+          assert p['schema_version']=='R39U-EXISTING-DATA-ANALOG-1.0'
+          assert p['sample']['size']==100
+          assert p['algorithm']['candidate_k']==[15,25,50]
+          assert p['algorithm']['abstention'] is False
+          assert p['algorithm']['manual_draw_boost'] is False
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0
+          assert h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False
+          assert h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False
+          assert h['main_mutation'] is False
+          print('PASS_R39U_EXISTING_DATA_ONLY_CONTRACT')
+          PY
+
+      - name: Execute fixed100 retrospective experiment
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r39u-output"
+          python football-data/research/existing_data_analog_r39u/evaluate_analog_r39u.py \
+            --prereg football-data/research/existing_data_analog_r39u/preregistration_r39u.json \
+            --root . \
+            --out "$RUNNER_TEMP/r39u-output"
+
+      - name: Verify fixed100 output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39u-output'
+          p=root/'r39u_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['status']=='PASS_R39U_EXISTING_DATA_FIXED100_EXPLORATORY'
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert set(r['candidate_results'])=={'15','25','50'}
+          for k,v in r['candidate_results'].items():
+              m=v['metrics']; preds=v['predictions']
+              assert m['n']==100 and len(preds)==100
+              assert sum(m['predicted_counts'].values())==100
+              assert sum(m['actual_counts'].values())==100
+              assert all(x['prediction'] in {'H','D','A'} for x in preds)
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r39u_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({k:v['metrics'] for k,v in r['candidate_results'].items()},indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39u-existing-data-fixed100-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39u-output
+          retention-days: 30
+          if-no-files-found: error
