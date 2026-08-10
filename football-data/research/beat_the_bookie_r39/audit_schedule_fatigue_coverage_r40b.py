@@ -79,7 +79,10 @@ def load_score_free_metadata(source_dir: Path):
     for original in ("odds_series_matches.csv.gz", "odds_series_b_matches.csv.gz"):
         path = source_dir / original.replace(".csv.gz", "_no_scores.csv.gz")
         source_odds = fixture_source_for_matches(original)
-        with gzip.open(path, "rt", encoding="utf-8-sig", newline="") as f:
+        # latin-1 is deliberately used after score columns are physically removed.
+        # It is a one-byte reversible decode, so mixed legacy Western encodings cannot
+        # make parsing fail or alter the underlying team/league byte identity.
+        with gzip.open(path, "rt", encoding="latin-1", newline="") as f:
             reader = csv.DictReader(f)
             expected = ["match_id", "league", "home_team", "away_team", "match_datetime"]
             if reader.fieldnames != expected:
@@ -153,9 +156,6 @@ def build_schedule_features(metadata_rows: list[dict]):
             }
 
         same_timestamp_team_conflicts += sum(v - 1 for v in seen_keys_in_batch.values() if v > 1)
-        # Histories are updated only after every row at this exact timestamp was featurized.
-        # Deduplicate the same league/team/timestamp so a duplicated fixture cannot create
-        # an artificial extra prior match for future fixtures.
         update_keys = set()
         for r in batch:
             update_keys.add((r["league"], r["home_team"]))
