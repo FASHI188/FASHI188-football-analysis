@@ -1,0 +1,97 @@
+name: Football R39Y Existing Data Regime Replication
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r39y-existing-data-regime-replication.yml'
+      - 'football-data/research/existing_data_regime_replication_r39y/**'
+
+permissions:
+  contents: read
+
+jobs:
+  fifth-disjoint-fixed100-replication:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R39Y preregistration and frozen R39X dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_regime_replication_r39y/evaluate_r39y.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_regime_replication_r39y/preregistration_r39y.json').read_text())
+          assert p['schema_version']=='R39Y-EXISTING-DATA-REGIME-REPLICATION-1.0'
+          assert p['sample']['size']==100
+          for k in ('r39u','r39v','r39w','r39x'):
+              assert p['sample'][f'required_overlap_with_{k}']==0
+          a=p['frozen_architecture']
+          assert a['r39x_evaluator_blob']=='c1ac4ae488be382e8a4d19c8c90c28d0d57907dd'
+          assert a['draw_rate_shrinkage_prior_strength']==60.0
+          assert a['side_l2']==10.0
+          assert a['manual_draw_boost'] is False
+          assert a['threshold_tuning'] is False
+          assert a['class_weighting'] is False
+          assert a['post_result_tuning'] is False
+          assert a['abstention'] is False
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_nonlinear_regime_r39x/evaluate_r39x.py'],text=True).strip()
+          assert got=='c1ac4ae488be382e8a4d19c8c90c28d0d57907dd', got
+          print('PASS_R39Y_PREREG_AND_R39X_DEPENDENCY')
+          PY
+
+      - name: Execute R39Y fifth disjoint fixed100 replication
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r39y-output"
+          python football-data/research/existing_data_regime_replication_r39y/evaluate_r39y.py \
+            --prereg football-data/research/existing_data_regime_replication_r39y/preregistration_r39y.json \
+            --root . \
+            --out "$RUNNER_TEMP/r39y-output"
+
+      - name: Verify R39Y output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39y-output'
+          p=root/'r39y_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R39Y_REGIME_DRAW_RANKING_REPLICATED','FAIL_R39Y_REGIME_DRAW_RANKING_NOT_REPLICATED'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['overlap']=={'r39u':0,'r39v':0,'r39w':0,'r39x':0}
+          assert len(r['cell_audit'])==100
+          assert r['solver']['side_fits']==100 and r['solver']['linear_draw_fits']==100
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r39y_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'], 'replicated':r['replicated'],
+            'sample_sha':r['r39y_fixed100_identity_sha256'], 'overlap':r['overlap'],
+            'regime_metrics':r['regime_metrics'], 'linear_metrics':r['linear_metrics'],
+            'regime_draw_auc':r['regime_draw_auc'], 'linear_draw_auc':r['linear_draw_auc'],
+            'gate':r['gate'], 'solver':r['solver']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39y-existing-data-regime-replication-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39y-output
+          retention-days: 30
+          if-no-files-found: error
