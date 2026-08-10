@@ -1,0 +1,66 @@
+{
+  "schema_version": "R40I-ROLLING-ELO-LEVEL-DRAW-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Test whether absolute pre-match Elo level (strong-v-strong versus weak-v-weak at the same Elo gap) adds stable Draw information beyond the frozen R39W strength/balance feature family in time-ordered competition-season folds.",
+  "data_glob": "football-data/training_datasets/*/point_in_time.csv",
+  "schema_evidence": {
+    "source": "R40H zero-label feature audit",
+    "r40h_run": 31383639884,
+    "r40h_artifact": 9060829194,
+    "r40h_artifact_digest": "sha256:5cf40342ee226b4647eb5a1bc33419bd5f0d45ac43bb0baba0485e6f57f0f55b",
+    "fields": ["home_elo_pre_match", "away_elo_pre_match"],
+    "coverage": 1.0
+  },
+  "folding": {
+    "unit": "competition_id x season",
+    "train_rule": "same-competition rows strictly before the first date of the test season",
+    "minimum_train_rows": 200,
+    "minimum_test_rows": 80,
+    "same_season_training": false
+  },
+  "elo_level_feature": {
+    "definition": "elo_mean_pre_match=(home_elo_pre_match+away_elo_pre_match)/2",
+    "rationale": "R39U already uses elo_difference_with_home_advantage; mean Elo is the orthogonal absolute matchup-strength level not represented by a difference alone",
+    "no_nonlinear_transform": true,
+    "no_post_result_feature_changes": true
+  },
+  "models": {
+    "baseline_draw": "R39W frozen 9-feature binary Draw logistic, L2=10",
+    "challenger_draw": "baseline 9 features plus elo_mean_pre_match, binary Draw logistic L2=10",
+    "conditional_HA": "R39W frozen conditional Home-vs-Away logistic on non-draws, L2=10; identical for baseline and challenger",
+    "standardization": "training-fold median/IQR only",
+    "solver": "deterministic Newton/IRLS with backtracking line search",
+    "class_weighting": false,
+    "candidate_grid": false,
+    "manual_draw_boost": false,
+    "threshold_tuning": false,
+    "post_result_tuning": false,
+    "abstention": false
+  },
+  "frozen_gate": {
+    "coverage": "elo-level eligible test rows / baseline finite test rows >= 0.995",
+    "pooled_HDA_log_loss": "challenger < baseline",
+    "pooled_binary_draw_log_loss": "challenger < baseline",
+    "pooled_draw_auc": "challenger >= baseline + 0.003",
+    "draw_f1": "challenger >= baseline + 0.02",
+    "draw_recall": "challenger >= baseline",
+    "accuracy_noninferiority": "challenger >= baseline - 0.01",
+    "fold_draw_log_loss_wins": "challenger wins at least 55% of eligible folds",
+    "competition_draw_log_loss_wins": "challenger wins at least 60% of competitions with at least two eligible folds",
+    "all_required": true,
+    "if_pass": "Absolute Elo level is a stable incremental Draw information family and may proceed to a separately preregistered confirmation; no formal promotion.",
+    "if_fail": "Close absolute-Elo Draw route; no post-result nonlinear/L2/threshold tuning on this evaluation."
+  },
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "random_fixed100_consumed": 0,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
