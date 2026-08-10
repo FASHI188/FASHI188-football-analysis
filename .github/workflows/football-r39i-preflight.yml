@@ -1,0 +1,63 @@
+name: Football R39I Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39i-preflight.yml'
+      - 'football-data/research/prematch_shock_r39i/preregistration_r39i.json'
+      - 'football-data/research/prematch_shock_r39i/evaluate_discrete_shock_r39i.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Validate frozen R39I contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/prematch_shock_r39i/evaluate_discrete_shock_r39i.py football-data/research/prematch_shock_r39i/audit_lineup_coverage_r39i.py
+          python football-data/research/prematch_shock_r39i/evaluate_discrete_shock_r39i.py --self-test
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/prematch_shock_r39i/preregistration_r39i.json').read_text())
+          assert p['source_binding']['fixed100_identity_sha256']=='f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc'
+          assert p['source_binding']['fixed100_labels_accessed_before_evaluation']==0
+          assert p['source_binding']['holdout_season']=='2526'
+          assert p['target_and_offset']['market_draw_logit_coefficient']==1.0
+          assert p['full_feature_dimension']==28
+          assert len(p['team_shock_features_per_side'])==13
+          assert p['strict_information_contract']['current_match_score_or_result_forbidden'] is True
+          assert p['strict_information_contract']['current_match_player_performance_forbidden'] is True
+          assert p['label_order_contract']['fixed100_labels_before_model_and_policy_freeze']==0
+          assert p['hard_limits']['formal_weight']==0
+          print('PASS_R39I_FROZEN_ZERO_LABEL_PREFLIGHT')
+          PY
+      - name: Persist preflight receipt
+        run: |
+          mkdir -p r39i-preflight
+          python - <<'PY'
+          import json
+          from datetime import datetime,timezone
+          from pathlib import Path
+          Path('r39i-preflight/preflight_r39i.json').write_text(json.dumps({'status':'PASS_R39I_ZERO_LABEL_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'real_data_access':0,'result_labels_accessed':0,'fixed100_labels_accessed':0,'model_fit_real_data':0},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39i-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39i-preflight/
+          if-no-files-found: error
+          retention-days: 30
