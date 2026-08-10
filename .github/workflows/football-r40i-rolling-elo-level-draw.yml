@@ -1,0 +1,70 @@
+name: Football R40I Rolling Elo Level Draw
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40i-rolling-elo-level-draw.yml'
+      - 'football-data/research/rolling_elo_level_draw_r40i/**'
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-elo-level-draw:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify R40I preregistration and dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/rolling_elo_level_draw_r40i/evaluate_r40i.py
+          python - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/rolling_elo_level_draw_r40i/preregistration_r40i.json').read_text())
+          assert p['schema_version']=='R40I-ROLLING-ELO-LEVEL-DRAW-1.0'
+          assert p['schema_evidence']['r40h_run']==31383639884
+          assert p['schema_evidence']['r40h_artifact']==9060829194
+          assert p['schema_evidence']['coverage']==1.0
+          assert p['folding']['minimum_train_rows']==200 and p['folding']['minimum_test_rows']==80 and p['folding']['same_season_training'] is False
+          assert p['elo_level_feature']['no_nonlinear_transform'] is True and p['elo_level_feature']['no_post_result_feature_changes'] is True
+          m=p['models']; h=p['hard_boundaries']
+          assert m['class_weighting'] is False and m['candidate_grid'] is False
+          assert m['manual_draw_boost'] is False and m['threshold_tuning'] is False and m['post_result_tuning'] is False and m['abstention'] is False
+          assert h['external_network_requests']==0 and h['football_api_requests']==0 and h['new_data_collection'] is False and h['random_fixed100_consumed']==0
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False and h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae',got
+          print('PASS_R40I_PREREG_AND_DEPENDENCY')
+          PY
+      - name: Execute R40I rolling absolute-Elo challenger
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r40i-output"
+          python football-data/research/rolling_elo_level_draw_r40i/evaluate_r40i.py --prereg football-data/research/rolling_elo_level_draw_r40i/preregistration_r40i.json --root . --out "$RUNNER_TEMP/r40i-output"
+      - name: Verify R40I output
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r40i-output'; p=root/'r40i_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R40I_ELO_LEVEL_DRAW_INCREMENT','FAIL_R40I_ELO_LEVEL_DRAW_NO_INCREMENT'}
+          assert r['eligible_fold_count']>0 and r['rows_scored']>0 and r['elo_audit']['invalid_rows']==0
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']; assert h['external_network_requests']==0 and h['football_api_requests']==0 and h['new_data_collection'] is False and h['random_fixed100_consumed']==0 and h['main_mutation'] is False
+          assert (root/'r40i_result.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({k:r[k] for k in ('terminal','passed','coverage','eligible_fold_count','rows_scored','competition_count','baseline_metrics','challenger_metrics','baseline_binary_draw_log_loss','challenger_binary_draw_log_loss','baseline_draw_auc','challenger_draw_auc','fold_draw_ll_win_rate','competition_draw_ll_win_rate','gate')},indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40i-rolling-elo-level-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40i-output
+          retention-days: 30
+          if-no-files-found: error
