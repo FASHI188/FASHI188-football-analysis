@@ -1,0 +1,119 @@
+name: Football Beat The Bookie R39E Evaluation
+
+on:
+  pull_request:
+    branches:
+      - research/betfair-kaggle-timestamp-coverage-r39a
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39e-evaluation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dense-sequence-third-fixed100:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+      - name: Verify exact frozen files
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/model_registration_r39e.json >/dev/null
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39e.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/model_registration_r39e.json)" = "9b5e2635875b042bccb47f9e103434d74977d727"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/preregistration_r39e.json)" = "29cccf2a4be033981d3720b403ba71f860873a31"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py)" = "e282b8ffd8f6b077451496d6e205428deb8e4926"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/preregistration_r39e.json').read_text())
+          assert r['status']=='PRE_REGISTERED_BEFORE_R39E_THIRD100_LABEL_ACCESS'
+          assert r['identity_binding']['third100_identity_sha256']=='d6d97f0aef62a8eb6d7b8163e12852dcf7d85b88164ce6d29956b9f2bc082695'
+          assert r['identity_binding']['first200_third100_overlap']==0
+          assert r['models']['r39e']['features']==40
+          assert r['models']['r39e']['threshold_selection']=='forbidden'
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39E_FINAL_PREREG')
+          PY
+      - name: Synthetic DCT basis check
+        run: |
+          python - <<'PY'
+          import importlib.util, numpy as np
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py')
+          s=importlib.util.spec_from_file_location('r39e',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+          z=m.dct6([2.0]*24)
+          assert abs(z[0]-2.0*np.sqrt(24))<1e-10
+          assert max(abs(v) for v in z[1:])<1e-10
+          print('PASS_R39E_DCT_CHECK')
+          PY
+      - name: Download exact source and build score-free feature copy
+        run: |
+          set -euo pipefail
+          rm -rf r39e-source r39e-sanitized r39e-output r39e-source.zip
+          mkdir -p r39e-source r39e-sanitized r39e-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' -o r39e-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39e-source.zip')
+          for n in ('odds_series.csv.gz','odds_series_b.csv.gz'): z.extract(n,'r39e-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r39e-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r39e-source/odds_series_b.csv.gz' | sha256sum -c -
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39e-source/${base}.csv.gz" | cut -d',' -f1-3,6- | gzip -c > "r39e-sanitized/${base}_no_scores.csv.gz"
+          done
+      - name: Execute frozen R39E once
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_dense_sequence_r39e.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39e.json \
+            --model-registration football-data/research/beat_the_bookie_r39/model_registration_r39e.json \
+            --sanitized-dir r39e-sanitized \
+            --original-dir r39e-source \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --out-dir r39e-output
+      - name: Verify access boundary and research-only result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out=Path('r39e-output')
+          r=json.loads((out/'result_r39e.json').read_text())
+          assert r['status'] in {'PASS_R39E_DENSE_SEQUENCE_CHALLENGER_EXPLORATION_ONLY','NO_R39E_DENSE_SEQUENCE_INCREMENT_THIRD100_EXPLORATION_ONLY'}
+          assert r['identity_set_sha256']=='d6d97f0aef62a8eb6d7b8163e12852dcf7d85b88164ce6d29956b9f2bc082695'
+          a=r['access_audit']
+          assert a['training_labels_accessed']==49511
+          assert a['third100_labels_accessed_before_parameter_freeze']==0
+          assert a['first200_holdout_labels_accessed']==0
+          assert a['third100_labels_accessed_after_parameter_freeze']==100
+          assert (out/'model_parameter_freeze_r39e.json').exists()
+          assert (out/'per_match_r39e.json').exists()
+          h=r['hard_limits'];assert h['formal_weight']==0 and h['formal_model_mutation']==0 and h['CURRENT_mutation']==0 and h['main_mutation']==0
+          print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+      - name: Remove raw source before artifact upload
+        if: always()
+        run: rm -rf r39e-source r39e-sanitized r39e-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football-beat-the-bookie-r39e-evaluation-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r39e-output/
+          if-no-files-found: error
+          retention-days: 30
