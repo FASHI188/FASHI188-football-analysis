@@ -45,7 +45,7 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/football-r39k-evaluation.yml/runs?branch=research%2Fonline-draw-calibration-r39k&per_page=20" \
             -o /tmp/eval-runs.json
-          for rid in 31350925707 31351186527 31351186544; do
+          for rid in 31350925707 31351186527 31351186544 31351445210 31351505662 31351549062; do
             curl --fail --silent --show-error \
               -H "Authorization: Bearer ${GH_TOKEN}" \
               -H 'Accept: application/vnd.github+json' \
@@ -61,24 +61,28 @@ jobs:
           cur=int(os.environ['GITHUB_RUN_ID'])
           runs=json.loads(Path('/tmp/eval-runs.json').read_text()).get('workflow_runs',[])
           prior={int(r['id']) for r in runs if int(r['id'])!=cur and r.get('head_branch')=='research/online-draw-calibration-r39k'}
-          allowed_prior={31350925707,31351186527}
+          allowed_prior={31350925707,31351186527,31351445210,31351505662,31351549062}
           assert prior <= allowed_prior, f'unexpected prior evaluation run(s): {sorted(prior-allowed_prior)}'
-          fail=json.loads(Path('/tmp/run-31350925707.json').read_text())
-          fail_art=json.loads(Path('/tmp/art-31350925707.json').read_text())
-          skipped=json.loads(Path('/tmp/run-31351186527.json').read_text())
-          skipped_art=json.loads(Path('/tmp/art-31351186527.json').read_text())
-          pre=json.loads(Path('/tmp/run-31351186544.json').read_text())
-          pre_art=json.loads(Path('/tmp/art-31351186544.json').read_text())
-          assert fail['status']=='completed' and fail['conclusion']=='failure'
-          assert fail_art.get('artifacts',[])==[]
-          assert skipped['status']=='completed' and skipped['conclusion']=='success'
-          sa=skipped_art.get('artifacts',[]); assert len(sa)==1 and sa[0]['id']==9049006983
-          assert sa[0]['name'].startswith('football-r39k-evaluation-uniqueness-')
+          def load(rid,kind='run'):
+              p=Path(f'/tmp/{kind}-{rid}.json'); return json.loads(p.read_text())
+          fail=load(31350925707); fail_art=load(31350925707,'art')
+          skip2=load(31351186527); skip2_art=load(31351186527,'art')
+          pre=load(31351186544); pre_art=load(31351186544,'art')
+          skip3=load(31351445210); skip3_art=load(31351445210,'art')
+          rec4=load(31351505662); rec4_art=load(31351505662,'art')
+          rec5=load(31351549062); rec5_art=load(31351549062,'art')
+          assert fail['status']=='completed' and fail['conclusion']=='failure' and fail_art.get('artifacts',[])==[]
+          assert skip2['status']=='completed' and skip2['conclusion']=='success'
+          a=skip2_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049006983 and a[0]['name'].startswith('football-r39k-evaluation-uniqueness-')
+          assert skip3['status']=='completed' and skip3['conclusion']=='success'
+          a=skip3_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049091601 and a[0]['name'].startswith('football-r39k-evaluation-uniqueness-')
+          assert rec4['status']=='completed' and rec4['conclusion']=='failure' and rec4_art.get('artifacts',[])==[]
+          assert rec5['status']=='completed' and rec5['conclusion']=='failure' and rec5_art.get('artifacts',[])==[]
           assert pre['status']=='completed' and pre['conclusion']=='success'
           assert pre['head_sha']=='c2e39c551fd60c29bbb971604453f02a403b9c60'
-          pa=pre_art.get('artifacts',[]); assert len(pa)==1 and pa[0]['id']==9049012812
-          assert pa[0].get('digest')=='sha256:5c3f3d33cd440a252cf37a74e965c310a1a7b166de24214d49f143d046265c54'
-          print('PASS_R39K_ONE_OFF_TECHNICAL_RECOVERY_AUTHORIZATION')
+          a=pre_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049012812
+          assert a[0].get('digest')=='sha256:5c3f3d33cd440a252cf37a74e965c310a1a7b166de24214d49f143d046265c54'
+          print('PASS_R39K_FINAL_ONE_OFF_RECOVERY_AUTHORIZATION')
           PY
           python football-data/research/online_draw_r39k/run_online_draw_r39k.py --self-test
 
