@@ -7,6 +7,7 @@ import importlib.util
 import json
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 R39U_PATH = Path("football-data/research/existing_data_analog_r39u/evaluate_analog_r39u.py")
@@ -23,6 +24,7 @@ def load_r39u_module():
     if spec is None or spec.loader is None:
         raise RuntimeError("R39U_IMPORT_SPEC_FAILED")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
