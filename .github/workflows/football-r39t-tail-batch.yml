@@ -1,0 +1,150 @@
+name: Football R39T T60-T30-T15 Tail Batch
+
+on:
+  push:
+    branches:
+      - research/premierleague-forward-windows-r39t
+    paths:
+      - 'football-data/research/premierleague_forward_windows_r39t/tail_trigger_r39t.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r39t-tail-batch
+  cancel-in-progress: false
+
+jobs:
+  capture-tail-window:
+    strategy:
+      fail-fast: false
+      matrix:
+        window: [T60, T30, T15]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      WINDOW: ${{ matrix.window }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen tail-batch authorization and scientific blobs
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/premierleague_forward_windows_r39t/capture_window_r39t.py
+          python -m py_compile football-data/research/premierleague_rendered_lineup_r39s/detect_confirmed_xi_r39s.py
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root=Path('football-data/research/premierleague_forward_windows_r39t')
+          c=json.loads((root/'contract_r39t.json').read_text())
+          t=json.loads((root/'tail_trigger_r39t.json').read_text())
+          window=os.environ['WINDOW']
+          assert t['schema_version']=='R39T-TAIL-BATCH-TRIGGER-1.0'
+          assert t['armed'] is True
+          assert t['mode']=='BATCH_T60_T30_T15'
+          assert window in {'T60','T30','T15'}
+          assert c['schema_version']=='R39T-PL-FORWARD-WINDOWS-1.0'
+          assert c['research_only'] is True and c['formal_weight']==0
+          assert c['fixture']['match_id']==2645195
+          assert c['fixture']['scheduled_kickoff_utc']=='2026-08-21T19:00:00Z'
+          f=c['frozen_detector']
+          for path,key in [(f['contract_path'],'contract_git_blob_sha'),(f['implementation_path'],'implementation_git_blob_sha')]:
+              got=subprocess.check_output(['git','rev-parse',f'HEAD:{path}'],text=True).strip()
+              assert got==f[key], (path,got,f[key])
+          b=c['hard_boundaries']
+          assert b['blind100_labels_accessed']==b['research_target_labels_used']==b['model_fits']==b['candidate_probabilities']==0
+          assert b['football_api_requests']==b['api_keys_used']==0
+          assert b['formal_model_mutation'] is False and b['formal_data_mutation'] is False
+          assert b['config_mutation'] is False and b['current_rule_mutation'] is False and b['main_mutation'] is False
+          print('PASS_R39T_TAIL_BATCH_AUTHORIZATION',window)
+          PY
+
+      - name: Wait until exact frozen window opens
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt, json, os, time
+          from pathlib import Path
+          c=json.loads(Path('football-data/research/premierleague_forward_windows_r39t/contract_r39t.json').read_text())
+          w=c['windows'][os.environ['WINDOW']]
+          def parse(s): return dt.datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(dt.timezone.utc)
+          now=dt.datetime.now(dt.timezone.utc)
+          earliest=parse(w['earliest_start_utc']); latest=parse(w['latest_observed_utc'])
+          if now>latest:
+              raise SystemExit(f"R39T_TAIL_WINDOW_ALREADY_MISSED:{os.environ['WINDOW']}:{now.isoformat()}:{w['latest_observed_utc']}")
+          if now<earliest:
+              delay=(earliest-now).total_seconds()
+              print(f"WAIT_R39T_{os.environ['WINDOW']}_SECONDS={delay:.3f}")
+              time.sleep(delay)
+          print('R39T_WINDOW_OPEN',os.environ['WINDOW'],dt.datetime.now(dt.timezone.utc).isoformat())
+          PY
+
+      - name: Build ephemeral exact-window trigger
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt, json, os
+          from pathlib import Path
+          now=dt.datetime.now(dt.timezone.utc).isoformat(timespec='microseconds').replace('+00:00','Z')
+          out=Path(os.environ['RUNNER_TEMP'])/f"trigger_{os.environ['WINDOW'].lower()}_r39t.json"
+          out.write_text(json.dumps({
+            'schema_version':'R39T-TRIGGER-1.0',
+            'mode':os.environ['WINDOW'],
+            'issued_at_utc':now,
+            'purpose':f"Frozen R39T {os.environ['WINDOW']} tail-batch capture; ephemeral runtime trigger derived from the single armed T60 batch authorization."
+          },indent=2,sort_keys=True)+'\n')
+          print(out)
+          PY
+
+      - name: Execute exact frozen window
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/r39t-tail-${WINDOW,,}"
+          TRIGGER="$RUNNER_TEMP/trigger_${WINDOW,,}_r39t.json"
+          python football-data/research/premierleague_forward_windows_r39t/capture_window_r39t.py \
+            --contract football-data/research/premierleague_forward_windows_r39t/contract_r39t.json \
+            --trigger "$TRIGGER" \
+            --output "$OUT"
+
+      - name: Verify exact window receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,re
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/f"r39t-tail-{os.environ['WINDOW'].lower()}"
+          files=list(root.glob('capture_receipt_*_r39t.json'))
+          assert len(files)==1, files
+          p=files[0]; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['schema_version']=='R39T-WINDOW-CAPTURE-RECEIPT-1.0'
+          assert r['terminal']=='PASS_R39T_WINDOW_CAPTURE'
+          assert r['window']==os.environ['WINDOW']
+          assert r['football_api_requests']==r['api_keys_used']==0
+          assert r['blind100_labels_accessed']==r['research_target_labels_used']==r['model_fits']==r['candidate_probabilities']==0
+          assert r['formal_weight']==0
+          assert Path(str(p).replace('.json','.sha256')).read_text().strip()==hashlib.sha256(raw).hexdigest()
+          assert re.fullmatch(r'[0-9a-f]{64}',r['rendered_dom_sha256'])
+          doms=list(root.glob('*_rendered_dom__sha256_*.html'))
+          assert len(doms)==1 and hashlib.sha256(doms[0].read_bytes()).hexdigest()==r['rendered_dom_sha256']
+          if r['usable_as_confirmed_xi_feature']:
+              assert r['detector_state']=='CONFIRMED_XI' and r['starter_count']==22
+              assert len(r['home_starters'])==11 and len(r['away_starters'])==11
+          else:
+              assert r['detector_state'] in {'PRE_ANNOUNCEMENT_SQUADS','UNKNOWN_FAIL_CLOSED'}
+          print(json.dumps({'window':r['window'],'terminal':r['terminal'],'observed_at_utc':r['observed_at_utc'],'detector_state':r['detector_state'],'starter_count':r['starter_count'],'usable_as_confirmed_xi_feature':r['usable_as_confirmed_xi_feature'],'dom_sha256':r['rendered_dom_sha256']},sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39t-tail-${{ matrix.window }}-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39t-tail-${{ matrix.window == 'T60' && 't60' || matrix.window == 'T30' && 't30' || 't15' }}
+          retention-days: 30
+          if-no-files-found: error
