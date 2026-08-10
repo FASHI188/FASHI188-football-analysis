@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime,timezone
 
 DATE_NAMES={'date','datetime','game_date','valuation_date','transfer_date'}
-DATE_SCAN_TABLES={'games.csv','game_lineups.csv','player_valuations.csv'}
+DATE_SCAN_TABLES={'games.csv','player_valuations.csv'}
 FORBIDDEN_VALUE_NAMES={'home_club_goals','away_club_goals','home_goals','away_goals','goals','assists','minutes_played','yellow_cards','red_cards','result','score'}
 
 def norm(s:str)->str:
@@ -43,9 +43,9 @@ def main():
             cols=next(csv.reader([header])) if header else []
             date_cols=[c for c in cols if norm(c) in DATE_NAMES or norm(c).endswith('_date')]
             n=fast_line_count(z,info);dmin=dmax=None
-            # Only source-critical tables need row-wise date coverage. All other large
-            # tables are limited to schema + fast line count. No outcome/performance
-            # value is ever interpreted in this stage.
+            # games gives canonical match dates; game_lineups inherits date through game_id.
+            # player_valuations needs its own timestamp. All other large tables are schema
+            # + fast row count only. No outcome/performance value is interpreted.
             if name in DATE_SCAN_TABLES and date_cols:
                 wanted=set(date_cols)
                 with z.open(info) as raw:
