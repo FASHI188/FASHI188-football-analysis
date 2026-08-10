@@ -1,0 +1,144 @@
+{
+  "schema_version": "r39k-online-draw-calibration-v1",
+  "stage": "R39K_CAUSAL_ONLINE_DRAW_CALIBRATION",
+  "preregistration_status": "MODEL_AND_PREEXISTING_HOLDOUT_FROZEN",
+  "research_question": "Can non-stationary closing-market draw calibration error be tracked causally with time-decayed online updates, and can market-geometry-specific online calibration beat both the raw market and a global online calibration baseline?",
+  "source_binding": {
+    "provider": "Football-Data.co.uk",
+    "r39j_source_audit_run_id": 31347526287,
+    "r39j_source_audit_artifact_id": 9047828794,
+    "r39j_source_audit_sha256": "748dda6fdc014c47b116b6859703e911f443f7437e60048695a44595584b8d9c",
+    "complete_preholdout_rows": 10704,
+    "complete_2526_rows": 1747,
+    "fixed100_identity_sha256": "6ebc9f200942a49e5456774236f950bd73f49e5a0591e29f2e5195c8ccb0d050",
+    "fixed100_rows": 100,
+    "holdout_season": "2526",
+    "holdout_origin": "pre-existing R39J source-native fixed100 locked before the R39K hypothesis",
+    "holdout_labels_accessed_before_r39k": 0
+  },
+  "abandoned_zero_label_lock_attempt": {
+    "purpose": "A separate chronological R39K fixed100 was initially proposed, but the GitHub-hosted runner remained queued before any source or label access. It is not part of R39K evaluation even if a queued zero-label job later completes.",
+    "result_labels_accessed": 0,
+    "reason_for_not_using": "Using the already-locked R39J fixed100 removes a post-hypothesis sample-selection degree of freedom and provides stronger blindness."
+  },
+  "prior_research_separation": {
+    "r39j_final_status": "STOP_R39J_BEFORE_HOLDOUT_LABEL_ACCESS_POLICY_REGIME_NOT_STABLE",
+    "r39j_fixed100_identity_sha256": "6ebc9f200942a49e5456774236f950bd73f49e5a0591e29f2e5195c8ccb0d050",
+    "r39j_fixed100_labels_accessed": 0,
+    "r39k_reuses_preexisting_r39j_fixed100": true,
+    "r39j_static_correction_reused": false,
+    "r39j_static_active_regimes_reused": false,
+    "note": "R39J revealed non-stationarity and motivated the online hypothesis; 2023/24 and 2024/25 are development-confirmation windows, not human-blind evidence. The pre-existing unopened 2025/26 fixed100 is the only blind confirmation."
+  },
+  "market_transform": {
+    "threeway_devig": "multiplicative inverse-odds normalization",
+    "twoway_devig": "multiplicative inverse-odds normalization",
+    "closing_1x2": ["AvgCH", "AvgCD", "AvgCA"],
+    "closing_ou25": ["AvgC>2.5", "AvgC<2.5"],
+    "closing_home_asian_handicap_line": "AHCh",
+    "regime_dimensions": [
+      "closing_draw_fair_probability",
+      "closing_absolute_home_away_fair_probability_gap",
+      "closing_under25_probability * exp(-abs(closing_home_AH_line))"
+    ],
+    "regime_cutpoints": "2019/20 market-only rows, 1/3 and 2/3 empirical quantiles per dimension; no labels",
+    "bins_per_dimension": 3,
+    "total_regimes": 27
+  },
+  "online_update": {
+    "same_day_rule": "predict every match on date d before any result from date d updates state",
+    "residual": "1(draw)-closing_market_draw_probability",
+    "half_life_days_candidates": [30, 90, 180, 365],
+    "decay": "exp(-ln(2) * elapsed_calendar_days / half_life_days)",
+    "global_prior_strength": 200.0,
+    "regime_prior_strength_toward_current_global": 60.0,
+    "global_formula": "global_correction = decayed_global_residual_sum / (decayed_global_weight + 200)",
+    "regime_formula": "regime_correction = (decayed_regime_residual_sum + 60*global_correction) / (decayed_regime_weight + 60)",
+    "correction_clip": [-0.04, 0.04],
+    "probability_clip": [0.02, 0.65],
+    "threeway_mapping": "preserve closing-market H:A non-draw ratio",
+    "manual_sign_override": false,
+    "event_classifier": false
+  },
+  "hyperparameter_selection": {
+    "warmup_season": "1920",
+    "development_score_seasons": ["2021", "2122", "2223"],
+    "selected_separately_for": ["global_online_baseline", "regime_online_model"],
+    "selection_order": ["lowest pooled HDA_LogLoss", "lowest pooled binary_Draw_LogLoss", "longer half_life_days"],
+    "development_gate_for_regime": {
+      "pooled_HDA_LogLoss_strictly_better_than_market": true,
+      "pooled_binary_Draw_LogLoss_strictly_better_than_market": true,
+      "pooled_HDA_LogLoss_strictly_better_than_selected_global_online": true
+    },
+    "if_fail": "STOP_R39K_BEFORE_CONFIRMATION_DYNAMIC_REGIME_NO_DEVELOPMENT_INCREMENT"
+  },
+  "confirmation_windows": {
+    "validation_season": "2324",
+    "policy_season": "2425",
+    "state_carries_forward_causally_across_seasons": true,
+    "note": "These outcomes were visible in prior research and are not human-blind; they are fixed chronological stress gates before the unopened 2025/26 fixed100."
+  },
+  "validation_gate_all_required": {
+    "regime_HDA_LogLoss_strictly_better_than_market": true,
+    "regime_binary_Draw_LogLoss_strictly_better_than_market": true,
+    "regime_HDA_Brier_nonworse_than_market": true,
+    "regime_RPS_nonworse_than_market": true,
+    "regime_HDA_LogLoss_strictly_better_than_global_online": true,
+    "regime_binary_Draw_LogLoss_strictly_better_than_global_online": true,
+    "per_division_HDA_LogLoss_wins_vs_market_min": 3,
+    "per_division_HDA_LogLoss_wins_vs_global_min": 3,
+    "correction_cap_hit_fraction_max": 0.05,
+    "if_fail": "STOP_R39K_BEFORE_HOLDOUT_LABEL_ACCESS_VALIDATION_DYNAMIC_REGIME_NO_INCREMENT"
+  },
+  "policy_gate_all_required": {
+    "regime_HDA_LogLoss_strictly_better_than_market": true,
+    "regime_binary_Draw_LogLoss_strictly_better_than_market": true,
+    "regime_HDA_Brier_nonworse_than_market": true,
+    "regime_RPS_nonworse_than_market": true,
+    "regime_HDA_LogLoss_strictly_better_than_global_online": true,
+    "regime_binary_Draw_LogLoss_strictly_better_than_global_online": true,
+    "per_division_HDA_LogLoss_wins_vs_market_min": 3,
+    "per_division_HDA_LogLoss_wins_vs_global_min": 3,
+    "correction_cap_hit_fraction_max": 0.05,
+    "if_fail": "STOP_R39K_BEFORE_HOLDOUT_LABEL_ACCESS_POLICY_DYNAMIC_REGIME_NO_INCREMENT"
+  },
+  "blind_holdout_protocol": {
+    "selection": "pre-existing R39J hash-locked source-native fixed100; no R39K reselection",
+    "online_update_within_fixed100": true,
+    "online_update_stream": "only prior fixed100 outcomes in chronological order; no nonfixed 2025/26 labels",
+    "nonfixed_2526_labels_may_be_read": false,
+    "same_day_predictions_before_same_day_updates": true,
+    "freeze_selected_half_lives_and_all_formulas_before_first_holdout_label": true,
+    "gate_all_required": {
+      "regime_HDA_LogLoss_strictly_better_than_market": true,
+      "regime_binary_Draw_LogLoss_strictly_better_than_market": true,
+      "regime_HDA_Brier_nonworse_than_market": true,
+      "regime_RPS_nonworse_than_market": true,
+      "regime_HDA_LogLoss_strictly_better_than_global_online": true,
+      "regime_binary_Draw_LogLoss_strictly_better_than_global_online": true
+    },
+    "pass_status": "PASS_R39K_ONLINE_DRAW_CALIBRATION_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39K_ONLINE_DRAW_CALIBRATION_INCREMENT_FIXED100"
+  },
+  "metrics": ["HDA_LogLoss", "HDA_Brier", "RPS", "binary_Draw_LogLoss", "Draw_AUC", "Top1_accuracy", "Top1_draw_count"],
+  "label_order_contract": {
+    "preholdout_labels_may_be_read": true,
+    "2526_nonfixed100_labels_may_not_be_read": true,
+    "fixed100_labels_before_final_freeze": 0,
+    "fixed100_labels_after_final_freeze_if_all_preholdout_gates_pass": 100,
+    "same_day_batch_prediction_before_update": true,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}

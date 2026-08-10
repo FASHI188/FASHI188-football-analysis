@@ -1,0 +1,81 @@
+name: Football R39K Preflight
+
+on:
+  pull_request:
+    branches: [research/market-draw-regime-r39j]
+    paths:
+      - 'football-data/research/online_draw_r39k/preregistration_r39k.json'
+      - 'football-data/research/online_draw_r39k/evaluate_online_draw_r39k.py'
+      - 'football-data/research/online_draw_r39k/run_online_draw_r39k.py'
+      - '.github/workflows/football-r39k-preflight.yml'
+
+permissions:
+  contents: read
+
+# Only the newest R39K preflight is allowed to remain active. Newer PR
+# synchronizations cancel older pending/running preflights in this group.
+concurrency:
+  group: r39k-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Validate exact frozen contract and causal barrier
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/online_draw_r39k/evaluate_online_draw_r39k.py football-data/research/online_draw_r39k/run_online_draw_r39k.py
+          python football-data/research/online_draw_r39k/run_online_draw_r39k.py --self-test
+          python - <<'PY'
+          import importlib.util,json
+          from datetime import date
+          from pathlib import Path
+          import numpy as np
+          p=json.loads(Path('football-data/research/online_draw_r39k/preregistration_r39k.json').read_text())
+          assert p['preregistration_status']=='MODEL_AND_PREEXISTING_HOLDOUT_FROZEN'
+          assert p['source_binding']['fixed100_identity_sha256']=='6ebc9f200942a49e5456774236f950bd73f49e5a0591e29f2e5195c8ccb0d050'
+          assert p['source_binding']['holdout_labels_accessed_before_r39k']==0
+          assert p['prior_research_separation']['r39j_fixed100_labels_accessed']==0
+          assert p['online_update']['half_life_days_candidates']==[30,90,180,365]
+          assert p['online_update']['global_prior_strength']==200.0
+          assert p['online_update']['regime_prior_strength_toward_current_global']==60.0
+          spec=importlib.util.spec_from_file_location('core','football-data/research/online_draw_r39k/evaluate_online_draw_r39k.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          cuts={'pdraw':[.25,.35],'gap':[.1,.2],'pressure':[.2,.4]}
+          def row(i,d):return {'identity':i,'season':'2021','div':'E0','date':d,'home':i+'H','away':i+'A','p':np.array([.4,.3,.3]),'pdraw':.3,'gap':.1,'pressure':.3}
+          rows=[row('a',date(2021,1,1)),row('b',date(2021,1,1)),row('c',date(2021,1,2))]
+          labels={'a':1,'b':0,'c':1}
+          pred,diag,_=m.simulate(rows,labels,cuts,90,'regime',p)
+          assert abs(diag['a']['correction']-diag['b']['correction'])<1e-15, 'same-day label leakage'
+          assert diag['c']['correction']!=diag['a']['correction'], 'online update not applied after day boundary'
+          print('PASS_R39K_CAUSAL_SAME_DAY_BARRIER')
+          PY
+      - name: Persist zero-label preflight receipt
+        run: |
+          mkdir -p r39k-preflight
+          python - <<'PY'
+          import json
+          from datetime import datetime,timezone
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/online_draw_r39k/preregistration_r39k.json').read_text())
+          out={'status':'PASS_R39K_ZERO_LABEL_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'fixed100_identity_sha256':p['source_binding']['fixed100_identity_sha256'],'real_data_access':0,'result_labels_accessed':0,'model_fit':0,'holdout_labels_accessed':0,'hard_limits':p['hard_limits']}
+          Path('r39k-preflight/preflight_r39k.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39k-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39k-preflight/
+          if-no-files-found: error
+          retention-days: 30

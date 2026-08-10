@@ -1,0 +1,92 @@
+name: Football R39K Holdout Lock
+
+# Deprecated for R39K evaluation. R39K is bound to the pre-existing unopened
+# R39J fixed100. Keep this workflow manual-only so branch updates cannot create
+# more obsolete queued jobs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r39k-obsolete-holdout-lock
+  cancel-in-progress: true
+
+jobs:
+  zero-label-holdout-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify zero-label lock contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/online_draw_r39k/lock_chronological_holdout_r39k.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/online_draw_r39k/holdout_lock_registration_r39k.json').read_text())
+          assert p['source']['expected_complete_2526_rows']==1747
+          assert p['prior_r39j']['labels_accessed']==0
+          assert p['r39k_holdout']['rows']==100
+          assert p['r39k_holdout']['labels_accessed_during_lock']==0
+          assert p['audit_access']['result_labels']==0
+          print('PASS_R39K_ZERO_LABEL_LOCK_CONTRACT')
+          PY
+      - name: Download and physically strip Football-Data labels
+        run: |
+          set -euo pipefail
+          rm -rf r39k-market r39k-raw r39k-lock
+          mkdir -p r39k-market r39k-raw r39k-lock
+          for div in E0 D1 I1 SP1 F1; do
+            raw="r39k-raw/2526_${div}.csv"
+            dst="r39k-market/2526_${div}.csv"
+            curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+              "https://www.football-data.co.uk/mmz4281/2526/${div}.csv" -o "$raw"
+            python - "$raw" "$dst" <<'PY'
+          import csv,sys
+          src,dst=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA','Avg>2.5','Avg<2.5','AvgC>2.5','AvgC<2.5','AHh','AvgAHH','AvgAHA','AHCh','AvgCAHH','AvgCAHA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f, open(dst,'w',encoding='utf-8',newline='') as g:
+              r=csv.DictReader(f);missing=[c for c in keep if c not in (r.fieldnames or [])]
+              if missing: raise SystemExit(f'{src} missing {missing}')
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in r:w.writerow({'Season':'2526',**{c:row.get(c,'') for c in keep}})
+          PY
+          done
+      - name: Lock chronological fixed100 without labels
+        run: |
+          set -euo pipefail
+          python football-data/research/online_draw_r39k/lock_chronological_holdout_r39k.py \
+            --registration football-data/research/online_draw_r39k/holdout_lock_registration_r39k.json \
+            --market-dir r39k-market --out-dir r39k-lock
+      - name: Verify zero-label terminal state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39k-lock/holdout_lock_r39k.json').read_text())
+          assert r['status']=='PASS_R39K_ZERO_LABEL_CHRONOLOGICAL_HOLDOUT_LOCK'
+          assert r['complete_2526_rows']==1747
+          assert r['r39k_fixed100_rows']==100
+          assert r['r39j_overlap']==0
+          assert r['audit_access']['result_labels']==0
+          assert r['audit_access']['score_values']==0
+          print('PASS_R39K_HOLDOUT_LOCK_LABELS_0')
+          PY
+      - name: Delete source inputs before artifact
+        run: rm -rf r39k-market r39k-raw
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39k-holdout-lock-${{ github.sha }}-${{ github.run_id }}
+          path: r39k-lock/
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,163 @@
+name: Football R39K Evaluation Recovery
+
+on:
+  pull_request:
+    branches: [research/market-draw-regime-r39j]
+    paths:
+      - '.github/workflows/football-r39k-evaluation.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39k-evaluation-recovery-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  online-draw-calibration-recovery:
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+
+      - name: Verify one-off technical recovery authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:football-data/research/online_draw_r39k/preregistration_r39k.json)" = "51aec273d3da73d7c7a5a51b2fadf1c1b85a6e96"
+          test "$(git rev-parse HEAD:football-data/research/online_draw_r39k/evaluate_online_draw_r39k.py)" = "bb22c32c268950022368f4eed5930f1c971318e0"
+          test "$(git rev-parse HEAD:football-data/research/online_draw_r39k/run_online_draw_r39k.py)" = "4ec5244b3366abd0a4379894930f61b326028fde"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/football-r39k-evaluation.yml/runs?branch=research%2Fonline-draw-calibration-r39k&per_page=20" \
+            -o /tmp/eval-runs.json
+          for rid in 31350925707 31351186527 31351186544 31351445210 31351505662 31351549062; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${rid}" -o "/tmp/run-${rid}.json"
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${rid}/artifacts" -o "/tmp/art-${rid}.json"
+          done
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          cur=int(os.environ['GITHUB_RUN_ID'])
+          runs=json.loads(Path('/tmp/eval-runs.json').read_text()).get('workflow_runs',[])
+          prior={int(r['id']) for r in runs if int(r['id'])!=cur and r.get('head_branch')=='research/online-draw-calibration-r39k'}
+          allowed_prior={31350925707,31351186527,31351445210,31351505662,31351549062}
+          assert prior <= allowed_prior, f'unexpected prior evaluation run(s): {sorted(prior-allowed_prior)}'
+          def load(rid,kind='run'):
+              p=Path(f'/tmp/{kind}-{rid}.json'); return json.loads(p.read_text())
+          fail=load(31350925707); fail_art=load(31350925707,'art')
+          skip2=load(31351186527); skip2_art=load(31351186527,'art')
+          pre=load(31351186544); pre_art=load(31351186544,'art')
+          skip3=load(31351445210); skip3_art=load(31351445210,'art')
+          rec4=load(31351505662); rec4_art=load(31351505662,'art')
+          rec5=load(31351549062); rec5_art=load(31351549062,'art')
+          assert fail['status']=='completed' and fail['conclusion']=='failure' and fail_art.get('artifacts',[])==[]
+          assert skip2['status']=='completed' and skip2['conclusion']=='success'
+          a=skip2_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049006983 and a[0]['name'].startswith('football-r39k-evaluation-uniqueness-')
+          assert skip3['status']=='completed' and skip3['conclusion']=='success'
+          a=skip3_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049091601 and a[0]['name'].startswith('football-r39k-evaluation-uniqueness-')
+          assert rec4['status']=='completed' and rec4['conclusion']=='failure' and rec4_art.get('artifacts',[])==[]
+          assert rec5['status']=='completed' and rec5['conclusion']=='failure' and rec5_art.get('artifacts',[])==[]
+          assert pre['status']=='completed' and pre['conclusion']=='success'
+          assert pre['head_sha']=='c2e39c551fd60c29bbb971604453f02a403b9c60'
+          a=pre_art.get('artifacts',[]); assert len(a)==1 and a[0]['id']==9049012812
+          assert a[0].get('digest')=='sha256:5c3f3d33cd440a252cf37a74e965c310a1a7b166de24214d49f143d046265c54'
+          print('PASS_R39K_FINAL_ONE_OFF_RECOVERY_AUTHORIZATION')
+          PY
+          python football-data/research/online_draw_r39k/run_online_draw_r39k.py --self-test
+
+      - name: Download Football-Data and isolate market-only inputs
+        run: |
+          set -euo pipefail
+          rm -rf r39k-market r39k-raw r39k-output
+          mkdir -p r39k-market r39k-raw r39k-output
+          for season in 1920 2021 2122 2223 2324 2425 2526; do
+            for div in E0 D1 I1 SP1 F1; do
+              raw="r39k-raw/${season}_${div}.csv"
+              dst="r39k-market/${season}_${div}.csv"
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+                "https://www.football-data.co.uk/mmz4281/${season}/${div}.csv" -o "$raw"
+              python - "$raw" "$dst" "$season" <<'PY'
+          import csv,sys
+          src,dst,season=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA','Avg>2.5','Avg<2.5','AvgC>2.5','AvgC<2.5','AHh','AvgAHH','AvgAHA','AHCh','AvgCAHH','AvgCAHA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f, open(dst,'w',encoding='utf-8',newline='') as g:
+              r=csv.DictReader(f);missing=[c for c in keep if c not in (r.fieldnames or [])]
+              if missing: raise SystemExit(f'{src} missing {missing}')
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in r:w.writerow({'Season':season,**{c:row.get(c,'') for c in keep}})
+          PY
+            done
+          done
+
+      - name: Execute frozen R39K recovery sequence
+        run: |
+          set -euo pipefail
+          python football-data/research/online_draw_r39k/run_online_draw_r39k.py \
+            --prereg football-data/research/online_draw_r39k/preregistration_r39k.json \
+            --market-dir r39k-market --raw-dir r39k-raw --out-dir r39k-output
+
+      - name: Verify terminal label boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39k-output/r39k_result.json').read_text())
+          allowed={
+            'STOP_R39K_BEFORE_CONFIRMATION_DYNAMIC_REGIME_NO_DEVELOPMENT_INCREMENT',
+            'STOP_R39K_BEFORE_HOLDOUT_LABEL_ACCESS_VALIDATION_DYNAMIC_REGIME_NO_INCREMENT',
+            'STOP_R39K_BEFORE_HOLDOUT_LABEL_ACCESS_POLICY_DYNAMIC_REGIME_NO_INCREMENT',
+            'PASS_R39K_ONLINE_DRAW_CALIBRATION_FIXED100_EXPLORATORY_ONLY',
+            'NO_R39K_ONLINE_DRAW_CALIBRATION_INCREMENT_FIXED100'
+          }
+          assert r['status'] in allowed
+          f=json.loads(Path('r39k-output/freeze_receipt_r39k.json').read_text())
+          if r['status'].startswith('STOP_R39K_BEFORE_'):
+              assert r['holdout_labels_accessed']==0
+              assert f['final_freeze_completed'] is False
+              assert f['holdout_labels_accessed_before_freeze']==0
+          else:
+              assert r['holdout_labels_accessed']==100
+              assert f['final_freeze_completed'] is True
+              assert f['holdout_labels_accessed_before_freeze']==0
+          print(json.dumps({
+            'status':r['status'],
+            'selected_half_lives':r.get('selected_half_lives'),
+            'development':r.get('development'),
+            'validation':r.get('validation'),
+            'policy':r.get('policy'),
+            'holdout':r.get('holdout'),
+            'holdout_labels_accessed':r['holdout_labels_accessed']
+          },indent=2))
+          PY
+
+      - name: Delete source inputs before artifact
+        run: rm -rf r39k-market r39k-raw
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39k-evaluation-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: r39k-output/
+          if-no-files-found: error
+          retention-days: 30
