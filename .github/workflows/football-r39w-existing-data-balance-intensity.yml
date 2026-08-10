@@ -1,0 +1,92 @@
+name: Football R39W Existing Data Balance Intensity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r39w-existing-data-balance-intensity.yml'
+      - 'football-data/research/existing_data_balance_intensity_r39w/**'
+
+permissions:
+  contents: read
+
+jobs:
+  disjoint-fixed100-balance-intensity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R39W preregistration and code
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_balance_intensity_r39w/preregistration_r39w.json').read_text())
+          assert p['schema_version']=='R39W-EXISTING-DATA-BALANCE-INTENSITY-1.0'
+          assert p['sample']['size']==100
+          assert p['sample']['required_overlap_with_r39u']==0
+          assert p['sample']['required_overlap_with_r39v']==0
+          assert p['model']['l2']==10.0
+          assert p['model']['candidate_grid'] is False
+          assert p['model']['manual_draw_boost'] is False
+          assert p['model']['post_result_tuning'] is False
+          assert p['model']['abstention'] is False
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_analog_r39u/evaluate_analog_r39u.py'],text=True).strip()
+          assert got=='16bdecdd508b780318628ec58224168dfa849e99', got
+          print('PASS_R39W_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute R39W third disjoint fixed100
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r39w-output"
+          python football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py \
+            --prereg football-data/research/existing_data_balance_intensity_r39w/preregistration_r39w.json \
+            --root . \
+            --out "$RUNNER_TEMP/r39w-output"
+
+      - name: Verify R39W output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39w-output'
+          p=root/'r39w_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R39W_BALANCE_INTENSITY_INCREMENT','FAIL_R39W_BALANCE_INTENSITY_NO_INCREMENT'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['r39u_overlap']==0 and r['r39v_overlap']==0
+          assert r['solver']['fits']==200
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r39w_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'], 'passed':r['passed'],
+            'sample_sha':r['r39w_fixed100_identity_sha256'],
+            'model_metrics':r['model_metrics'], 'baseline_metrics':r['baseline_metrics'],
+            'model_draw_auc':r['model_draw_auc'], 'baseline_draw_auc':r['baseline_draw_auc'],
+            'gate':r['gate'], 'solver':r['solver']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39w-existing-data-balance-intensity-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39w-output
+          retention-days: 30
+          if-no-files-found: error
