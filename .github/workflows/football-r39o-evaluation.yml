@@ -1,0 +1,148 @@
+name: Football R39O Evaluation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39o-evaluation.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39o-evaluation-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  snapshot-bound-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Enforce unique first-attempt R39O evaluation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          curl --fail --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/football-r39o-evaluation.yml/runs?branch=research%2Flineup-surprise-position-r39o&per_page=20" -o /tmp/runs.json
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          cur=int(os.environ['GITHUB_RUN_ID']);runs=json.loads(Path('/tmp/runs.json').read_text()).get('workflow_runs',[])
+          prior=[int(r['id']) for r in runs if int(r['id'])!=cur and r.get('head_branch')=='research/lineup-surprise-position-r39o']
+          assert not prior,f'prior R39O evaluation run(s) exist: {prior}'
+          print('PASS_R39O_UNIQUE_FIRST_EVALUATION')
+          PY
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify frozen science and Preflight authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json)" = "a6aa4b52b39ef0076ea3be0ae258b2cd429a64ae"
+          test "$(git rev-parse HEAD:football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json)" = "12d8eec227d34181ef421b03abdde84755baedaf"
+          test "$(git rev-parse HEAD:football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json)" = "5ca1f56883736b40bbb7df6245a872a16691675f"
+          test "$(git rev-parse HEAD:football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py)" = "80c7b94940abb373164298920b9cb785a58c013d"
+          curl --fail --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31359749963" -o /tmp/preflight-run.json
+          curl --fail --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31359749963/artifacts" -o /tmp/preflight-artifacts.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/preflight-run.json').read_text());a=json.loads(Path('/tmp/preflight-artifacts.json').read_text()).get('artifacts',[])
+          assert r['status']=='completed' and r['conclusion']=='success'
+          assert r['head_sha']=='adcd12786cd5d61de7f53d6ea4bdf41a92017e19'
+          assert len(a)==1 and a[0]['id']==9051911887
+          assert a[0].get('digest')=='sha256:0cf797b3179e30ceb821a50fa3aff586ef0fde8dd424cfa4981f26be17f06b05'
+          print('PASS_R39O_PREFLIGHT_AUTHORIZATION_METADATA')
+          PY
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9051911887/zip" -o /tmp/preflight.zip
+          echo "0cf797b3179e30ceb821a50fa3aff586ef0fde8dd424cfa4981f26be17f06b05  /tmp/preflight.zip" | sha256sum -c -
+          rm -rf /tmp/preflight && mkdir -p /tmp/preflight && unzip -q /tmp/preflight.zip -d /tmp/preflight
+          echo "55d9575b790ad5f337f669c4d4570a4e329272409dc4778c26bd6b6e429fa45c  /tmp/preflight/preflight_receipt_r39o.json" | sha256sum -c -
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('/tmp/preflight/preflight_receipt_r39o.json').read_text())
+          expected={'football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json':'a6aa4b52b39ef0076ea3be0ae258b2cd429a64ae','football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json':'12d8eec227d34181ef421b03abdde84755baedaf','football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json':'5ca1f56883736b40bbb7df6245a872a16691675f','football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py':'80c7b94940abb373164298920b9cb785a58c013d'}
+          assert x['status']=='PASS_R39O_ZERO_LABEL_EVALUATOR_PREFLIGHT' and x['scientific_blobs']==expected
+          assert x['real_target_labels_accessed']==0 and x['model_fit_on_real_labels']==0 and x['policy_labels_accessed']==0 and x['fixed100_labels_accessed']==0
+          print('PASS_R39O_EXACT_ZERO_LABEL_PREFLIGHT_RECEIPT')
+          PY
+          python football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py --self-test
+      - name: Download and verify exact frozen feature snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf r39o-input r39n-input r39l-input r39o-raw r39o-output && mkdir -p r39o-input r39n-input r39l-input r39o-raw r39o-output
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9051835857/zip" -o /tmp/r39o.zip
+          echo "03cdecf13b50ed8450f89ee02dbb17558f17b62db2adf8912e308883db2a08ea  /tmp/r39o.zip" | sha256sum -c -
+          unzip -q /tmp/r39o.zip -d r39o-input
+          echo "d180702a577b48bf73bba2cec6574c0b59e1b93b8046d21adbe604bd9630bbb3  r39o-input/feature_snapshot_r39o.csv" | sha256sum -c -
+          echo "fcdb321b4e4a0d5b6f57b4582cf35ff5b43cd312dc74daa071eef589dd6cc449  r39o-input/snapshot_receipt_r39o.json" | sha256sum -c -
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050468369/zip" -o /tmp/r39n.zip
+          echo "02b018ac4587ce7237607a1ebe81558f059e4db298223a7e5f4e5088d7611d99  /tmp/r39n.zip" | sha256sum -c -
+          unzip -q /tmp/r39n.zip -d r39n-input
+          echo "fb304ad55d21ffcb53f7623c82ecfb3f13d4db838aa8788446c6eafc8abd5a18  r39n-input/feature_snapshot_r39n.csv" | sha256sum -c -
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050139416/zip" -o /tmp/r39l.zip
+          echo "d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575  /tmp/r39l.zip" | sha256sum -c -
+          unzip -q /tmp/r39l.zip -d r39l-input
+          echo "da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4  r39l-input/feature_snapshot_r39m.csv" | sha256sum -c -
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          o=json.loads(Path('r39o-input/snapshot_receipt_r39o.json').read_text());n=json.loads(Path('r39n-input/snapshot_receipt_r39n.json').read_text());l=json.loads(Path('r39l-input/snapshot_receipt_r39m.json').read_text())
+          assert o['status']=='PASS_R39O_ZERO_LABEL_FEATURE_SNAPSHOT' and o['rows']=={'all':9412,'preholdout':8145,'holdout_2526':1267,'fixed100':100}
+          assert n['status']=='PASS_R39N_ZERO_LABEL_VALUATION_SNAPSHOT' and l['status']=='PASS_R39M_ZERO_LABEL_FROZEN_FEATURE_SNAPSHOT'
+          assert all(v==0 for v in o['zero_label_contract'].values()) and all(v==0 for v in n['zero_label_contract'].values()) and all(v==0 for v in l['zero_label_contract'].values())
+          print('PASS_R39O_EXACT_HASH_LOCKED_FEATURE_INPUTS')
+          PY
+      - name: Download Football-Data result-label files only
+        run: |
+          set -euo pipefail
+          for season in 1920 2021 2122 2223 2324 2425 2526; do
+            for div in E0 D1 I1 SP1 F1; do
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "https://www.football-data.co.uk/mmz4281/${season}/${div}.csv" -o "r39o-raw/${season}_${div}.csv"
+            done
+          done
+      - name: Execute frozen R39O sequence
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py --prereg football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json --contract football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json --binding football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json --r39o-snapshot r39o-input/feature_snapshot_r39o.csv --r39n-snapshot r39n-input/feature_snapshot_r39n.csv --r39l-snapshot r39l-input/feature_snapshot_r39m.csv --raw-dir r39o-raw --out-dir r39o-output
+      - name: Verify terminal scientific and label boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39o-output/r39o_result.json').read_text());ff=json.loads(Path('r39o-output/feature_freeze_receipt_r39o.json').read_text());fr=json.loads(Path('r39o-output/final_freeze_receipt_r39o.json').read_text())
+          assert ff['feature_freeze_completed'] is True and ff['input_mode']=='three_hash_locked_zero_label_snapshots'
+          assert ff['R39O_snapshot_artifact_id']==9051835857 and ff['R39N_snapshot_artifact_id']==9050468369 and ff['R39L_snapshot_artifact_id']==9050139416
+          assert ff['preholdout_rows']==8145 and ff['holdout_pool_rows']==1267 and ff['fixed100_rows']==100 and ff['target_labels_accessed_before_feature_freeze']==0
+          allowed={'STOP_R39O_BEFORE_POLICY_AND_HOLDOUT_LINEUP_SURPRISE_NO_ROLLING_INCREMENT','STOP_R39O_BEFORE_HOLDOUT_LINEUP_SURPRISE_NO_POLICY_INCREMENT','PASS_R39O_LINEUP_SURPRISE_FIXED100_EXPLORATORY_ONLY','NO_R39O_LINEUP_SURPRISE_INCREMENT_FIXED100'}
+          assert r['status'] in allowed
+          if r['status']=='STOP_R39O_BEFORE_POLICY_AND_HOLDOUT_LINEUP_SURPRISE_NO_ROLLING_INCREMENT':
+              assert r['policy_labels_accessed']==0 and r['holdout_labels_accessed']==0 and fr['final_freeze_completed'] is False
+          elif r['status']=='STOP_R39O_BEFORE_HOLDOUT_LINEUP_SURPRISE_NO_POLICY_INCREMENT':
+              assert r['policy_labels_accessed']>0 and r['holdout_labels_accessed']==0 and fr['final_freeze_completed'] is False
+          else:
+              assert r['policy_labels_accessed']>0 and r['holdout_labels_accessed']==100 and fr['final_freeze_completed'] is True and fr['holdout_labels_accessed_before_freeze']==0
+          print(json.dumps({'status':r['status'],'selected_L2':r.get('selected_L2'),'rolling_gate_pass':r.get('rolling_gate_pass'),'policy_labels_accessed':r.get('policy_labels_accessed'),'rolling_development':r.get('rolling_development'),'policy':r.get('policy'),'holdout':r.get('holdout'),'holdout_labels_accessed':r['holdout_labels_accessed']},indent=2))
+          PY
+      - name: Delete all downloaded label and snapshot inputs before artifact
+        run: rm -rf r39o-raw r39o-input r39n-input r39l-input /tmp/r39o.zip /tmp/r39n.zip /tmp/r39l.zip /tmp/preflight.zip /tmp/preflight
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39o-evaluation-${{ github.sha }}-${{ github.run_id }}
+          path: r39o-output/
+          if-no-files-found: error
+          retention-days: 30

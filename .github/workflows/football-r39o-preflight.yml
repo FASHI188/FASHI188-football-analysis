@@ -1,0 +1,119 @@
+name: Football R39O Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39o-preflight.yml'
+      - 'football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json'
+      - 'football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json'
+      - 'football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json'
+      - 'football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39o-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify frozen zero-label contracts
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json').read_text())
+          b=json.loads(Path('football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json').read_text())
+          c=json.loads(Path('football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json').read_text())
+          assert p['preregistration_status']=='HYPOTHESIS_FEATURES_AND_GATES_FROZEN_BEFORE_TARGET_LABEL_ACCESS'
+          assert p['blind_binding']['fixed100_labels_accessed_before_r39o']==0
+          assert b['status']=='FROZEN_ZERO_LABEL_R39O_SNAPSHOT_BOUND_FOR_EVALUATION'
+          assert b['frozen_R39O_snapshot']['rows']=={'all':9412,'preholdout':8145,'holdout_2526':1267,'fixed100':100}
+          assert b['sample_reselected'] is False and b['gates_changed_after_snapshot'] is False
+          assert c['frozen_before_real_target_label_evaluation'] is True
+          assert c['candidate']['L2_candidates']==[1.0,10.0,100.0]
+          assert c['benchmarks']['absolute_R39N']['L2']==100.0
+          assert c['benchmarks']['static_R39L']['L2']==1.0
+          print('PASS_R39O_ZERO_LABEL_CONTRACTS')
+          PY
+      - name: Download and verify all three frozen snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf r39o-input r39n-input r39l-input && mkdir -p r39o-input r39n-input r39l-input
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9051835857/zip" -o /tmp/r39o.zip
+          echo "03cdecf13b50ed8450f89ee02dbb17558f17b62db2adf8912e308883db2a08ea  /tmp/r39o.zip" | sha256sum -c -
+          unzip -q /tmp/r39o.zip -d r39o-input
+          echo "d180702a577b48bf73bba2cec6574c0b59e1b93b8046d21adbe604bd9630bbb3  r39o-input/feature_snapshot_r39o.csv" | sha256sum -c -
+          echo "fcdb321b4e4a0d5b6f57b4582cf35ff5b43cd312dc74daa071eef589dd6cc449  r39o-input/snapshot_receipt_r39o.json" | sha256sum -c -
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050468369/zip" -o /tmp/r39n.zip
+          echo "02b018ac4587ce7237607a1ebe81558f059e4db298223a7e5f4e5088d7611d99  /tmp/r39n.zip" | sha256sum -c -
+          unzip -q /tmp/r39n.zip -d r39n-input
+          echo "fb304ad55d21ffcb53f7623c82ecfb3f13d4db838aa8788446c6eafc8abd5a18  r39n-input/feature_snapshot_r39n.csv" | sha256sum -c -
+          echo "444d6c55abe86fbdef28c1871c76173bcb65f70157055bcc9ca809b33e8cbc56  r39n-input/snapshot_receipt_r39n.json" | sha256sum -c -
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050139416/zip" -o /tmp/r39l.zip
+          echo "d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575  /tmp/r39l.zip" | sha256sum -c -
+          unzip -q /tmp/r39l.zip -d r39l-input
+          echo "da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4  r39l-input/feature_snapshot_r39m.csv" | sha256sum -c -
+          echo "a502fca9ede0c457db33c7dd129da5fe4b4d6947551594fd498378a3f95fe978  r39l-input/snapshot_receipt_r39m.json" | sha256sum -c -
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          o=json.loads(Path('r39o-input/snapshot_receipt_r39o.json').read_text());n=json.loads(Path('r39n-input/snapshot_receipt_r39n.json').read_text());l=json.loads(Path('r39l-input/snapshot_receipt_r39m.json').read_text())
+          assert o['status']=='PASS_R39O_ZERO_LABEL_FEATURE_SNAPSHOT' and o['rows']=={'all':9412,'preholdout':8145,'holdout_2526':1267,'fixed100':100} and all(v==0 for v in o['zero_label_contract'].values())
+          assert n['status']=='PASS_R39N_ZERO_LABEL_VALUATION_SNAPSHOT' and all(v==0 for v in n['zero_label_contract'].values())
+          assert l['status']=='PASS_R39M_ZERO_LABEL_FROZEN_FEATURE_SNAPSHOT' and all(v==0 for v in l['zero_label_contract'].values())
+          print('PASS_R39O_THREE_HASH_LOCKED_ZERO_LABEL_SNAPSHOTS')
+          PY
+      - name: Run evaluator self-test and label-order audit
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py --self-test
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py').read_text()
+          ff=s.index("feature_freeze_receipt_r39o.json').write_text")
+          roll=s.index('labels=rl.load_labels(a.raw_dir,rolling_seasons',ff)
+          stop=s.index('if not rpass:',roll)
+          pol=s.index("policy_labels=rl.load_labels(a.raw_dir,{'2425'}",stop)
+          final=s.index("final_freeze_receipt_r39o.json').write_text",pol)
+          hold=s.index("hlabels=rl.load_labels(a.raw_dir,{'2526'}",final)
+          assert ff < roll < stop < pol < final < hold
+          print('PASS_R39O_LABEL_ORDER_AUDIT')
+          PY
+      - name: Persist zero-label preflight receipt with scientific blobs
+        run: |
+          set -euo pipefail
+          mkdir -p r39o-preflight
+          python - <<'PY'
+          import json,subprocess
+          from datetime import datetime,timezone
+          from pathlib import Path
+          files=['football-data/research/lineup_surprise_position_r39o/preregistration_r39o.json','football-data/research/lineup_surprise_position_r39o/feature_snapshot_binding_r39o.json','football-data/research/lineup_surprise_position_r39o/evaluator_contract_r39o.json','football-data/research/lineup_surprise_position_r39o/evaluate_snapshot_r39o.py']
+          out={'status':'PASS_R39O_ZERO_LABEL_EVALUATOR_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'scientific_blobs':{p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files},'R39O_snapshot_artifact_id':9051835857,'R39N_snapshot_artifact_id':9050468369,'R39L_snapshot_artifact_id':9050139416,'real_target_labels_accessed':0,'model_fit_on_real_labels':0,'policy_labels_accessed':0,'fixed100_labels_accessed':0,'formal_weight':0}
+          Path('r39o-preflight/preflight_receipt_r39o.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39o-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39o-preflight/
+          if-no-files-found: error
+          retention-days: 30

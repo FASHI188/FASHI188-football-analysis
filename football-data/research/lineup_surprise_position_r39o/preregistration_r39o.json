@@ -1,0 +1,157 @@
+{
+  "schema_version": "r39o-lineup-surprise-v1",
+  "stage": "R39O_ACTUAL_XI_RECENT_LINEUP_VALUE_SURPRISE",
+  "preregistration_status": "HYPOTHESIS_FEATURES_AND_GATES_FROZEN_BEFORE_TARGET_LABEL_ACCESS",
+  "research_question": "Does the value surprise of the actual starting XI relative to the club's recent strictly-prior complete lineups, including defensive-versus-offensive unit balance, add stable draw-probability information beyond market, R39L and R39N?",
+  "zero_label_source_audit": {
+    "run_id": 31359100982,
+    "artifact_id": 9051713726,
+    "artifact_sha256": "7626e0820699c904bb23a967c81e9aff3d7954b1a44fda766e7882305de55f7e",
+    "status": "PASS_R39O_ZERO_LABEL_SOURCE_AUDIT",
+    "target_labels_accessed": 0,
+    "model_fit": 0,
+    "selection_rationale": "Use a five-lineup baseline because the hypothesis is match-specific lineup surprise rather than long-run club strength. Require at least nine valued starters because this preserves the complete target identity lane for current XI valuation and preserves fixed100 100/100 for the five-lineup baseline. Window 3 loses two fixed100 identities; threshold 11 loses seven; window 10 is less recent without a material blind-coverage advantage over window 5 at threshold 9."
+  },
+  "zero_label_schema_amendment": {
+    "reason": "The source audit showed Transfermarkt target rows use specific position strings such as Centre-Back and Centre-Forward rather than generic Defender/Attack labels. The audit-only substring mapper therefore classified these as OTHER. No target outcomes were accessed.",
+    "final_position_mapping": {
+      "GK": ["Goalkeeper"],
+      "DEF": ["Centre-Back", "Left-Back", "Right-Back", "Sweeper", "Defender"],
+      "MID": ["Defensive Midfield", "Central Midfield", "Attacking Midfield", "Left Midfield", "Right Midfield", "Midfield", "midfield"],
+      "ATT": ["Centre-Forward", "Left Winger", "Right Winger", "Second Striker", "Attack"]
+    },
+    "unknown_position_policy": "feature-ineligible; never impute or silently map",
+    "scientific_design_changed_after_labels": false
+  },
+  "blind_binding": {
+    "origin": "pre-existing R39I fixed100 locked before R39O hypothesis",
+    "fixed100_seed": 51145,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc",
+    "fixed100_labels_accessed_before_r39o": 0,
+    "no_reselection": true
+  },
+  "point_in_time_contract": {
+    "actual_XI": "target-match starting lineup identity is allowed as pre-match information; target-match performance is forbidden",
+    "prior_lineups": "last five complete club starting lineups with game_date strictly before target_date across available competitions",
+    "minimum_valid_prior_lineups_for_baseline": 3,
+    "valuation_rule": "for every player identity, latest positive finite market_value_in_eur with valuation_date strictly before target_date",
+    "minimum_valued_starters_per_lineup": 9,
+    "same_day_valuation_forbidden": true,
+    "future_valuation_forbidden": true,
+    "imputation": "none",
+    "baseline_valuation_time": "prior lineup player identities are revalued using only valuations observable strictly before the TARGET date, isolating lineup-composition surprise from historical valuation drift"
+  },
+  "lineup_metrics": {
+    "total_log_value": "log1p(sum of valued starter market values)",
+    "DEF_unit": "GK plus DEF mapped positions",
+    "OFF_unit": "MID plus ATT mapped positions",
+    "DEF_mean_log_value": "mean(log1p(value)) over valued DEF-unit starters",
+    "OFF_mean_log_value": "mean(log1p(value)) over valued OFF-unit starters",
+    "DEF_minus_OFF_balance": "DEF_mean_log_value minus OFF_mean_log_value",
+    "recent_baseline": "componentwise median across the valid lineups among the last five strictly-prior complete lineups"
+  },
+  "feature_contract": {
+    "market_context": [
+      "closing_absolute_home_away_fair_probability_gap",
+      "closing_threeway_entropy"
+    ],
+    "surprise_features": [
+      "home_total_log_value_surprise",
+      "away_total_log_value_surprise",
+      "absolute_home_away_total_surprise_gap",
+      "home_DEF_mean_log_value_surprise",
+      "away_DEF_mean_log_value_surprise",
+      "absolute_home_away_DEF_surprise_gap",
+      "home_OFF_mean_log_value_surprise",
+      "away_OFF_mean_log_value_surprise",
+      "absolute_home_away_OFF_surprise_gap",
+      "home_DEF_minus_OFF_balance_surprise",
+      "away_DEF_minus_OFF_balance_surprise",
+      "absolute_home_away_balance_surprise_gap"
+    ],
+    "full_dimension": 14,
+    "absolute_XI_value_levels_forbidden_in_R39O_candidate": true,
+    "reason": "Absolute XI value was already tested in R39N; R39O isolates match-specific deviation from recent lineup composition."
+  },
+  "zero_label_snapshot_gate": {
+    "expected_feature_eligible_from_source_audit": {"all": 9412, "preholdout": 8145, "holdout_2526": 1267, "fixed100": 100},
+    "fixed100_identity_sha256_required": "f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc",
+    "unknown_positions_max": 0,
+    "strict_lag_violations_max": 0,
+    "nonfinite_features_max": 0,
+    "target_labels_accessed": 0,
+    "if_fail": "STOP_R39O_ZERO_LABEL_FEATURE_SNAPSHOT_GATE"
+  },
+  "model_contract": {
+    "target": "draw_vs_non_draw",
+    "equation": "logit(Pdraw)=logit(Pdraw_closing_market)+intercept+standardized_X@beta",
+    "market_draw_logit_coefficient": 1.0,
+    "intercept": "included_unpenalized",
+    "L2_candidates": [1.0, 10.0, 100.0],
+    "class_weights": "none",
+    "threeway_mapping": "preserve closing-market H:A non-draw ratio",
+    "R39O_dimension": 14
+  },
+  "benchmarks": {
+    "raw_closing_market": true,
+    "market_context": {"dimension": 2, "L2": 100.0},
+    "static_R39L_actual_XI_attack": {"dimension": 10, "L2": 1.0, "source_artifact_id": 9050139416},
+    "R39N_absolute_actual_XI_value": {"dimension": 14, "L2": 100.0, "source_artifact_id": 9050468369}
+  },
+  "rolling_design": {
+    "folds": [
+      {"name": "fold_2223", "train_seasons": ["1920", "2021", "2122"], "test_season": "2223"},
+      {"name": "fold_2324", "train_seasons": ["1920", "2021", "2122", "2223"], "test_season": "2324"}
+    ],
+    "candidate_selection": "lowest pooled HDA_LogLoss, then pooled binary_Draw_LogLoss, then larger L2",
+    "selected_candidate_must_pass_each_fold_individually": true,
+    "each_fold_gate": {
+      "R39O_HDA_LogLoss_strictly_better_than_raw_market": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_raw_market": true,
+      "R39O_HDA_Brier_nonworse_than_raw_market": true,
+      "R39O_RPS_nonworse_than_raw_market": true,
+      "R39O_HDA_LogLoss_strictly_better_than_market_context": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_market_context": true,
+      "R39O_HDA_LogLoss_strictly_better_than_R39L_static": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_R39L_static": true,
+      "R39O_HDA_LogLoss_strictly_better_than_R39N_absolute_value": true,
+      "R39O_binary_Draw_LogLoss_strictly_better_than_R39N_absolute_value": true,
+      "R39O_Draw_AUC_strictly_better_than_R39N_absolute_value": true,
+      "R39O_division_HDA_LogLoss_wins_vs_R39N_min": 3
+    },
+    "if_fail": "STOP_R39O_BEFORE_POLICY_AND_HOLDOUT_LINEUP_SURPRISE_NO_ROLLING_INCREMENT"
+  },
+  "policy_design": {
+    "train_seasons": ["1920", "2021", "2122", "2223", "2324"],
+    "test_season": "2425",
+    "selected_L2_frozen_from_rolling": true,
+    "same_gate_as_rolling": true,
+    "if_fail": "STOP_R39O_BEFORE_HOLDOUT_LINEUP_SURPRISE_NO_POLICY_INCREMENT"
+  },
+  "blind_confirmation": {
+    "only_after_rolling_and_policy_pass": true,
+    "write_final_freeze_before_any_fixed100_label": true,
+    "nonfixed_2526_labels_may_be_read": false,
+    "fixed100_labels_after_freeze": 100,
+    "same_proper_score_and_R39N_benchmark_gate": true,
+    "pass_status": "PASS_R39O_LINEUP_SURPRISE_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39O_LINEUP_SURPRISE_INCREMENT_FIXED100",
+    "no_post_holdout_tuning": true
+  },
+  "execution_gate": {
+    "real_target_label_evaluation_authorized_now": false,
+    "next_required_asset": "one complete zero-label hash-locked R39O feature snapshot; live Transfermarkt recomputation forbidden during evaluation"
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
