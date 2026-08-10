@@ -1,0 +1,58 @@
+{
+  "schema_version": "r39m-evaluator-contract-v1",
+  "frozen_before_real_target_label_evaluation": true,
+  "numerical": {
+    "offset": "logit closing-market draw probability with coefficient fixed at 1",
+    "intercept": "included and unpenalized",
+    "standardization": "fit rows only for each fold/model; population sd below 1e-12 replaced by 1",
+    "objective": "sum binary negative log likelihood + 0.5 * L2 * sum(slope^2)",
+    "newton_max_iterations": 50,
+    "newton_parameter_tolerance": 1e-10,
+    "linear_predictor_clip": [-35.0, 35.0],
+    "solver": "numpy.linalg.solve; any numerical failure is fail-closed",
+    "class_weights": "none",
+    "threeway_mapping": "preserve closing-market home:away non-draw ratio"
+  },
+  "benchmarks": {
+    "raw_market": true,
+    "market_context": {"dimensions": 2, "L2": 100.0},
+    "static_R39L": {"dimensions": 10, "L2": 1.0, "feature_definition": "R39L all-history current-XI GA90_EB"}
+  },
+  "dynamic_candidates": {
+    "half_life_days": [90, 180, 365],
+    "L2": [1.0, 10.0, 100.0],
+    "dimensions": 10,
+    "count": 9
+  },
+  "rolling_folds": [
+    {"name":"fold_2223","train_seasons":["1920","2021","2122"],"test_season":"2223"},
+    {"name":"fold_2324","train_seasons":["1920","2021","2122","2223"],"test_season":"2324"}
+  ],
+  "dynamic_selection": {
+    "pooled_prediction_definition": "concatenate the two fold test prediction streams produced by fold-specific fits",
+    "order": ["lowest pooled HDA_LogLoss","lowest pooled binary_Draw_LogLoss","longer half_life_days","larger L2"]
+  },
+  "rolling_gate": {
+    "selected_candidate_must_pass_both_folds_individually": true,
+    "gate_source": "preregistration_r39m.json rolling_development.each_fold_gate",
+    "failure_status": "STOP_R39M_BEFORE_POLICY_AND_HOLDOUT_RECENCY_NO_ROLLING_INCREMENT"
+  },
+  "policy": {
+    "train_seasons":["1920","2021","2122","2223","2324"],
+    "test_season":"2425",
+    "selected_dynamic_half_life_and_L2_frozen": true,
+    "benchmark_L2_values_frozen": true,
+    "gate_source":"preregistration_r39m.json policy_stress.gate",
+    "failure_status":"STOP_R39M_BEFORE_HOLDOUT_RECENCY_NO_POLICY_INCREMENT"
+  },
+  "blind": {
+    "only_after_rolling_and_policy_pass": true,
+    "refit_all_three_models_on_all_8161_preholdout_rows": true,
+    "write_freeze_receipt_before_any_fixed100_label": true,
+    "nonfixed_2526_labels_may_be_read": false,
+    "fixed100_labels_after_freeze": 100,
+    "no_post_holdout_refit_or_tuning": true
+  },
+  "metrics": ["HDA_LogLoss","HDA_Brier","RPS","binary_Draw_LogLoss","Draw_AUC","Top1_accuracy","Top1_draw_count","actual_draw_count"],
+  "hard_limits": {"formal_weight":0,"promotion_authorized":false,"current_match_use":false,"EV":false,"formal_model_mutation":0,"formal_data_mutation":0,"config_mutation":0,"CURRENT_mutation":0,"main_mutation":0}
+}
