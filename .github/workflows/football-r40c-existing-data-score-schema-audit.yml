@@ -1,0 +1,68 @@
+name: Football R40C Existing Data Score Schema Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40c-existing-data-score-schema-audit.yml'
+      - 'football-data/research/existing_data_score_schema_audit_r40c/**'
+
+permissions:
+  contents: read
+
+jobs:
+  header-only-schema-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Compile zero-label header auditor
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_score_schema_audit_r40c/audit_headers_r40c.py
+
+      - name: Audit point-in-time CSV headers only
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/r40c-output
+          python football-data/research/existing_data_score_schema_audit_r40c/audit_headers_r40c.py
+
+      - name: Verify zero-row boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('/tmp/r40c-output')
+          p=root/'r40c_header_audit.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['status']=='PASS_R40C_HEADER_ONLY_SCHEMA_AUDIT'
+          h=r['hard_boundaries']
+          assert h['data_rows_iterated']==0
+          assert h['target_labels_accessed']==0
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['model_fits']==0 and h['candidate_probabilities']==0
+          assert h['formal_weight']==0
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          assert (root/'r40c_header_audit.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'file_count':r['file_count'],
+            'same_schema_across_files':r['same_schema_across_files'],
+            'canonical_field_count':r['canonical_field_count'],
+            'canonical_fields':r['canonical_fields'],
+            'score_like_fields':r['score_like_fields'],
+            'label_like_fields':r['label_like_fields']
+          },ensure_ascii=False,indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40c-header-only-schema-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/r40c-output
+          retention-days: 30
+          if-no-files-found: error
