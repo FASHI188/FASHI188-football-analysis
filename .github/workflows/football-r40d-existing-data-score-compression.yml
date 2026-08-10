@@ -1,0 +1,99 @@
+name: Football R40D Existing Data Score Compression
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40d-existing-data-score-compression.yml'
+      - 'football-data/research/existing_data_score_compression_r40d/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ninth-disjoint-fixed100-score-compression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R40D preregistration and dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_score_compression_r40d/evaluate_r40d.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_score_compression_r40d/preregistration_r40d.json').read_text())
+          assert p['schema_version']=='R40D-EXISTING-DATA-SCORE-COMPRESSION-1.0'
+          assert p['sample']['size']==100
+          for k in ('r39u','r39v','r39w','r39x','r39y','r39z','r40a','r40b'):
+              assert p['sample'][f'required_overlap_with_{k}']==0
+          assert p['schema_evidence']['r40c_run']==31381910770
+          assert p['schema_evidence']['r40c_artifact']==9060187851
+          s=p['score_state']; m=p['model']; h=p['hard_boundaries']
+          assert s['window']==10 and s['empirical_bayes_prior_strength']==5.0
+          assert len(s['features'])==8
+          assert m['draw_l2']==10.0
+          assert m['manual_draw_boost'] is False and m['class_weighting'] is False
+          assert m['candidate_grid'] is False and m['post_result_tuning'] is False
+          assert m['abstention'] is False
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R40D_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute R40D ninth disjoint fixed100
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r40d-output"
+          python football-data/research/existing_data_score_compression_r40d/evaluate_r40d.py \
+            --prereg football-data/research/existing_data_score_compression_r40d/preregistration_r40d.json \
+            --root . \
+            --out "$RUNNER_TEMP/r40d-output"
+
+      - name: Verify R40D output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r40d-output'
+          p=root/'r40d_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R40D_SCORE_COMPRESSION_INCREMENT','FAIL_R40D_SCORE_COMPRESSION_NO_INCREMENT'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['overlap']=={'r39u':0,'r39v':0,'r39w':0,'r39x':0,'r39y':0,'r39z':0,'r40a':0,'r40b':0}
+          assert len(r['audit'])==100
+          assert r['score_audit']['consistency_failures']==0
+          assert r['score_audit']['score_map_rows']==r['source_rows']
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          for row in r['audit']:
+              assert abs(row['probability_sum_challenger']-1.0)<1e-10
+              assert abs(row['probability_sum_baseline']-1.0)<1e-10
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r40d_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'],'passed':r['passed'],'sample_sha':r['r40d_fixed100_identity_sha256'],
+            'overlap':r['overlap'],'score_audit':r['score_audit'],
+            'challenger_metrics':r['challenger_metrics'],'baseline_metrics':r['baseline_metrics'],
+            'challenger_draw_auc':r['challenger_draw_auc'],'baseline_draw_auc':r['baseline_draw_auc'],'gate':r['gate']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40d-existing-data-score-compression-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40d-output
+          retention-days: 30
+          if-no-files-found: error
