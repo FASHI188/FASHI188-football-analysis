@@ -1,0 +1,90 @@
+{
+  "schema_version": "beat-the-bookie-market-offset-multinomial-r39f.0",
+  "status": "MODEL_REPRESENTATION_FROZEN_BEFORE_FOURTH100_IDENTITY_LOCK",
+  "classification": "VIEWED_HISTORICAL_MARKET_OFFSET_MULTINOMIAL_CHALLENGE_FORMAL_WEIGHT_0",
+  "research_question": "Can the already-frozen dense T-24..T-1 sequence shape improve ordinary H/D/A argmax when it learns class-specific residuals around the T-1 market probabilities instead of predicting draw-vs-nondraw and inheriting a fixed H:A split?",
+  "source_and_feature_binding": {
+    "r39e_model_registration_git_blob_sha": "9b5e2635875b042bccb47f9e103434d74977d727",
+    "sequence_hours": 24,
+    "core_bookmakers": "same fixed all-hours T-24..T-1 core bookmaker set as R39E",
+    "minimum_core_bookmakers": 3,
+    "sequence_channels": ["draw_logit", "home_away_log_ratio", "threeway_entropy", "draw_bookmaker_dispersion"],
+    "dct_coefficients_per_channel": [0,1,2,3,4,5],
+    "static_feature": "log1p(core_bookmaker_count)",
+    "feature_count": 25,
+    "feature_changes_from_r39e_sequence_block": 0
+  },
+  "population": {
+    "holdout_start": "2016-09-20T14:00:00",
+    "expected_training_rows": 49511,
+    "expected_holdout_rows": 10734,
+    "consumed_identity_sha256": [
+      "d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48",
+      "739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4",
+      "d6d97f0aef62a8eb6d7b8163e12852dcf7d85b88164ce6d29956b9f2bc082695"
+    ],
+    "consumed_first300_labels_allowed_for_model_or_hyperparameter_selection": false,
+    "fourth100_selection_rule": "same sha256('51139|' + identity) ordering; zero-based ranks [300,400)"
+  },
+  "market_offset": {
+    "source": "frozen R39C T-1h de-vig consensus q=(qH,qD,qA)",
+    "reference_class": "A",
+    "home_offset": "log(qH/qA)",
+    "draw_offset": "log(qD/qA)",
+    "away_offset": 0,
+    "probability_clip": 1e-08,
+    "market_offset_coefficients_trainable": false
+  },
+  "model": {
+    "target": "three classes H,D,A",
+    "features": "25 frozen R39E dense sequence features only",
+    "standardize_features_using_pre_holdout_training_only": true,
+    "equations": [
+      "eta_H = log(qH/qA) + beta_H0 + z dot beta_H",
+      "eta_D = log(qD/qA) + beta_D0 + z dot beta_D",
+      "eta_A = 0",
+      "P(H,D,A) = softmax(eta_H,eta_D,eta_A)"
+    ],
+    "intercepts": "beta_H0 and beta_D0 unpenalized",
+    "l2_lambda": 1.0,
+    "l2_penalty": "all feature slopes for H and D; no penalty on intercepts",
+    "optimizer": "full-batch Newton-Raphson with exact 2-block multinomial Hessian and backtracking line search",
+    "maximum_iterations": 25,
+    "coefficient_delta_tolerance": 1e-08,
+    "gradient_abs_tolerance": 1e-07,
+    "backtracking_factor": 0.5,
+    "minimum_step": 0.0009765625,
+    "class_weight": "none",
+    "threshold_selection": "forbidden",
+    "decision_rule": "ordinary argmax of the final H/D/A probabilities",
+    "hyperparameter_search": "none"
+  },
+  "planned_comparators_on_fourth100": [
+    "T-1h market probabilities/argmax",
+    "R39C frozen binary 15-feature trajectory model",
+    "R39E frozen binary 40-feature dense sequence model",
+    "R39F market-offset multinomial residual model"
+  ],
+  "planned_gates": {
+    "probability_signal": "R39F log_loss, brier and rps strictly better than R39E; draw_auc strictly better than market",
+    "decision_increment": "R39F accuracy strictly better than market, R39C and R39E; predicted draws >=1; draw_f1 strictly better than R39E",
+    "strong_uncertainty": "match-date cluster-bootstrap p05 for R39F minus market accuracy >0",
+    "overall": "all gates"
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "current_match_use_allowed": false,
+    "first300_labels_allowed": false,
+    "fourth100_labels_allowed_before_parameter_freeze": false,
+    "threshold_tuning_allowed": false,
+    "class_weight_tuning_allowed": false,
+    "seed_search_allowed": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "formal_config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
