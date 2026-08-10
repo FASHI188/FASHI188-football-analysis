@@ -1,30 +1,60 @@
 name: Football R39J Evaluation
 
 on:
-  push:
-    branches: [research/market-draw-regime-r39j]
+  pull_request:
     paths:
       - '.github/workflows/football-r39j-evaluation.yml'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   market-draw-regime-fixed100:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Resolve unique R39J evaluation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p r39j-pointer
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/football-r39j-evaluation.yml/runs?branch=research%2Fmarket-draw-regime-r39j&per_page=20" \
+            -o /tmp/runs.json
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          x=json.loads(Path('/tmp/runs.json').read_text());cur=int(os.environ['GITHUB_RUN_ID'])
+          prior=[r for r in x.get('workflow_runs',[]) if int(r['id'])!=cur and r.get('head_branch')=='research/market-draw-regime-r39j']
+          prior.sort(key=lambda r:int(r['id']),reverse=True)
+          if prior:
+              p=prior[0];skip='1';pid=str(p['id']);state=p.get('status');conclusion=p.get('conclusion')
+          else:
+              skip='0';pid='';state=None;conclusion=None
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write(f'SKIP_R39J={skip}\nPRIOR_R39J_RUN_ID={pid}\n')
+          out={'current_run_id':cur,'skip_current_evaluation':skip=='1','prior_evaluation_run_id':int(pid) if pid else None,'prior_status':state,'prior_conclusion':conclusion}
+          Path('r39j-pointer/uniqueness.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+          PY
       - uses: actions/checkout@v6
+        if: env.SKIP_R39J != '1'
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v6
+        if: env.SKIP_R39J != '1'
         with:
           python-version: '3.12'
       - name: Install frozen numerical dependency
+        if: env.SKIP_R39J != '1'
         run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
       - name: Verify exact frozen contract before data or labels
+        if: env.SKIP_R39J != '1'
         run: |
           set -euo pipefail
           python -m py_compile football-data/research/market_regime_r39j/evaluate_market_draw_regime_r39j.py
@@ -43,6 +73,7 @@ jobs:
           print('PASS_R39J_EXACT_FROZEN_EVALUATION_CONTRACT')
           PY
       - name: Download Football-Data and isolate market-only from sealed result files
+        if: env.SKIP_R39J != '1'
         run: |
           set -euo pipefail
           rm -rf r39j-market r39j-raw r39j-output
@@ -66,12 +97,14 @@ jobs:
             done
           done
       - name: Execute frozen R39J label-order sequence
+        if: env.SKIP_R39J != '1'
         run: |
           set -euo pipefail
           python football-data/research/market_regime_r39j/evaluate_market_draw_regime_r39j.py \
             --prereg football-data/research/market_regime_r39j/preregistration_r39j.json \
             --market-dir r39j-market --raw-dir r39j-raw --out-dir r39j-output
       - name: Verify terminal label boundary
+        if: env.SKIP_R39J != '1'
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -91,10 +124,18 @@ jobs:
           print(json.dumps({'status':r['status'],'split':r['split'],'active_regimes':len(r['fit_active_regimes']),'validation':r['validation'],'policy':r.get('policy'),'holdout':r.get('holdout'),'holdout_labels_accessed':r['holdout_labels_accessed']},indent=2))
           PY
       - name: Delete all raw/source inputs before artifact
+        if: env.SKIP_R39J != '1'
         run: rm -rf r39j-market r39j-raw
       - uses: actions/upload-artifact@v4
+        if: env.SKIP_R39J != '1'
         with:
           name: football-r39j-evaluation-${{ github.sha }}-${{ github.run_id }}
           path: r39j-output/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39j-evaluation-uniqueness-${{ github.sha }}-${{ github.run_id }}
+          path: r39j-pointer/
           if-no-files-found: error
           retention-days: 30
