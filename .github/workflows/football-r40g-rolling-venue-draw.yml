@@ -1,0 +1,97 @@
+name: Football R40G Rolling Venue Draw
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40g-rolling-venue-draw.yml'
+      - 'football-data/research/rolling_venue_draw_r40g/**'
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-venue-draw:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R40G preregistration and dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/rolling_venue_draw_r40g/evaluate_r40g.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/rolling_venue_draw_r40g/preregistration_r40g.json').read_text())
+          assert p['schema_version']=='R40G-ROLLING-VENUE-DRAW-1.0'
+          f=p['folding']; v=p['venue_features']; m=p['models']; h=p['hard_boundaries']
+          assert f['minimum_train_rows']==200 and f['minimum_test_rows']==80
+          assert f['same_season_training'] is False
+          assert v['empirical_bayes_prior_strength']==5.0
+          assert len(v['draw_specific_features'])==6
+          assert v['no_post_result_feature_changes'] is True
+          assert m['class_weighting'] is False and m['candidate_grid'] is False
+          assert m['manual_draw_boost'] is False and m['threshold_tuning'] is False
+          assert m['abstention'] is False
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['random_fixed100_consumed']==0
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R40G_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute R40G rolling venue challenger
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r40g-output"
+          python football-data/research/rolling_venue_draw_r40g/evaluate_r40g.py \
+            --prereg football-data/research/rolling_venue_draw_r40g/preregistration_r40g.json \
+            --root . \
+            --out "$RUNNER_TEMP/r40g-output"
+
+      - name: Verify R40G output and boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r40g-output'
+          p=root/'r40g_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R40G_VENUE_DRAW_INCREMENT','FAIL_R40G_VENUE_DRAW_NO_INCREMENT'}
+          assert r['eligible_fold_count']>0 and r['rows_scored']>0
+          assert len(r['fold_metrics'])==r['eligible_fold_count']
+          assert 0<=r['coverage']<=1
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['random_fixed100_consumed']==0
+          assert h['main_mutation'] is False
+          assert (root/'r40g_result.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'],'passed':r['passed'],'coverage':r['coverage'],
+            'eligible_fold_count':r['eligible_fold_count'],'rows_scored':r['rows_scored'],
+            'competition_count':r['competition_count'],
+            'baseline_metrics':r['baseline_metrics'],'challenger_metrics':r['challenger_metrics'],
+            'baseline_binary_draw_log_loss':r['baseline_binary_draw_log_loss'],
+            'challenger_binary_draw_log_loss':r['challenger_binary_draw_log_loss'],
+            'baseline_draw_auc':r['baseline_draw_auc'],'challenger_draw_auc':r['challenger_draw_auc'],
+            'fold_draw_ll_win_rate':r['fold_draw_ll_win_rate'],
+            'competition_draw_ll_win_rate':r['competition_draw_ll_win_rate'],
+            'gate':r['gate']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40g-rolling-venue-draw-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40g-output
+          retention-days: 30
+          if-no-files-found: error
