@@ -1,0 +1,97 @@
+name: Football R40I2 Policy Evaluation
+
+on:
+  pull_request:
+    branches: [research/beat-the-bookie-timeseries-r39b]
+    paths: ['.github/workflows/football-r40i2-policy-evaluation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  one-time-policy-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify exact frozen policy contract
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/policy_evaluation_registration_r40i2.json)" = "78b4fdc46456d48d80d7a92a7db846d5f09d3d95"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_external_policy_r40i2.py)" = "356b9e8e2e8a20f3c02fd368be6ea2599446bc2e"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json)" = "47f05a9b49044799064605d83488f41a62b37f66"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py)" = "066437c4067a729607a9852d178f4e22e1ab214a"
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_external_policy_r40i2.py football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py
+          python - <<'PY'
+          import json
+          r=json.load(open('football-data/research/beat_the_bookie_r39/policy_evaluation_registration_r40i2.json'))
+          assert r['status']=='PRE_REGISTERED_ONE_TIME_EXTERNAL_POLICY_EVALUATION'
+          assert r['frozen_policy']['count']==4312
+          assert r['hard_limits']['blind_result_values_allowed'] is False
+          assert r['hard_limits']['model_fit_allowed'] is False
+          assert r['policy_gate']['trajectory_accuracy_delta_vs_baseline_min_pp']==-0.5
+          print('PASS_R40I2_FROZEN_POLICY_CONTRACT')
+          PY
+      - name: Download exact source
+        run: |
+          set -euo pipefail
+          mkdir -p r40i2-source r40i2-output
+          curl --fail --location --retry 3 'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' -o r40i2.zip
+          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40i2.zip' | sha256sum -c -
+          unzip -p r40i2.zip Matches_Odds.csv > r40i2-source/Matches_Odds.csv
+          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40i2-source/Matches_Odds.csv' | sha256sum -c -
+      - name: Rebuild frozen policy IDs without result values
+        run: |
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py')
+          s=importlib.util.spec_from_file_location('p',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+          eligible,_=m.build_eligible(Path('r40i2-source/Matches_Odds.csv'))
+          policy=eligible[12936:17248]
+          assert len(policy)==4312
+          assert m.digest_rows(policy)=='a3392481fd121dcd6a949e0d10ea037d17075e88c8c58da2cd61dc011e8605b3'
+          Path('r40i2-policy-ids.txt').write_text('\n'.join(r['match_id'] for r in policy)+'\n')
+          PY
+      - name: Physically isolate policy result values; blind remains unopened
+        run: |
+          set -euo pipefail
+          awk 'BEGIN{FS=OFS=","} NR==FNR{ids[$1]=1;next} FNR==1{print;next} ($1 in ids){print}' \
+            r40i2-policy-ids.txt <(unzip -p r40i2.zip Matches_Results.csv) > r40i2-policy-results.csv
+          test "$(($(wc -l < r40i2-policy-results.csv)-1))" -eq 4312
+          rm -f r40i2.zip
+      - name: Run one-time policy evaluation
+        run: |
+          python football-data/research/beat_the_bookie_r39/evaluate_external_policy_r40i2.py \
+            --registration football-data/research/beat_the_bookie_r39/policy_evaluation_registration_r40i2.json \
+            --r40h1-registration football-data/research/beat_the_bookie_r39/cross_source_prediction_freeze_registration_r40h1.json \
+            --r40h1-code football-data/research/beat_the_bookie_r39/freeze_external_predictions_r40h1.py \
+            --odds-csv r40i2-source/Matches_Odds.csv --policy-results r40i2-policy-results.csv --out-dir r40i2-output
+      - name: Verify blind remained unopened
+        run: |
+          python - <<'PY'
+          import json
+          s=json.load(open('r40i2-output/external_policy_evaluation_status_r40i2.json'))
+          assert s['access_audit']['policy_result_values_accessed']==4312
+          assert s['access_audit']['blind_result_values_accessed']==0
+          assert s['access_audit']['model_fits']==0
+          assert s['policy']['prediction_sha256']=='281cbe305b51c13fdf5bae94f24b00ecd2cb877c1b41a2b4d35fa69bd128ccd7'
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Delete source and policy labels before evidence upload
+        if: always()
+        run: rm -rf r40i2-source r40i2.zip r40i2-policy-ids.txt r40i2-policy-results.csv
+      - name: Upload policy evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r40i2-policy-evaluation-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: r40i2-output/
+          if-no-files-found: error
+          retention-days: 30
