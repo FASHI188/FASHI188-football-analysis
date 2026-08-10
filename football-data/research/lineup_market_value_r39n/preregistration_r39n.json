@@ -1,0 +1,133 @@
+{
+  "schema_version": "r39n-lineup-market-value-v1",
+  "stage": "R39N_ACTUAL_STARTING_XI_PIT_MARKET_VALUE_STRUCTURE",
+  "preregistration_status": "HYPOTHESIS_AND_FEATURE_ALGORITHM_FROZEN_BEFORE_TARGET_LABEL_ACCESS",
+  "research_question": "Does the strictly-prior market-value structure of the actual starting XIs add stable draw-probability information beyond the closing 1X2 market?",
+  "novelty_and_separation": {
+    "v633_prior_route": "constructed a pre-match expected core / highest-valued active pool and explicitly never used the target match lineup",
+    "v657_prior_route": "tested expected-core absence and missing-value share",
+    "r39i_prior_route": "tested actual-lineup continuity/absence/workload shocks, not actual-XI aggregate valuation structure",
+    "r39l_r39m_prior_route": "tested actual-XI attacking G+A production, not broad valuation structure",
+    "r39n_new_quantity": "latest valuation strictly before target date for the players who actually start the target match",
+    "target_lineup_identity_used": true,
+    "target_match_performance_used": false,
+    "league_filtering_from_prior_results": false
+  },
+  "blind_binding": {
+    "origin": "pre-existing R39I fixed100 locked before R39N hypothesis",
+    "preholdout_rows": 8161,
+    "holdout_2526_rows": 1273,
+    "fixed100_seed": 51145,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc",
+    "fixed100_labels_accessed_before_r39n": 0,
+    "no_reselection": true
+  },
+  "valuation_point_in_time_contract": {
+    "source": "Transfermarkt-derived davidcariboo/player-scores player_valuations.csv",
+    "required_columns": ["player_id", "date", "market_value_in_eur"],
+    "selection": "latest positive finite market_value_in_eur with valuation date strictly before target match date",
+    "same_day_valuation_forbidden": true,
+    "future_valuation_forbidden": true,
+    "imputation": "none",
+    "minimum_valued_starters_per_team": 4,
+    "market_value_claim": "market-estimate proxy correlated with performance and other player attributes; not true latent ability"
+  },
+  "feature_contract": {
+    "market_context_features": [
+      "closing_absolute_home_away_fair_probability_gap",
+      "closing_threeway_entropy"
+    ],
+    "valuation_features": [
+      "home_mean_log1p_value",
+      "away_mean_log1p_value",
+      "absolute_home_away_mean_log_gap",
+      "home_top4_mean_log1p_value",
+      "away_top4_mean_log1p_value",
+      "absolute_home_away_top4_mean_log_gap",
+      "home_bottom4_mean_log1p_value",
+      "away_bottom4_mean_log1p_value",
+      "absolute_home_away_bottom4_mean_log_gap",
+      "home_top4_raw_value_share",
+      "away_top4_raw_value_share",
+      "minimum_home_away_valuation_coverage_fraction"
+    ],
+    "full_dimension": 14,
+    "no_manual_interactions_beyond_listed_features": true
+  },
+  "zero_label_snapshot_gate": {
+    "identity_lane_must_rederive": {"preholdout":8161,"holdout_2526":1273,"fixed100":100},
+    "fixed100_identity_sha256_must_equal": "f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc",
+    "minimum_feature_eligible_preholdout_rows": 7000,
+    "fixed100_feature_eligible_rows_required": 100,
+    "strict_valuation_lag_violations_max": 0,
+    "nonfinite_features_max": 0,
+    "target_labels_accessed": 0,
+    "if_fail": "STOP_R39N_ZERO_LABEL_VALUATION_COVERAGE_OR_LAG_GATE"
+  },
+  "future_model_contract": {
+    "target": "draw_vs_non_draw",
+    "equation": "logit(Pdraw)=logit(Pdraw_closing_market)+intercept+standardized_X@beta",
+    "market_draw_logit_coefficient": 1.0,
+    "intercept": "included_unpenalized",
+    "L2_candidates": [1.0,10.0,100.0],
+    "class_weights": "none",
+    "threeway_mapping": "preserve closing-market H:A non-draw ratio",
+    "benchmark_market_context_dimension": 2,
+    "benchmark_R39L_static_dimension": 10,
+    "benchmark_R39L_static_L2": 1.0,
+    "candidate_R39N_dimension": 14
+  },
+  "rolling_design": {
+    "folds": [
+      {"name":"fold_2223","train_seasons":["1920","2021","2122"],"test_season":"2223"},
+      {"name":"fold_2324","train_seasons":["1920","2021","2122","2223"],"test_season":"2324"}
+    ],
+    "candidate_selection": "lowest pooled HDA_LogLoss, then pooled binary_Draw_LogLoss, then larger L2",
+    "selected_candidate_must_pass_each_fold_individually": true,
+    "each_fold_gate": {
+      "R39N_HDA_LogLoss_strictly_better_than_raw_market": true,
+      "R39N_binary_Draw_LogLoss_strictly_better_than_raw_market": true,
+      "R39N_HDA_Brier_nonworse_than_raw_market": true,
+      "R39N_RPS_nonworse_than_raw_market": true,
+      "R39N_HDA_LogLoss_strictly_better_than_market_context": true,
+      "R39N_binary_Draw_LogLoss_strictly_better_than_market_context": true,
+      "R39N_HDA_LogLoss_strictly_better_than_R39L_static": true,
+      "R39N_binary_Draw_LogLoss_strictly_better_than_R39L_static": true,
+      "R39N_Draw_AUC_strictly_better_than_R39L_static": true,
+      "R39N_division_HDA_LogLoss_wins_vs_R39L_static_min": 3
+    },
+    "if_fail": "STOP_R39N_BEFORE_POLICY_AND_HOLDOUT_XI_VALUE_NO_ROLLING_INCREMENT"
+  },
+  "policy_design": {
+    "train_seasons":["1920","2021","2122","2223","2324"],
+    "test_season":"2425",
+    "selected_L2_frozen_from_rolling": true,
+    "same_gate_as_rolling": true,
+    "if_fail": "STOP_R39N_BEFORE_HOLDOUT_XI_VALUE_NO_POLICY_INCREMENT"
+  },
+  "blind_confirmation": {
+    "only_after_rolling_and_policy_pass": true,
+    "write_final_freeze_before_any_fixed100_label": true,
+    "nonfixed_2526_labels_may_be_read": false,
+    "fixed100_labels_after_freeze": 100,
+    "same_proper_score_and_R39L_benchmark_gate": true,
+    "pass_status": "PASS_R39N_ACTUAL_XI_VALUE_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39N_ACTUAL_XI_VALUE_INCREMENT_FIXED100"
+  },
+  "execution_gate": {
+    "real_target_label_evaluation_authorized_now": false,
+    "next_required_asset": "one complete zero-label hash-locked feature snapshot artifact; live valuation recomputation is forbidden in evaluation"
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
