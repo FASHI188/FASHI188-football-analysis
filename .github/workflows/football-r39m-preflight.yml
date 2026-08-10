@@ -1,0 +1,119 @@
+name: Football R39M Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39m-preflight.yml'
+      - 'football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json'
+      - 'football-data/research/lineup_attack_recency_r39m/source_registration_r39m.json'
+      - 'football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json'
+      - 'football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py'
+      - 'football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r39m-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify exact frozen scientific blobs and coverage evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json)" = "01046fb1412f434c973b6369169cc6059ff6f9d2"
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/source_registration_r39m.json)" = "b87d52023815469592128c43d2dab0406765d54a"
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json)" = "de2c4ba33d0ed2a0f85c76b96f63a875daf59615"
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py)" = "a465ea1d3ff59db25f166d248f31f89ab62fdeb4"
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py)" = "300d896d66ce554c62ec3acf96d208ae9f0c4531"
+          python -m py_compile football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json').read_text())
+          c=json.loads(Path('football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json').read_text())
+          s=json.loads(Path('football-data/research/lineup_attack_recency_r39m/source_registration_r39m.json').read_text())
+          assert p['preregistration_status']=='RECENCY_COVERAGE_PASSED_MODEL_FROZEN_BEFORE_R39M_TARGET_LABEL_EVALUATION'
+          b=p['coverage_binding'];assert b['status']=='PASS_R39M_ZERO_TARGET_LABEL_RECENCY_FEATURE_COVERAGE'
+          assert b['run_id']==31353392211 and b['artifact_id']==9049789421
+          assert b['artifact_sha256']=='4af5f3ba95f87d03a69a3e9279885157a35fd72023c5feae2d2b9ba84991e09b'
+          assert b['identity_counts']=={'all':9434,'preholdout':8161,'holdout_2526':1273,'fixed100':100}
+          assert b['strict_lag_violations']==0 and b['target_labels_accessed']==0
+          assert b['feature_sha256_by_half_life']=={
+            '90':'38c1ecc0bf47c4762747a8216e0ceaae3f432c712b50462acd75a74c84ef9d7a',
+            '180':'c76a1da7e689d61c766f32295d6886477040eef0563b9b6fec1fa7bd92a93e4f',
+            '365':'86d63860eb590d9a0fdddbfb3c6b5a48f84c7bd222bfd533098391585c40772f'}
+          assert p['blind_binding']['fixed100_labels_accessed_before_r39m']==0
+          assert c['dynamic_candidates']['count']==9 and c['dynamic_candidates']['half_life_days']==[90,180,365]
+          assert c['dynamic_candidates']['L2']==[1.0,10.0,100.0]
+          assert c['benchmarks']['static_R39L']['L2']==1.0 and c['benchmarks']['market_context']['L2']==100.0
+          assert c['binary_residual_model']=={'newton_max_iterations':50,'newton_parameter_tolerance':1e-10,'sigmoid_linear_predictor_clip':[-35.0,35.0]}
+          assert all(v==0 for v in s['no_target_label_contract'].values())
+          print('PASS_R39M_FROZEN_ZERO_LABEL_CONTRACT')
+          PY
+          curl --fail --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31353392211" -o /tmp/cov-run.json
+          curl --fail --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/31353392211/artifacts" -o /tmp/cov-artifacts.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/cov-run.json').read_text());a=json.loads(Path('/tmp/cov-artifacts.json').read_text())
+          assert r['status']=='completed' and r['conclusion']=='success'
+          assert r['head_sha']=='6ca4236321c37a8bc013edb9e5d3d01e302707aa'
+          arts=a.get('artifacts',[]);assert len(arts)==1
+          x=arts[0];assert x['id']==9049789421
+          assert x.get('digest')=='sha256:4af5f3ba95f87d03a69a3e9279885157a35fd72023c5feae2d2b9ba84991e09b'
+          print('PASS_R39M_BOUND_ZERO_LABEL_COVERAGE_ARTIFACT')
+          PY
+      - name: Run evaluator self-test and label-order audit
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py --self-test
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py').read_text()
+          feature_write=src.index("feature_freeze_receipt_r39m.json').write_text")
+          pre_label=src.index("labels=rl.load_labels(a.raw_dir")
+          final_write=src.index("final_freeze_receipt_r39m.json').write_text")
+          hold_label=src.index("hlab=rl.load_labels(a.raw_dir,{'2526'}")
+          assert feature_write < pre_label < final_write < hold_label
+          assert "nonfixed_2526_labels_may_be_read" in Path('football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json').read_text()
+          print('PASS_R39M_LABEL_ORDER_STATIC_AUDIT')
+          PY
+      - name: Persist zero-label preflight receipt
+        run: |
+          set -euo pipefail
+          mkdir -p r39m-preflight
+          python - <<'PY'
+          import json,subprocess
+          from datetime import datetime,timezone
+          from pathlib import Path
+          files=['football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json','football-data/research/lineup_attack_recency_r39m/source_registration_r39m.json','football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json','football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py','football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py']
+          blobs={p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files}
+          out={'status':'PASS_R39M_ZERO_LABEL_EVALUATOR_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'scientific_blobs':blobs,'coverage_run_id':31353392211,'coverage_artifact_id':9049789421,'coverage_artifact_sha256':'4af5f3ba95f87d03a69a3e9279885157a35fd72023c5feae2d2b9ba84991e09b','real_football_data_accessed':0,'real_target_labels_accessed':0,'model_fit_on_real_labels':0,'fixed100_labels_accessed':0,'formal_weight':0}
+          Path('r39m-preflight/preflight_receipt_r39m.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39m-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: r39m-preflight/
+          if-no-files-found: error
+          retention-days: 30
