@@ -1,0 +1,182 @@
+name: Football Beat The Bookie R39D Evaluation
+
+on:
+  push:
+    branches:
+      - research/beat-the-bookie-timeseries-r39b
+    paths:
+      - '.github/workflows/football-beat-the-bookie-r39d-evaluation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-second100-decision-boundary:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.2.6
+
+      - name: Verify exact preregistration and code identities
+        run: |
+          set -euo pipefail
+          python -m json.tool football-data/research/beat_the_bookie_r39/preregistration_r39d.json >/dev/null
+          python -m py_compile football-data/research/beat_the_bookie_r39/evaluate_draw_policy_r39d.py
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/preregistration_r39d.json)" = "0d30417972bfa26172a542f3e122822569246b4f"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_policy_r39d.py)" = "ed334dffaf81d2009853aaf7eb5108eb2a47ce79"
+          test "$(git hash-object football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py)" = "f92e9e9b344ad87133cd7e7cc1b0bdfc0b6f04fb"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/beat_the_bookie_r39/preregistration_r39d.json').read_text())
+          assert r['status']=='PRE_REGISTERED_BEFORE_R39D_HOLDOUT_LABEL_ACCESS'
+          assert r['identity_binding']['identity_set_sha256']=='739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4'
+          assert r['identity_binding']['excluded_r39c_identity_set_sha256']=='d131574b30283bceb4a05346a3614263e2ebbd0b2392795e280b5c8c93170d48'
+          assert r['identity_binding']['old_new_overlap']==0
+          assert r['identity_binding']['selection_lock_run_id']==31388761578
+          assert r['identity_binding']['selection_lock_artifact_id']==9062836528
+          assert r['policy_selection']['policy_window_days']==60
+          assert r['policy_selection']['r39c_old100_labels_allowed'] is False
+          assert r['policy_selection']['r39d_holdout_labels_allowed_before_freeze'] is False
+          assert r['probability_model']['l2_lambda']==1.0
+          assert len(r['features'])==15
+          assert r['evaluation']['cluster_bootstrap']=={
+              'cluster':'match_date','samples':5000,'seed':511391,
+              'metric':'R39D policy accuracy minus market argmax accuracy'
+          }
+          assert r['hard_limits']['formal_weight']==0
+          assert r['hard_limits']['formal_promotion_allowed'] is False
+          print('PASS_R39D_FROZEN_PREREGISTRATION')
+          PY
+
+      - name: Synthetic decision-policy execution check
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          p=Path('football-data/research/beat_the_bookie_r39/evaluate_draw_policy_r39d.py')
+          spec=importlib.util.spec_from_file_location('r39d',p)
+          m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          assert m.policy_decision([0.50,0.25,0.25],0.31,0.30)==1
+          assert m.policy_decision([0.50,0.25,0.25],0.29,0.30)==0
+          assert m.policy_decision([0.20,0.25,0.55],0.29,0.30)==2
+          z=m.decision_metrics([1,0,2,1],[1,0,1,2])
+          assert z['rows']==4 and z['hits']==2 and z['predicted_draw_count']==2
+          print('PASS_R39D_SYNTHETIC_POLICY_CHECK')
+          PY
+
+      - name: Download exact bound source
+        run: |
+          set -euo pipefail
+          rm -rf r39d-source r39d-sanitized r39d-output r39d-source.zip
+          mkdir -p r39d-source r39d-sanitized r39d-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
+            -o r39d-source.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('r39d-source.zip')
+          wanted={'odds_series.csv.gz','odds_series_b.csv.gz'}
+          assert wanted <= set(z.namelist())
+          for name in wanted: z.extract(name,'r39d-source')
+          PY
+          echo 'cc6e0ad9b818d9d8a06e857d65d8dd8f32d8d7a21d9b9b49a5c27d4e9eb1c722  r39d-source/odds_series.csv.gz' | sha256sum -c -
+          echo '3d24e8c8021559b03afa17194a3748929e48b27311fea5da045e7f0040c957c5  r39d-source/odds_series_b.csv.gz' | sha256sum -c -
+
+      - name: Build score-free feature inputs
+        run: |
+          set -euo pipefail
+          for base in odds_series odds_series_b; do
+            gzip -dc "r39d-source/${base}.csv.gz" \
+              | cut -d',' -f1-3,6- \
+              | gzip -c > "r39d-sanitized/${base}_no_scores.csv.gz"
+          done
+          python - <<'PY'
+          import csv,gzip
+          for base in ('odds_series','odds_series_b'):
+              p=f'r39d-sanitized/{base}_no_scores.csv.gz'
+              with gzip.open(p,'rt',encoding='utf-8-sig',newline='') as f:
+                  h=next(csv.reader(f))
+              assert h[:3]==['match_id','match_date','match_time']
+              assert 'score_home' not in h and 'score_away' not in h
+              assert len(h)==32*72*3+3
+          print('PASS_R39D_SCORE_FREE_FEATURE_INPUTS')
+          PY
+
+      - name: Execute frozen pre-holdout policy selection then second fixed100 evaluation
+        run: |
+          set -euo pipefail
+          python football-data/research/beat_the_bookie_r39/evaluate_draw_policy_r39d.py \
+            --prereg football-data/research/beat_the_bookie_r39/preregistration_r39d.json \
+            --sanitized-dir r39d-sanitized \
+            --original-dir r39d-source \
+            --parent-code football-data/research/beat_the_bookie_r39/evaluate_draw_residual_r39c.py \
+            --out-dir r39d-output
+
+      - name: Verify label boundary and research-only result
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out=Path('r39d-output')
+          p=json.loads((out/'policy_selection_freeze_r39d.json').read_text())
+          r=json.loads((out/'result_r39d.json').read_text())
+          assert p['r39c_old100_labels_accessed_for_policy']==0
+          assert p['r39d_holdout_labels_accessed_before_policy_freeze']==0
+          assert r['identity_set_sha256']=='739e9c7b3340ed52e02fb360a7c029a63d3da46ec28d1f1ddf3ccceec0f6c9b4'
+          assert r['formal_weight']==0 if r['status'].startswith('STOP_R39D_') else r['hard_limits']['formal_weight']==0
+          if r['status']=='STOP_R39D_NO_FEASIBLE_DECISION_POLICY_BEFORE_HOLDOUT_LABELS':
+              assert r['r39c_old100_holdout_labels_accessed']==0
+              assert r['r39d_holdout_labels_accessed']==0
+              assert not (out/'per_match_r39d.json').exists()
+              assert not (out/'model_policy_freeze_r39d.json').exists()
+              print('VALID_STOP_R39D_BEFORE_HOLDOUT_LABELS')
+          else:
+              assert r['status'] in {
+                  'PASS_R39D_DECISION_BOUNDARY_CHALLENGER_EXPLORATION_ONLY',
+                  'NO_R39D_DECISION_BOUNDARY_INCREMENT_FIXED100_EXPLORATION_ONLY'
+              }
+              a=r['access_audit']
+              assert a['training_labels_accessed']==49511
+              assert a['holdout_labels_accessed_before_policy_freeze']==0
+              assert a['holdout_labels_accessed_before_model_policy_freeze']==0
+              assert a['r39c_old100_holdout_score_values_accessed']==0
+              assert a['r39d_new100_holdout_score_values_accessed_after_freeze']==100
+              assert (out/'model_policy_freeze_r39d.json').exists()
+              assert (out/'per_match_r39d.json').exists()
+              assert r['old_new_overlap']==0
+              assert r['hard_limits']['formal_model_mutation']==0
+              assert r['hard_limits']['formal_data_mutation']==0
+              assert r['hard_limits']['formal_config_mutation']==0
+              assert r['hard_limits']['CURRENT_mutation']==0
+              assert r['hard_limits']['main_mutation']==0
+              print(json.dumps(r,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Delete raw source before artifact upload
+        if: always()
+        run: rm -rf r39d-source r39d-sanitized r39d-source.zip
+
+      - name: Upload R39D frozen research evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beat-the-bookie-r39d-evaluation-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: r39d-output/
+          if-no-files-found: error
+          retention-days: 30
