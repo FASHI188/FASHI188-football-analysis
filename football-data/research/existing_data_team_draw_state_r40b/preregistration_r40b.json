@@ -1,0 +1,74 @@
+{
+  "schema_version": "R40B-EXISTING-DATA-TEAM-DRAW-STATE-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Test whether strictly-prior team-specific Draw propensity and recent Draw state add match-specific Draw information beyond the existing strength/balance representations, on an eighth deterministic 100-match sample disjoint from R39U through R40A.",
+  "sample": {
+    "seed": "R40B_TEAM_DRAW_STATE_FIXED100_20260810",
+    "size": 100,
+    "minimum_strictly_prior_same_competition_rows": 200,
+    "required_overlap_with_r39u": 0,
+    "required_overlap_with_r39v": 0,
+    "required_overlap_with_r39w": 0,
+    "required_overlap_with_r39x": 0,
+    "required_overlap_with_r39y": 0,
+    "required_overlap_with_r39z": 0,
+    "required_overlap_with_r40a": 0,
+    "status": "RETROSPECTIVE_DISJOINT_TEAM_STATE_CHALLENGER_NOT_BLIND"
+  },
+  "team_state": {
+    "scope": "strictly-prior same-competition matches only; all matches on the same date are featurized before any same-date outcome updates team state",
+    "competition_prior_draw_rate": "strictly-prior same-competition draw rate",
+    "empirical_bayes_prior_strength": 5.0,
+    "features": [
+      "home_team_last20_overall_draw_rate_eb",
+      "away_team_last20_overall_draw_rate_eb",
+      "home_team_last5_overall_draw_rate_eb",
+      "away_team_last5_overall_draw_rate_eb",
+      "home_team_last10_home_role_draw_rate_eb",
+      "away_team_last10_away_role_draw_rate_eb",
+      "home20_x_away20_draw_rate_interaction",
+      "home_role10_x_away_role10_draw_rate_interaction"
+    ],
+    "no_team_history_behavior": "EB rate equals strictly-prior competition draw rate when the team window contains zero matches; no target/future information is used"
+  },
+  "model": {
+    "family": "binary Draw logistic from team-state features + unchanged conditional H/A lane",
+    "draw_l2": 10.0,
+    "intercept_penalized": false,
+    "standardization": "median/IQR fitted on each target's strictly-prior feature-eligible same-competition training rows only",
+    "solver": "deterministic Newton/IRLS with backtracking line search",
+    "conditional_HA": "exact R39W conditional Home-vs-Away logistic on non-draws, L2=10",
+    "mapping": "P(D)=team-state Draw logistic; remaining probability split by conditional H/A probability; exact H/D/A probability conservation",
+    "manual_draw_boost": false,
+    "class_weighting": false,
+    "candidate_grid": false,
+    "post_result_tuning": false,
+    "abstention": false,
+    "top1": "argmax H/D/A with no Draw tie preference"
+  },
+  "baseline": {
+    "name": "exact R39W two-stage linear balance/intensity Draw model plus conditional H/A lane",
+    "same_sample": true
+  },
+  "frozen_gate": {
+    "draw_auc": "team_draw_auc >= baseline_draw_auc + 0.02 AND team_draw_auc > 0.56",
+    "draw_f1": "team_draw_f1 >= 0.20 AND team_draw_f1 >= baseline_draw_f1 + 0.08",
+    "draw_recall": "team_draw_recall >= 0.15",
+    "proper_score_noninferiority": "team_log_loss <= baseline_log_loss + 0.01 AND team_brier <= baseline_brier + 0.01",
+    "accuracy_noninferiority": "team_accuracy >= baseline_accuracy - 0.02",
+    "all_required": true,
+    "if_pass": "Authorizes only time-ordered rolling evaluation of the exact team-state architecture; no formal promotion.",
+    "if_fail": "Stop this team-specific Draw-state route; no post-result window/L2/threshold tuning on the eighth sample."
+  },
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
