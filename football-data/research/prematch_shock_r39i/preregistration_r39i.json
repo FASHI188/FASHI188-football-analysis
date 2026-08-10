@@ -1,0 +1,158 @@
+{
+  "schema_version": "r39i-prematch-discrete-shock-v1",
+  "stage": "R39I_PREMATCH_DISCRETE_SHOCK_FIXED100",
+  "research_question": "Do discrete pre-match lineup and workload shocks add stable draw-probability information beyond the closing 1X2 market and a market-context residual baseline?",
+  "source_binding": {
+    "transfermarkt_dataset": "davidcariboo/player-scores",
+    "football_data_provider": "Football-Data.co.uk",
+    "coverage_run_id": 31346607748,
+    "coverage_artifact_id": 9047541116,
+    "coverage_artifact_sha256": "cdd49ea7a991d35862652fcda6e57c997089c08e3f26333a3b92092526802281",
+    "complete_preholdout_rows": 8161,
+    "holdout_pool_rows": 1273,
+    "holdout_season": "2526",
+    "fixed100_seed": 51145,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc",
+    "fixed100_labels_accessed_before_evaluation": 0
+  },
+  "target_and_offset": {
+    "target": "draw_vs_non_draw",
+    "closing_market": ["AvgCH","AvgCD","AvgCA"],
+    "devig": "multiplicative inverse-odds normalization",
+    "equation": "logit(Pdraw_model)=logit(Pdraw_closing_market)+residual(X)",
+    "market_draw_logit_coefficient": 1.0,
+    "threeway_mapping": "preserve closing-market home:away non-draw probability ratio"
+  },
+  "strict_information_contract": {
+    "current_match_starting_xi_allowed": true,
+    "current_match_manager_identity_allowed": true,
+    "current_match_score_or_result_forbidden": true,
+    "current_match_player_performance_forbidden": true,
+    "historical_lineup_rows_must_be_strictly_before_target_date": true,
+    "future_lineups_forbidden": true,
+    "future_player_valuations_not_used": true,
+    "same_day_prior_match_not_used_for_same_club": true
+  },
+  "lineup_semantics": {
+    "starter_rule": "normalized Transfermarkt game_lineups.type contains 'starting'",
+    "required_unique_starters_each_side": 11,
+    "position_groups": {
+      "goalkeeper": ["goalkeeper"],
+      "defense": ["back","defender","defence"],
+      "midfield": ["midfield"],
+      "attack": ["winger","forward","striker"]
+    },
+    "core_definition": "player started at least 60 percent of the club's last up-to-10 complete strictly-prior matches, with at least 3 prior complete matches required",
+    "history_scope": "all Transfermarkt competitions available for the club, not only domestic league"
+  },
+  "team_shock_features_per_side": [
+    "starting_XI_change_share_vs_last_complete_match",
+    "goalkeeper_changed",
+    "defense_unit_change_share",
+    "midfield_unit_change_share",
+    "attack_unit_change_share",
+    "captain_changed_when_both_captains_identified",
+    "manager_changed_when_both_managers_identified",
+    "core_starter_absent_share",
+    "core_attacker_absent_share",
+    "rest_days_capped14_scaled",
+    "club_games_last14_days_capped5_scaled",
+    "current_XI_prior_starts_last14_days_mean_capped5_scaled",
+    "consecutive_prior_away_games_capped3_scaled"
+  ],
+  "market_context_features": [
+    "closing_absolute_home_away_probability_gap",
+    "closing_threeway_entropy"
+  ],
+  "full_feature_dimension": 28,
+  "missing_semantics": {
+    "captain_changed": "0 if either captain unavailable",
+    "manager_changed": "0 if either manager unavailable",
+    "unit_change_share": "0 only if the unit has no mapped players on both current and prior XI; unknown-position players remain represented by overall XI change",
+    "no_manual_probability_or_xG_imputation": true
+  },
+  "chronological_design": {
+    "preholdout_order": "match_datetime_then_identity",
+    "fit_fraction": 0.70,
+    "validation_fraction": 0.15,
+    "policy_fraction": 0.15,
+    "all_2526_labels_forbidden_before_model_and_policy_freeze": true,
+    "minimum_eligible_preholdout_rows_after_strict_history": 7000,
+    "fixed100_rows_must_all_be_feature_eligible_before_any_holdout_label_access": true
+  },
+  "models": {
+    "family": "deterministic_L2_logistic_with_fixed_market_logit_offset_Newton",
+    "market_context_baseline_features": 2,
+    "full_discrete_shock_features": 28,
+    "l2_candidates_each": [1.0,10.0,100.0],
+    "standardization": "fit partition only for validation; fit+validation only after validation gate for policy freeze",
+    "class_weighting": "none",
+    "candidate_selection": ["lowest_validation_HDA_LogLoss","lowest_validation_binary_Draw_LogLoss","lowest_L2"]
+  },
+  "validation_gate_all_required": {
+    "full_HDA_LogLoss_strictly_better_than_raw_closing_market": true,
+    "full_binary_Draw_LogLoss_strictly_better_than_raw_closing_market": true,
+    "full_HDA_LogLoss_strictly_better_than_selected_market_context_baseline": true,
+    "full_binary_Draw_LogLoss_strictly_better_than_selected_market_context_baseline": true,
+    "full_Draw_AUC_strictly_better_than_selected_market_context_baseline": true,
+    "full_HDA_LogLoss_beats_market_context_baseline_in_at_least_divisions": 3,
+    "if_fail": "STOP_R39I_BEFORE_HOLDOUT_LABEL_ACCESS_DISCRETE_SHOCK_NO_INCREMENT"
+  },
+  "policy": {
+    "decision_score": "Pdraw_model_minus_max(PHome_model,PAway_model)",
+    "coverages": [0.05,0.10,0.15,0.20],
+    "outside_selected_draw_lane": "choose higher closing-market non-draw side",
+    "eligible_requires_accuracy_strictly_better_than_closing_market": true,
+    "draw_precision_at_least_policy_draw_prevalence_plus": 0.05,
+    "draw_f1_min": 0.15,
+    "selection_order": ["highest_accuracy","highest_draw_F1","highest_draw_precision","lowest_coverage"],
+    "if_no_lane": "STOP_R39I_BEFORE_HOLDOUT_LABEL_ACCESS_NO_POLICY_LANE"
+  },
+  "holdout": {
+    "fixed100": true,
+    "labels_read_only_after_model_and_policy_freeze": true,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 511450,
+    "gate_all_required": {
+      "decision_accuracy_strictly_better_than_closing_market": true,
+      "draw_precision_min": 0.35,
+      "draw_recall_min": 0.10,
+      "draw_f1_min": 0.15,
+      "predicted_draw_count_min": 5,
+      "predicted_draw_count_max": 25,
+      "full_HDA_LogLoss_nonworse_than_closing_market": true,
+      "full_HDA_LogLoss_strictly_better_than_market_context_baseline": true,
+      "full_binary_Draw_LogLoss_strictly_better_than_market_context_baseline": true,
+      "full_Draw_AUC_strictly_better_than_market_context_baseline": true
+    },
+    "pass_status": "PASS_R39I_DISCRETE_SHOCK_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39I_DISCRETE_SHOCK_INCREMENT_FIXED100"
+  },
+  "label_order_contract": {
+    "preholdout_labels_may_be_read_after_feature_identity_freeze": true,
+    "2526_nonfixed100_labels_may_not_be_read": true,
+    "fixed100_labels_before_model_and_policy_freeze": 0,
+    "fixed100_labels_after_all_preholdout_gates_pass": 100,
+    "freeze_receipt_must_be_persisted_before_fixed100_label_access": true,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "prior_blind_sets": {
+    "beat_the_bookie_2425_sha256": "1ccb7e5dd7a3328ee9cc47e6886dc3a8348203dac2ed414c0da59b4185031ae5",
+    "r39g_2425_sha256": "0e95f2b0234c125c440c2d2c87eca20c41270a22474ec4871282b51a56bfab62",
+    "r39h_2425_sha256": "1c87503823f858e03c34ee42c2b3847460da466f59ee4ffa2dfac4628c6169eb",
+    "used_in_r39i": false
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
