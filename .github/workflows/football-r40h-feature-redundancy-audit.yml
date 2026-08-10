@@ -1,0 +1,50 @@
+name: Football R40H Feature Redundancy Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40h-feature-redundancy-audit.yml'
+      - 'football-data/research/feature_redundancy_audit_r40h/**'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-feature-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Compile auditor
+        run: python -m py_compile football-data/research/feature_redundancy_audit_r40h/audit_r40h.py
+      - name: Run zero-label feature audit
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/r40h-output
+          python football-data/research/feature_redundancy_audit_r40h/audit_r40h.py
+      - name: Verify boundaries
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('/tmp/r40h-output'); p=root/'r40h_audit.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['status']=='PASS_R40H_ZERO_LABEL_FEATURE_AUDIT'
+          h=r['hard_boundaries']
+          assert h['target_label_values_referenced']==0 and h['model_fits']==0 and h['candidate_probabilities']==0
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['formal_weight']==0
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False and h['current_rule_mutation'] is False and h['main_mutation'] is False
+          assert (root/'r40h_audit.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({'unused_pre_match_fields':r['unused_pre_match_fields'],'pairwise_redundancy':r['pairwise_redundancy'],'flag_distributions':r['flag_distributions'],'r39u_raw_fields_missing':r['r39u_raw_fields_missing']},indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40h-feature-redundancy-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/r40h-output
+          retention-days: 30
+          if-no-files-found: error
