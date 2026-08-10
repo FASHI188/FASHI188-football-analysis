@@ -1,0 +1,120 @@
+name: Football R39O Zero-Label Source Audit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39o-source-audit.yml'
+      - 'football-data/research/lineup_surprise_position_r39o/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r39o-source-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify zero-label audit contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/lineup_surprise_position_r39o/audit_source_r39o.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/lineup_surprise_position_r39o/source_audit_registration_r39o.json').read_text())
+          assert r['identity_lane']['fixed100_labels_accessed_before_r39o']==0
+          assert r['identity_lane']['no_reselection'] is True
+          assert r['audit_only_quantities']['feature_selection_from_labels'] is False
+          assert r['audit_only_quantities']['model_fit'] is False
+          assert all(v==0 for v in r['no_target_label_contract'].values())
+          print('PASS_R39O_ZERO_LABEL_AUDIT_CONTRACT')
+          PY
+      - name: Download and sanitize Transfermarkt identity, lineup position and valuation tables
+        run: |
+          set -euo pipefail
+          rm -rf r39o-tm r39o-market r39o-output player_scores.zip /tmp/r39o-*.csv
+          mkdir -p r39o-tm r39o-market r39o-output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/davidcariboo/player-scores' -o player_scores.zip
+          unzip -p player_scores.zip games.csv > /tmp/r39o-games.csv
+          unzip -p player_scores.zip game_lineups.csv > /tmp/r39o-lineups.csv
+          unzip -p player_scores.zip player_valuations.csv > /tmp/r39o-valuations.csv
+          python - <<'PY'
+          import csv
+          specs=[
+            ('/tmp/r39o-games.csv','r39o-tm/games_identity.csv',['game_id','competition_id','season','date','home_club_id','away_club_id','home_club_name','away_club_name']),
+            ('/tmp/r39o-lineups.csv','r39o-tm/lineups_identity_position.csv',['game_id','player_id','club_id','type','position','number','team_captain']),
+            ('/tmp/r39o-valuations.csv','r39o-tm/valuations_prior.csv',['player_id','date','market_value_in_eur'])]
+          for src,dst,keep in specs:
+              with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f,open(dst,'w',encoding='utf-8',newline='') as g:
+                  rd=csv.DictReader(f);missing=[c for c in keep if c not in (rd.fieldnames or [])]
+                  if missing:raise SystemExit(f'{src} missing {missing}')
+                  w=csv.DictWriter(g,fieldnames=keep);w.writeheader()
+                  for row in rd:w.writerow({c:row.get(c,'') for c in keep})
+          PY
+          rm -f /tmp/r39o-games.csv /tmp/r39o-lineups.csv /tmp/r39o-valuations.csv player_scores.zip
+      - name: Download and sanitize Football-Data closing-market identity only
+        run: |
+          set -euo pipefail
+          for season in 1920 2021 2122 2223 2324 2425 2526; do
+            for div in E0 D1 I1 SP1 F1; do
+              raw="/tmp/r39o-${season}_${div}.csv";out="r39o-market/${season}_${div}.csv"
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+                "https://www.football-data.co.uk/mmz4281/${season}/${div}.csv" -o "$raw"
+              python - "$raw" "$out" "$season" <<'PY'
+          import csv,sys
+          src,dst,season=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgCH','AvgCD','AvgCA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f,open(dst,'w',encoding='utf-8',newline='') as g:
+              rd=csv.DictReader(f);missing=[c for c in keep if c not in (rd.fieldnames or [])]
+              if missing:raise SystemExit(f'{src} missing {missing}')
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in rd:w.writerow({'Season':season,**{c:row.get(c,'') for c in keep}})
+          PY
+              rm -f "$raw"
+            done
+          done
+      - name: Run zero-label R39O source audit
+        run: |
+          set -euo pipefail
+          python football-data/research/lineup_surprise_position_r39o/audit_source_r39o.py \
+            --registration football-data/research/lineup_surprise_position_r39o/source_audit_registration_r39o.json \
+            --r39i-registration football-data/research/prematch_shock_r39i/coverage_registration_r39i.json \
+            --market-dir r39o-market --games r39o-tm/games_identity.csv \
+            --lineups r39o-tm/lineups_identity_position.csv --valuations r39o-tm/valuations_prior.csv \
+            --out-dir r39o-output
+      - name: Verify zero-label terminal boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39o-output/source_audit_receipt_r39o.json').read_text())
+          assert r['status']=='PASS_R39O_ZERO_LABEL_SOURCE_AUDIT'
+          assert r['identity_lane']=={'all':9434,'preholdout':8161,'holdout_2526':1273,'fixed100':100,'fixed100_identity_sha256':'f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc'}
+          assert r['strict_valuation_lag_violations']==0
+          assert all(v==0 for v in r['zero_label_contract'].values())
+          print(json.dumps(r,indent=2))
+          PY
+      - name: Delete mutable source inputs before artifact
+        run: rm -rf r39o-tm r39o-market
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39o-zero-label-source-audit-${{ github.sha }}-${{ github.run_id }}
+          path: r39o-output/
+          if-no-files-found: error
+          retention-days: 30
