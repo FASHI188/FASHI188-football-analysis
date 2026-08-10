@@ -1,0 +1,92 @@
+name: Football R39J Source Audit
+
+on:
+  push:
+    branches: [research/market-draw-regime-r39j]
+    paths:
+      - 'football-data/research/market_regime_r39j/source_registration_r39j.json'
+      - 'football-data/research/market_regime_r39j/audit_market_regime_coverage_r39j.py'
+      - '.github/workflows/football-r39j-source-audit.yml'
+  pull_request:
+    paths:
+      - 'football-data/research/market_regime_r39j/source_registration_r39j.json'
+      - 'football-data/research/market_regime_r39j/audit_market_regime_coverage_r39j.py'
+      - '.github/workflows/football-r39j-source-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-market-regime-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify zero-label contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/market_regime_r39j/audit_market_regime_coverage_r39j.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/market_regime_r39j/source_registration_r39j.json').read_text())
+          assert p['no_label_contract']['score_fields_read']==0
+          assert p['no_label_contract']['result_labels_read']==0
+          assert p['no_label_contract']['model_fit']==0
+          assert p['hard_limits']['formal_weight']==0
+          PY
+      - name: Download Football-Data and persist market identity only
+        run: |
+          set -euo pipefail
+          rm -rf r39j-market r39j-output r39j-raw
+          mkdir -p r39j-market r39j-output r39j-raw
+          for season in 1920 2021 2122 2223 2324 2425 2526; do
+            for div in E0 D1 I1 SP1 F1; do
+              raw="r39j-raw/${season}_${div}.csv"
+              dst="r39j-market/${season}_${div}.csv"
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+                "https://www.football-data.co.uk/mmz4281/${season}/${div}.csv" -o "$raw"
+              python - "$raw" "$dst" "$season" <<'PY'
+          import csv,sys
+          src,dst,season=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA','Avg>2.5','Avg<2.5','AvgC>2.5','AvgC<2.5','AHh','AvgAHH','AvgAHA','AHCh','AvgCAHH','AvgCAHA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f, open(dst,'w',encoding='utf-8',newline='') as g:
+              r=csv.DictReader(f);missing=[c for c in keep if c not in (r.fieldnames or [])]
+              if missing: raise SystemExit(f'{src} missing {missing}')
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in r:w.writerow({'Season':season,**{c:row.get(c,'') for c in keep}})
+          PY
+            done
+          done
+          rm -rf r39j-raw
+      - name: Audit coverage and lock 2025/26 fixed100 without labels
+        run: |
+          set -euo pipefail
+          python football-data/research/market_regime_r39j/audit_market_regime_coverage_r39j.py \
+            --registration football-data/research/market_regime_r39j/source_registration_r39j.json \
+            --market-dir r39j-market --out-dir r39j-output
+      - name: Verify terminal zero-label state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39j-output/source_audit_r39j.json').read_text())
+          assert r['status']=='PASS_R39J_ZERO_LABEL_MARKET_COVERAGE_AND_FIXED100_LOCK'
+          assert r['fixed100_rows']==100
+          assert r['audit_access']=={'score_values':0,'result_labels':0,'model_fit':0,'regime_threshold_selection':0,'holdout_labels':0}
+          print(json.dumps({k:r[k] for k in ['status','complete_preholdout_rows','complete_holdout_rows','fixed100_identity_sha256','fixed100_min_date','fixed100_max_date']},indent=2))
+          PY
+      - name: Delete market source before artifact
+        run: rm -rf r39j-market
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39j-source-audit-${{ github.sha }}-${{ github.run_id }}
+          path: r39j-output/
+          if-no-files-found: error
+          retention-days: 30
