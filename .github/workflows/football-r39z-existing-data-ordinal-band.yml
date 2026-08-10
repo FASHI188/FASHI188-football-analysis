@@ -1,0 +1,93 @@
+name: Football R39Z Existing Data Ordinal Band
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r39z-existing-data-ordinal-band.yml'
+      - 'football-data/research/existing_data_ordinal_band_r39z/**'
+
+permissions:
+  contents: read
+
+jobs:
+  sixth-disjoint-fixed100-ordinal-band:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R39Z preregistration and frozen dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_ordinal_band_r39z/evaluate_r39z.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_ordinal_band_r39z/preregistration_r39z.json').read_text())
+          assert p['schema_version']=='R39Z-EXISTING-DATA-ORDINAL-BAND-1.0'
+          assert p['sample']['size']==100
+          for k in ('r39u','r39v','r39w','r39x','r39y'):
+              assert p['sample'][f'required_overlap_with_{k}']==0
+          a=p['algorithm']
+          assert a['ridge_l2']==10.0
+          assert a['target_sample_threshold_tuning'] is False
+          assert a['manual_draw_boost'] is False
+          assert a['class_weighting'] is False
+          assert a['abstention'] is False
+          assert a['probabilistic_claim'] is False
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R39Z_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute R39Z sixth disjoint fixed100
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r39z-output"
+          python football-data/research/existing_data_ordinal_band_r39z/evaluate_r39z.py \
+            --prereg football-data/research/existing_data_ordinal_band_r39z/preregistration_r39z.json \
+            --root . \
+            --out "$RUNNER_TEMP/r39z-output"
+
+      - name: Verify R39Z output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39z-output'
+          p=root/'r39z_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R39Z_ORDINAL_DRAW_BAND_DECISION_INCREMENT','FAIL_R39Z_ORDINAL_DRAW_BAND_NO_INCREMENT'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['overlap']=={'r39u':0,'r39v':0,'r39w':0,'r39x':0,'r39y':0}
+          assert len(r['audit'])==100
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r39z_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'], 'passed':r['passed'],
+            'sample_sha':r['r39z_fixed100_identity_sha256'], 'overlap':r['overlap'],
+            'ordinal_metrics':r['ordinal_metrics'], 'baseline_metrics':r['baseline_metrics'],
+            'gate':r['gate']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39z-existing-data-ordinal-band-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39z-output
+          retention-days: 30
+          if-no-files-found: error
