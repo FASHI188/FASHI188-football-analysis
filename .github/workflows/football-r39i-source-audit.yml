@@ -1,0 +1,68 @@
+name: Football R39I Source Audit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-r39i-source-audit.yml'
+      - 'football-data/research/prematch_shock_r39i/source_audit_registration_r39i.json'
+      - 'football-data/research/prematch_shock_r39i/inventory_player_scores_r39i.py'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify frozen zero-label contract
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/prematch_shock_r39i/inventory_player_scores_r39i.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('football-data/research/prematch_shock_r39i/source_audit_registration_r39i.json').read_text())
+          assert all(r['forbidden_in_this_stage'].values())
+          assert r['hard_limits']['formal_weight']==0
+          print('PASS_R39I_ZERO_LABEL_SOURCE_CONTRACT')
+          PY
+      - name: Download candidate Transfermarkt dataset
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/davidcariboo/player-scores' -o player_scores.zip
+      - name: Inventory schema and date coverage only
+        run: |
+          set -euo pipefail
+          rm -rf r39i-out && mkdir -p r39i-out
+          python football-data/research/prematch_shock_r39i/inventory_player_scores_r39i.py \
+            --zip player_scores.zip \
+            --registration football-data/research/prematch_shock_r39i/source_audit_registration_r39i.json \
+            --out-dir r39i-out
+          rm -f player_scores.zip
+      - name: Verify no-label audit
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39i-out/source_inventory_r39i.json').read_text())
+          assert all(v==0 for v in r['audit_access'].values())
+          assert r['status'] in {'PASS_R39I_SOURCE_SCHEMA_FEASIBLE_ZERO_LABEL','STOP_R39I_SOURCE_SCHEMA_INSUFFICIENT'}
+          print(json.dumps({'status':r['status'],'lineup_linkage_ok':r['lineup_linkage_ok'],'missing_required_tables':r['missing_required_tables']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39i-source-audit-${{ github.sha }}-${{ github.run_id }}
+          path: r39i-out/
+          if-no-files-found: error
+          retention-days: 30
