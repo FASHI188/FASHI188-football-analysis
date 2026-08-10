@@ -1,0 +1,69 @@
+{
+  "schema_version": "R40F-ROLLING-DRAW-CENTRALITY-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Diagnose whether Draw occurrence is stably concentrated near the center of a learned A-D-H latent strength axis across time-ordered competition-season folds, using all existing repository data rather than consuming another random fixed100 sample.",
+  "data_glob": "football-data/training_datasets/*/point_in_time.csv",
+  "folding": {
+    "unit": "competition_id x season",
+    "season_order": "ascending by the minimum match date observed for each competition-season",
+    "train_rule": "for each test competition-season, train only same-competition rows with match date strictly before the minimum date of that test season",
+    "minimum_train_rows": 200,
+    "minimum_test_rows": 80,
+    "same_season_training": false,
+    "same_date_leakage": false
+  },
+  "latent_axis": {
+    "target_encoding": {"A": -1.0, "D": 0.0, "H": 1.0},
+    "features": [
+      "elo_difference_with_home_advantage",
+      "home_last5_ppg_minus_away_last5_ppg",
+      "home_last5_gf_minus_away_last5_gf",
+      "home_last5_ga_minus_away_last5_ga",
+      "home_history_ppg_minus_away_history_ppg",
+      "home_history_gf_rate_minus_away_history_gf_rate",
+      "home_history_ga_rate_minus_away_history_ga_rate"
+    ],
+    "standardization": "median/IQR fitted on training fold only",
+    "regression": "ridge least squares with unpenalized intercept",
+    "l2": 10.0
+  },
+  "centrality_definition": {
+    "train_draw_rate": "training-fold empirical Draw rate",
+    "central_band": "symmetric quantile band around the training fitted-score median with total training coverage equal to the training Draw rate: q_low=(1-pD_train)/2 and q_high=(1+pD_train)/2",
+    "deciles": "training fitted-score decile cutpoints; test rows are assigned using those frozen cutpoints",
+    "no_test_threshold_tuning": true
+  },
+  "primary_structural_gate": {
+    "pooled_central_draw_lift": "pooled test Draw rate inside central band minus pooled test Draw rate outside central band >= 0.03",
+    "fold_sign_stability": "at least 60% of eligible folds have positive central-band Draw lift",
+    "competition_sign_stability": "at least 60% of competitions represented by at least two eligible folds have positive pooled central-band Draw lift",
+    "central_decile_shape": "pooled Draw rate in central deciles 5-6 exceeds pooled Draw rate in outer deciles 1-2 and 9-10 by >= 0.02",
+    "axis_direction_sanity": "pooled H rate in top 30% exceeds bottom 30% by >=0.20 and pooled A rate in bottom 30% exceeds top 30% by >=0.20",
+    "all_required": true,
+    "if_pass": "Centrality is a stable structural Draw mechanism worthy of a separately preregistered model; this diagnostic itself has formal_weight=0.",
+    "if_fail": "Do not keep pursuing generic central-band Draw models on the current feature family."
+  },
+  "outputs": [
+    "eligible_fold_count",
+    "competition_count",
+    "rows_scored",
+    "fold_metrics",
+    "competition_aggregates",
+    "pooled_central_vs_outer_draw_rates",
+    "pooled_decile_H_D_A_rates",
+    "gate_results"
+  ],
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "random_fixed100_consumed": 0,
+    "candidate_probability_model_fit": 0,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
