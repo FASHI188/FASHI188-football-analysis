@@ -1,115 +1,17 @@
-name: Football R40I0A Result Duplicate Audit
+name: Football R40I0A Result Duplicate Audit FROZEN
 
 on:
-  pull_request:
-    branches:
-      - research/beat-the-bookie-timeseries-r39b
-    paths:
-      - '.github/workflows/football-r40i0a-result-duplicate-audit.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  zero-label-duplicate-result-id-audit:
-    if: ${{ github.run_attempt == 1 }}
+  frozen-failed-r40i0a:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Verify exact R40I0A contract
-        run: |
-          set -euo pipefail
-          python -m json.tool football-data/research/beat_the_bookie_r39/result_duplicate_quarantine_registration_r40i0a.json >/dev/null
-          python -m py_compile football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py
-          python -m py_compile football-data/research/beat_the_bookie_r39/audit_result_duplicate_ids_r40i0a.py
-          test "$(git hash-object football-data/research/beat_the_bookie_r39/result_duplicate_quarantine_registration_r40i0a.json)" = "e3e2883b294ffcd5058f248259df0031f8f4c99f"
-          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py)" = "120199c7c25cc325d44594c24286ceda56146d46"
-          test "$(git hash-object football-data/research/beat_the_bookie_r39/audit_result_duplicate_ids_r40i0a.py)" = "c25a99873ae8ad676d07bc9962f8d48d0dd2a642"
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          r=json.loads(Path('football-data/research/beat_the_bookie_r39/result_duplicate_quarantine_registration_r40i0a.json').read_text())
-          assert r['status']=='PRE_REGISTERED_ZERO_LABEL_DUPLICATE_RESULT_ID_AUDIT'
-          assert r['parent_r40i0']['verdict']=='STOP_R40I0_RESULT_IDENTITY_AUDIT'
-          assert r['parent_r40i0']['verdict_must_not_be_overridden'] is True
-          assert r['audit_contract']['duplicated_result_match_ids_in_frozen_eligible_must_equal']==0
-          assert r['hard_limits']['score_or_outcome_values_allowed'] is False
-          print('PASS_R40I0A_CONTRACT')
-          PY
-
-      - name: Download exact source and sanitize result to match_id only
-        run: |
-          set -euo pipefail
-          rm -rf r40i0a-source r40i0a-output r40i0a-archive.zip r40i0a-result-ids.csv
-          mkdir -p r40i0a-source r40i0a-output
-          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
-            --user-agent 'Mozilla/5.0' \
-            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
-            -o r40i0a-archive.zip
-          echo '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9  r40i0a-archive.zip' | sha256sum -c -
-          python - <<'PY'
-          import shutil,zipfile
-          from pathlib import PurePosixPath
-          z=zipfile.ZipFile('r40i0a-archive.zip')
-          odds=[m for m in z.namelist() if PurePosixPath(m).name.casefold()=='matches_odds.csv']
-          results=[m for m in z.namelist() if PurePosixPath(m).name.casefold()=='matches_results.csv']
-          assert len(odds)==1 and len(results)==1
-          with z.open(odds[0]) as src, open('r40i0a-source/Matches_Odds.csv','wb') as dst: shutil.copyfileobj(src,dst)
-          PY
-          echo 'bfa14f07a11581ffd793b1f44d3e7c9203c631d26ac1c692fe71a77f66579298  r40i0a-source/Matches_Odds.csv' | sha256sum -c -
-          unzip -p r40i0a-archive.zip Matches_Results.csv | cut -d',' -f1 > r40i0a-result-ids.csv
-          test "$(head -n1 r40i0a-result-ids.csv | tr -d '\r')" = 'match_id'
-          rm -f r40i0a-archive.zip
-          test ! -e r40i0a-source/Matches_Results.csv
-
-      - name: Audit duplicate result IDs against frozen eligible set
-        run: |
-          set -euo pipefail
-          python football-data/research/beat_the_bookie_r39/audit_result_duplicate_ids_r40i0a.py \
-            --registration football-data/research/beat_the_bookie_r39/result_duplicate_quarantine_registration_r40i0a.json \
-            --parent-code football-data/research/beat_the_bookie_r39/audit_result_identity_r40i0.py \
-            --odds-csv r40i0a-source/Matches_Odds.csv \
-            --result-id-file r40i0a-result-ids.csv \
-            --out-dir r40i0a-output
-
-      - name: Verify R40I0A hard boundary
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          s=json.loads(Path('r40i0a-output/result_duplicate_id_audit_status_r40i0a.json').read_text())
-          assert s['status']=='PASS_R40I0A_ZERO_LABEL_DUPLICATE_RESULT_ID_AUDIT',s['status']
-          assert s['parent_r40i0_verdict_preserved']=='STOP_R40I0_RESULT_IDENTITY_AUDIT'
-          assert s['gates']['frozen_identity_hashes_exact']
-          assert s['gates']['parent_duplicate_result_ids_exact']
-          assert s['gates']['duplicated_result_match_ids_in_frozen_eligible_zero']
-          assert s['gates']['frozen_eligible_coverage_exact']
-          n=s['no_label_audit']
-          assert n['score_or_outcome_values_accessed']==0
-          assert n['model_fits']==0 and n['prediction_metrics']==0 and n['thresholds_selected']==0
-          print(json.dumps(s,ensure_ascii=False,indent=2))
-          PY
-
-      - name: Delete source bytes before evidence upload
-        if: always()
-        run: rm -rf r40i0a-source r40i0a-archive.zip r40i0a-result-ids.csv
-
-      - name: Upload R40I0A evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: football-r40i0a-result-duplicate-audit-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
-          path: r40i0a-output/
-          if-no-files-found: error
-          retention-days: 30
+      - run: |
+          echo 'R40I0A authoritative run 31406567539 is frozen as STOP_R40I0A_DUPLICATE_RESULT_ID_AUDIT.'
+          echo 'Exactly one duplicate result match_id intersects the frozen eligible set; it is in fit only. Policy and blind have zero duplicated result IDs.'
+          echo 'Score/outcome values accessed: 0.'
