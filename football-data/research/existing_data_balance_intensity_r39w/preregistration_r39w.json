@@ -1,0 +1,71 @@
+{
+  "schema_version": "R39W-EXISTING-DATA-BALANCE-INTENSITY-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Test whether separating Draw from H/A and modeling Draw from competitive-balance plus recent scoring-intensity features improves draw identification on a third deterministic 100-match sample using repository-existing point_in_time.csv data only.",
+  "data_glob": "football-data/training_datasets/*/point_in_time.csv",
+  "sample": {
+    "seed": "R39W_BALANCE_INTENSITY_FIXED100_20260810",
+    "size": 100,
+    "minimum_strictly_prior_same_competition_rows": 200,
+    "exclude_r39u_seed": "R39U_FIXED100_20260810",
+    "exclude_r39v_seed": "R39V_DISJOINT_FIXED100_20260810",
+    "required_overlap_with_r39u": 0,
+    "required_overlap_with_r39v": 0,
+    "status": "RETROSPECTIVE_DISJOINT_EXPLORATORY_SAMPLE_NOT_BLIND"
+  },
+  "model": {
+    "architecture": "two-stage strictly-prior same-competition logistic: Draw-vs-nonDraw then Home-vs-Away conditional on nonDraw",
+    "draw_features": [
+      "abs_elo_difference_with_home_advantage",
+      "abs_home_last5_ppg_minus_away_last5_ppg",
+      "abs_home_last5_gf_minus_away_last5_gf",
+      "abs_home_last5_ga_minus_away_last5_ga",
+      "home_last5_gf_plus_away_last5_gf",
+      "home_last5_ga_plus_away_last5_ga",
+      "abs_home_history_ppg_minus_away_history_ppg",
+      "abs_home_history_gf_rate_minus_away_history_gf_rate",
+      "abs_home_history_ga_rate_minus_away_history_ga_rate"
+    ],
+    "nondraw_side_features": [
+      "elo_difference_with_home_advantage",
+      "home_last5_ppg_minus_away_last5_ppg",
+      "home_last5_gf_minus_away_last5_gf",
+      "home_last5_ga_minus_away_last5_ga",
+      "home_history_ppg_minus_away_history_ppg",
+      "home_history_gf_rate_minus_away_history_gf_rate",
+      "home_history_ga_rate_minus_away_history_ga_rate"
+    ],
+    "standardization": "median/IQR fitted separately for each target from strictly-prior same-competition pool",
+    "solver": "deterministic Newton/IRLS with backtracking line search",
+    "l2": 10.0,
+    "intercept_penalized": false,
+    "probability_clip": [1e-9, 0.999999999],
+    "top1": "argmax H/D/A with no Draw tie preference",
+    "abstention": false,
+    "manual_draw_boost": false,
+    "candidate_grid": false,
+    "post_result_tuning": false
+  },
+  "baseline": {
+    "name": "R39U same-competition analog kNN k50",
+    "k": 50
+  },
+  "frozen_gate": {
+    "draw_auc": "model_draw_auc > 0.55 AND model_draw_auc >= baseline_draw_auc + 0.02",
+    "draw_f1": "model_draw_f1 >= baseline_draw_f1 + 0.05",
+    "proper_score": "model_log_loss < baseline_log_loss",
+    "accuracy_noninferiority": "model_accuracy >= baseline_accuracy - 0.02",
+    "all_required": true
+  },
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
