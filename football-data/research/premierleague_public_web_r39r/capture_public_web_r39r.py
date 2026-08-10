@@ -136,11 +136,16 @@ def detect_markers(name: str, raw: bytes) -> dict[str, Any]:
     text = raw.decode("utf-8", errors="replace")
     lowered = text.lower()
     return {
+        "contains_user_agent_directive": "user-agent:" in lowered,
+        "contains_official_sitemap": "https://www.premierleague.com/en/sitemap/index.xml" in lowered,
         "contains_premier_league": "premier league" in lowered,
         "contains_arsenal": "arsenal" in lowered,
         "contains_coventry": "coventry" in lowered,
+        "contains_match_id_2645195": "2645195" in lowered,
+        "contains_news_id_4675097": "4675097" in lowered,
         "contains_lineup_token": any(token in lowered for token in ("lineup", "line-up", "starting xi", "starting 11")),
-        "contains_fixture_release_token": "380" in lowered and "2026/27" in text,
+        "contains_2026_27_token": "2026/27" in text or "2026-27" in lowered or "202627" in lowered,
+        "contains_380_token": "380" in lowered,
         "target_name": name,
     }
 
@@ -194,13 +199,27 @@ def main() -> int:
         fail("REQUEST_COUNT_MISMATCH")
     if any(row["http_status"] != 200 or not HEX64.fullmatch(row["sha256"]) for row in rows):
         fail("CAPTURE_AUDIT_FAILED")
-    if not rows[0]["markers"]["contains_premier_league"]:
+
+    # Identity checks intentionally use source-native tokens. robots.txt does not
+    # contain the phrase "Premier League"; it identifies the site via directives
+    # and the official sitemap URL.
+    robots = rows[0]["markers"]
+    if not robots["contains_user_agent_directive"] or not robots["contains_official_sitemap"]:
         fail("ROBOTS_CONTENT_IDENTITY_FAILED")
-    if not rows[1]["markers"]["contains_fixture_release_token"]:
+
+    fixture_list = rows[1]["markers"]
+    if not (
+        fixture_list["contains_news_id_4675097"]
+        or (fixture_list["contains_380_token"] and fixture_list["contains_2026_27_token"])
+    ):
         fail("FIXTURE_LIST_IDENTITY_FAILED")
+
     for row in rows[2:]:
-        if not row["markers"]["contains_arsenal"] or not row["markers"]["contains_coventry"]:
+        marker = row["markers"]
+        if not marker["contains_match_id_2645195"]:
             fail("MATCH_PAGE_IDENTITY_FAILED")
+        if not (marker["contains_arsenal"] or marker["contains_coventry"]):
+            fail("MATCH_TEAM_IDENTITY_FAILED")
 
     receipt = {
         "schema_version": "R39R-CAPTURE-RECEIPT-1.0",
@@ -219,7 +238,7 @@ def main() -> int:
         "api_keys_used": 0,
         "append_only_evidence": True,
         "formal_weight": 0,
-        "terminal": "PASS_R39R_FIRST_PUBLIC_WEB_FORWARD_CAPTURE" 
+        "terminal": "PASS_R39R_FIRST_PUBLIC_WEB_FORWARD_CAPTURE"
     }
     receipt_bytes = packed(receipt) + b"\n"
     (output / "capture_receipt_r39r.json").write_bytes(receipt_bytes)
@@ -228,6 +247,7 @@ def main() -> int:
         "terminal": receipt["terminal"],
         "request_count": receipt["request_count"],
         "receipt_sha256": sha256(receipt_bytes),
+        "markers": [{"name": row["name"], **row["markers"]} for row in rows],
         "observed_at": [row["observed_at_utc"] for row in rows],
         "raw_sha256": [row["sha256"] for row in rows],
     }, sort_keys=True))
