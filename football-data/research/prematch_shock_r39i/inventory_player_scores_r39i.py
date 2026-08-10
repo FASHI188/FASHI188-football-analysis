@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime,timezone
 
 DATE_NAMES={'date','datetime','game_date','valuation_date','transfer_date'}
+DATE_SCAN_TABLES={'games.csv','game_lineups.csv','player_valuations.csv'}
 FORBIDDEN_VALUE_NAMES={'home_club_goals','away_club_goals','home_goals','away_goals','goals','assists','minutes_played','yellow_cards','red_cards','result','score'}
 
 def norm(s:str)->str:
@@ -42,9 +43,10 @@ def main():
             cols=next(csv.reader([header])) if header else []
             date_cols=[c for c in cols if norm(c) in DATE_NAMES or norm(c).endswith('_date')]
             n=fast_line_count(z,info);dmin=dmax=None
-            # Only tables carrying an explicit date column are parsed row-wise.
-            # Outcome/performance values are never read or interpreted.
-            if date_cols:
+            # Only source-critical tables need row-wise date coverage. All other large
+            # tables are limited to schema + fast line count. No outcome/performance
+            # value is ever interpreted in this stage.
+            if name in DATE_SCAN_TABLES and date_cols:
                 wanted=set(date_cols)
                 with z.open(info) as raw:
                     text=(line.decode('utf-8-sig','replace') for line in raw)
@@ -57,6 +59,7 @@ def main():
                                 dmax=d if dmax is None or d>dmax else dmax
             item.update({
               'row_count':n,'columns':cols,'date_columns':date_cols,
+              'date_scanned':name in DATE_SCAN_TABLES and bool(date_cols),
               'min_date':str(dmin) if dmin else None,'max_date':str(dmax) if dmax else None,
               'linkage_columns':[c for c in cols if norm(c) in {'game_id','club_id','player_id','home_club_id','away_club_id'}],
               'lineup_type_column':[c for c in cols if norm(c) in {'type','lineup_type','position'}],
