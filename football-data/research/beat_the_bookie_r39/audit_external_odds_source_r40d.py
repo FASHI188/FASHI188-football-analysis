@@ -96,7 +96,13 @@ def main():
         rows=0; profile_limit=200000
         for row in reader:
             rows+=1
-            if rows>profile_limit: continue
+            # Identity coverage is a full-table source property and is counted on every row.
+            # This is zero-label and does not change the frozen >=20,000 gate.
+            for k in id_fields:
+                v=str(row.get(k,'') or '').strip()
+                if v and len(unique_ids[k])<100000: unique_ids[k].add(v)
+            if rows>profile_limit:
+                continue
             for k in fields:
                 v=str(row.get(k,'') or '').strip()
                 if not v: continue
@@ -105,7 +111,6 @@ def main():
                 if x is not None:
                     s['numeric']+=1
                     if x>1.0: s['gt1']+=1
-                if k in unique_ids and len(unique_ids[k])<100000: unique_ids[k].add(v)
             for k in time_fields:
                 v=str(row.get(k,'') or '').strip()
                 if not v: continue
@@ -118,7 +123,7 @@ def main():
     profile={}; timestamp_like=[]; odds_like=[]
     for k,s in stats.items():
         non=s['nonempty']; nr=s['numeric']/non if non else 0.0; gr=s['gt1']/s['numeric'] if s['numeric'] else 0.0; dr=s['datetime']/non if non else 0.0
-        profile[k]={'nonempty_profile_rows':non,'numeric_rate_nonempty':nr,'numeric_gt1_rate':gr,'datetime_parse_rate_nonempty':dr,'unique_values_sample_capped':len(unique_ids[k]) if k in unique_ids else None,'datetime_min':s['dt_min'],'datetime_max':s['dt_max']}
+        profile[k]={'nonempty_profile_rows':non,'numeric_rate_nonempty':nr,'numeric_gt1_rate':gr,'datetime_parse_rate_nonempty':dr,'unique_values_full_table_capped':len(unique_ids[k]) if k in unique_ids else None,'datetime_min':s['dt_min'],'datetime_max':s['dt_max']}
         if k in time_fields and dr>=0.50: timestamp_like.append(k)
         if k in odds_name_fields and nr>=0.80 and gr>=0.50: odds_like.append(k)
 
@@ -127,7 +132,7 @@ def main():
     gate=reg['source_screen']
     gates={
         'odds_rows_minimum':rows>=int(gate['minimum_odds_rows']),
-        'unique_match_ids_minimum_in_profile':unique_match_estimate>=int(gate['minimum_unique_match_ids']),
+        'unique_match_ids_minimum_full_table':unique_match_estimate>=int(gate['minimum_unique_match_ids']),
         'timestamp_like_column_present':len(timestamp_like)>=1,
         'three_odds_like_columns_present':len(odds_like)>=3,
         'result_file_values_accessed_zero':True,'model_fits_zero':True,'prediction_metrics_zero':True,'identity_locks_zero':True,
@@ -136,7 +141,7 @@ def main():
     out={
         'schema_version':reg['schema_version'],'generated_at_utc':datetime.now(timezone.utc).isoformat(),'status':status,
         'source':{'dataset_slug':reg['source_binding']['dataset_slug'],'archive_sha256':args.archive_sha256,'archive_members':members,'odds_members':odds_members,'result_members_present_but_not_extracted':result_members,'odds_csv_sha256':sha256(args.odds_csv),'odds_csv_bytes':args.odds_csv.stat().st_size,'encoding':encoding,'rows':rows,'profile_rows':min(rows,profile_limit),'fields':fields},
-        'schema_profile':profile,'candidate_timestamp_columns':timestamp_like,'candidate_odds_columns':odds_like,'candidate_match_id_columns':id_fields,'selected_match_id_column_for_source_screen':selected_id_col,'unique_match_ids_profile_capped':unique_match_estimate,'gates':gates,
+        'schema_profile':profile,'candidate_timestamp_columns':timestamp_like,'candidate_odds_columns':odds_like,'candidate_match_id_columns':id_fields,'selected_match_id_column_for_source_screen':selected_id_col,'unique_match_ids_full_table_capped':unique_match_estimate,'gates':gates,
         'no_label_audit':{'result_file_extracted':False,'result_values_accessed':0,'model_fits':0,'prediction_metrics':0,'thresholds_selected':0,'identity_locks_created':0,'fifth_fixed100_accessed':0},
         'next_stage_authorization':'ZERO_LABEL_KICKOFF_IDENTITY_AUDIT_ONLY_FIFTH100_FORBIDDEN' if passed else 'CLOSE_SOURCE_OR_REPAIR_SOURCE_ACCESS_NO_LABELS','hard_limits':reg['hard_limits']}
     (args.out_dir/'external_odds_source_audit_status_r40d.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
