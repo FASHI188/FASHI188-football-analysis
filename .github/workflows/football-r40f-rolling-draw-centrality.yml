@@ -1,0 +1,97 @@
+name: Football R40F Rolling Draw Centrality
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r40f-rolling-draw-centrality.yml'
+      - 'football-data/research/rolling_draw_centrality_r40f/**'
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-centrality-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R40F preregistration and dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/rolling_draw_centrality_r40f/evaluate_r40f.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/rolling_draw_centrality_r40f/preregistration_r40f.json').read_text())
+          assert p['schema_version']=='R40F-ROLLING-DRAW-CENTRALITY-1.0'
+          f=p['folding']; a=p['latent_axis']; c=p['centrality_definition']; h=p['hard_boundaries']
+          assert f['minimum_train_rows']==200 and f['minimum_test_rows']==80
+          assert f['same_season_training'] is False and f['same_date_leakage'] is False
+          assert a['l2']==10.0
+          assert c['no_test_threshold_tuning'] is True
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['random_fixed100_consumed']==0
+          assert h['candidate_probability_model_fit']==0
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R40F_PREREG_AND_DEPENDENCY')
+          PY
+
+      - name: Execute rolling centrality diagnostic
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r40f-output"
+          python football-data/research/rolling_draw_centrality_r40f/evaluate_r40f.py \
+            --prereg football-data/research/rolling_draw_centrality_r40f/preregistration_r40f.json \
+            --root . \
+            --out "$RUNNER_TEMP/r40f-output"
+
+      - name: Verify R40F output and boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r40f-output'
+          p=root/'r40f_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R40F_STABLE_DRAW_CENTRALITY','FAIL_R40F_DRAW_CENTRALITY_NOT_STABLE'}
+          assert r['eligible_fold_count']>0 and r['rows_scored']>0
+          assert len(r['fold_metrics'])==r['eligible_fold_count']
+          assert len(r['pooled_deciles'])==10
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False
+          assert h['random_fixed100_consumed']==0 and h['candidate_probability_model_fit']==0
+          assert h['main_mutation'] is False
+          assert (root/'r40f_result.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'],'passed':r['passed'],
+            'eligible_fold_count':r['eligible_fold_count'],'competition_count':r['competition_count'],
+            'competitions_with_at_least_two_folds':r['competitions_with_at_least_two_folds'],
+            'rows_scored':r['rows_scored'],'pooled':r['pooled'],
+            'fold_positive_lift_rate':r['fold_positive_lift_rate'],
+            'competition_positive_lift_rate':r['competition_positive_lift_rate'],
+            'central_decile_draw_rate':r['central_decile_draw_rate'],
+            'outer_decile_draw_rate':r['outer_decile_draw_rate'],
+            'central_decile_draw_lift':r['central_decile_draw_lift'],
+            'H_direction_gap':r['H_direction_gap'],'A_direction_gap':r['A_direction_gap'],
+            'gate':r['gate']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r40f-rolling-draw-centrality-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40f-output
+          retention-days: 30
+          if-no-files-found: error
