@@ -18,6 +18,13 @@ def parse_date(v:str):
         except:pass
     return None
 
+def fast_line_count(z:zipfile.ZipFile,info)->int:
+    n=0
+    with z.open(info) as raw:
+        for chunk in iter(lambda:raw.read(1024*1024),b''):
+            n+=chunk.count(b'\n')
+    return max(0,n-1)
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--zip',required=True);ap.add_argument('--registration',required=True);ap.add_argument('--out-dir',required=True);a=ap.parse_args()
     reg=json.loads(Path(a.registration).read_text())
@@ -31,18 +38,23 @@ def main():
                 rows.append(item);continue
             info=members[name]
             with z.open(info) as raw:
-                text=(line.decode('utf-8-sig','replace') for line in raw)
-                rd=csv.DictReader(text);cols=rd.fieldnames or []
-                n=0;dmin=dmax=None;date_cols=[c for c in cols if norm(c) in DATE_NAMES or norm(c).endswith('_date')]
-                # Inspect only identity/date columns. Never parse outcome/performance values.
-                for r in rd:
-                    n+=1
-                    for c in date_cols:
-                        d=parse_date(r.get(c,''))
-                        if d is not None:
-                            dmin=d if dmin is None or d<dmin else dmin
-                            dmax=d if dmax is None or d>dmax else dmax
-            nc=[norm(c) for c in cols]
+                header=raw.readline().decode('utf-8-sig','replace')
+            cols=next(csv.reader([header])) if header else []
+            date_cols=[c for c in cols if norm(c) in DATE_NAMES or norm(c).endswith('_date')]
+            n=fast_line_count(z,info);dmin=dmax=None
+            # Only tables carrying an explicit date column are parsed row-wise.
+            # Outcome/performance values are never read or interpreted.
+            if date_cols:
+                wanted=set(date_cols)
+                with z.open(info) as raw:
+                    text=(line.decode('utf-8-sig','replace') for line in raw)
+                    rd=csv.DictReader(text)
+                    for r in rd:
+                        for c in wanted:
+                            d=parse_date(r.get(c,''))
+                            if d is not None:
+                                dmin=d if dmin is None or d<dmin else dmin
+                                dmax=d if dmax is None or d>dmax else dmax
             item.update({
               'row_count':n,'columns':cols,'date_columns':date_cols,
               'min_date':str(dmin) if dmin else None,'max_date':str(dmax) if dmax else None,
