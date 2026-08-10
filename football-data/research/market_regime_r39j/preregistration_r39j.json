@@ -1,0 +1,130 @@
+{
+  "schema_version": "r39j-market-draw-regime-v1",
+  "stage": "R39J_MARKET_DRAW_CALIBRATION_REGIMES",
+  "research_question": "Do coarse, forward-identifiable closing-market regimes exhibit time-persistent draw calibration bias that can improve proper probability scores through a fixed shrinkage correction?",
+  "source_binding": {
+    "provider": "Football-Data.co.uk",
+    "source_audit_run_id": 31347526287,
+    "source_audit_artifact_id": 9047828794,
+    "source_audit_artifact_sha256": "748dda6fdc014c47b116b6859703e911f443f7437e60048695a44595584b8d9c",
+    "complete_preholdout_rows": 10704,
+    "complete_holdout_rows": 1747,
+    "holdout_season": "2526",
+    "fixed100_seed": 51146,
+    "fixed100_rows": 100,
+    "fixed100_identity_sha256": "6ebc9f200942a49e5456774236f950bd73f49e5a0591e29f2e5195c8ccb0d050",
+    "fixed100_date_min": "2025-08-16",
+    "fixed100_date_max": "2026-05-24",
+    "fixed100_labels_accessed_before_r39j_evaluation": 0
+  },
+  "market_transform": {
+    "threeway_devig": "multiplicative inverse-odds normalization",
+    "twoway_devig": "multiplicative inverse-odds normalization",
+    "closing_1x2": ["AvgCH", "AvgCD", "AvgCA"],
+    "closing_ou25": ["AvgC>2.5", "AvgC<2.5"],
+    "closing_ah_line": "AHCh",
+    "event_level_market_wrong_classifier": false,
+    "top1_override_architecture": false
+  },
+  "chronological_design": {
+    "order": "match_date_then_division_then_home_then_away",
+    "fit_fraction": 0.60,
+    "validation_fraction": 0.20,
+    "policy_fraction": 0.20,
+    "all_2526_labels_forbidden_before_final_freeze": true,
+    "no_random_cross_validation": true
+  },
+  "regime_definition": {
+    "dimensions": [
+      "closing_draw_fair_probability",
+      "closing_absolute_home_away_fair_probability_gap",
+      "crossmarket_draw_pressure"
+    ],
+    "crossmarket_draw_pressure_formula": "closing_under25_fair_probability * exp(-abs(closing_home_AH_line))",
+    "cutpoints": "fit-partition-only 1/3 and 2/3 empirical quantiles for each of the three dimensions",
+    "bins_per_dimension": 3,
+    "total_regimes": 27,
+    "minimum_fit_rows_per_active_regime": 120,
+    "minimum_absolute_fit_calibration_residual": 0.01,
+    "minimum_absolute_fit_zscore": 1.0,
+    "fit_residual": "observed_draw_rate - mean_closing_market_draw_probability within regime"
+  },
+  "correction": {
+    "family": "regime_empirical_draw_rate_shrinkage",
+    "pseudo_count": 300.0,
+    "formula": "correction = n/(n+pseudo_count) * (observed_draw_rate - mean_market_draw_probability)",
+    "inactive_regime_correction": 0.0,
+    "event_probability": "Pdraw_corrected = clip(Pdraw_market + regime_correction, 0.02, 0.65)",
+    "threeway_mapping": "preserve closing-market home:away non-draw ratio",
+    "no_event_level_classifier": true,
+    "no_manual_regime_sign_override": true
+  },
+  "validation_gate_all_required": {
+    "active_regimes_min": 3,
+    "corrected_HDA_LogLoss_strictly_better_than_market": true,
+    "corrected_binary_Draw_LogLoss_strictly_better_than_market": true,
+    "corrected_HDA_Brier_nonworse_than_market": true,
+    "corrected_RPS_nonworse_than_market": true,
+    "active_regime_same_sign_fraction_min": 0.60,
+    "active_regime_validation_rows_min_for_sign_check": 60,
+    "per_division_HDA_LogLoss_wins_min": 3,
+    "if_fail": "STOP_R39J_BEFORE_HOLDOUT_LABEL_ACCESS_REGIME_NOT_STABLE"
+  },
+  "policy_confirmation": {
+    "after_validation_pass": "keep fit-derived cutpoints and active-regime identities fixed; recompute only correction magnitudes on fit+validation",
+    "all_required": {
+      "corrected_HDA_LogLoss_strictly_better_than_market": true,
+      "corrected_binary_Draw_LogLoss_strictly_better_than_market": true,
+      "corrected_HDA_Brier_nonworse_than_market": true,
+      "corrected_RPS_nonworse_than_market": true,
+      "active_regime_same_sign_fraction_min": 0.60,
+      "active_regime_policy_rows_min_for_sign_check": 60,
+      "per_division_HDA_LogLoss_wins_min": 3
+    },
+    "if_fail": "STOP_R39J_BEFORE_HOLDOUT_LABEL_ACCESS_POLICY_REGIME_NOT_STABLE"
+  },
+  "final_freeze": {
+    "after_policy_pass": "keep original fit-derived cutpoints and active-regime identities fixed; recompute only correction magnitudes on all 10704 preholdout rows",
+    "freeze_receipt_before_holdout_labels": true
+  },
+  "holdout": {
+    "fixed100": true,
+    "labels_read_only_after_validation_policy_and_final_freeze": true,
+    "gate_all_required": {
+      "corrected_HDA_LogLoss_strictly_better_than_market": true,
+      "corrected_binary_Draw_LogLoss_strictly_better_than_market": true,
+      "corrected_HDA_Brier_nonworse_than_market": true,
+      "corrected_RPS_nonworse_than_market": true
+    },
+    "pass_status": "PASS_R39J_MARKET_DRAW_REGIME_FIXED100_EXPLORATORY_ONLY",
+    "fail_status": "NO_R39J_MARKET_DRAW_REGIME_INCREMENT_FIXED100"
+  },
+  "metrics": ["HDA_LogLoss", "HDA_Brier", "RPS", "binary_Draw_LogLoss", "Draw_AUC"],
+  "label_order_contract": {
+    "preholdout_labels_may_be_read": true,
+    "2526_nonfixed100_labels_may_not_be_read": true,
+    "fixed100_labels_before_final_freeze": 0,
+    "fixed100_labels_after_final_freeze_if_all_preholdout_gates_pass": 100,
+    "freeze_receipt_must_be_persisted_before_fixed100_label_access": true,
+    "no_post_holdout_tuning": true,
+    "no_rerun_as_unseen_confirmation": true
+  },
+  "historical_v640_separation": {
+    "v640_architecture": "event-level CatBoost market Top-1 wrong/correct plus alternate override",
+    "r39j_architecture": "coarse regime-level calibration residual and shrinkage probability correction",
+    "v640_parameters_reused": false,
+    "v640_thresholds_reused": false,
+    "v640_results_used_for_tuning": false
+  },
+  "hard_limits": {
+    "formal_weight": 0,
+    "promotion_authorized": false,
+    "current_match_use": false,
+    "EV": false,
+    "formal_model_mutation": 0,
+    "formal_data_mutation": 0,
+    "config_mutation": 0,
+    "CURRENT_mutation": 0,
+    "main_mutation": 0
+  }
+}
