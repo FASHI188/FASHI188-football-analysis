@@ -80,9 +80,16 @@ jobs:
               | gzip -c > "r40b-sanitized/${base}_no_scores.csv.gz"
           done
           for base in odds_series_matches odds_series_b_matches; do
-            gzip -dc "r40b-source/${base}.csv.gz" \
-              | cut -d',' -f1-4,7 \
-              | gzip -c > "r40b-sanitized/${base}_no_scores.csv.gz"
+            {
+              printf '%s\n' 'match_id,league,home_team,away_team,match_datetime'
+              gzip -dc "r40b-source/${base}.csv.gz" \
+                | tail -n +2 \
+                | cut -d',' -f1-4,7
+            } | gzip -c > "r40b-sanitized/${base}_no_scores.csv.gz"
+          done
+          for base in odds_series_matches odds_series_b_matches; do
+            gzip -dc "r40b-sanitized/${base}_no_scores.csv.gz" \
+              | awk -F',' 'NR>1 && NF!=5 {bad++} END {exit bad?1:0}'
           done
           rm -rf r40b-source r40b-source.zip
           python - <<'PY'
