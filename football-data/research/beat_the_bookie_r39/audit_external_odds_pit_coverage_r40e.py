@@ -17,8 +17,21 @@ def hfile(path: Path) -> str:
 def dt(v: str):
     s=str(v or '').strip()
     if not s: return None
-    try: return datetime.fromisoformat(s.replace('Z','+00:00')).replace(tzinfo=None)
-    except ValueError: return None
+    for x in (s, s.replace('Z','+00:00')):
+        try:
+            return datetime.fromisoformat(x).replace(tzinfo=None)
+        except ValueError:
+            pass
+    for fmt in (
+        '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d',
+        '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y',
+        '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y',
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
 
 
 def valid_odd(v: str) -> bool:
