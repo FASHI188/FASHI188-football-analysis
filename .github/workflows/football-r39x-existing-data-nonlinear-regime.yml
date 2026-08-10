@@ -1,0 +1,94 @@
+name: Football R39X Existing Data Nonlinear Regime
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football-r39x-existing-data-nonlinear-regime.yml'
+      - 'football-data/research/existing_data_nonlinear_regime_r39x/**'
+
+permissions:
+  contents: read
+
+jobs:
+  fourth-disjoint-fixed100-regime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify R39X preregistration and frozen R39W dependency
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/existing_data_nonlinear_regime_r39x/evaluate_r39x.py
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/existing_data_nonlinear_regime_r39x/preregistration_r39x.json').read_text())
+          assert p['schema_version']=='R39X-EXISTING-DATA-NONLINEAR-REGIME-1.0'
+          assert p['sample']['size']==100
+          assert p['sample']['required_overlap_with_r39u']==0
+          assert p['sample']['required_overlap_with_r39v']==0
+          assert p['sample']['required_overlap_with_r39w']==0
+          assert p['draw_model']['cells']==9
+          assert p['draw_model']['draw_rate_shrinkage_prior_strength']==60.0
+          assert p['draw_model']['post_result_tuning'] is False
+          assert p['draw_model']['manual_draw_boost'] is False
+          assert p['side_model']['l2']==10.0
+          h=p['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['abstention'] is False
+          assert h['formal_model_mutation'] is False and h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False and h['main_mutation'] is False
+          got=subprocess.check_output(['git','rev-parse','HEAD:football-data/research/existing_data_balance_intensity_r39w/evaluate_r39w.py'],text=True).strip()
+          assert got=='4abe6918ec9fd32e65d7b6eb2d74686238e0f1ae', got
+          print('PASS_R39X_PREREG_AND_R39W_DEPENDENCY')
+          PY
+
+      - name: Execute R39X fourth disjoint fixed100
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r39x-output"
+          python football-data/research/existing_data_nonlinear_regime_r39x/evaluate_r39x.py \
+            --prereg football-data/research/existing_data_nonlinear_regime_r39x/preregistration_r39x.json \
+            --root . \
+            --out "$RUNNER_TEMP/r39x-output"
+
+      - name: Verify R39X output and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r39x-output'
+          p=root/'r39x_result.json'; raw=p.read_bytes(); r=json.loads(raw)
+          assert r['terminal'] in {'PASS_R39X_NONLINEAR_REGIME_INCREMENT','FAIL_R39X_NONLINEAR_REGIME_NO_INCREMENT'}
+          assert len(r['sample_keys'])==100 and len(set(r['sample_keys']))==100
+          assert r['overlap']=={'r39u':0,'r39v':0,'r39w':0}
+          assert len(r['cell_audit'])==100
+          assert r['solver']['side_fits']==100 and r['solver']['linear_draw_fits']==100
+          assert all(isinstance(v,bool) for v in r['gate'].values())
+          h=r['hard_boundaries']
+          assert h['external_network_requests']==0 and h['football_api_requests']==0
+          assert h['new_data_collection'] is False and h['main_mutation'] is False
+          want=(root/'r39x_result.sha256').read_text().strip()
+          assert want==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'terminal':r['terminal'], 'passed':r['passed'],
+            'sample_sha':r['r39x_fixed100_identity_sha256'], 'overlap':r['overlap'],
+            'regime_metrics':r['regime_metrics'], 'linear_metrics':r['linear_metrics'],
+            'regime_draw_auc':r['regime_draw_auc'], 'linear_draw_auc':r['linear_draw_auc'],
+            'gate':r['gate'], 'solver':r['solver']
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r39x-existing-data-nonlinear-regime-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r39x-output
+          retention-days: 30
+          if-no-files-found: error
