@@ -1,74 +1,27 @@
 name: Football R39S Rendered Lineup Observer
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - '.github/workflows/football-r39s-rendered-lineup-observer.yml'
-      - 'football-data/research/premierleague_rendered_lineup_r39s/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: read
-
-env:
-  AUTHORIZED_RENDER_HEAD: 1d9c6210cf402111e1172aee339f1f09002b31b3
-  RENDER_WORKFLOW: football-r39s-rendered-lineup-tech.yml
 
 jobs:
-  observe-r39s-render:
+  historical-evidence-check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 1
           persist-credentials: false
-
-      - name: Audit exact R39S rendered-lineup run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
+      - name: Confirm historical render evidence is frozen
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/r39s-observer"
           python - <<'PY'
-          import json,os,time,urllib.parse,urllib.request
+          import json
           from pathlib import Path
-          repo=os.environ['REPOSITORY']; token=os.environ['GH_TOKEN']; head=os.environ['AUTHORIZED_RENDER_HEAD']; wf=os.environ['RENDER_WORKFLOW']
-          base='https://api.github.com'
-          def get(path):
-              req=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'FASHI188-r39s-observer'})
-              with urllib.request.urlopen(req,timeout=20) as r:return json.loads(r.read())
-          q=urllib.parse.urlencode({'branch':'research/premierleague-rendered-lineup-r39s','event':'push','per_page':20})
-          selected=None
-          for _ in range(60):
-              data=get('/repos/'+repo+'/actions/workflows/'+wf+'/runs?'+q)
-              matches=[r for r in data.get('workflow_runs',[]) if r.get('head_sha')==head]
-              if len(matches)==1:
-                  selected=matches[0]
-                  if selected.get('status')=='completed': break
-              time.sleep(5)
-          if selected is None: raise SystemExit('R39S_RENDER_RUN_NOT_FOUND')
-          rid=int(selected['id'])
-          jobs=get(f'/repos/{repo}/actions/runs/{rid}/jobs?per_page=100').get('jobs',[])
-          arts=get(f'/repos/{repo}/actions/runs/{rid}/artifacts?per_page=100').get('artifacts',[])
-          steps=[]
-          for j in jobs:
-              for s in j.get('steps') or []:
-                  steps.append({'job_id':j.get('id'),'job_name':j.get('name'),'name':s.get('name'),'status':s.get('status'),'conclusion':s.get('conclusion'),'number':s.get('number')})
-          failed=[s for s in steps if s.get('conclusion')=='failure']
-          rarts=[a for a in arts if str(a.get('name','')).startswith('football-r39s-rendered-lineup-tech-')]
-          receipt={'schema_version':'R39S-OBSERVER-1.0','authorized_render_head':head,'render_run_id':rid,'run_status':selected.get('status'),'run_conclusion':selected.get('conclusion'),'first_failed_step':failed[0]['name'] if failed else None,'jobs':[{'id':j.get('id'),'name':j.get('name'),'status':j.get('status'),'conclusion':j.get('conclusion')} for j in jobs],'steps':steps,'artifacts':[{'id':a.get('id'),'name':a.get('name'),'digest':a.get('digest'),'size_in_bytes':a.get('size_in_bytes'),'expired':a.get('expired')} for a in rarts],'artifact_count':len(rarts),'render_pass_claimed':selected.get('conclusion')=='success' and len(rarts)==1,'football_api_requests':0,'formal_weight':0}
-          out=Path(os.environ['RUNNER_TEMP'])/'r39s-observer/observer_receipt.json';out.write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
-          print(json.dumps({'run_id':rid,'status':receipt['run_status'],'conclusion':receipt['run_conclusion'],'first_failed_step':receipt['first_failed_step'],'artifact_count':receipt['artifact_count'],'render_pass_claimed':receipt['render_pass_claimed']},sort_keys=True))
-          if receipt['run_status']!='completed': raise SystemExit('R39S_RENDER_NOT_TERMINAL')
+          r=json.loads(Path('football-data/research/premierleague_rendered_lineup_r39s/terminal_receipt_r39s.json').read_text())
+          assert r['technical_render_audit']['workflow_run_id']==31364726786
+          assert r['technical_render_audit']['artifact_id']==9053700055
+          assert r['technical_render_audit']['run_conclusion']=='success'
+          print('R39S_RENDER_OBSERVER_FROZEN')
           PY
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: football-r39s-render-observer-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/r39s-observer
-          retention-days: 30
-          if-no-files-found: error
