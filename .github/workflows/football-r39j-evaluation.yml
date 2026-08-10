@@ -1,0 +1,100 @@
+name: Football R39J Evaluation
+
+on:
+  push:
+    branches: [research/market-draw-regime-r39j]
+    paths:
+      - '.github/workflows/football-r39j-evaluation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  market-draw-regime-fixed100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen numerical dependency
+        run: python -m pip install --disable-pip-version-check 'numpy==2.3.2'
+      - name: Verify exact frozen contract before data or labels
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/market_regime_r39j/evaluate_market_draw_regime_r39j.py
+          python football-data/research/market_regime_r39j/evaluate_market_draw_regime_r39j.py --self-test
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/research/market_regime_r39j/preregistration_r39j.json').read_text())
+          assert p['source_binding']['source_audit_run_id']==31347526287
+          assert p['source_binding']['fixed100_identity_sha256']=='6ebc9f200942a49e5456774236f950bd73f49e5a0591e29f2e5195c8ccb0d050'
+          assert p['source_binding']['fixed100_labels_accessed_before_r39j_evaluation']==0
+          assert p['regime_definition']['total_regimes']==27
+          assert p['correction']['pseudo_count']==300.0
+          assert p['historical_v640_separation']['v640_parameters_reused'] is False
+          assert p['label_order_contract']['fixed100_labels_before_final_freeze']==0
+          print('PASS_R39J_EXACT_FROZEN_EVALUATION_CONTRACT')
+          PY
+      - name: Download Football-Data and isolate market-only from sealed result files
+        run: |
+          set -euo pipefail
+          rm -rf r39j-market r39j-raw r39j-output
+          mkdir -p r39j-market r39j-raw r39j-output
+          for season in 1920 2021 2122 2223 2324 2425 2526; do
+            for div in E0 D1 I1 SP1 F1; do
+              raw="r39j-raw/${season}_${div}.csv"
+              dst="r39j-market/${season}_${div}.csv"
+              curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+                "https://www.football-data.co.uk/mmz4281/${season}/${div}.csv" -o "$raw"
+              python - "$raw" "$dst" "$season" <<'PY'
+          import csv,sys
+          src,dst,season=sys.argv[1:]
+          keep=['Div','Date','Time','HomeTeam','AwayTeam','AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA','Avg>2.5','Avg<2.5','AvgC>2.5','AvgC<2.5','AHh','AvgAHH','AvgAHA','AHCh','AvgCAHH','AvgCAHA']
+          with open(src,'r',encoding='utf-8-sig',errors='replace',newline='') as f, open(dst,'w',encoding='utf-8',newline='') as g:
+              r=csv.DictReader(f);missing=[c for c in keep if c not in (r.fieldnames or [])]
+              if missing: raise SystemExit(f'{src} missing {missing}')
+              w=csv.DictWriter(g,fieldnames=['Season']+keep);w.writeheader()
+              for row in r:w.writerow({'Season':season,**{c:row.get(c,'') for c in keep}})
+          PY
+            done
+          done
+      - name: Execute frozen R39J label-order sequence
+        run: |
+          set -euo pipefail
+          python football-data/research/market_regime_r39j/evaluate_market_draw_regime_r39j.py \
+            --prereg football-data/research/market_regime_r39j/preregistration_r39j.json \
+            --market-dir r39j-market --raw-dir r39j-raw --out-dir r39j-output
+      - name: Verify terminal label boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r39j-output/r39j_result.json').read_text())
+          allowed={'STOP_R39J_BEFORE_HOLDOUT_LABEL_ACCESS_REGIME_NOT_STABLE','STOP_R39J_BEFORE_HOLDOUT_LABEL_ACCESS_POLICY_REGIME_NOT_STABLE','PASS_R39J_MARKET_DRAW_REGIME_FIXED100_EXPLORATORY_ONLY','NO_R39J_MARKET_DRAW_REGIME_INCREMENT_FIXED100'}
+          assert r['status'] in allowed
+          f=json.loads(Path('r39j-output/freeze_receipt_r39j.json').read_text())
+          if r['status'].startswith('STOP_R39J_BEFORE_'):
+              assert r['holdout_labels_accessed']==0
+              assert f['holdout_labels_accessed_before_freeze']==0
+          else:
+              assert r['holdout_labels_accessed']==100
+              assert f['final_freeze_completed'] is True
+              assert f['holdout_labels_accessed_before_freeze']==0
+          print(json.dumps({'status':r['status'],'split':r['split'],'active_regimes':len(r['fit_active_regimes']),'validation':r['validation'],'policy':r.get('policy'),'holdout':r.get('holdout'),'holdout_labels_accessed':r['holdout_labels_accessed']},indent=2))
+          PY
+      - name: Delete all raw/source inputs before artifact
+        run: rm -rf r39j-market r39j-raw
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-r39j-evaluation-${{ github.sha }}-${{ github.run_id }}
+          path: r39j-output/
+          if-no-files-found: error
+          retention-days: 30
