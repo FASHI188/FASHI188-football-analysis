@@ -1,127 +1,14 @@
-name: Football Beat The Bookie Schema R39B
+name: Football Beat The Bookie Schema R39B FROZEN
 
 on:
-  push:
-    branches:
-      - research/beat-the-bookie-timeseries-r39b
-    paths:
-      - '.github/workflows/football-beat-the-bookie-schema-r39b.yml'
-      - 'football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json'
-      - 'football-data/research/beat_the_bookie_r39/inventory_source_schema_r39b.py'
-  pull_request:
-    branches:
-      - research/betfair-kaggle-timestamp-coverage-r39a
-    paths:
-      - '.github/workflows/football-beat-the-bookie-schema-r39b.yml'
-      - 'football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json'
-      - 'football-data/research/beat_the_bookie_r39/inventory_source_schema_r39b.py'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: football-beat-the-bookie-schema-r39b-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  schema-no-rows:
+  frozen-completed-stage:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Verify R39B no-row contract
-        run: |
-          set -euo pipefail
-          python -m py_compile football-data/research/beat_the_bookie_r39/inventory_source_schema_r39b.py
-          python -m json.tool football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json >/dev/null
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          r=json.loads(Path('football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json').read_text())
-          assert r['no_label_contract']['read_data_rows'] is False
-          assert r['no_label_contract']['read_result_values'] is False
-          assert r['no_label_contract']['read_score_values'] is False
-          assert r['hard_limits']['formal_weight']==0
-          print('PASS_R39B_NO_ROW_CONTRACT')
-          PY
-
-      - name: Download Beat The Bookie public dataset
-        run: |
-          set -euo pipefail
-          rm -rf r39b-source r39b-source.zip
-          mkdir -p r39b-source
-          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
-            --user-agent 'Mozilla/5.0' \
-            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
-            -o r39b-source.zip
-          python - <<'PY'
-          import zipfile
-          from pathlib import Path
-          p=Path('r39b-source.zip')
-          assert zipfile.is_zipfile(p)
-          with zipfile.ZipFile(p) as z:
-              z.extractall('r39b-source')
-              print({'entries':len(z.namelist()),'names':z.namelist()})
-          PY
-          find r39b-source -maxdepth 3 -type f -printf '%p %s bytes\n' | sort
-
-      - name: Inventory schema without reading rows
-        run: |
-          set -euo pipefail
-          rm -rf r39b-output
-          python football-data/research/beat_the_bookie_r39/inventory_source_schema_r39b.py \
-            --registration football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json \
-            --source-dir r39b-source \
-            --out-dir r39b-output
-
-      - name: Verify no-row boundary
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          s=json.loads(Path('r39b-output/status.json').read_text())
-          assert s['status'] in {'PASS_R39B_SOURCE_SCHEMA_IDENTIFIED_NO_ROWS_READ','STOP_R39B_SOURCE_SCHEMA_NOT_IDENTIFIABLE_NO_ROWS_READ'}
-          n=s['no_label_audit']
-          assert n['data_rows_read']==0
-          assert n['result_values_read']==0
-          assert n['score_values_read']==0
-          assert n['prediction_metrics_computed']==0
-          assert n['match_identities_locked']==0
-          h=s['hard_limits']
-          assert h['formal_weight']==0 and h['CURRENT_mutation']==0 and h['main_mutation']==0
-          print(json.dumps(s,ensure_ascii=False,indent=2))
-          PY
-
-      - name: Confirm isolated research diff
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import subprocess
-          base='c52a742f2f1fef2eace2dcf5f606fa887023367d'
-          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
-          expected={
-            '.github/workflows/football-beat-the-bookie-schema-r39b.yml',
-            'football-data/research/beat_the_bookie_r39/source_schema_registration_r39b.json',
-            'football-data/research/beat_the_bookie_r39/inventory_source_schema_r39b.py',
-          }
-          assert changed==expected,(changed,expected)
-          print({'changed':sorted(changed),'formal_asset_changes':0})
-          PY
-
-      - name: Upload R39B schema evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: football-beat-the-bookie-schema-r39b-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
-          path: r39b-output/
-          if-no-files-found: error
-          retention-days: 30
+      - run: echo 'R39B source-schema audit is completed and frozen; source semantics remain historical evidence only.'
