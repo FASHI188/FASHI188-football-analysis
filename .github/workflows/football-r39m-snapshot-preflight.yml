@@ -36,7 +36,7 @@ jobs:
           test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json)" = "de2c4ba33d0ed2a0f85c76b96f63a875daf59615"
           test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py)" = "a465ea1d3ff59db25f166d248f31f89ab62fdeb4"
           test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py)" = "300d896d66ce554c62ec3acf96d208ae9f0c4531"
-          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/feature_snapshot_binding_r39m.json)" = "018102cec3e1776c00062d118f2963eeee052e3e"
+          test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/feature_snapshot_binding_r39m.json)" = "d18347c5551049013dfe653c04fdfeb9183432ea"
           test "$(git rev-parse HEAD:football-data/research/lineup_attack_recency_r39m/evaluate_recency_snapshot_r39m.py)" = "db9662313e92181e43edbadb050208215a445708"
           python -m py_compile football-data/research/lineup_attack_recency_r39m/evaluate_recency_snapshot_r39m.py
           python - <<'PY'
@@ -44,14 +44,20 @@ jobs:
           from pathlib import Path
           b=json.loads(Path('football-data/research/lineup_attack_recency_r39m/feature_snapshot_binding_r39m.json').read_text())
           assert b['scientific_design_changed'] is False and b['sample_changed'] is False and b['gates_changed'] is False and b['blind_set_changed'] is False
+          assert b['metadata_correction']['target_labels_accessed_before_correction']==0
           assert b['source_drift_audit']['first_evaluation_run_id']==31353952166
           assert b['source_drift_audit']['first_evaluation_preholdout_labels_loaded']==0
           assert b['source_drift_audit']['first_evaluation_fixed100_labels_loaded']==0
           s=b['frozen_snapshot'];assert s['artifact_id']==9050139416
           assert s['artifact_sha256']=='d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575'
-          assert s['snapshot_csv_sha256']=='c800b200ca22307ca4a9804797f513296b705eaf91b3586a0a9bd463083e0317'
+          assert s['snapshot_csv_sha256']=='da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4'
+          assert s['snapshot_receipt_sha256']=='a502fca9ede0c457db33c7dd129da5fe4b4d6947551594fd498378a3f95fe978'
           assert s['rows']=={'all':9434,'preholdout':8161,'holdout_2526':1273,'fixed100':100}
           assert s['fixed100_identity_sha256']=='f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc'
+          assert s['dynamic_feature_sha256_by_half_life']=={
+            '90':'355a6ecc23f07c51c4b29334825646efa068404069fee2e462c60cb87a316ca7',
+            '180':'2e741a8611dc2deb3322d20b18425f5753ba808ef2337cd7e24b26de83d9488e',
+            '365':'13017dde1fca9e7a30fe120e53b9b898c37ca15e63f805c0fca5e30b3c5b0aa5'}
           assert all(v==0 for v in s['zero_label_contract'].values())
           print('PASS_R39M_SNAPSHOT_BINDING_ZERO_LABEL_CONTRACT')
           PY
@@ -83,13 +89,19 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9050139416/zip" -o /tmp/r39m-snapshot.zip
           echo "d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575  /tmp/r39m-snapshot.zip" | sha256sum -c -
           unzip -q /tmp/r39m-snapshot.zip -d r39m-snapshot-input
-          echo "c800b200ca22307ca4a9804797f513296b705eaf91b3586a0a9bd463083e0317  r39m-snapshot-input/feature_snapshot_r39m.csv" | sha256sum -c -
+          echo "da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4  r39m-snapshot-input/feature_snapshot_r39m.csv" | sha256sum -c -
+          echo "a502fca9ede0c457db33c7dd129da5fe4b4d6947551594fd498378a3f95fe978  r39m-snapshot-input/snapshot_receipt_r39m.json" | sha256sum -c -
           python - <<'PY'
           import json
           from pathlib import Path
           r=json.loads(Path('r39m-snapshot-input/snapshot_receipt_r39m.json').read_text())
           assert r['status']=='PASS_R39M_ZERO_LABEL_FROZEN_FEATURE_SNAPSHOT'
-          assert r['snapshot_csv_sha256']=='c800b200ca22307ca4a9804797f513296b705eaf91b3586a0a9bd463083e0317'
+          assert r['snapshot_csv_sha256']=='da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4'
+          assert r['static_feature_sha256']=='4d7c809dd62bf985a9311bdd8058e1faf83ba32cf4766e728bd3c403586bf51e'
+          assert r['dynamic_feature_sha256_by_half_life']=={
+            '90':'355a6ecc23f07c51c4b29334825646efa068404069fee2e462c60cb87a316ca7',
+            '180':'2e741a8611dc2deb3322d20b18425f5753ba808ef2337cd7e24b26de83d9488e',
+            '365':'13017dde1fca9e7a30fe120e53b9b898c37ca15e63f805c0fca5e30b3c5b0aa5'}
           assert r['fixed100_identity_sha256']=='f5ac889cec4ffe9cc4bb40ec1586f5362f769b54a0e1f81a650ecc78ff68f3cc'
           assert all(v==0 for v in r['zero_label_contract'].values())
           print('PASS_R39M_EXACT_FROZEN_FEATURE_ARTIFACT')
@@ -122,7 +134,7 @@ jobs:
           from datetime import datetime,timezone
           from pathlib import Path
           files=['football-data/research/lineup_attack_recency_r39m/preregistration_r39m.json','football-data/research/lineup_attack_recency_r39m/source_registration_r39m.json','football-data/research/lineup_attack_recency_r39m/evaluator_contract_r39m.json','football-data/research/lineup_attack_recency_r39m/audit_recency_features_r39m.py','football-data/research/lineup_attack_recency_r39m/evaluate_recency_r39m.py','football-data/research/lineup_attack_recency_r39m/feature_snapshot_binding_r39m.json','football-data/research/lineup_attack_recency_r39m/evaluate_recency_snapshot_r39m.py']
-          out={'status':'PASS_R39M_SNAPSHOT_RECOVERY_ZERO_LABEL_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'blobs':{p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files},'snapshot_artifact_id':9050139416,'snapshot_artifact_sha256':'d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575','snapshot_csv_sha256':'c800b200ca22307ca4a9804797f513296b705eaf91b3586a0a9bd463083e0317','real_target_labels_accessed':0,'model_fit_on_real_labels':0,'fixed100_labels_accessed':0,'formal_weight':0}
+          out={'status':'PASS_R39M_SNAPSHOT_RECOVERY_ZERO_LABEL_PREFLIGHT','generated_at_utc':datetime.now(timezone.utc).isoformat(),'blobs':{p:subprocess.check_output(['git','rev-parse',f'HEAD:{p}'],text=True).strip() for p in files},'snapshot_artifact_id':9050139416,'snapshot_artifact_sha256':'d9e1827db18c0c908ca57b819d7e4cc18f3b2da2554a6ead344d0d85e5607575','snapshot_receipt_sha256':'a502fca9ede0c457db33c7dd129da5fe4b4d6947551594fd498378a3f95fe978','snapshot_csv_sha256':'da7f3c94292207342e4ae170492458af320eae0b685124123d186faf911ec6b4','real_target_labels_accessed':0,'model_fit_on_real_labels':0,'fixed100_labels_accessed':0,'formal_weight':0}
           Path('r39m-snapshot-preflight/preflight_receipt_r39m.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))
           PY
       - uses: actions/upload-artifact@v4
