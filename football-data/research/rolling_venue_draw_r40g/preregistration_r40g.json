@@ -1,0 +1,68 @@
+{
+  "schema_version": "R40G-ROLLING-VENUE-DRAW-1.0",
+  "research_only": true,
+  "formal_weight": 0,
+  "purpose": "Test whether strictly pre-match home-venue and away-venue scoring/conceding history adds stable Draw information beyond the frozen R39W overall/last5 strength-balance feature family in time-ordered competition-season folds.",
+  "data_glob": "football-data/training_datasets/*/point_in_time.csv",
+  "folding": {
+    "unit": "competition_id x season",
+    "train_rule": "same-competition rows strictly before the first date of the test season",
+    "minimum_train_rows": 200,
+    "minimum_test_rows": 80,
+    "same_season_training": false
+  },
+  "venue_features": {
+    "empirical_bayes_prior_strength": 5.0,
+    "eligibility": "home_history_matches>0 and away_history_matches>0 and all required venue/history aggregates finite; baseline is evaluated on the identical eligible rows",
+    "home_venue_gf_eb": "(home_venue_gf + 5*home_history_gf/home_history_matches)/(home_venue_matches+5)",
+    "home_venue_ga_eb": "(home_venue_ga + 5*home_history_ga/home_history_matches)/(home_venue_matches+5)",
+    "away_venue_gf_eb": "(away_venue_gf + 5*away_history_gf/away_history_matches)/(away_venue_matches+5)",
+    "away_venue_ga_eb": "(away_venue_ga + 5*away_history_ga/away_history_matches)/(away_venue_matches+5)",
+    "draw_specific_features": [
+      "abs_home_vs_away_venue_gf_gap",
+      "abs_home_vs_away_venue_ga_gap",
+      "venue_gf_sum",
+      "venue_ga_sum",
+      "abs_venue_total_event_rate_gap",
+      "abs_venue_net_strength_gap"
+    ],
+    "no_post_result_feature_changes": true
+  },
+  "models": {
+    "baseline_draw": "R39W frozen 9-feature binary Draw logistic, L2=10",
+    "challenger_draw": "baseline 9 features plus 6 frozen venue-specific Draw features, binary logistic L2=10",
+    "conditional_HA": "R39W frozen conditional Home-vs-Away logistic on non-draws, L2=10; identical for baseline and challenger",
+    "standardization": "training-fold median/IQR only",
+    "solver": "deterministic Newton/IRLS with backtracking line search",
+    "class_weighting": false,
+    "candidate_grid": false,
+    "manual_draw_boost": false,
+    "threshold_tuning": false,
+    "abstention": false
+  },
+  "frozen_gate": {
+    "coverage": "venue eligible test rows / baseline finite test rows >= 0.95",
+    "pooled_HDA_log_loss": "challenger < baseline",
+    "pooled_binary_draw_log_loss": "challenger < baseline",
+    "pooled_draw_auc": "challenger >= baseline + 0.005",
+    "draw_f1": "challenger >= baseline + 0.03",
+    "draw_recall": "challenger >= baseline",
+    "accuracy_noninferiority": "challenger >= baseline - 0.01",
+    "fold_draw_log_loss_wins": "challenger wins at least 55% of eligible folds",
+    "competition_draw_log_loss_wins": "challenger wins at least 60% of competitions with at least two eligible folds",
+    "all_required": true,
+    "if_pass": "Venue-specific history is a stable incremental Draw information family and may proceed to a separately preregistered confirmation; no formal promotion.",
+    "if_fail": "Close the venue-history Draw route; no post-result EB/L2/feature/threshold tuning."
+  },
+  "hard_boundaries": {
+    "external_network_requests": 0,
+    "football_api_requests": 0,
+    "new_data_collection": false,
+    "random_fixed100_consumed": 0,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "config_mutation": false,
+    "current_rule_mutation": false,
+    "main_mutation": false
+  }
+}
