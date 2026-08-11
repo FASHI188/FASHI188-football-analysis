@@ -3,7 +3,7 @@
   "status": "ZERO_LABEL_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_ONLY",
   "research_only": true,
   "formal_weight": 0,
-  "purpose": "Bootstrap an auditable V5.2 forward-PIT evidence path using an official Premier League lineup page plus one exact-fixture public odds payload. R44A records collector first-observed timestamps and payload hashes, then independently audits H/D/A, Asian and multi-line OU sections inside the same exact fixture response. It does not create a formal market snapshot or predictive claim.",
+  "purpose": "Bootstrap an auditable V5.2 forward-PIT evidence path using an official Premier League lineup page plus one exact-fixture public odds payload. R44A records collector first-observed timestamps and payload hashes, audits H/D/A, Asian and multi-line OU inside one response, then freezes bookmaker-specific visible quote fields and target freeze-window identity. It does not create a formal market snapshot or predictive claim.",
   "fixture": {
     "competition": "Premier League",
     "season": "2026/27",
@@ -37,9 +37,7 @@
   "market_source": {
     "provider_group": "Infobetting public odds aggregator",
     "allowed_hosts": ["www.infobetting.com", "infobetting.com"],
-    "candidate_urls": [
-      "https://www.infobetting.com/calcio/quote/inghilterra/premier-league/arsenal_coventry/dett-t-40-1-q-4-248-1402950.htm"
-    ],
+    "candidate_urls": ["https://www.infobetting.com/calcio/quote/inghilterra/premier-league/arsenal_coventry/dett-t-40-1-q-4-248-1402950.htm"],
     "discovery_urls": [],
     "exact_fixture_payload": {
       "url": "https://www.infobetting.com/calcio/quote/inghilterra/premier-league/arsenal_coventry/dett-t-40-1-q-4-248-1402950.htm",
@@ -47,9 +45,28 @@
       "role_separation_rule": "Audit three role-specific regions inside one exact-fixture payload. HDA must be bounded before the first handicap table; Asian must be the first handicap table containing 0:0; OU must be the second handicap table containing 0.5 through 5.5. Do not infer OU lines from the Asian region.",
       "synchronization_semantics": "SAME_HTTP_PAYLOAD_SINGLE_OBSERVATION"
     },
+    "structured_extraction": {
+      "fixture_market_id": "1402950",
+      "primary_quote_semantics": "BOOKMAKER_SPECIFIC_VISIBLE_ROWS_FROM_HASHED_AGGREGATOR_PAYLOAD",
+      "summary_fields_are_advisory": true,
+      "hda_min_complete_bookmakers": 3,
+      "asian_handicap_line": "0:0",
+      "asian_min_complete_bookmakers": 2,
+      "ou_required_lines": ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"],
+      "ou_min_complete_bookmakers_per_line": 1,
+      "freeze_window_targets": [
+        {"label": "T-72h", "hours_to_kickoff": 72.0},
+        {"label": "T-24h", "hours_to_kickoff": 24.0},
+        {"label": "T-6h", "hours_to_kickoff": 6.0},
+        {"label": "T-90m", "hours_to_kickoff": 1.5},
+        {"label": "T-15m", "hours_to_kickoff": 0.25}
+      ],
+      "freeze_window_tolerance_minutes": 15,
+      "persistence_semantics": "IMMUTABLE_ARTIFACT_PER_OBSERVATION; target-window coverage is proven only by distinct successful run/artifact identities"
+    },
     "source_native_quote_timestamp_expected": false,
     "availability_time_fallback": "collector_first_observed_at_utc",
-    "independence_rule": "Treat Infobetting as one provider group. Listed bookmakers are not counted as independent markets in R44A."
+    "independence_rule": "Treat Infobetting as one provider group. Listed bookmaker quote rows may be extracted for field identity but are not counted as independent provider groups in R44A."
   },
   "hard_boundaries": {
     "target_labels": 0,
@@ -66,7 +83,9 @@
   },
   "stage1_success_semantics": {
     "PASS_R44A_SOURCE_FEASIBILITY_NOT_FORMAL_MARKET_SNAPSHOT": "Official lineup state is captured pre-kickoff and the exact Infobetting fixture page is captured for the same fixture. This remains a broad source-feasibility receipt.",
-    "PASS_R44A_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_NOT_FORMAL_SNAPSHOT": "One pre-kickoff exact-fixture payload is hash-verified and independently passes H/D/A, Asian and multi-line OU role audits without cross-role inference. Same-payload synchronization is exact by construction, but field-level quote freshness and formal runtime admission remain unavailable.",
+    "PASS_R44A_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_NOT_FORMAL_SNAPSHOT": "One pre-kickoff exact-fixture payload is hash-verified and independently passes H/D/A, Asian and multi-line OU role audits without cross-role inference.",
+    "PASS_R44A_STRUCTURED_BOOKMAKER_QUOTES_NOT_FORMAL_SNAPSHOT": "The hashed exact-fixture payload yields frozen bookmaker-specific H/D/A, Asian and required OU quote pairs under the preregistered field identity contract; no source-summary inconsistency is detected.",
+    "PASS_R44A_STRUCTURED_BOOKMAKER_QUOTES_WITH_SOURCE_SUMMARY_WARNINGS_NOT_FORMAL_SNAPSHOT": "Bookmaker-specific quote rows are structurally frozen and pass coverage gates, while one or more aggregator summary Max fields differ from visible bookmaker-row maxima. Bookmaker rows remain primary and the mismatch is retained as a warning, not silently reconciled.",
     "STOP_R44A_MARKET_DISCOVERY_NO_MATCH": "Official lineup evidence may be valid, but no qualifying exact fixture market page was captured inside the frozen request budget. Stop before any label/model work."
   }
 }
