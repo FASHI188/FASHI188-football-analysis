@@ -5,10 +5,12 @@ on:
     paths:
       - "football-data/config/r41a_fixed200_joint_error_decomposition.json"
       - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
       - "football-data/validation/v510_historical_structure_features_r1.py"
       - "football-data/validation/v510_historical_structure_model_r1.py"
+      - "football-data/config/v510_existing_score_market_pit_ledger_r1.json"
       - "football-data/config/v510_historical_label_structure_rolling_r1.json"
-      - "football-data/manifests/v510_existing_score_market_pit_ledger_r1_rows.csv"
+      - "football-data/processed/**/*.csv"
       - ".github/workflows/football-r41a-fixed200-joint-error-decomposition.yml"
   workflow_dispatch:
 
@@ -36,14 +38,19 @@ jobs:
         run: >-
           python -m pip install --disable-pip-version-check
           numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
-      - name: Compile evaluator
+      - name: Compile evaluator and ledger builder
         run: |
           python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
             football-data/validation/v510_historical_structure_features_r1.py \
             football-data/validation/v510_historical_structure_model_r1.py \
             football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py
-      - name: Deterministic self-test
-        run: python football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py --self-test
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py --self-test
+      - name: Rebuild exact audited V5.1 historical score ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Run fixed200 decomposition once
         run: python football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py
       - name: Verify fixed contract and hard boundaries
@@ -77,10 +84,26 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r41a-fixed200-joint-error-decomposition
-          path: football-data/manifests/r41a_fixed200_joint_error_decomposition_status.json
+          path: |
+            football-data/manifests/r41a_fixed200_joint_error_decomposition_status.json
+            football-data/manifests/v510_existing_score_market_pit_ledger_r1_status.json
           if-no-files-found: error
           retention-days: 30
-      - name: Confirm no repository persistence
+      - name: Confirm only runtime manifests are untracked
         run: |
-          test -z "$(git diff --cached --name-only)"
-          test -z "$(git status --short | grep -v '^?? football-data/manifests/r41a_fixed200_joint_error_decomposition_status.json$' || true)"
+          python - <<'PY'
+          import subprocess
+          allowed={
+            'football-data/manifests/v510_existing_score_market_pit_ledger_r1_rows.csv',
+            'football-data/manifests/v510_existing_score_market_pit_ledger_r1_status.json',
+            'football-data/manifests/r41a_fixed200_joint_error_decomposition_status.json',
+          }
+          lines=subprocess.check_output(['git','status','--short'],text=True).splitlines()
+          unexpected=[]
+          for line in lines:
+              path=line[3:]
+              if path not in allowed:
+                  unexpected.append(line)
+          assert not unexpected, unexpected
+          print({'runtime_only': sorted(allowed)})
+          PY
