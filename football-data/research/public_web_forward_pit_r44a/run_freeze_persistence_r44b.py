@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -43,9 +43,22 @@ def safe_api_bytes(module, url: str, token: str | None) -> bytes:
         return response.read()
 
 
+def frozen_head_artifacts(module, original_list_artifacts, repository: str, branch: str | None, token: str | None):
+    checked_out_head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip().lower()
+    rows = original_list_artifacts(repository, branch, token)
+    return [
+        row for row in rows
+        if str((row.get("workflow_run") or {}).get("head_sha") or "").strip().lower() == checked_out_head
+    ]
+
+
 def main() -> int:
     module = load_auditor()
     module.api_bytes = lambda url, token: safe_api_bytes(module, url, token)
+    original_list_artifacts = module.list_artifacts
+    module.list_artifacts = lambda repository, branch, token: frozen_head_artifacts(
+        module, original_list_artifacts, repository, branch, token
+    )
     return int(module.main())
 
 
