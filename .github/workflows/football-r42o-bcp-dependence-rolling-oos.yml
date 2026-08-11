@@ -1,0 +1,94 @@
+name: Football R42O BCP Dependence Rolling OOS
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r42o_bcp_dependence_rolling_oos.json"
+      - "football-data/validation/evaluate_r42o_bcp_dependence_rolling_oos.py"
+      - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-r42o-bcp-dependence-rolling-oos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r42o-bcp-dependence-rolling-oos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R42O path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py \
+            football-data/validation/evaluate_r42o_bcp_dependence_rolling_oos.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r42o_bcp_dependence_rolling_oos.py --self-test
+      - name: Rebuild exact audited V5.1 historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen R42O rolling OOS
+        run: python football-data/validation/evaluate_r42o_bcp_dependence_rolling_oos.py
+      - name: Verify R42O governance and scientific contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/r42o_bcp_dependence_rolling_oos_status.json').read_text(encoding='utf-8'))
+          assert x['status']=='PASS_R42O_ROLLING_OOS_EXECUTION_COMPLETE'
+          assert x['data_identity']=={'rows':26873,'competitions':16,'draws':6976,'zero_zero':1910,'tail_7plus':630}
+          m=x['model_contract']
+          assert m['core_feature_count']==47
+          assert m['test_labels_used_for_direction_selection'] is False
+          assert m['test_labels_used_for_parameter_selection'] is False
+          assert m['fixed200_consumed']==0
+          assert m['bcp_contract']['baseline_phi']==0.0
+          assert m['bcp_contract']['directions']==['H_TO_A','A_TO_H']
+          assert m['bcp_contract']['manual_draw_bonus'] is False
+          assert m['bcp_contract']['manual_score_adjustment'] is False
+          assert m['bcp_contract']['manual_total_adjustment'] is False
+          assert len(x['folds'])==3
+          assert x['pooled_competition_season_blocks']>=3
+          g=x['governance']
+          assert g['formal_weight']==0 and g['protected_blind_access']==0 and g['fixed200_consumed']==0
+          assert g['provider_requests']==0 and g['new_data_collection'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False and g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False and g['main_mutation'] is False
+          assert x['max_probability_mass_residual'] <= m['bcp_contract']['max_probability_mass_residual'] or x['gate']['probability_mass_audit'] is False
+          print(json.dumps({'scientific_verdict':x['scientific_verdict'],'pooled_test_rows':x['pooled_test_rows'],'folds_with_better_joint_score_logloss':x['folds_with_better_joint_score_logloss'],'point_deltas':x['point_deltas_challenger_minus_baseline'],'gate':x['gate']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R42O receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42o-bcp-dependence-rolling-oos
+          path: football-data/manifests/r42o_bcp_dependence_rolling_oos_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
