@@ -79,8 +79,11 @@ def main() -> None:
         assert mod.ou_line(markets["1.ou25"], local) == 2.5
         assert mod.category(markets["1.ah"], local)[0] == "ASIAN_HANDICAP"
 
+        # Test-only counterexample: at T-30m the last synthetic quote is from T-60m,
+        # so a 20-minute freshness bound must reject the event.
         stale = json.loads(json.dumps(local))
-        stale["freeze_contract"][2]["max_quote_age_minutes"] = 30
+        stale["freeze_contract"][2]["minutes_before_kickoff"] = 30
+        stale["freeze_contract"][2]["max_quote_age_minutes"] = 20
         stale_cov = mod.audit(markets, stale)
         assert stale_cov["events_all_required_freezes_complete"] == 0
 
