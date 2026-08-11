@@ -1,0 +1,91 @@
+name: Football GPT Fact Gate V1
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "football-data/validation/gpt_fact_gate_v1.py"
+      - "football-data/tests/test_gpt_fact_gate_v1.py"
+      - "football-data/schemas/gpt_fact_evidence_bundle_v1.schema.json"
+      - "football-data/docs/GPT_FACT_GATE_V1.md"
+      - ".github/workflows/football-gpt-fact-gate-v1.yml"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number for live identity verification"
+        required: false
+        type: string
+      run_id:
+        description: "Workflow run ID for live identity verification"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: football-gpt-fact-gate-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile production gate
+        run: python -m py_compile football-data/validation/gpt_fact_gate_v1.py
+      - name: Run production and tamper tests
+        run: python -m unittest football-data/tests/test_gpt_fact_gate_v1.py -v
+      - name: Confirm protected assets unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+          changed_file="$(mktemp)"
+          git diff --name-only "$base"...HEAD > "$changed_file"
+          unexpected="$(grep -Ev '^(\.github/workflows/football-gpt-fact-gate-v1\.yml|football-data/docs/GPT_FACT_GATE_V1\.md|football-data/schemas/gpt_fact_evidence_bundle_v1\.schema\.json|football-data/tests/test_gpt_fact_gate_v1\.py|football-data/validation/gpt_fact_gate_v1\.py)$' "$changed_file" || true)"
+          test -z "$unexpected"
+          test -z "$(git diff --name-only "$base"...HEAD -- football-data/models football-data/processed football-data/raw football-data/training_datasets football-data/config)"
+
+  live-identity-report:
+    if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && inputs.run_id != ''
+    needs: contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Collect live GitHub identity evidence
+        run: >-
+          python football-data/validation/gpt_fact_gate_v1.py collect-github
+          --repo "${{ github.repository }}"
+          --pr "${{ inputs.pr_number }}"
+          --run-id "${{ inputs.run_id }}"
+          --output gpt-fact-output/evidence.json
+      - name: Build deterministic fact report
+        run: >-
+          python football-data/validation/gpt_fact_gate_v1.py build
+          --input gpt-fact-output/evidence.json
+          --output-dir gpt-fact-output/report
+      - name: Verify deterministic fact report
+        run: >-
+          python football-data/validation/gpt_fact_gate_v1.py verify
+          --input gpt-fact-output/evidence.json
+          --output-dir gpt-fact-output/report
+      - uses: actions/upload-artifact@v6
+        with:
+          name: football-gpt-fact-gate-${{ github.sha }}-${{ github.run_id }}
+          path: gpt-fact-output
+          if-no-files-found: error
