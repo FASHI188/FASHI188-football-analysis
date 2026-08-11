@@ -2,34 +2,17 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import hashlib
 import html as html_lib
 import json
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 TAG_RE = re.compile(r"<[^>]+>")
 SPACE_RE = re.compile(r"\s+")
 DECIMAL_RE = re.compile(r"(?<![\d.])(?:1\.[0-9]{2,3}|[2-9]\.[0-9]{2,3}|[1-9][0-9]\.[0-9]{2,3})(?![\d.])")
-USER_AGENT = "FASHI188-V520-R44A-MarketTriplet/1.0"
-
-
-def utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
-
-
-def iso(value: dt.datetime) -> str:
-    return value.astimezone(dt.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
-
-
-def parse_utc(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
 
 
 def sha256(raw: bytes) -> str:
@@ -49,174 +32,161 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
-def validate_url(url: str) -> None:
-    p = urllib.parse.urlsplit(url)
-    if p.scheme != "https" or p.hostname not in {"www.infobetting.com", "infobetting.com"} or p.username or p.password or p.port:
-        fail("URL_OUTSIDE_ALLOWLIST")
+def find_all(text: str, needle: str) -> list[int]:
+    out: list[int] = []
+    start = 0
+    while True:
+        pos = text.find(needle, start)
+        if pos < 0:
+            return out
+        out.append(pos)
+        start = pos + len(needle)
 
 
-class SafeRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        validate_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-def fetch(url: str, timeout: int, max_bytes: int) -> tuple[bytes, dict[str, Any]]:
-    validate_url(url)
-    requested = utc_now()
-    req = urllib.request.Request(
-        url,
-        method="GET",
-        headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*;q=0.1", "Cache-Control": "no-cache"},
-    )
-    opener = urllib.request.build_opener(SafeRedirect())
-    try:
-        with opener.open(req, timeout=timeout) as response:
-            status = int(getattr(response, "status", response.getcode()))
-            final_url = response.geturl()
-            validate_url(final_url)
-            raw = response.read(max_bytes + 1)
-            ctype = str(response.headers.get("Content-Type") or "")
-    except urllib.error.HTTPError as exc:
-        fail(f"HTTP_{exc.code}")
-    except urllib.error.URLError as exc:
-        raise RuntimeError("NETWORK_READ_FAILED") from exc
-    observed = utc_now()
-    if status != 200 or not raw or len(raw) > max_bytes:
-        fail("HTTP_BODY_INVALID")
-    return raw, {
-        "requested_at_utc": iso(requested),
-        "observed_at_utc": iso(observed),
-        "status": status,
-        "final_url": final_url,
-        "content_type": ctype,
-        "bytes": len(raw),
-        "payload_sha256": sha256(raw),
+def extract_role_regions(text: str) -> dict[str, str]:
+    low = text.casefold()
+    hda_anchor = low.find("media 1 x 2")
+    hand_anchors = find_all(low, "media 1 hand. media 2")
+    if hda_anchor < 0:
+        fail("HDA_SECTION_ANCHOR_MISSING")
+    if len(hand_anchors) < 2:
+        fail("HANDICAP_SECTION_ANCHORS_LT2")
+    asian_anchor = hand_anchors[0]
+    ou_anchor = hand_anchors[1]
+    if not (hda_anchor < asian_anchor < ou_anchor):
+        fail("MARKET_SECTION_ORDER_INVALID")
+    ou_end = low.find("media gol nogol", ou_anchor)
+    if ou_end < 0:
+        ou_end = min(len(text), ou_anchor + 12000)
+    return {
+        "hda": text[hda_anchor:asian_anchor],
+        "asian": text[asian_anchor:ou_anchor],
+        "ou": text[ou_anchor:ou_end],
     }
 
 
-def fixture_region(text: str) -> str:
-    low = text.casefold()
-    start = low.find("arsenal - coventry")
-    if start < 0:
-        fail("FIXTURE_TOKEN_MISSING")
-    next_markers = ["hull - manchester united", "everton - crystal palace", "ipswich - sunderland"]
-    ends = [low.find(m, start + 20) for m in next_markers]
-    ends = [x for x in ends if x > start]
-    end = min(ends) if ends else min(len(text), start + 6000)
-    region = text[start:end]
-    if "21-08-2026" not in region and "21/08/2026" not in region:
-        fail("FIXTURE_DATE_MISSING")
-    return region
+def audit_roles(regions: dict[str, str]) -> list[dict[str, Any]]:
+    date_tokens = ("21/08/2026", "21-08-2026")
+    hda = regions["hda"]
+    hda_decimals = DECIMAL_RE.findall(hda)
+    if not any(x in hda for x in date_tokens) or len(hda_decimals) < 6:
+        fail("HDA_COMPLETE_PRICE_COVERAGE_FAILED")
 
+    asian = regions["asian"]
+    asian_decimals = DECIMAL_RE.findall(asian)
+    if not any(x in asian for x in date_tokens) or "0:0" not in asian or len(asian_decimals) < 4:
+        fail("ASIAN_BILATERAL_COVERAGE_FAILED")
 
-def audit_role(role: str, region: str) -> dict[str, Any]:
-    decimals = DECIMAL_RE.findall(region)
-    if role == "hda":
-        if len(decimals) < 3:
-            fail("HDA_COMPLETE_PRICE_TRIPLE_NOT_VISIBLE")
-        return {
-            "role": role,
-            "price_like_count": len(decimals),
-            "visible_price_sample": decimals[:6],
+    ou = regions["ou"]
+    ou_decimals = DECIMAL_RE.findall(ou)
+    required = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"]
+    missing = [x for x in required if x not in ou]
+    if not any(x in ou for x in date_tokens) or missing or len(ou_decimals) < 12:
+        fail("OU_MULTILINE_BILATERAL_COVERAGE_FAILED:" + ",".join(missing))
+
+    return [
+        {
+            "role": "hda",
             "role_gate": True,
-        }
-    if role == "asian":
-        if "0:0" not in region or len(decimals) < 2:
-            fail("ASIAN_PAIR_NOT_VISIBLE")
-        return {
-            "role": role,
+            "region_sha256": sha256(hda.encode("utf-8")),
+            "price_like_count": len(hda_decimals),
+            "visible_price_sample": hda_decimals[:9],
+        },
+        {
+            "role": "asian",
+            "role_gate": True,
             "contains_handicap_0_0": True,
-            "price_like_count": len(decimals),
-            "visible_price_sample": decimals[:6],
+            "region_sha256": sha256(asian.encode("utf-8")),
+            "price_like_count": len(asian_decimals),
+            "visible_price_sample": asian_decimals[:8],
+        },
+        {
+            "role": "ou",
             "role_gate": True,
-        }
-    if role == "ou":
-        required = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"]
-        missing = [line for line in required if line not in region]
-        if missing:
-            fail("OU_REQUIRED_LINES_MISSING:" + ",".join(missing))
-        if len(decimals) < 12:
-            fail("OU_BILATERAL_PRICE_COVERAGE_TOO_LOW")
-        return {
-            "role": role,
             "required_half_goal_lines": required,
             "missing_half_goal_lines": [],
-            "price_like_count": len(decimals),
-            "visible_price_sample": decimals[:18],
-            "role_gate": True,
-        }
-    fail("UNKNOWN_MARKET_ROLE")
-    raise AssertionError
+            "region_sha256": sha256(ou.encode("utf-8")),
+            "price_like_count": len(ou_decimals),
+            "visible_price_sample": ou_decimals[:18],
+        },
+    ]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--contract", required=True)
+    ap.add_argument("--base-output", required=True)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
+
     cp = Path(args.contract)
+    base = Path(args.base_output)
+    out = Path(args.output)
     c = json.loads(cp.read_text(encoding="utf-8"))
-    if c.get("schema_version") != "V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.0":
+    if c.get("schema_version") != "V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.1":
         fail("CONTRACT_SCHEMA_MISMATCH")
+    if c.get("status") != "ZERO_LABEL_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_ONLY":
+        fail("CONTRACT_STATUS_MISMATCH")
     if c.get("research_only") is not True or c.get("formal_weight") != 0:
         fail("RESEARCH_BOUNDARY_INVALID")
-    triplet = (c.get("market_source") or {}).get("synchronized_triplet") or []
-    if [x.get("role") for x in triplet] != ["hda", "asian", "ou"]:
-        fail("TRIPLET_ROLE_ORDER_INVALID")
-    if len(triplet) != 3:
-        fail("TRIPLET_SIZE_INVALID")
+    exact = (c.get("market_source") or {}).get("exact_fixture_payload") or {}
+    if exact.get("required_roles") != ["hda", "asian", "ou"]:
+        fail("ROLE_CONTRACT_INVALID")
+    if exact.get("synchronization_semantics") != "SAME_HTTP_PAYLOAD_SINGLE_OBSERVATION":
+        fail("SYNC_SEMANTICS_INVALID")
 
-    out = Path(args.output)
+    receipt_path = base / "receipt_r44a.json"
+    if not receipt_path.is_file():
+        fail("BASE_RECEIPT_MISSING")
+    base_raw = receipt_path.read_bytes()
+    base_receipt = json.loads(base_raw)
+    if base_receipt.get("schema_version") != "V520-R44A-RECEIPT-1.1":
+        fail("BASE_RECEIPT_SCHEMA_MISMATCH")
+    if base_receipt.get("terminal") != "PASS_R44A_SOURCE_FEASIBILITY_NOT_FORMAL_MARKET_SNAPSHOT":
+        fail("BASE_SOURCE_FEASIBILITY_NOT_PASS")
+
+    market = base_receipt.get("market_evidence") or {}
+    source_url = market.get("selected_url")
+    expected_url = exact.get("url")
+    if source_url != expected_url:
+        fail("EXACT_FIXTURE_URL_MISMATCH")
+    raw_rel = market.get("raw_path")
+    digest = market.get("payload_sha256")
+    if not isinstance(raw_rel, str) or not isinstance(digest, str):
+        fail("BASE_RAW_IDENTITY_MISSING")
+    market_raw_path = base / raw_rel
+    if not market_raw_path.is_file():
+        fail("BASE_MARKET_RAW_MISSING")
+    raw = market_raw_path.read_bytes()
+    if sha256(raw) != digest:
+        fail("BASE_MARKET_SHA_MISMATCH")
+
+    text = visible_text(raw)
+    low = text.casefold()
+    if "arsenal" not in low or "coventry" not in low:
+        fail("FIXTURE_IDENTITY_MISSING")
+    regions = extract_role_regions(text)
+    audits = audit_roles(regions)
+
     out.mkdir(parents=True, exist_ok=False)
-    raw_dir = out / "raw"
-    raw_dir.mkdir()
-    timeout = int(c["capture_rules"]["http_timeout_seconds"])
-    max_bytes = int(c["capture_rules"]["max_http_bytes"])
-    kickoff = parse_utc(c["fixture"]["scheduled_kickoff_utc"])
-
-    rows: list[dict[str, Any]] = []
-    for item in triplet:
-        raw, meta = fetch(item["url"], timeout, max_bytes)
-        observed = parse_utc(meta["observed_at_utc"])
-        if observed >= kickoff:
-            fail("MARKET_OBSERVED_AFTER_KICKOFF")
-        text = visible_text(raw)
-        region = fixture_region(text)
-        role_audit = audit_role(item["role"], region)
-        raw_name = f"{item['role']}__{meta['payload_sha256']}.html"
-        (raw_dir / raw_name).write_bytes(raw)
-        rows.append({
-            "role": item["role"],
-            "source_url": item["url"],
-            "raw_path": f"raw/{raw_name}",
-            "fixture_region_sha256": sha256(region.encode("utf-8")),
-            **meta,
-            **role_audit,
-        })
-
-    first = min(parse_utc(x["requested_at_utc"]) for x in rows)
-    last = max(parse_utc(x["observed_at_utc"]) for x in rows)
-    span = (last - first).total_seconds()
-    max_span = float(c["capture_rules"].get("market_triplet_max_sync_span_seconds", 15))
-    if span > max_span:
-        fail("MARKET_TRIPLET_SYNC_SPAN_EXCEEDED")
-
     receipt = {
-        "schema_version": "V520-R44A-MARKET-TRIPLET-RECEIPT-1.0",
-        "terminal": "PASS_R44A_SYNCHRONIZED_MARKET_SOURCE_COVERAGE_NOT_FORMAL_SNAPSHOT",
+        "schema_version": "V520-R44A-EXACT-PAYLOAD-MARKET-RECEIPT-1.0",
+        "terminal": "PASS_R44A_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_NOT_FORMAL_SNAPSHOT",
         "fixture": c["fixture"],
         "provider_group": c["market_source"]["provider_group"],
         "independent_market_count_claimed": 1,
-        "collector_observation_window_start_utc": iso(first),
-        "collector_observation_window_end_utc": iso(last),
-        "synchronization_span_seconds": span,
-        "synchronization_span_limit_seconds": max_span,
+        "source_url": source_url,
+        "source_payload_sha256": digest,
+        "source_payload_path": str(market_raw_path),
+        "collector_first_observed_at_utc": market["collector_first_observed_at_utc"],
         "source_native_quote_timestamp": None,
-        "availability_time_semantics": "collector_first_observed_at_utc per captured page",
-        "markets": rows,
+        "availability_time_semantics": "collector_first_observed_at_utc",
+        "synchronization_semantics": "SAME_HTTP_PAYLOAD_SINGLE_OBSERVATION",
+        "synchronization_span_seconds": 0.0,
+        "market_roles": audits,
         "formal_market_snapshot": False,
-        "reason_not_formal_snapshot": "This is a zero-label coverage gate. Exact field-level structured prices, source freshness policy, and repeated freeze-window persistence are not yet admitted into the formal runtime.",
+        "structured_complete_prices_extracted": False,
+        "reason_not_formal_snapshot": "Same-payload role coverage is proven, but source-native quote timestamps, frozen field-level price extraction, executable-price identity, and repeated freeze-window persistence are not yet admitted.",
         "target_labels_accessed": 0,
         "settlement_results_accessed": 0,
         "model_fits": 0,
@@ -230,16 +200,15 @@ def main() -> int:
         "formal_config_changes": 0,
         "CURRENT_changes": 0,
     }
-    raw = packed(receipt) + b"\n"
-    (out / "market_triplet_receipt_r44a.json").write_bytes(raw)
-    (out / "market_triplet_receipt_r44a.sha256").write_text(sha256(raw) + "\n", encoding="ascii")
+    encoded = packed(receipt) + b"\n"
+    (out / "exact_payload_market_receipt_r44a.json").write_bytes(encoded)
+    (out / "exact_payload_market_receipt_r44a.sha256").write_text(sha256(encoded) + "\n", encoding="ascii")
     print(json.dumps({
         "terminal": receipt["terminal"],
-        "sync_span_seconds": span,
-        "roles": [x["role"] for x in rows],
-        "observed_at": [x["observed_at_utc"] for x in rows],
-        "payload_sha256": [x["payload_sha256"] for x in rows],
-        "receipt_sha256": sha256(raw),
+        "source_payload_sha256": digest,
+        "roles": [x["role"] for x in audits],
+        "synchronization_span_seconds": 0.0,
+        "receipt_sha256": sha256(encoded),
     }, sort_keys=True))
     return 0
 
@@ -248,5 +217,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"R44A_MARKET_TRIPLET_FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"R44A_EXACT_PAYLOAD_AUDIT_FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise
