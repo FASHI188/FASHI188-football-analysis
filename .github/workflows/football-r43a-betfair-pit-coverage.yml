@@ -1,0 +1,106 @@
+name: Football R43A Betfair PIT Coverage
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r43a_betfair_basic_pit_coverage.json"
+      - "football-data/validation/audit_r43a_betfair_basic_pit_coverage.py"
+      - "football-data/validation/test_r43a_betfair_basic_pit_coverage.py"
+      - "football-data/external/betfair-basic/**"
+      - "external/betfair-basic/**"
+      - ".github/workflows/football-r43a-betfair-pit-coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r43a-betfair-pit-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile frozen R43A path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_r43a_betfair_basic_pit_coverage.py \
+            football-data/validation/test_r43a_betfair_basic_pit_coverage.py
+
+      - name: Independent deterministic zero-label tests
+        run: python football-data/validation/test_r43a_betfair_basic_pit_coverage.py
+
+      - name: Run R43A coverage gate once
+        run: python football-data/validation/audit_r43a_betfair_basic_pit_coverage.py
+
+      - name: Verify fail-closed governance and coverage contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path('football-data/manifests/r43a_betfair_basic_pit_coverage_status.json')
+          x = json.loads(p.read_text(encoding='utf-8'))
+          allowed = {
+              'STOP_R43A_BETFAIR_INPUT_ABSENT',
+              'STOP_R43A_BETFAIR_COVERAGE_GATE_FAIL',
+              'PASS_R43A_BETFAIR_ZERO_LABEL_COVERAGE',
+          }
+          assert x['status'] in allowed
+          g = x['governance']
+          assert g['research_only'] is True
+          assert g['formal_weight'] == 0
+          assert g['zero_label'] is True
+          assert g['model_fit'] == 0
+          assert g['provider_requests_from_actions'] == 0
+          assert g['protected_blind_access'] == 0
+          assert g['formal_model_mutation'] is False
+          assert g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False
+          assert g['main_mutation'] is False
+          z = x['zero_label_receipt']
+          assert z['result_or_settlement_fields_accessed'] == 0
+          assert z['post_kickoff_prices_used'] == 0
+          assert z['model_fits'] == 0
+          assert z['fixed200_selected'] == 0
+          if x['status'] == 'PASS_R43A_BETFAIR_ZERO_LABEL_COVERAGE':
+              assert x['coverage']['coverage_gate_pass'] is True
+              assert x['coverage']['events_all_required_freezes_complete'] >= 200
+              assert len(x['coverage']['distinct_countries_all_complete']) >= 3
+              assert len(x['coverage']['distinct_calendar_months_all_complete']) >= 6
+              assert x['scientific_verdict'] == 'AUTHORIZE_R43B_FIXED200_PREREGISTRATION'
+          else:
+              assert x['scientific_verdict'] != 'AUTHORIZE_R43B_FIXED200_PREREGISTRATION'
+          print(json.dumps({
+              'status': x['status'],
+              'scientific_verdict': x['scientific_verdict'],
+              'input_files': x['input']['files'],
+              'coverage_summary': None if x['coverage'] is None else {
+                  'events': x['coverage']['football_events'],
+                  'all_freezes_complete': x['coverage']['events_all_required_freezes_complete'],
+              },
+              'zero_label_receipt': z,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload R43A coverage receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r43a-betfair-pit-coverage
+          path: football-data/manifests/r43a_betfair_basic_pit_coverage_status.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm only runtime manifest is untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
