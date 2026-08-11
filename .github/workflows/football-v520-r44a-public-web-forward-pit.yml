@@ -1,0 +1,105 @@
+name: Football V5.2 R44A Public-Web Forward PIT Precheck
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-v520-r44a-public-web-forward-pit.yml'
+      - 'football-data/research/public_web_forward_pit_r44a/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v520-r44a-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-forward-pit-precheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Verify V5.2 governance and zero-label contract
+        run: |
+          set -euo pipefail
+          test -f football-data/governance/pit_evidence_contract_v520.json
+          test -f football-data/governance/model_promotion_gate_v520.json
+          python -m py_compile football-data/research/public_web_forward_pit_r44a/capture_forward_pit_r44a.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('football-data/research/public_web_forward_pit_r44a/contract_r44a.json').read_text(encoding='utf-8'))
+          assert c['schema_version']=='V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.0'
+          assert c['status']=='ZERO_LABEL_SOURCE_FEASIBILITY_ONLY'
+          assert c['research_only'] is True and c['formal_weight']==0
+          assert c['fixture']['fixture_id']==2645195
+          assert c['fixture']['scheduled_kickoff_utc']=='2026-08-21T19:00:00Z'
+          b=c['hard_boundaries']
+          assert b['target_labels']==b['settlement_results']==b['model_fits']==0
+          assert b['candidate_probabilities']==b['fixed_sample_consumption']==b['ev_calculations']==0
+          assert b['formal_model_mutation'] is False and b['formal_data_mutation'] is False
+          assert b['formal_config_mutation'] is False and b['current_rule_mutation'] is False and b['main_mutation'] is False
+          print('PASS_R44A_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Capture official lineup state and discover public synchronized market page
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r44a"
+          python football-data/research/public_web_forward_pit_r44a/capture_forward_pit_r44a.py \
+            --contract football-data/research/public_web_forward_pit_r44a/contract_r44a.json \
+            --output "$RUNNER_TEMP/r44a"
+
+      - name: Verify receipt, hashes and hard boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,re
+          from datetime import datetime
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r44a'
+          p=root/'receipt_r44a.json'
+          raw=p.read_bytes()
+          r=json.loads(raw)
+          assert r['schema_version']=='V520-R44A-RECEIPT-1.0'
+          assert r['terminal'] in {'PASS_R44A_SOURCE_FEASIBILITY_NOT_FORMAL_MARKET_SNAPSHOT','STOP_R44A_MARKET_DISCOVERY_NO_MATCH'}
+          assert r['current_rule_family']=='V5.2.0'
+          h=r['hard_boundary_receipt']
+          assert h['target_labels_accessed']==h['settlement_results_accessed']==h['model_fits']==0
+          assert h['candidate_probabilities']==h['fixed100_consumed']==h['fixed200_consumed']==h['ev_calculations']==0
+          assert h['formal_weight']==h['formal_model_changes']==h['formal_data_changes']==h['formal_config_changes']==h['CURRENT_changes']==0
+          assert re.fullmatch(r'[0-9a-f]{64}',r['lineup_evidence']['payload_sha256'])
+          assert r['lineup_evidence']['state'] in {'CONFIRMED_XI','PRE_ANNOUNCEMENT_SQUADS','UNKNOWN_FAIL_CLOSED'}
+          ko=datetime.fromisoformat(r['fixture']['scheduled_kickoff_utc'].replace('Z','+00:00'))
+          lo=datetime.fromisoformat(r['lineup_evidence']['collector_first_observed_at_utc'].replace('Z','+00:00'))
+          assert lo < ko
+          if r['terminal'].startswith('PASS_'):
+              m=r['market_evidence']
+              assert m['formal_market_snapshot'] is False
+              assert m['independent_market_count_claimed']==1
+              assert m['source_native_quote_timestamp'] is None
+              assert m['identity']['feasibility_gate'] is True
+              mo=datetime.fromisoformat(m['collector_first_observed_at_utc'].replace('Z','+00:00'))
+              assert mo < ko
+              assert re.fullmatch(r'[0-9a-f]{64}',m['payload_sha256'])
+          expected=(root/'receipt_r44a.sha256').read_text(encoding='ascii').strip()
+          assert expected==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({'terminal':r['terminal'],'receipt_sha256':expected,'lineup_state':r['lineup_evidence']['state'],'market_url':r['market_evidence'].get('selected_url')},sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-v520-r44a-forward-pit-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/r44a
+          retention-days: 30
+          if-no-files-found: error
