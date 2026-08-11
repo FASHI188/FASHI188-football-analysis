@@ -1,0 +1,110 @@
+name: Football R42L Team Total Histogram Fixed200
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r42l_team_total_histogram_fixed200.json"
+      - "football-data/validation/evaluate_r42l_team_total_histogram_fixed200.py"
+      - "football-data/validation/evaluate_r42k_total_shape_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42i_two_half_generative_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42h_team_red_foul_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42g_discipline_referee_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-r42l-team-total-histogram-fixed200.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r42l-team-total-histogram-fixed200-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R42L path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py \
+            football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42g_discipline_referee_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42h_team_red_foul_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42i_two_half_generative_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42k_total_shape_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42l_team_total_histogram_fixed200.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r42l_team_total_histogram_fixed200.py --self-test
+      - name: Rebuild exact audited V5.1 historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen R42L coverage gate and fixed200 if authorized
+        run: python football-data/validation/evaluate_r42l_team_total_histogram_fixed200.py
+      - name: Verify coverage, sample and governance contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/r42l_team_total_histogram_fixed200_status.json').read_text(encoding='utf-8'))
+          assert x['prior_fixed200_exclusion']['rows']==3400
+          z=x['zero_test_selection_receipt']
+          assert z['target_labels_used_for_coverage_gate'] is False
+          assert z['target_labels_used_for_identity_selection'] is False
+          assert z['current_match_total_used_in_own_features']==0
+          assert z['same_day_freeze_before_update'] is True
+          assert z['pseudo_counts_used']==0
+          g=x['governance']
+          assert g['formal_weight']==0 and g['protected_blind_access']==0
+          assert g['fixed200_parameter_selection'] is False and g['fixed200_feature_selection'] is False and g['fixed200_threshold_selection'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False and g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False and g['main_mutation'] is False
+          if x['status']=='STOP_R42L_TEAM_HISTOGRAM_COVERAGE_LT200':
+              assert x['model_fits']==0 and x['sample'] is None
+          else:
+              assert x['status']=='PASS_R42L_FIXED200_EXECUTION_COMPLETE'
+              assert x['sample']['rows']==200 and x['sample']['overlap_with_prior_3400']==0
+              assert x['sample']['labels_used_for_identity_selection'] is False
+              m=x['model_contract']
+              assert m['same_C_used_by_challenger'] is True
+              assert m['team_histogram_feature_count']==28
+              assert m['scientific_parameters_selected_on_fixed200']==0
+              assert m['baseline_probability_sum_max_residual'] < 1e-10
+              assert m['challenger_probability_sum_max_residual'] < 1e-10
+          print(json.dumps({'status':x['status'],'scientific_verdict':x['scientific_verdict'],'coverage':x['coverage'],'sample':x.get('sample'),'model_contract':x.get('model_contract'),'metrics':x.get('metrics')},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R42L receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42l-team-total-histogram-fixed200
+          path: football-data/manifests/r42l_team_total_histogram_fixed200_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
