@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -36,6 +37,8 @@ jobs:
           test -f football-data/governance/model_promotion_gate_v520.json
           python -m py_compile football-data/research/public_web_forward_pit_r44a/capture_forward_pit_r44a.py
           python -m py_compile football-data/research/public_web_forward_pit_r44a/probe_market_triplet_r44a.py
+          python -m py_compile football-data/research/public_web_forward_pit_r44a/finalize_run_identity_r44a.py
+          python -m py_compile football-data/research/public_web_forward_pit_r44a/audit_freeze_persistence_r44b.py
           python - <<'PY'
           import json
           from pathlib import Path
@@ -49,6 +52,9 @@ jobs:
           assert e['required_roles']==['hda','asian','ou']
           assert e['synchronization_semantics']=='SAME_HTTP_PAYLOAD_SINGLE_OBSERVATION'
           assert e['url']==c['market_source']['candidate_urls'][0]
+          s=c['market_source']['structured_extraction']
+          assert [x['label'] for x in s['freeze_window_targets']]==['T-72h','T-24h','T-6h','T-90m','T-15m']
+          assert s['freeze_window_tolerance_minutes']==15
           b=c['hard_boundaries']
           assert b['target_labels']==b['settlement_results']==b['model_fits']==0
           assert b['candidate_probabilities']==b['fixed_sample_consumption']==b['ev_calculations']==0
@@ -112,11 +118,17 @@ jobs:
             --base-output "$RUNNER_TEMP/r44a/base" \
             --output "$RUNNER_TEMP/r44a/exact_market"
 
-      - name: Verify exact payload multi-market receipt
+      - name: Finalize immutable checkout and run-attempt identity
+        run: |
+          set -euo pipefail
+          python football-data/research/public_web_forward_pit_r44a/finalize_run_identity_r44a.py \
+            --exact-market-output "$RUNNER_TEMP/r44a/exact_market"
+
+      - name: Verify exact payload structured receipt and immutable identity
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib,json,os,re
+          import hashlib,json,os,re,subprocess
           from datetime import datetime
           from pathlib import Path
           runroot=Path(os.environ['RUNNER_TEMP'])/'r44a'
@@ -125,11 +137,13 @@ jobs:
           p=root/'exact_payload_market_receipt_r44a.json'
           raw=p.read_bytes()
           r=json.loads(raw)
-          assert r['schema_version']=='V520-R44A-EXACT-PAYLOAD-MARKET-RECEIPT-1.0'
+          assert r['schema_version']=='V520-R44A-EXACT-PAYLOAD-MARKET-RECEIPT-1.1'
           assert r['terminal']=='PASS_R44A_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_NOT_FORMAL_SNAPSHOT'
           assert r['provider_group']=='Infobetting public odds aggregator'
           assert r['independent_market_count_claimed']==1
-          assert r['formal_market_snapshot'] is False
+          assert r['formal_market_snapshot'] is False and r['formal_execution_ready'] is False
+          assert r['bookmaker_specific_quotes_extracted'] is True
+          assert r['structured_visible_prices_extracted'] is True
           assert r['structured_complete_prices_extracted'] is False
           assert r['source_native_quote_timestamp'] is None
           assert r['synchronization_semantics']=='SAME_HTTP_PAYLOAD_SINGLE_OBSERVATION'
@@ -143,17 +157,89 @@ jobs:
           ko=datetime.fromisoformat(r['fixture']['scheduled_kickoff_utc'].replace('Z','+00:00'))
           obs=datetime.fromisoformat(r['collector_first_observed_at_utc'].replace('Z','+00:00'))
           assert obs < ko
+          structured=root/r['structured_quote_document']
+          structured_raw=structured.read_bytes()
+          assert hashlib.sha256(structured_raw).hexdigest()==r['structured_quote_document_sha256']
+          structured_obj=json.loads(structured_raw)
+          assert structured_obj['formal_market_snapshot'] is False and structured_obj['formal_execution_ready'] is False
+          identity=r['run_identity']
+          actual_head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert identity['checked_out_head_sha']==actual_head
+          assert identity['github_run_id']==os.environ['GITHUB_RUN_ID']
+          assert identity['github_run_attempt']==os.environ['GITHUB_RUN_ATTEMPT']
           assert r['target_labels_accessed']==r['settlement_results_accessed']==r['model_fits']==0
           assert r['candidate_probabilities']==r['fixed100_consumed']==r['fixed200_consumed']==r['ev_calculations']==0
           assert r['formal_weight']==r['formal_model_changes']==r['formal_data_changes']==r['formal_config_changes']==r['CURRENT_changes']==0
           expected=(root/'exact_payload_market_receipt_r44a.sha256').read_text(encoding='ascii').strip()
           assert expected==hashlib.sha256(raw).hexdigest()
-          print(json.dumps({'terminal':r['terminal'],'roles':[x['role'] for x in r['market_roles']],'receipt_sha256':expected},sort_keys=True))
+          print(json.dumps({'terminal':r['terminal'],'structured_terminal':r['structured_terminal'],'target_window':r['freeze_window']['target_window_label'],'matched_target_window':r['freeze_window']['matched_target_window'],'checked_out_head_sha':actual_head,'github_run_attempt':identity['github_run_attempt'],'receipt_sha256':expected},sort_keys=True))
           PY
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: football-v520-r44a-forward-pit-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          name: football-v520-r44a-forward-pit-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/r44a
+          retention-days: 30
+          if-no-files-found: error
+
+  freeze-window-persistence-audit:
+    needs: zero-label-forward-pit-precheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Audit immutable R44A artifacts against preregistered freeze windows
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/r44b"
+          python football-data/research/public_web_forward_pit_r44a/audit_freeze_persistence_r44b.py \
+            --contract football-data/research/public_web_forward_pit_r44a/contract_r44a.json \
+            --repository "${{ github.repository }}" \
+            --branch "research/v520-public-web-forward-pit-r44a" \
+            --output "$RUNNER_TEMP/r44b"
+
+      - name: Verify R44B fail-closed persistence semantics
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r44b'
+          p=root/'freeze_persistence_audit_r44b.json'
+          raw=p.read_bytes()
+          r=json.loads(raw)
+          assert r['schema_version']=='V520-R44B-FREEZE-PERSISTENCE-AUDIT-1.0'
+          assert r['terminal'] in {'STOP_R44B_TARGET_WINDOW_COVERAGE_INCOMPLETE','PASS_R44B_ALL_TARGET_WINDOWS_PERSISTED_NOT_FORMAL_SNAPSHOT'}
+          assert r['formal_market_snapshot'] is False and r['formal_execution_ready'] is False
+          assert r['source_native_quote_timestamp_proven'] is False
+          assert r['direct_bookmaker_revalidation_proven'] is False
+          assert r['target_labels_accessed']==r['settlement_results_accessed']==r['model_fits']==0
+          assert r['candidate_probabilities']==r['fixed100_consumed']==r['fixed200_consumed']==r['ev_calculations']==0
+          assert r['formal_weight']==r['formal_model_changes']==r['formal_data_changes']==r['formal_config_changes']==r['CURRENT_changes']==0
+          expected=(root/'freeze_persistence_audit_r44b.sha256').read_text(encoding='ascii').strip()
+          assert expected==hashlib.sha256(raw).hexdigest()
+          if r['freeze_window_persistence_complete']:
+              assert r['missing_target_windows']==[]
+              assert r['covered_target_windows']==['T-72h','T-24h','T-6h','T-90m','T-15m']
+          else:
+              assert r['missing_target_windows']
+          print(json.dumps({'terminal':r['terminal'],'observation_count':r['observation_count'],'covered':r['covered_target_windows'],'missing':r['missing_target_windows'],'report_sha256':expected},sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-v520-r44b-freeze-persistence-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r44b
           retention-days: 30
           if-no-files-found: error
