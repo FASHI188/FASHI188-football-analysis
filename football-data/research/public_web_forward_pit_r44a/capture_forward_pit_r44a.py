@@ -22,7 +22,7 @@ URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 TAG_RE = re.compile(r"<[^>]+>")
 SPACE_RE = re.compile(r"\s+")
 PLAYER_HREF = re.compile(r"^/en/players/(\d+)/[^/]+/overview$")
-USER_AGENT = "FASHI188-V520-R44A-Forward-PIT/1.0"
+USER_AGENT = "FASHI188-V520-R44A-Forward-PIT/1.1"
 
 def utc_now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -213,8 +213,10 @@ def market_identity(text: str) -> dict[str, Any]:
     }
 
 def validate_contract(c: dict[str, Any]) -> None:
-    if c.get("schema_version") != "V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.0":
+    if c.get("schema_version") != "V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.1":
         fail("CONTRACT_SCHEMA_MISMATCH")
+    if c.get("status") != "ZERO_LABEL_EXACT_FIXTURE_MULTI_MARKET_COVERAGE_ONLY":
+        fail("CONTRACT_STATUS_MISMATCH")
     if c.get("research_only") is not True or c.get("formal_weight") != 0:
         fail("RESEARCH_BOUNDARY_INVALID")
     b = c.get("hard_boundaries") or {}
@@ -260,7 +262,7 @@ def main() -> int:
     timeout = int(c["capture_rules"]["http_timeout_seconds"])
     max_http = int(c["capture_rules"]["max_http_bytes"])
     max_req = int(c["capture_rules"]["max_market_requests"])
-    queue = list(market["discovery_urls"]) + list(market["candidate_urls"])
+    queue = list(market.get("discovery_urls") or []) + list(market["candidate_urls"])
     seen: set[str] = set()
     fetch_rows: list[dict[str, Any]] = []
     selected: dict[str, Any] | None = None
@@ -277,12 +279,13 @@ def main() -> int:
             continue
         digest = meta["sha256"]
         suffix = ".xml" if "xml" in meta.get("content_type", "").casefold() else ".html"
-        (raw_dir / f"market_discovery_{len(fetch_rows):02d}__{digest}{suffix}").write_bytes(raw)
+        raw_path = raw_dir / f"market_discovery_{len(fetch_rows):02d}__{digest}{suffix}"
+        raw_path.write_bytes(raw)
         text = visible_text(raw.decode("utf-8", errors="replace"))
         ident = market_identity(text)
         meta["market_identity"] = ident
         if ident["feasibility_gate"]:
-            selected = {"url": meta.get("final_url", u), "raw": raw, "meta": meta, "identity": ident}
+            selected = {"url": meta.get("final_url", u), "raw": raw, "meta": meta, "identity": ident, "raw_path": raw_path.relative_to(out).as_posix()}
             break
         for link in extract_links(raw, hosts):
             low = link.casefold()
@@ -307,6 +310,7 @@ def main() -> int:
             fail("MARKET_OBSERVED_AFTER_KICKOFF")
         market_receipt.update({
             "selected_url": selected["url"],
+            "raw_path": selected["raw_path"],
             "collector_first_observed_at_utc": selected["meta"]["observed_at_utc"],
             "retrieved_at_utc": selected["meta"]["observed_at_utc"],
             "payload_sha256": selected["meta"]["sha256"],
@@ -316,7 +320,7 @@ def main() -> int:
         })
 
     receipt = {
-        "schema_version": "V520-R44A-RECEIPT-1.0",
+        "schema_version": "V520-R44A-RECEIPT-1.1",
         "terminal": terminal,
         "current_rule_family": "V5.2.0",
         "contract_sha256": sha256(cp.read_bytes()),
