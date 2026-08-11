@@ -1,0 +1,109 @@
+name: Football R42D Mutual Draw Utility Replication Fixed200
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r42d_mutual_draw_utility_replication_fixed200.json"
+      - "football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py"
+      - "football-data/config/r42d_mutual_draw_utility_fixed200.json"
+      - "football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py"
+      - "football-data/validation/evaluate_r42c_favourite_nonwin_fixed200.py"
+      - "football-data/validation/evaluate_r42a_dynamic_diagonal_fixed200.py"
+      - "football-data/validation/evaluate_r41d_replication_fixed200.py"
+      - "football-data/validation/evaluate_r41_priority_fixed200_battery.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-r42d-mutual-draw-utility-replication-fixed200.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r42d-mutual-draw-utility-replication-fixed200-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile exact R42D replication path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py \
+            football-data/validation/evaluate_r41_priority_fixed200_battery.py \
+            football-data/validation/evaluate_r41d_replication_fixed200.py \
+            football-data/validation/evaluate_r42a_dynamic_diagonal_fixed200.py \
+            football-data/validation/evaluate_r42c_favourite_nonwin_fixed200.py \
+            football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py \
+            football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r41_priority_fixed200_battery.py --self-test
+          python football-data/validation/evaluate_r41d_replication_fixed200.py --self-test
+          python football-data/validation/evaluate_r42a_dynamic_diagonal_fixed200.py --self-test
+          python football-data/validation/evaluate_r42c_favourite_nonwin_fixed200.py --self-test
+          python football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py --self-test
+          python football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py --self-test
+      - name: Rebuild exact audited V5.1 historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run exact-method R42D replication once
+        run: python football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py
+      - name: Verify exact replication and governance contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/r42d_mutual_draw_utility_replication_fixed200_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS_R42D_REPLICATION_FIXED200_EXECUTION_COMPLETE'
+          assert x['sample']['rows']==200
+          assert x['prior_fixed200_exclusion']['rows']==2000
+          assert x['prior_fixed200_exclusion']['all_expected_hashes_match'] is True
+          assert x['sample']['overlap_with_prior_2000']==0
+          assert x['sample']['labels_used_for_identity_selection'] is False
+          assert x['sample']['blind_claim'] is False
+          assert x['exact_method_replication']['scientific_parameters_changed_from_parent']==0
+          assert x['exact_method_replication']['feature_count']==22
+          assert x['exact_method_replication']['method_contract']['manual_draw_bonus'] is False
+          assert x['exact_method_replication']['method_contract']['manual_threshold'] is None
+          g=x['governance']
+          assert g['formal_weight']==0 and g['protected_blind_access']==0
+          assert g['fixed200_parameter_selection'] is False
+          assert g['fixed200_feature_selection'] is False
+          assert g['fixed200_threshold_selection'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False and g['current_mutation'] is False and g['main_mutation'] is False
+          assert x['market_boundary']['formal_PIT_claim'] is False
+          print(json.dumps({'scientific_verdict':x['scientific_verdict'],'sample':x['sample'],'comparison':x['comparison']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R42D replication receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42d-mutual-draw-utility-replication-fixed200
+          path: football-data/manifests/r42d_mutual_draw_utility_replication_fixed200_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
