@@ -1,0 +1,87 @@
+name: Football R41 Priority Fixed200 Battery
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r41_priority_fixed200_battery.json"
+      - "football-data/validation/evaluate_r41_priority_fixed200_battery.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-r41-priority-fixed200-battery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r41-priority-fixed200-battery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile research path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py \
+            football-data/validation/evaluate_r41_priority_fixed200_battery.py
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r41_priority_fixed200_battery.py --self-test
+      - name: Rebuild exact audited V5.1 historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run four disjoint fixed200 priority screens once
+        run: python football-data/validation/evaluate_r41_priority_fixed200_battery.py
+      - name: Verify frozen sample and governance contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/r41_priority_fixed200_battery_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS_R41_PRIORITY_FIXED200_BATTERY_EXECUTION_COMPLETE'
+          assert set(x['methods'])=={'R41C','R41D','R41E','R41F'}
+          for key in ('R41C','R41D','R41E','R41F'):
+              assert x['methods'][key]['sample']['rows']==200
+              assert x['methods'][key]['sample']['labels_used_for_identity_selection'] is False
+              assert x['methods'][key]['sample']['blind_claim'] is False
+          assert all(v==0 for v in x['sample_overlap_audit']['pairwise_battery'].values())
+          assert all(v==0 for v in x['sample_overlap_audit']['with_R41A_R41B'].values())
+          g=x['governance']
+          assert g['formal_weight']==0 and g['protected_blind_access']==0
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False and g['current_mutation'] is False and g['main_mutation'] is False
+          assert g['retrospective_market_reference_only'] is True
+          print(json.dumps({'summary':x['summary'],'overlap':x['sample_overlap_audit']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload aggregate research receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r41-priority-fixed200-battery
+          path: football-data/manifests/r41_priority_fixed200_battery_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
