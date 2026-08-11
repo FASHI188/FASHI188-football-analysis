@@ -29,50 +29,54 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Verify V5.2 governance and zero-label contract
+      - name: Verify V5.2 governance and zero-label synchronized-source contract
         run: |
           set -euo pipefail
           test -f football-data/governance/pit_evidence_contract_v520.json
           test -f football-data/governance/model_promotion_gate_v520.json
           python -m py_compile football-data/research/public_web_forward_pit_r44a/capture_forward_pit_r44a.py
+          python -m py_compile football-data/research/public_web_forward_pit_r44a/probe_market_triplet_r44a.py
           python - <<'PY'
           import json
           from pathlib import Path
           c=json.loads(Path('football-data/research/public_web_forward_pit_r44a/contract_r44a.json').read_text(encoding='utf-8'))
           assert c['schema_version']=='V520-R44A-PUBLIC-WEB-FORWARD-PIT-1.0'
-          assert c['status']=='ZERO_LABEL_SOURCE_FEASIBILITY_ONLY'
+          assert c['status']=='ZERO_LABEL_SYNCHRONIZED_SOURCE_COVERAGE_ONLY'
           assert c['research_only'] is True and c['formal_weight']==0
           assert c['fixture']['fixture_id']==2645195
           assert c['fixture']['scheduled_kickoff_utc']=='2026-08-21T19:00:00Z'
+          assert [x['role'] for x in c['market_source']['synchronized_triplet']]==['hda','asian','ou']
+          assert c['capture_rules']['market_triplet_max_sync_span_seconds']==15
           b=c['hard_boundaries']
           assert b['target_labels']==b['settlement_results']==b['model_fits']==0
           assert b['candidate_probabilities']==b['fixed_sample_consumption']==b['ev_calculations']==0
           assert b['formal_model_mutation'] is False and b['formal_data_mutation'] is False
           assert b['formal_config_mutation'] is False and b['current_rule_mutation'] is False and b['main_mutation'] is False
-          print('PASS_R44A_ZERO_LABEL_CONTRACT')
+          print('PASS_R44A_ZERO_LABEL_SYNCHRONIZED_SOURCE_CONTRACT')
           PY
 
-      - name: Capture official lineup state and discover public synchronized market page
+      - name: Capture official lineup state and exact fixture market source
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/r44a"
+          mkdir -p "$RUNNER_TEMP/r44a"
           python football-data/research/public_web_forward_pit_r44a/capture_forward_pit_r44a.py \
             --contract football-data/research/public_web_forward_pit_r44a/contract_r44a.json \
-            --output "$RUNNER_TEMP/r44a"
+            --output "$RUNNER_TEMP/r44a/base"
 
-      - name: Verify receipt, hashes and hard boundaries
+      - name: Verify base receipt and hard boundaries
         run: |
           set -euo pipefail
           python - <<'PY'
           import hashlib,json,os,re
           from datetime import datetime
           from pathlib import Path
-          root=Path(os.environ['RUNNER_TEMP'])/'r44a'
+          root=Path(os.environ['RUNNER_TEMP'])/'r44a'/'base'
           p=root/'receipt_r44a.json'
           raw=p.read_bytes()
           r=json.loads(raw)
           assert r['schema_version']=='V520-R44A-RECEIPT-1.0'
-          assert r['terminal'] in {'PASS_R44A_SOURCE_FEASIBILITY_NOT_FORMAL_MARKET_SNAPSHOT','STOP_R44A_MARKET_DISCOVERY_NO_MATCH'}
+          assert r['terminal']=='PASS_R44A_SOURCE_FEASIBILITY_NOT_FORMAL_MARKET_SNAPSHOT'
           assert r['current_rule_family']=='V5.2.0'
           h=r['hard_boundary_receipt']
           assert h['target_labels_accessed']==h['settlement_results_accessed']==h['model_fits']==0
@@ -83,18 +87,62 @@ jobs:
           ko=datetime.fromisoformat(r['fixture']['scheduled_kickoff_utc'].replace('Z','+00:00'))
           lo=datetime.fromisoformat(r['lineup_evidence']['collector_first_observed_at_utc'].replace('Z','+00:00'))
           assert lo < ko
-          if r['terminal'].startswith('PASS_'):
-              m=r['market_evidence']
-              assert m['formal_market_snapshot'] is False
-              assert m['independent_market_count_claimed']==1
-              assert m['source_native_quote_timestamp'] is None
-              assert m['identity']['feasibility_gate'] is True
-              mo=datetime.fromisoformat(m['collector_first_observed_at_utc'].replace('Z','+00:00'))
-              assert mo < ko
-              assert re.fullmatch(r'[0-9a-f]{64}',m['payload_sha256'])
+          m=r['market_evidence']
+          assert m['formal_market_snapshot'] is False
+          assert m['independent_market_count_claimed']==1
+          assert m['source_native_quote_timestamp'] is None
+          assert m['identity']['feasibility_gate'] is True
+          mo=datetime.fromisoformat(m['collector_first_observed_at_utc'].replace('Z','+00:00'))
+          assert mo < ko
+          assert re.fullmatch(r'[0-9a-f]{64}',m['payload_sha256'])
           expected=(root/'receipt_r44a.sha256').read_text(encoding='ascii').strip()
           assert expected==hashlib.sha256(raw).hexdigest()
-          print(json.dumps({'terminal':r['terminal'],'receipt_sha256':expected,'lineup_state':r['lineup_evidence']['state'],'market_url':r['market_evidence'].get('selected_url')},sort_keys=True))
+          print(json.dumps({'terminal':r['terminal'],'receipt_sha256':expected,'lineup_state':r['lineup_evidence']['state'],'market_url':m['selected_url']},sort_keys=True))
+          PY
+
+      - name: Probe synchronized HDA Asian and multi-line OU coverage
+        run: |
+          set -euo pipefail
+          python football-data/research/public_web_forward_pit_r44a/probe_market_triplet_r44a.py \
+            --contract football-data/research/public_web_forward_pit_r44a/contract_r44a.json \
+            --output "$RUNNER_TEMP/r44a/market_triplet"
+
+      - name: Verify synchronized market triplet receipt
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,re
+          from datetime import datetime
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'r44a'/'market_triplet'
+          p=root/'market_triplet_receipt_r44a.json'
+          raw=p.read_bytes()
+          r=json.loads(raw)
+          assert r['schema_version']=='V520-R44A-MARKET-TRIPLET-RECEIPT-1.0'
+          assert r['terminal']=='PASS_R44A_SYNCHRONIZED_MARKET_SOURCE_COVERAGE_NOT_FORMAL_SNAPSHOT'
+          assert r['provider_group']=='Infobetting public odds aggregator'
+          assert r['independent_market_count_claimed']==1
+          assert r['formal_market_snapshot'] is False
+          assert r['source_native_quote_timestamp'] is None
+          assert r['synchronization_span_seconds'] <= r['synchronization_span_limit_seconds'] == 15
+          assert [x['role'] for x in r['markets']]==['hda','asian','ou']
+          ko=datetime.fromisoformat(r['fixture']['scheduled_kickoff_utc'].replace('Z','+00:00'))
+          for m in r['markets']:
+              assert m['role_gate'] is True
+              assert m['status']==200
+              assert re.fullmatch(r'[0-9a-f]{64}',m['payload_sha256'])
+              assert datetime.fromisoformat(m['observed_at_utc'].replace('Z','+00:00')) < ko
+              rp=root/m['raw_path']
+              assert rp.is_file() and hashlib.sha256(rp.read_bytes()).hexdigest()==m['payload_sha256']
+          ou=r['markets'][2]
+          assert ou['required_half_goal_lines']==['0.5','1.5','2.5','3.5','4.5','5.5']
+          assert ou['missing_half_goal_lines']==[]
+          assert r['target_labels_accessed']==r['settlement_results_accessed']==r['model_fits']==0
+          assert r['candidate_probabilities']==r['fixed100_consumed']==r['fixed200_consumed']==r['ev_calculations']==0
+          assert r['formal_weight']==r['formal_model_changes']==r['formal_data_changes']==r['formal_config_changes']==r['CURRENT_changes']==0
+          expected=(root/'market_triplet_receipt_r44a.sha256').read_text(encoding='ascii').strip()
+          assert expected==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({'terminal':r['terminal'],'sync_span_seconds':r['synchronization_span_seconds'],'receipt_sha256':expected},sort_keys=True))
           PY
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
