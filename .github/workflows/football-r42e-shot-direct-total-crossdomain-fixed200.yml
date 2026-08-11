@@ -1,0 +1,108 @@
+name: Football R42E Shot Direct-T Crossdomain Fixed200
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r42e_shot_direct_total_crossdomain_fixed200.json"
+      - "football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py"
+      - "football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py"
+      - "football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py"
+      - "football-data/validation/evaluate_r42c_favourite_nonwin_fixed200.py"
+      - "football-data/validation/evaluate_r42a_dynamic_diagonal_fixed200.py"
+      - "football-data/validation/evaluate_r41d_replication_fixed200.py"
+      - "football-data/validation/evaluate_r41_priority_fixed200_battery.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-r42e-shot-direct-total-crossdomain-fixed200.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r42e-shot-direct-total-crossdomain-fixed200-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R42E path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py \
+            football-data/validation/evaluate_r41_priority_fixed200_battery.py \
+            football-data/validation/evaluate_r41d_replication_fixed200.py \
+            football-data/validation/evaluate_r42a_dynamic_diagonal_fixed200.py \
+            football-data/validation/evaluate_r42c_favourite_nonwin_fixed200.py \
+            football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py \
+            football-data/validation/evaluate_r42d_mutual_draw_utility_replication_fixed200.py \
+            football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py
+      - name: Deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py --self-test
+      - name: Rebuild exact audited V5.1 historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen R42E coverage gate and fixed200 if authorized
+        run: python football-data/validation/evaluate_r42e_shot_direct_total_crossdomain_fixed200.py
+      - name: Verify fail-closed coverage, sample and governance contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/r42e_shot_direct_total_crossdomain_fixed200_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['prior_fixed200_exclusion']['rows']==2200
+          assert x['zero_test_selection_receipt']['target_labels_used_for_coverage_gate'] is False
+          assert x['zero_test_selection_receipt']['current_match_shot_values_used_in_own_features']==0
+          assert x['zero_test_selection_receipt']['current_match_shot_values_required_for_eligibility'] is False
+          g=x['governance']
+          assert g['formal_weight']==0 and g['protected_blind_access']==0
+          assert g['fixed200_parameter_selection'] is False and g['fixed200_feature_selection'] is False and g['fixed200_threshold_selection'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False and g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False and g['main_mutation'] is False
+          if x['status']=='STOP_R42E_CROSSDOMAIN_SHOT_COVERAGE_LT200':
+              assert x['model_fits']==0
+              assert x['sample'] is None
+              assert x['cross_domain_coverage']['fresh_target_rows_after_prior2200_exclusion'] < x['cross_domain_coverage']['minimum_required']
+          else:
+              assert x['status']=='PASS_R42E_FIXED200_EXECUTION_COMPLETE'
+              assert x['sample']['rows']==200 and x['sample']['overlap_with_prior_2200']==0
+              assert x['sample']['labels_used_for_identity_selection'] is False
+              assert x['model_contract']['scientific_parameters_selected_on_fixed200']==0
+              assert x['model_contract']['shot_feature_count']==27
+              assert x['model_contract']['fixed_C']==0.01
+              assert x['model_contract']['baseline_probability_sum_max_residual'] < 1e-10
+              assert x['model_contract']['challenger_probability_sum_max_residual'] < 1e-10
+          print(json.dumps({'status':x['status'],'scientific_verdict':x['scientific_verdict'],'coverage':x['cross_domain_coverage'],'sample':x.get('sample'),'metrics':x.get('metrics')},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R42E receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42e-shot-direct-total-crossdomain-fixed200
+          path: football-data/manifests/r42e_shot_direct_total_crossdomain_fixed200_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
