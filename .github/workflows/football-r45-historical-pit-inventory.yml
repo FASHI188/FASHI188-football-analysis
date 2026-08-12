@@ -1,0 +1,66 @@
+name: Football R45 Historical PIT Existing Pool Inventory
+
+on:
+  push:
+    branches:
+      - research/v520-historical-pit-1000-r45
+    paths:
+      - football-data/research/historical_pit_1000_r45/**
+      - .github/workflows/football-r45-historical-pit-inventory.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r45-historical-pit-inventory-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact research branch HEAD
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run read-only existing-pool inventory
+        run: |
+          set -euo pipefail
+          python football-data/research/historical_pit_1000_r45/inventory_existing_pool_r45.py
+
+      - name: Show inventory summary
+        if: always()
+        run: |
+          if [ -f football-data/research/historical_pit_1000_r45/out/existing_pool_inventory_r45.json ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/historical_pit_1000_r45/out/existing_pool_inventory_r45.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps({
+              'files':x['files'],
+              'rows_total':x['rows_total'],
+              'unique_identities_total':x['unique_identities_total'],
+              'duplicate_rows_global':x['duplicate_rows_global'],
+              'cross_file_duplicate_identity_count':x['cross_file_duplicate_identity_count'],
+              'holdout_2526_name_match_rows':x['holdout_2526_name_match_rows'],
+              'header_variant_count':x['header_variant_count'],
+              'missing_required':x['missing_required'],
+              'malformed_dates_count':x['malformed_dates_count'],
+              'empty_identity_count':x['empty_identity_count'],
+          }, indent=2))
+          PY
+          fi
+
+      - name: Upload R45 inventory artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45-existing-pit-pool-inventory
+          path: football-data/research/historical_pit_1000_r45/out/
+          if-no-files-found: error
+          retention-days: 30
