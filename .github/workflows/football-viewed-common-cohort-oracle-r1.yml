@@ -1,0 +1,117 @@
+name: Football Viewed Common-Cohort Oracle R1
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/viewed_common_cohort_oracle_r1.json"
+      - "football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py"
+      - "football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py"
+      - "football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py"
+      - "football-data/validation/evaluate_r41_priority_fixed200_battery.py"
+      - "football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - ".github/workflows/football-viewed-common-cohort-oracle-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-viewed-common-cohort-oracle-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile inherited and audit paths
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_r41a_fixed200_joint_error_decomposition.py \
+            football-data/validation/evaluate_r41_priority_fixed200_battery.py \
+            football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py \
+            football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py \
+            football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py \
+            football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py
+      - name: Run deterministic self-test
+        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py --self-test
+      - name: Rebuild exact audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run viewed common-cohort forensic replay
+        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py
+      - name: Verify diagnostic-only governance and evidence
+        run: |
+          python - <<'PY'
+          import csv, hashlib, json
+          from pathlib import Path
+          root=Path('football-data/manifests/viewed_common_cohort_oracle_r1')
+          x=json.loads((root/'status.json').read_text(encoding='utf-8'))
+          assert x['status']=='PASS_VIEWED_COMMON_COHORT_ORACLE_DIAGNOSTIC_COMPLETE'
+          assert x['scientific_verdict']=='RETROSPECTIVE_DIAGNOSTIC_ONLY_NO_SCIENTIFIC_PASS_NO_PROMOTION'
+          c=x['cohort']
+          assert c['selected_rows']==1000 and c['common_target_pool_rows']>=1000
+          assert c['selection_uses_labels'] is False
+          assert c['retrospective_viewed_only'] is True
+          assert c['protected_confirmation_sample'] is False
+          assert c['fixed100_or_fixed200_consumption']==0
+          assert x['replay_audits']['r40f']['frozen_summary_reproduced'] is True
+          assert x['oracle_gap_learnability_status']=='NOT_TESTED_DO_NOT_INFER_FROM_EX_POST_ORACLE'
+          g=x['governance']
+          assert g['formal_weight']==0
+          assert g['scientific_pass_claim_allowed'] is False
+          assert g['confirmation_pass_claim_allowed'] is False
+          assert g['formal_promotion_allowed'] is False
+          assert g['new_data_collection'] is False
+          assert g['provider_requests']==0 and g['paid_api_requests']==0 and g['r44_forward_capture_requests']==0
+          assert g['new_blind_or_holdout_label_access']==0
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False and g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False and g['main_mutation'] is False and g['pr_176_mutation'] is False
+          csv_path=root/'common_cohort_1000_per_match.csv'
+          assert csv_path.is_file()
+          with csv_path.open('r',encoding='utf-8',newline='') as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==1000
+          got=hashlib.sha256(csv_path.read_bytes()).hexdigest()
+          assert got==x['per_match_evidence']['sha256']
+          print(json.dumps({
+              'status':x['status'],
+              'cohort':x['cohort'],
+              'hda_oracle':x['hda']['oracle'],
+              'hda_error_sets':x['hda']['error_sets'],
+              'direct_t_oracle':x['direct_t']['oracle'],
+              'direct_t_complementarity':x['direct_t']['residual_complementarity'],
+              'r40f_common_cohort':x['r40f_common_cohort'],
+              'per_match_evidence':x['per_match_evidence'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload common-cohort diagnostic evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewed-common-cohort-oracle-r1
+          path: football-data/manifests/viewed_common_cohort_oracle_r1/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm only runtime manifests are untracked
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
