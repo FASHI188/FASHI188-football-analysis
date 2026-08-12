@@ -87,6 +87,7 @@ ALIASES = {
     "newcastle": "newcastle", "newcastle united": "newcastle", "newcastle united fc": "newcastle",
     "nott m forest": "nottingham forest", "nottingham forest": "nottingham forest", "nottingham forest fc": "nottingham forest",
     "sunderland": "sunderland", "sunderland afc": "sunderland",
+    "spurs": "tottenham",
     "tottenham": "tottenham", "tottenham hotspur": "tottenham", "tottenham hotspur fc": "tottenham",
     "west ham": "west ham", "west ham united": "west ham", "west ham united fc": "west ham",
     "wolves": "wolves", "wolverhampton wanderers": "wolves", "wolverhampton wanderers fc": "wolves",
