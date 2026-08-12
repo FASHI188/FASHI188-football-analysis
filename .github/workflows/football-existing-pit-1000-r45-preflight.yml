@@ -1,0 +1,69 @@
+name: Football R45 Existing PIT 1000 Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/v520-existing-pit-1000-r45
+    paths:
+      - '.github/workflows/football-existing-pit-1000-r45-preflight.yml'
+      - 'football-data/research/existing_pit_1000_r45/**'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Compile preflight
+        run: python -m py_compile football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py
+      - name: Run zero-label pool and protection audit
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/r45-preflight
+          python football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py
+      - name: Verify zero-label hard boundaries and receipt hashes
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root=Path('/tmp/r45-preflight')
+          p=root/'r45_preflight.json'
+          raw=p.read_bytes()
+          r=json.loads(raw)
+          h=r['hard_boundaries']
+          assert h['target_label_values_referenced']==0
+          assert h['oos_labels_referenced']==0
+          assert h['model_fits']==0 and h['candidate_probabilities']==0
+          assert h['external_network_requests']==0 and h['new_data_downloads']==0
+          assert h['formal_weight']==0
+          assert h['formal_model_mutation'] is False
+          assert h['formal_data_mutation'] is False
+          assert h['current_rule_mutation'] is False
+          assert h['main_mutation'] is False
+          assert r['source_file_count']==17
+          assert (root/'r45_preflight.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'status':r['status'],
+            'source_total_rows':r['source_total_rows'],
+            'global_split_counts':r['global_split_counts'],
+            'protected_identity_count_discovered_in_repo':r['protected_identity_count_discovered_in_repo'],
+            'candidate_protected_overlap_count':r['candidate_protected_overlap_count'],
+            'eligible_rows_after_exact_repo_protection_overlap':r['eligible_rows_after_exact_repo_protection_overlap'],
+            'protection_scan':r['protection_scan'],
+            'preliminary1000':r['preliminary1000']
+          },indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r45-existing-pit-1000-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/r45-preflight
+          retention-days: 30
+          if-no-files-found: error
