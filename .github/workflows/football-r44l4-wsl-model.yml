@@ -1,0 +1,85 @@
+name: Football R44L4 WSL External Domain Model
+
+on:
+  push:
+    branches:
+      - research/r44l4-wsl-attack-balance
+    paths:
+      - 'football-data/research/r44l4_wsl_attack_balance/run_model_r44l4.py'
+      - 'football-data/research/r44l4_wsl_attack_balance/model_execution_freeze_r44l4.md'
+      - '.github/workflows/football-r44l4-wsl-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r44l4-wsl-model-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  external-domain-oos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frozen dependencies
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+      - name: Bind prereg and execution freeze before labels
+        shell: bash
+        run: |
+          test -f football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+          test -f football-data/research/r44l4_wsl_attack_balance/model_execution_freeze_r44l4.md
+          test -f football-data/research/r44l4_wsl_attack_balance/run_model_r44l4.py
+          test "$(sha256sum football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md | awk '{print $1}')" = "3091d3eb84e1d1f65ef48d319b61cb542fd9ca076bf79cecd154843519ded494"
+          echo "prereg_commit=$(git log -1 --format=%H -- football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md)"
+          echo "freeze_commit=$(git log -1 --format=%H -- football-data/research/r44l4_wsl_attack_balance/model_execution_freeze_r44l4.md)"
+          echo "model_commit=$(git log -1 --format=%H -- football-data/research/r44l4_wsl_attack_balance/run_model_r44l4.py)"
+          python -m py_compile football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py
+          python -m py_compile football-data/research/r44l4_wsl_attack_balance/run_model_r44l4.py
+      - name: Re-run zero-label gate on exact source before target-bearing read
+        shell: bash
+        env:
+          R44L4_OUT: r44l4_prelabel
+        run: |
+          python football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py | tee r44l4_prelabel_stdout.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('r44l4_prelabel/zero_label_result_r44l4.json').read_text())
+          assert r['status']=='PASS_R44L4_ZERO_LABEL_COVERAGE'
+          assert r['label_fields_accessed']==0
+          assert r['model_fits']==0
+          print('PRELABEL_RECHECK_PASS')
+          PY
+      - name: Execute frozen three-fold external-domain model
+        shell: bash
+        env:
+          R44L4_PRELABEL_DIR: r44l4_prelabel
+          R44L4_MODEL_OUT: r44l4_model_output
+        run: |
+          python football-data/research/r44l4_wsl_attack_balance/run_model_r44l4.py | tee r44l4_model_stdout.txt
+      - name: Verify protected repository assets unchanged
+        shell: bash
+        run: |
+          git diff --exit-code -- . ':!r44l4_prelabel/**' ':!r44l4_model_output/**' ':!r44l4_prelabel_stdout.txt' ':!r44l4_model_stdout.txt'
+      - name: Upload R44L4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r44l4-wsl-model-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            r44l4_prelabel/
+            r44l4_model_output/
+            r44l4_prelabel_stdout.txt
+            r44l4_model_stdout.txt
+            football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+            football-data/research/r44l4_wsl_attack_balance/model_execution_freeze_r44l4.md
+          retention-days: 30
+          if-no-files-found: warn
