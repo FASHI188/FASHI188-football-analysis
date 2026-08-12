@@ -1,0 +1,60 @@
+name: Football R44L5 Ligue1 Zero Label Coverage
+
+on:
+  push:
+    branches:
+      - research/r44l5-ligue1-attack-balance
+    paths:
+      - 'football-data/research/r44l5_ligue1_attack_balance/zero_label_contract_r44l5.md'
+      - 'football-data/research/r44l5_ligue1_attack_balance/run_zero_label_gate_r44l5.py'
+      - '.github/workflows/football-r44l5-ligue1-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: r44l5-ligue1-zero-label-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  zero-label-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind zero-label contract
+        run: |
+          test -f football-data/research/r44l5_ligue1_attack_balance/zero_label_contract_r44l5.md
+          sha256sum football-data/research/r44l5_ligue1_attack_balance/zero_label_contract_r44l5.md
+          python -m py_compile football-data/research/r44l5_ligue1_attack_balance/run_zero_label_gate_r44l5.py
+      - name: Static exact target-token audit
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('football-data/research/r44l5_ligue1_attack_balance/run_zero_label_gate_r44l5.py')
+          text=p.read_text(encoding='utf-8')
+          forbidden=['"home_score"',"'home_score'",'"away_score"',"'away_score'",'"label_draw"',"'label_draw'",'"label_result"',"'label_result'",'"binary_target"',"'binary_target'"]
+          hits=[x for x in forbidden if x in text]
+          if hits: raise SystemExit(f'forbidden target tokens: {hits}')
+          print('STATIC_ZERO_LABEL_TOKEN_AUDIT_PASS')
+          PY
+      - name: Run zero-label coverage
+        run: python football-data/research/r44l5_ligue1_attack_balance/run_zero_label_gate_r44l5.py | tee r44l5_zero_label_stdout.txt
+      - name: Verify repository unchanged by execution
+        run: git diff --exit-code -- . ':!r44l5_zero_label_output/**' ':!r44l5_zero_label_stdout.txt'
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r44l5-ligue1-zero-label-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            r44l5_zero_label_output/
+            r44l5_zero_label_stdout.txt
+            football-data/research/r44l5_ligue1_attack_balance/zero_label_contract_r44l5.md
+          retention-days: 30
+          if-no-files-found: warn
