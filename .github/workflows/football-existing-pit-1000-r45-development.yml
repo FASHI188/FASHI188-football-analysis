@@ -1,0 +1,90 @@
+name: Football R45 Existing PIT 650-150 Development
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/v520-existing-pit-1000-r45
+    paths:
+      - '.github/workflows/football-existing-pit-1000-r45-development.yml'
+      - 'football-data/research/existing_pit_1000_r45/development_prereg_r45.json'
+      - 'football-data/research/existing_pit_1000_r45/train_validate_development_r45.py'
+      - 'football-data/research/existing_pit_1000_r45/sample_freeze_receipt_r45.json'
+      - 'football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py'
+      - 'football-data/research/existing_pit_1000_r45/protected_assets_receipt_r45.json'
+
+permissions:
+  contents: read
+
+jobs:
+  development-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Compile R45 programs
+        run: |
+          python -m py_compile football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py
+          python -m py_compile football-data/research/existing_pit_1000_r45/train_validate_development_r45.py
+      - name: Reconstruct and verify frozen sample without target selection
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/r45-preflight /tmp/r45-development
+          python football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/r45-preflight/r45_preflight.json').read_text())
+          assert r['status']=='PASS_R45_ZERO_LABEL_SAMPLE_FREEZE'
+          assert r['frozen1000']['identity_sha256']=='4a10584f85422f56b14e9f8dccd47303dcbfac4f0b00a204eb95ddc09164b784'
+          assert r['frozen_split']['train650']['identity_sha256']=='bb269f2519bf0f062d494ccc3ba56d736092a3925550a407b246d16de579222b'
+          assert r['frozen_split']['validation150']['identity_sha256']=='85063c6748cdef45dfb376433c43ede2e89a0967e47708b4be6273f39573c3c5'
+          assert r['frozen_split']['locked_oos200']['identity_sha256']=='2afbead3e6111433f68b55c44170465bc244c047fc2075fb343bdfad43603803'
+          assert r['hard_boundaries']['oos_labels_referenced']==0
+          PY
+      - name: Fit train650 and evaluate validation150 only
+        run: |
+          set -euo pipefail
+          python football-data/research/existing_pit_1000_r45/train_validate_development_r45.py
+      - name: Verify locked OOS was not consumed
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('/tmp/r45-development')
+          p=root/'r45_development_validation.json'
+          raw=p.read_bytes(); r=json.loads(raw)
+          assert r['status']=='COMPLETE_DEVELOPMENT_VALIDATION_OOS_STILL_LOCKED'
+          assert r['label_access']['train_labels_read']==650
+          assert r['label_access']['validation_labels_read']==150
+          assert r['label_access']['locked_oos_identities_verified_present']==200
+          assert r['label_access']['locked_oos_labels_referenced']==0
+          assert r['oos_gate']['released'] is False
+          assert r['boundaries']['hyperparameter_search'] is False
+          assert r['boundaries']['candidate_models_fit']==1
+          assert r['boundaries']['formal_weight']==0
+          assert r['boundaries']['formal_model_mutation'] is False
+          assert r['boundaries']['formal_data_mutation'] is False
+          assert r['boundaries']['current_rule_mutation'] is False
+          assert r['boundaries']['main_mutation'] is False
+          assert (root/'r45_development_validation.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({
+            'status':r['status'],
+            'class_counts':r['class_counts'],
+            'baseline_validation':r['baseline_validation'],
+            'model_validation':r['model_validation'],
+            'validation_delta_model_minus_prior':r['validation_delta_model_minus_prior'],
+            'model_sha256':r['model_sha256'],
+            'oos_gate':r['oos_gate']
+          },indent=2,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-r45-existing-pit-development-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/r45-development
+          retention-days: 30
+          if-no-files-found: error
