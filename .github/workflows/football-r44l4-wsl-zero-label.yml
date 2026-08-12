@@ -38,10 +38,21 @@ jobs:
         shell: bash
         run: |
           python -m py_compile football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py
-          if grep -E -i 'home_score|away_score|team_h_score|team_a_score|label_result|label_draw|one_goal' football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py; then
-            echo 'Forbidden target-field reference in zero-label gate' >&2
-            exit 9
-          fi
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py')
+          text = p.read_text(encoding='utf-8')
+          forbidden = [
+              '"home_score"', "'home_score'", '"away_score"', "'away_score'",
+              '"team_h_score"', "'team_h_score'", '"team_a_score"', "'team_a_score'",
+              '"label_result"', "'label_result'", '"label_draw"', "'label_draw'",
+              '"one_goal"', "'one_goal'",
+          ]
+          hits = [token for token in forbidden if token in text]
+          if hits:
+              raise SystemExit(f'Forbidden exact target-field tokens in zero-label gate: {hits}')
+          print('STATIC_ZERO_LABEL_TOKEN_AUDIT_PASS')
+          PY
       - name: Run zero-label coverage gate
         shell: bash
         run: |
