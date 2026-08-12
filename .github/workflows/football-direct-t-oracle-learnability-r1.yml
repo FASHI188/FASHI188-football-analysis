@@ -1,0 +1,104 @@
+name: Football Direct-T Oracle Learnability R1
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/direct_t_oracle_learnability_r1.json"
+      - "football-data/validation/evaluate_direct_t_oracle_learnability_r1.py"
+      - ".github/workflows/football-direct-t-oracle-learnability-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-direct-t-oracle-learnability-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen paths
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py \
+            football-data/validation/evaluate_viewed_common_cohort_cleanfit_r1.py \
+            football-data/validation/evaluate_direct_t_oracle_learnability_r1.py
+      - name: Run selector self-test
+        run: python football-data/validation/evaluate_direct_t_oracle_learnability_r1.py --self-test
+      - name: Rebuild exact audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Reproduce frozen parent diagnostic identities
+        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py
+      - name: Run disjoint oracle-gap learnability evaluation
+        run: python football-data/validation/evaluate_direct_t_oracle_learnability_r1.py
+      - name: Verify research boundary and primary gate record
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/direct_t_oracle_learnability_r1/status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS_DIRECT_T_ORACLE_LEARNABILITY_EXECUTION_COMPLETE'
+          d=x['data_audit']
+          assert d['common_pool_rows']==2584
+          assert d['excluded_parent_diagnostic_rows']==1000
+          assert d['primary_evaluation_rows']==1584
+          assert d['overlap_with_parent_diagnostic']==0
+          assert d['target_labels_used_for_selector_fit'] is False
+          assert d['parent_diagnostic_labels_used_for_selector_fit'] is False
+          assert d['evaluation_identity_selected_with_labels'] is False
+          assert d['blind_claim'] is False
+          assert d['r40f_frozen_summary_reproduced'] is True
+          s=x['selector']
+          assert s['fixed_C']==0.01 and s['meta_feature_count']==39
+          b=x['interpretation_boundary']
+          assert b['evaluation_is_disjoint_from_parent_diagnostic1000'] is True
+          assert b['evaluation_is_retrospective_viewed_not_blind'] is True
+          assert b['scientific_pass_claim_allowed'] is False
+          assert b['confirmation_pass_claim_allowed'] is False
+          assert b['formal_promotion_allowed'] is False
+          assert b['formal_weight']==0
+          g=x['governance']
+          assert g['formal_weight']==0
+          assert g['new_data_collection'] is False
+          assert g['provider_requests']==0 and g['paid_api_requests']==0 and g['r44_forward_capture_requests']==0
+          assert g['new_blind_or_holdout_label_access']==0
+          assert g['protected_fixed100_fixed200_consumption']==0
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False and g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False and g['main_mutation'] is False and g['pr_176_mutation'] is False
+          print(json.dumps({
+              'status':x['status'],
+              'scientific_verdict':x['scientific_verdict'],
+              'data_audit':x['data_audit'],
+              'selector':x['selector'],
+              'primary_evaluation':x['primary_evaluation'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload learnability evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-oracle-learnability-r1
+          path: football-data/manifests/direct_t_oracle_learnability_r1/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
