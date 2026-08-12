@@ -1,0 +1,70 @@
+name: football-r44l3-player-attack-mechanism
+
+on:
+  push:
+    branches:
+      - research/r44l3-player-attack-mechanism-diagnostic
+    paths:
+      - 'football-data/research/r44l3_player_attack_mechanism/run_r44l3_attack_decomposition.py'
+      - '.github/workflows/football-r44l3-player-attack-mechanism.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  posthoc-mechanism-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact pushed HEAD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas scikit-learn
+
+      - name: Record execution identity
+        run: |
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          git rev-parse HEAD
+          git status --short
+          sha256sum football-data/research/r44l3_player_attack_mechanism/run_r44l3_attack_decomposition.py
+
+      - name: Download consumed PR81 R2 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p r2_input
+          gh api repos/${{ github.repository }}/actions/artifacts/8848368411/zip > r2.zip
+          unzip -q r2.zip -d r2_input
+          test -f r2_input/EPL_LINEUP_QUALITY_R2_dataset.csv
+          python - <<'PY'
+          import pandas as pd
+          p='r2_input/EPL_LINEUP_QUALITY_R2_dataset.csv'
+          d=pd.read_csv(p)
+          assert len(d)==1231, len(d)
+          print({'frozen_r2_rows':len(d)})
+          PY
+
+      - name: Run R44L3 consumed-sample mechanism diagnostic
+        run: |
+          python football-data/research/r44l3_player_attack_mechanism/run_r44l3_attack_decomposition.py \
+            --r2-dataset r2_input/EPL_LINEUP_QUALITY_R2_dataset.csv \
+            --out r44l3_output
+
+      - name: Upload R44L3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r44l3-player-attack-mechanism-${{ github.sha }}
+          path: r44l3_output/
+          if-no-files-found: warn
+          retention-days: 30
