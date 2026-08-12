@@ -1,0 +1,53 @@
+name: Football R44L6 StatsBomb Domain Census
+
+on:
+  push:
+    branches:
+      - research/r44l6-statsbomb-domain-census
+    paths:
+      - 'football-data/research/r44l6_statsbomb_domain_census/zero_label_contract_r44l6.md'
+      - 'football-data/research/r44l6_statsbomb_domain_census/run_zero_label_census_r44l6.py'
+      - '.github/workflows/football-r44l6-statsbomb-domain-census.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind and audit zero-label census
+        shell: bash
+        run: |
+          sha256sum football-data/research/r44l6_statsbomb_domain_census/zero_label_contract_r44l6.md
+          python -m py_compile football-data/research/r44l6_statsbomb_domain_census/run_zero_label_census_r44l6.py
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('football-data/research/r44l6_statsbomb_domain_census/run_zero_label_census_r44l6.py').read_text()
+          forbidden=['"home_score"',"'home_score'",'"away_score"',"'away_score'",'"label_draw"',"'label_draw'",'"binary_target"',"'binary_target'"]
+          hits=[x for x in forbidden if x in text]
+          if hits: raise SystemExit(f'forbidden target tokens: {hits}')
+          print('STATIC_ZERO_LABEL_TOKEN_AUDIT_PASS')
+          PY
+      - name: Run all-domain identity census
+        run: python football-data/research/r44l6_statsbomb_domain_census/run_zero_label_census_r44l6.py | tee r44l6_census_stdout.txt
+      - name: Verify repository unchanged
+        run: git diff --exit-code -- . ':!r44l6_census_output/**' ':!r44l6_census_stdout.txt'
+      - name: Upload census evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r44l6-domain-census-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            r44l6_census_output/
+            r44l6_census_stdout.txt
+            football-data/research/r44l6_statsbomb_domain_census/zero_label_contract_r44l6.md
+          retention-days: 30
+          if-no-files-found: warn
