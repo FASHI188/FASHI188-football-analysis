@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/r45-preflight
           python football-data/research/existing_pit_1000_r45/preflight_zero_label_r45.py
-      - name: Verify zero-label hard boundaries and receipt hashes
+      - name: Verify zero-label hard boundaries and frozen identities
         run: |
           python - <<'PY'
           import hashlib, json
@@ -39,26 +39,51 @@ jobs:
           raw=p.read_bytes()
           r=json.loads(raw)
           h=r['hard_boundaries']
+          g=r['protection_gate']
+          s=r['frozen_split']
+          assert r['status']=='PASS_R45_ZERO_LABEL_SAMPLE_FREEZE'
+          assert r['source_file_count']==17
+          assert r['frozen1000']['count']==1000
+          assert r['frozen1000']['date_max'] < '2023-01-27'
+          assert s['train650']['count']==650
+          assert s['validation150']['count']==150
+          assert s['locked_oos200']['count']==200
+          assert s['train650']['date_max'] <= s['validation150']['date_min']
+          assert s['validation150']['date_max'] <= s['locked_oos200']['date_min']
+          assert g['selected_repo_overlap_count']==0
+          assert g['external_receipt_consistent'] is True
+          assert g['selected_temporally_disjoint_from_gold_full500_2025_holdout'] is True
+          assert g['gold1000_union_rows']==3000
+          assert g['full500_union_rows']==736
+          assert g['protection_complete_for_freeze'] is True
           assert h['target_label_values_referenced']==0
+          assert h['selection_uses_target_labels'] is False
           assert h['oos_labels_referenced']==0
           assert h['model_fits']==0 and h['candidate_probabilities']==0
-          assert h['external_network_requests']==0 and h['new_data_downloads']==0
+          assert h['external_network_requests']==0 and h['new_match_downloads']==0
           assert h['formal_weight']==0
           assert h['formal_model_mutation'] is False
           assert h['formal_data_mutation'] is False
           assert h['current_rule_mutation'] is False
           assert h['main_mutation'] is False
-          assert r['source_file_count']==17
           assert (root/'r45_preflight.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          required=[
+            'r45_frozen1000_identity.csv','r45_train650_identity.csv',
+            'r45_validation150_identity.csv','r45_locked_oos200_identity.csv'
+          ]
+          assert all((root/x).exists() for x in required)
           print(json.dumps({
             'status':r['status'],
             'source_total_rows':r['source_total_rows'],
             'global_split_counts':r['global_split_counts'],
-            'protected_identity_count_discovered_in_repo':r['protected_identity_count_discovered_in_repo'],
-            'candidate_protected_overlap_count':r['candidate_protected_overlap_count'],
-            'eligible_rows_after_exact_repo_protection_overlap':r['eligible_rows_after_exact_repo_protection_overlap'],
-            'protection_scan':r['protection_scan'],
-            'preliminary1000':r['preliminary1000']
+            'candidate_rows_before_exact_repo_protection':r['candidate_rows_before_exact_repo_protection'],
+            'protected_identity_count_discovered_in_current_repo':r['protected_identity_count_discovered_in_current_repo'],
+            'candidate_repo_protected_overlap_count':r['candidate_repo_protected_overlap_count'],
+            'eligible_rows_after_repo_protection':r['eligible_rows_after_repo_protection'],
+            'protection_gate':g,
+            'frozen1000':r['frozen1000'],
+            'frozen_split':s,
+            'selected_zero_label_feature_audit':r['selected_zero_label_feature_audit']
           },indent=2,ensure_ascii=False))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
