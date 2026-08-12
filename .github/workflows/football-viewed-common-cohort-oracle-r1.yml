@@ -5,6 +5,7 @@ on:
     paths:
       - "football-data/config/viewed_common_cohort_oracle_r1.json"
       - "football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py"
+      - "football-data/validation/evaluate_viewed_common_cohort_cleanfit_r1.py"
       - "football-data/validation/evaluate_r42d_mutual_draw_utility_fixed200.py"
       - "football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py"
       - "football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py"
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 100
     env:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
@@ -51,14 +52,19 @@ jobs:
             football-data/validation/evaluate_r42f_htft_response_direct_total_fixed200.py \
             football-data/validation/evaluate_r42j_all_history_pair_recovery_direct_total_fixed200.py \
             football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py \
+            football-data/validation/evaluate_viewed_common_cohort_cleanfit_r1.py \
             football-data/validation/v510_historical_structure_features_r1.py \
             football-data/validation/v510_historical_structure_model_r1.py
-      - name: Run deterministic self-test
-        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py --self-test
+      - name: Run deterministic self-tests
+        run: |
+          python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py --self-test
+          python football-data/validation/evaluate_viewed_common_cohort_cleanfit_r1.py --self-test
       - name: Rebuild exact audited historical ledger
         run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Run viewed common-cohort forensic replay
         run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py
+      - name: Remove Direct-T baseline-fit confound on same frozen cohort
+        run: python football-data/validation/evaluate_viewed_common_cohort_cleanfit_r1.py
       - name: Verify diagnostic-only governance and evidence
         run: |
           python - <<'PY'
@@ -93,13 +99,27 @@ jobs:
           assert len(rows)==1000
           got=hashlib.sha256(csv_path.read_bytes()).hexdigest()
           assert got==x['per_match_evidence']['sha256']
+
+          clean=json.loads((root/'direct_t_cleanfit.json').read_text(encoding='utf-8'))
+          assert clean['status']=='PASS_DIRECT_T_COMMON_FIT_CONFOUND_REMOVED'
+          assert clean['cohort']['rows']==1000 and clean['cohort']['new_sample_consumption']==0
+          cc=clean['common_fit_contract']
+          assert cc['same_fit_rows_all_three_models'] is True and cc['same_C_all_three_models'] is True
+          ib=clean['interpretation_boundary']
+          assert ib['baseline_confound_removed'] is True
+          assert ib['fusion_selector_fit'] is False and ib['oracle_is_ex_post_only'] is True
+          assert ib['learnability_status']=='NOT_TESTED' and ib['formal_weight']==0
+          assert ib['new_data_collection']==0 and ib['new_blind_or_holdout_access']==0
+          assert ib['formal_promotion_allowed'] is False
           print(json.dumps({
               'status':x['status'],
               'cohort':x['cohort'],
               'hda_oracle':x['hda']['oracle'],
               'hda_error_sets':x['hda']['error_sets'],
-              'direct_t_oracle':x['direct_t']['oracle'],
-              'direct_t_complementarity':x['direct_t']['residual_complementarity'],
+              'raw_direct_t_oracle':x['direct_t']['oracle'],
+              'cleanfit_direct_t_metrics':clean['metrics'],
+              'cleanfit_direct_t_oracle':clean['oracle'],
+              'cleanfit_complementarity':clean['residual_complementarity'],
               'r40f_common_cohort':x['r40f_common_cohort'],
               'per_match_evidence':x['per_match_evidence'],
           },ensure_ascii=False,indent=2))
