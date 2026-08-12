@@ -1,0 +1,138 @@
+name: football-lineup-opportunity-300-r1
+
+on:
+  push:
+    branches:
+      - research/lineup-opportunity-300-r1
+    paths:
+      - .github/workflows/football-lineup-opportunity-300-r1.yml
+      - football-data/research/lineup_opportunity_300_r1/run_lineup_opportunity_300_r1.py
+      - football-data/research/lineup_opportunity_300_r1/execution_freeze_r1.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-lineup-opportunity-300-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_COMMIT: 8c97b2adb123863c3dd581e730f1360e89815ac2
+  STUDY_DIR: football-data/research/lineup_opportunity_300_r1
+
+jobs:
+  zero-label-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen runtime dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pandas==2.3.1 numpy==2.3.2 scikit-learn==1.7.1
+          python - <<'PY'
+          import pandas, numpy, sklearn
+          print('pandas', pandas.__version__)
+          print('numpy', numpy.__version__)
+          print('sklearn', sklearn.__version__)
+          PY
+
+      - name: Download pinned public historical source
+        run: |
+          mkdir -p /tmp/fpl
+          curl -L --fail --retry 3 -o /tmp/fpl/fixtures.csv "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/${SOURCE_COMMIT}/data/2025-26/fixtures.csv"
+          curl -L --fail --retry 3 -o /tmp/fpl/merged_gw.csv "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/${SOURCE_COMMIT}/data/2025-26/gws/merged_gw.csv"
+          sha256sum /tmp/fpl/fixtures.csv /tmp/fpl/merged_gw.csv
+
+      - name: Run zero-label lineup coverage gate
+        run: |
+          mkdir -p output/gate
+          python "$STUDY_DIR/run_lineup_opportunity_300_r1.py" \
+            --mode gate \
+            --fixtures /tmp/fpl/fixtures.csv \
+            --merged /tmp/fpl/merged_gw.csv \
+            --outdir output/gate
+
+      - name: Upload zero-label gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineup-opportunity-300-r1-gate-${{ github.sha }}
+          path: output/gate
+          if-no-files-found: warn
+          retention-days: 30
+
+  model-oos:
+    needs: zero-label-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen runtime dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pandas==2.3.1 numpy==2.3.2 scikit-learn==1.7.1
+          python - <<'PY'
+          import pandas, numpy, sklearn
+          print('pandas', pandas.__version__)
+          print('numpy', numpy.__version__)
+          print('sklearn', sklearn.__version__)
+          PY
+
+      - name: Download gate evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: lineup-opportunity-300-r1-gate-${{ github.sha }}
+          path: output/gate
+
+      - name: Download exact same pinned public historical source
+        run: |
+          mkdir -p /tmp/fpl
+          curl -L --fail --retry 3 -o /tmp/fpl/fixtures.csv "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/${SOURCE_COMMIT}/data/2025-26/fixtures.csv"
+          curl -L --fail --retry 3 -o /tmp/fpl/merged_gw.csv "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/${SOURCE_COMMIT}/data/2025-26/gws/merged_gw.csv"
+          sha256sum /tmp/fpl/fixtures.csv /tmp/fpl/merged_gw.csv
+
+      - name: Verify gate/source identity and run frozen OOS model
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          def sha(p):
+              h=hashlib.sha256()
+              with open(p,'rb') as f:
+                  for b in iter(lambda:f.read(1024*1024),b''):
+                      h.update(b)
+              return h.hexdigest()
+          with open('output/gate/data_gate_r1.json',encoding='utf-8') as f:
+              g=json.load(f)
+          assert g['gate_status']=='PASS', g
+          assert g['label_columns_loaded'] is False, g
+          assert g['fixtures_sha256']==sha('/tmp/fpl/fixtures.csv')
+          assert g['merged_sha256']==sha('/tmp/fpl/merged_gw.csv')
+          print('gate/source identity PASS')
+          PY
+          mkdir -p output/model
+          python "$STUDY_DIR/run_lineup_opportunity_300_r1.py" \
+            --mode model \
+            --fixtures /tmp/fpl/fixtures.csv \
+            --merged /tmp/fpl/merged_gw.csv \
+            --gate-json output/gate/data_gate_r1.json \
+            --outdir output/model
+
+      - name: Upload model and audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineup-opportunity-300-r1-model-${{ github.sha }}
+          path: |
+            output/gate/data_gate_r1.json
+            output/model
+          if-no-files-found: warn
+          retention-days: 30
