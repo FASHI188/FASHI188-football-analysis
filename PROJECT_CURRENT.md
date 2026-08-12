@@ -3,8 +3,8 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 1
-- updated_at_utc: 2026-08-12T03:52:00Z
+- state_version: 2
+- updated_at_utc: 2026-08-12T04:03:00Z
 - updated_by: GPT-5.6 Sol
 - status_source: VERIFIED_GITHUB_AIRTABLE_FILE_LIBRARY_GOVERNANCE
 - project_current_sha256: RECORDED_IN_AIRTABLE
@@ -12,8 +12,8 @@
 ## 当前状态
 
 - status: WAITING
-- current_phase: CONTEXT_GOVERNANCE_WAITING_USER_ACCEPTANCE
-- current_objective: 完成新对话永久接续治理并等待用户验收治理Draft PR；不启动任何足球研究。
+- current_phase: CONTEXT_GOVERNANCE_V2_WAITING_USER_ACCEPTANCE
+- current_objective: 完成新对话永久接续治理验证器缺口整改并等待用户验收治理Draft PR；不启动任何足球研究。
 - exact_head: 06a0825308573420e4c0096c157d52adf7b8d7d2
 - branch: research/v520-public-web-forward-pit-r44a
 - pull_request: #176
@@ -28,15 +28,15 @@
 
 ## 当前证据
 
-- verified_facts: GitHub main 为 f3a6450087c7f532da05056db6c21ee3c658a9e9；active work PR #176 为 Open/Draft/未合并且 head=06a0825308573420e4c0096c157d52adf7b8d7d2；governance PR #177 为 Open/Draft/未合并；本次只读核验时 Actions in_progress=0、queued=0；Airtable《当前状态》只有一条记录；File Library 中正式规则 CURRENT 数量=1。
+- verified_facts: active work PR #176 保持 Open/Draft/未合并且 head=06a0825308573420e4c0096c157d52adf7b8d7d2；governance PR #177 保持 Open/Draft/未合并；验收发现旧validator未机器核对current_phase/branch/PR状态/更新时间等字段，已在治理分支补齐；Airtable《当前状态》仍只有一条足球项目记录；File Library 中正式规则 CURRENT 数量=1。
 - reported_not_verified: PR #176 正文、旧 Airtable 历史日志及旧聊天中关于历史 run/job/Artifact、研究指标、技术验收和科学效果的陈述，除非在新对话中重新按准确身份实时核验。
 - inferred_facts: 无。
 - unknown_facts: 正式 CURRENT 原始 DOCX 字节 SHA-256 当前未取得可计算字节，因此不得编造；未逐项实时复核的历史 Artifact/指标状态均为 UNKNOWN 或 REPORTED_NOT_VERIFIED。
-- workflow_runs: VERIFIED 当前 in_progress=0；VERIFIED 当前 queued=0；本治理未启动任何 workflow。
+- workflow_runs: 本治理未启动任何 workflow；治理HEAD的PR触发workflow需实时核验，不得用无结果自动解释为PASS。
 - job_ids: NONE_EXECUTED_BY_THIS_GOVERNANCE
 - artifact_ids: NONE_CREATED_BY_THIS_GOVERNANCE
 - artifact_sha256: NOT_APPLICABLE
-- evidence_observed_at: 2026-08-12T03:52:00Z
+- evidence_observed_at: 2026-08-12T04:03:00Z
 
 ## 允许事项
 
@@ -61,7 +61,7 @@
 
 ## 停止条件
 
-- `PROJECT_CURRENT.md` 与 Airtable《当前状态》的 `state_version`、当前目标、`exact_head`、PR、允许事项、禁止事项、唯一下一步或 SHA-256 任一不一致：`BLOCKED_STATE_MISMATCH`。
+- `PROJECT_CURRENT.md` 与 Airtable《当前状态》的 `project_id`、`state_version`、`updated_at_utc`、状态、当前阶段、当前目标、`exact_head`、分支、PR、PR状态、允许事项、禁止事项、唯一下一步、停止条件、绑定日志ID或 SHA-256 任一不一致：`BLOCKED_STATE_MISMATCH`。
 - Airtable 无法读取：`BLOCKED_AIRTABLE_UNAVAILABLE`，只允许回答、解释和只读盘点。
 - Airtable 中 `项目名=足球项目` 且 `是否激活=true` 的记录数量不等于1：`BLOCKED_STATE_MISMATCH`。
 - 涉及正式预测/模型研究/训练/评分/晋级/CURRENT修改时，正式规则 CURRENT 数量不等于1：`BLOCKED_CURRENT_RULE_COUNT_MISMATCH`；宣称存在但无法完整读取：`BLOCKED_CURRENT_RULE_UNAVAILABLE`。
@@ -81,6 +81,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recADs7Ppjt0bLMde
-- airtable_state_version: 1
-- airtable_sync_status: STATE_SYNC_VERIFIED
+- state_log_record_id: recyWLPXheCYgEtlQ
+- airtable_state_version: 2
+- airtable_sync_status: PENDING_FINAL_RECHECK
