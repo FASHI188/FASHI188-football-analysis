@@ -3,8 +3,8 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 2
-- updated_at_utc: 2026-08-12T04:03:00Z
+- state_version: 3
+- updated_at_utc: 2026-08-12T04:24:00Z
 - updated_by: GPT-5.6 Sol
 - status_source: VERIFIED_GITHUB_AIRTABLE_FILE_LIBRARY_GOVERNANCE
 - project_current_sha256: RECORDED_IN_AIRTABLE
@@ -12,8 +12,8 @@
 ## 当前状态
 
 - status: WAITING
-- current_phase: CONTEXT_GOVERNANCE_V2_WAITING_USER_ACCEPTANCE
-- current_objective: 完成新对话永久接续治理验证器缺口整改并等待用户验收治理Draft PR；不启动任何足球研究。
+- current_phase: CONTEXT_GOVERNANCE_ACCEPTED_AWAITING_READY_AUTHORIZATION
+- current_objective: 用户已验收治理PR #177；保持Draft/Open/未合并，等待用户单独明确授权转Ready；不启动任何足球研究。
 - exact_head: 06a0825308573420e4c0096c157d52adf7b8d7d2
 - branch: research/v520-public-web-forward-pit-r44a
 - pull_request: #176
@@ -28,7 +28,7 @@
 
 ## 当前证据
 
-- verified_facts: active work PR #176 保持 Open/Draft/未合并且 head=06a0825308573420e4c0096c157d52adf7b8d7d2；governance PR #177 保持 Open/Draft/未合并；验收发现旧validator未机器核对current_phase/branch/PR状态/更新时间等字段，已在治理分支补齐；Airtable《当前状态》仍只有一条足球项目记录；File Library 中正式规则 CURRENT 数量=1。
+- verified_facts: 用户已在当前对话明确验收治理PR #177；GitHub实时核验 #177 仍为 Open/Draft/未合并且治理HEAD=0733141865de4317e609be5c18d1da585da6e5f6；active work PR #176 继续作为冻结背景对象，head=06a0825308573420e4c0096c157d52adf7b8d7d2；Airtable《当前状态》仍只有一条足球项目记录；File Library 中正式规则 CURRENT 数量=1。
 - reported_not_verified: PR #176 正文、旧 Airtable 历史日志及旧聊天中关于历史 run/job/Artifact、研究指标、技术验收和科学效果的陈述，除非在新对话中重新按准确身份实时核验。
 - inferred_facts: 无。
 - unknown_facts: 正式 CURRENT 原始 DOCX 字节 SHA-256 当前未取得可计算字节，因此不得编造；未逐项实时复核的历史 Artifact/指标状态均为 UNKNOWN 或 REPORTED_NOT_VERIFIED。
@@ -36,12 +36,13 @@
 - job_ids: NONE_EXECUTED_BY_THIS_GOVERNANCE
 - artifact_ids: NONE_CREATED_BY_THIS_GOVERNANCE
 - artifact_sha256: NOT_APPLICABLE
-- evidence_observed_at: 2026-08-12T04:03:00Z
+- evidence_observed_at: 2026-08-12T04:24:00Z
 
 ## 允许事项
 
 - 只读核验 `AGENTS.md`、`PROJECT_CURRENT.md`、Airtable同步、治理PR #177差异与验证结果。
 - 用户明确要求时，可仅修复接续治理缺陷；任何重要状态变化必须递增 `state_version` 并重新闭环同步。
+- 只有用户后续单独明确授权时，才允许将治理PR #177转Ready；转Ready本身仍需形成新的状态版本并闭环同步。
 
 ## 禁止事项
 
@@ -51,13 +52,13 @@
 - 禁止创建研究授权文件。
 - 禁止修改正式模型、正式数据、config、正式预测逻辑或正式 CURRENT 正文。
 - 禁止执行冻结背景工作对象 PR #176 的任何研究动作。
-- 禁止将任何 PR 转 Ready，禁止合并 PR #177 或其他 PR。
+- 未获得用户单独明确授权前，禁止将治理PR #177转Ready；禁止合并 PR #177 或其他 PR。
 - 禁止删除、覆盖或改写历史证据与旧维护日志。
 - 禁止把 Workflow success、Artifact 存在或 GPT 报告解释为模型有效或科学 PASS。
 
 ## 唯一下一步
 
-- 用户验收治理 Draft PR #177；验收前不继续足球研究、不转 Ready、不合并。
+- 用户单独明确授权将治理PR #177转Ready；在该独立授权前保持Draft，不合并、不启动足球研究。
 
 ## 停止条件
 
@@ -81,6 +82,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recyWLPXheCYgEtlQ
-- airtable_state_version: 2
+- state_log_record_id: rec68o9cbfO12IqQa
+- airtable_state_version: 3
 - airtable_sync_status: STATE_SYNC_VERIFIED
