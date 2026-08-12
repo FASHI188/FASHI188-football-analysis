@@ -1,0 +1,63 @@
+name: Football R44L4 WSL Zero Label Coverage
+
+on:
+  push:
+    branches:
+      - research/r44l4-wsl-attack-balance
+    paths:
+      - 'football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md'
+      - 'football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py'
+      - '.github/workflows/football-r44l4-wsl-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r44l4-wsl-zero-label-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bind prereg before gate
+        shell: bash
+        run: |
+          test -f football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+          git log -1 --format=%H -- football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+          sha256sum football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+      - name: Static no-target-field audit
+        shell: bash
+        run: |
+          python -m py_compile football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py
+          if grep -E -i 'home_score|away_score|team_h_score|team_a_score|label_result|label_draw|one_goal' football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py; then
+            echo 'Forbidden target-field reference in zero-label gate' >&2
+            exit 9
+          fi
+      - name: Run zero-label coverage gate
+        shell: bash
+        run: |
+          python football-data/research/r44l4_wsl_attack_balance/run_zero_label_gate_r44l4.py | tee r44l4_zero_label_stdout.txt
+      - name: Verify no formal asset writes
+        shell: bash
+        run: |
+          git diff --exit-code -- . ':!r44l4_zero_label_output/**' ':!r44l4_zero_label_stdout.txt'
+      - name: Upload zero-label evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-r44l4-zero-label-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            r44l4_zero_label_output/
+            r44l4_zero_label_stdout.txt
+            football-data/research/r44l4_wsl_attack_balance/prereg_r44l4.md
+          retention-days: 30
+          if-no-files-found: warn
