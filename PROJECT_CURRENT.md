@@ -93,6 +93,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: PENDING_R44L2_STATE7_LOG
+- state_log_record_id: reczcNQmIZXYX1nDm
 - airtable_state_version: 7
-- airtable_sync_status: PENDING_STATE7_SYNC
+- airtable_sync_status: STATE_SYNC_VERIFIED
