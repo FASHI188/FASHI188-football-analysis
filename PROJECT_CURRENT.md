@@ -83,4 +83,4 @@
 - current_state_record_id: recs1pQ1rhuwJQAzE
 - state_log_record_id: recADs7Ppjt0bLMde
 - airtable_state_version: 1
-- airtable_sync_status: PENDING_FINAL_SHA_WRITE_AND_RECHECK
+- airtable_sync_status: STATE_SYNC_VERIFIED
