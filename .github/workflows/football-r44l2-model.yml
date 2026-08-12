@@ -1,0 +1,53 @@
+name: football-r44l2-model
+
+on:
+  push:
+    branches:
+      - research/r44l2-lineup-role-opportunity-300
+    paths:
+      - 'football-data/research/r44l2_lineup_role_opportunity_300/run_model_r44l2.py'
+      - 'football-data/research/r44l2_lineup_role_opportunity_300/model_execution_freeze_r44l2.md'
+      - '.github/workflows/football-r44l2-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-model-oos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact pushed HEAD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen runtime dependencies
+        run: |
+          python -m pip install --disable-pip-version-check numpy pandas scikit-learn
+
+      - name: Record execution identity
+        run: |
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          git rev-parse HEAD
+          git status --short
+          sha256sum football-data/research/r44l2_lineup_role_opportunity_300/model_execution_freeze_r44l2.md
+
+      - name: Execute frozen R44L2 OOS model
+        run: |
+          python football-data/research/r44l2_lineup_role_opportunity_300/run_model_r44l2.py r44l2_model_output
+
+      - name: Upload R44L2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r44l2-model-${{ github.sha }}
+          path: r44l2_model_output/
+          if-no-files-found: error
+          retention-days: 30
