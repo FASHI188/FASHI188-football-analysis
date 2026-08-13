@@ -90,8 +90,9 @@ def main() -> int:
         errors.append("coverage_minimum_below_300")
     if coverage.get("complete_same_freeze_1x2_baseline_required") is not True:
         errors.append("same_freeze_1x2_baseline_not_required")
-    if int(coverage.get("invalid_record_tolerance") or -1) != 0:
-        errors.append("invalid_record_tolerance_nonzero")
+    invalid_tolerance = coverage.get("invalid_record_tolerance")
+    if not isinstance(invalid_tolerance, int) or isinstance(invalid_tolerance, bool) or invalid_tolerance != 0:
+        errors.append("invalid_record_tolerance_nonzero_or_invalid")
 
     sample = prereg.get("sample_identity_policy") if isinstance(prereg.get("sample_identity_policy"), dict) else {}
     if sample.get("identity_manifest_required_before_authorization") is not True:
