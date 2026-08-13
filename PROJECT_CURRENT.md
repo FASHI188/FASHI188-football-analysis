@@ -7,6 +7,7 @@
 - updated_at_utc: 2026-08-13T05:02:00Z
 - updated_by: GPT-5.6 Sol
 - status_source: VERIFIED_USER_DIRECTIVE_IN_PROGRESS_TASK
+- project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
