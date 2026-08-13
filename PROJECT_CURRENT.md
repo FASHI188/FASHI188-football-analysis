@@ -15,12 +15,9 @@
 - current_phase: R44L4_WSL_EXTERNAL_DOMAIN_STOP_UNDERPOWERED_FIND_NEXT_UNTOUCHED_DOMAIN
 - current_objective: R44L4 已在独立外部赛事域 FA Women's Super League 按冻结方法测试“当前XI严格prior攻击产出 + 双方攻击平衡”。零标签覆盖457/457通过；开标签后的目标二分类有效样本仅172场/65平局，低于预注册250场最低门，因此在任何模型拟合前按规则停止。该结果不是科学FAIL，效果仍未知；WSL样本已消费，不得在同一确认中追加赛季、放宽门槛或重拟合。
 - exact_head: 08b88d51c976da46f78e7125744a702e3c94be55
-- branch: research/r44l4-wsl-attack-balance
-- pull_request: NONE_FOR_R44L4
-- pull_request_state: NOT_APPLICABLE
-- background_governed_pr: #176
-- background_branch: research/v520-public-web-forward-pit-r44a
-- background_pr_state: VERIFIED_OPEN_DRAFT_UNMERGED
+- branch: research/v520-public-web-forward-pit-r44a
+- pull_request: #176
+- pull_request_state: VERIFIED_OPEN_DRAFT_UNMERGED
 - formal_weight: 0
 - latest_completed_research: r44l4_wsl_attack_balance
 - latest_research_branch: research/r44l4-wsl-attack-balance
@@ -45,30 +42,15 @@
 
 ## 允许事项
 
-- 修复 state_version 9 的 GitHub/Airtable 接续同步，不改变研究结论。
-- 只读复盘 R44L2 与 R44L4。
-- 继续平局主线时，优先寻找信息本质不同且可验证赛前可用的新轴；任何新研究必须重新预注册。
-- 若继续外部赛事域确认，必须在零标签阶段先证明目标有效样本规模足够，预期总二分类样本>=250且可形成至少3个时间顺序OOS块；不足即STOP，不读标签。
-- 优先新信息：可验证时间戳的职责/战术任务/定位球职责，或与既有阵型位置聚合不同的机会数量×机会质量结构。
-- PR #176 只允许只读核验，除非用户另行明确授权其执行动作。
-- 任何新的重要状态变化必须递增 state_version 并完成 GitHub+Airtable 闭环。
+- 只读复盘R1/R44L2；回平局主线并独立预注册新实验；若继续首发，只研究可验证赛前时间戳且信息类型本质不同的职责/任务/定位球等变量。
 
 ## 禁止事项
 
-- 禁止把 R44L4 写成科学FAIL或PASS；正确状态是覆盖通过后因172<250而 `STOP_UNDERPOWERED_AFTER_LABEL_OPEN`，模型拟合=0。
-- 禁止在 R44L4 WSL 内追加赛季、降低门槛、改变折定义或拟合172场来“救”结果。
-- 禁止继续“阵型标签+位置计数+XI连续性→机会质量”的等价变体烧新保护样本。
-- 禁止给 R44L2、R44L4 或其他未晋级研究非零 formal_weight。
-- 禁止访问 Provider、API-Football、付费接口或创建/使用 Secret，除非用户另行明确授权且正式规则允许。
-- 禁止修改正式模型、正式数据、config、正式预测逻辑或正式 CURRENT 正文，除非用户另行明确授权且正式规则允许。
-- 禁止执行、转Ready或合并 PR #176 或其他PR，除非后续取得对应独立明确授权。
-- 禁止删除或改写 R44L2/R44L4 历史证据。
+- 不得把run 31595573285 workflow success写成科学PASS；不得给R44L2非零权重；不得在R44L2内事后调参救结果；不得执行/转Ready/合并PR #176；不得修改正式模型/正式数据/config/CURRENT。
 
 ## 唯一下一步
 
-- 在真正未看且样本更大的外部赛事域做**零标签** identity / lineup / XI / event-schema / 规模筛选；只有预先证明可支持预注册最低样本量后，才冻结方法并开标签。
-- 不重用或放宽 R44L4 WSL。
-- 若找不到满足规模与PIT/事件字段要求的未看域，停止该首发/机会质量路线，切换到信息本质不同的平局轴。
+- 另开真正未看且样本更大的外部赛事域，先做零标签identity/lineup/XI/event schema与规模筛选；达到预注册样本支持后才冻结并开标签。不得重用或放宽R44L4 WSL。
 
 ## 停止条件
 
