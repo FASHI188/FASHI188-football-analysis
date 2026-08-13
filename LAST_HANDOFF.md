@@ -7,7 +7,7 @@
 - project_id: football-project
 - handoff_version: 9
 - state_version: 37
-- updated_at_utc: 2026-08-13T09:40:00Z
+- updated_at_utc: 2026-08-13T09:45:00Z
 - status: WAITING
 
 ## 用户最后明确目标
@@ -20,13 +20,14 @@
 1. 已确认真实项目停点是 state36 的 R45B 独立 OOS 零标签样本积累，首场 Alaves-Getafe 已完全合格，当前 1/300、剩余 299。
 2. 新增稳定协议文件 `ACTIVE_CHECKPOINT.md`。
 3. Airtable Base《足球项目接续》新增表《执行检查点》，表ID=`tblFMldlWUzFf3b3t`。
-4. 建立唯一激活检查点 `recIRxK7EIMjJdG4A`，当前 state_version=37、checkpoint_version=1、status=WAITING。
+4. 建立唯一激活检查点 `recIRxK7EIMjJdG4A`，当前 state_version=37；实时 checkpoint_version 与 status 只从 Airtable 读取，不在本文件硬编码。
 5. 检查点当前恢复位置固定为：从第2个合格 fixture 候选开始，不重做第1场、不重跑已通过的 readiness/OOS prereg。
 6. 已定义原子步骤幂等规则：开始前 RUNNING + 唯一操作ID；完成后先核验真实副作用再 COMPLETED/WAITING；若刷新时仍为 RUNNING/VERIFYING，必须先查副作用是否已发生，不能盲重试。
 7. 若副作用已发生，禁止重复执行；若明确未发生且可安全重试才允许重试；若无法判断则 BLOCKED_CHECKPOINT_SIDE_EFFECT_AMBIGUOUS。
 8. 检查点高频更新只递增 checkpoint_version，不递增 PROJECT_CURRENT state_version，也不为每个工具调用制造 main commit / Actions。
 9. `AGENTS.md` 已升级为四层接续：ACTIVE_CHECKPOINT → LAST_HANDOFF → PROJECT_CURRENT → Airtable；并保留唯一 CURRENT 硬门。
 10. `PROJECT_CURRENT.md` 已升级 state37；R45B 科学状态与正式资产均未改变。
+11. state-doc-integrity Workflow 已纳入 ACTIVE_CHECKPOINT.md，会同时计算 ACTIVE/PROJECT/LAST 三份 SHA-256 并校验 PROJECT_CURRENT/LAST_HANDOFF state_version 一致。
 
 ## 当前实时执行检查点
 
@@ -35,13 +36,12 @@
 - table_id: `tblFMldlWUzFf3b3t`
 - active_record_id: `recIRxK7EIMjJdG4A`
 - checkpoint_state_version: 37
-- checkpoint_version: 1（最终同步时可递增）
-- checkpoint_status: WAITING
-- operation_id: `R45B-OOS-COLLECT-NEXT-FIXTURE`
+- checkpoint_version: RUNTIME_AUTHORITATIVE_IN_AIRTABLE
+- checkpoint_status: RUNTIME_AUTHORITATIVE_IN_AIRTABLE
+- operation_id at current waiting baseline: `R45B-OOS-COLLECT-NEXT-FIXTURE`
 - last_completed_substep: 第1个完全合格样本 Alaves-Getafe 已注册并通过 validator，1/300
 - resume_from: 第2个合格 fixture 候选
-- pending_side_effect: NONE
-- safe_to_retry: true（当前没有半完成副作用）
+- pending_side_effect at governance closure: NONE
 
 ## 当前项目真实停点
 
