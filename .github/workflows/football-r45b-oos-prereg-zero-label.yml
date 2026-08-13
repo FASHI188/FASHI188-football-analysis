@@ -1,0 +1,71 @@
+name: Football R45B OOS Prereg Zero-Label Gate
+
+on:
+  push:
+    branches:
+      - research/r45b-pit-role-availability-zero-label
+    paths:
+      - 'football-data/research/r45b_independent_oos_preregistration.json'
+      - 'football-data/research/r45b_independent_oos_prereg_validator.py'
+      - 'football-data/research/r45b_oos_governance_guard.py'
+      - 'football-data/governance/model_promotion_gate_v520.json'
+      - '.github/workflows/football-r45b-oos-prereg-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r45b-oos-prereg-zero-label-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prereg-zero-label-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Validate immutable OOS preregistration design
+        shell: bash
+        run: |
+          python football-data/research/r45b_independent_oos_prereg_validator.py
+          cat football-data/research/r45b_independent_oos_prereg_validation_status.json
+
+      - name: Assert prereg pass but OOS remains unauthorized
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path('football-data/research/r45b_independent_oos_prereg_validation_status.json')
+          s = json.loads(p.read_text(encoding='utf-8'))
+          if s.get('status') != 'PASS_PREREGISTRATION_ZERO_LABEL_WAITING_SAMPLE_MANIFEST':
+              raise SystemExit(f"unexpected prereg status: {s.get('status')}")
+          if not str(s.get('preregistration_sha256') or '').strip():
+              raise SystemExit('missing preregistration sha256')
+          if int(s.get('minimum_fully_eligible_fixture_count') or 0) < 300:
+              raise SystemExit('sample gate below 300')
+          if int(s.get('chronological_test_fold_count') or 0) < 3:
+              raise SystemExit('test folds below 3')
+          if s.get('sample_manifest_frozen') is not False:
+              raise SystemExit('sample manifest must still be unfrozen')
+          if s.get('independent_oos_authorized') is not False:
+              raise SystemExit('OOS must remain unauthorized')
+          for field in ('target_match_labels_read','training_runs','scoring_runs','tuning_runs','provider_requests','paid_provider_requests','formal_weight'):
+              if int(s.get(field) or 0) != 0:
+                  raise SystemExit(f'zero-label invariant violated: {field}')
+          print('R45B_OOS_PREREG_ZERO_LABEL_PASS_WAITING_SAMPLE_MANIFEST')
+          PY
+
+      - name: Enforce no automatic OOS authorization
+        shell: bash
+        run: |
+          python football-data/research/r45b_oos_governance_guard.py
