@@ -144,7 +144,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Assert captured evidence axes validated
+      - name: Assert full zero-label data readiness
         shell: bash
         run: |
           python - <<'PY'
@@ -155,30 +155,72 @@ jobs:
           status = json.loads(path.read_text(encoding='utf-8'))
           valid_by_type = status.get('valid_by_type') or {}
           axis = status.get('axis_ready') or {}
-          valid_task = int(valid_by_type.get('task_utility') or 0)
-          valid_availability = int(valid_by_type.get('availability_and_replacement') or 0)
-          valid_process = int(valid_by_type.get('process_capability') or 0)
-          task_ready = bool(axis.get('task_utility'))
-          availability_ready = bool(axis.get('availability_and_replacement'))
-          process_ready = bool(axis.get('process_capability'))
+          blockers = status.get('blocking_axes') or []
+
+          expected = {
+              'task_utility': 2,
+              'availability_and_replacement': 1,
+              'process_capability': 2,
+              'expected_xi_roles': 2,
+          }
+          for kind, minimum in expected.items():
+              actual = int(valid_by_type.get(kind) or 0)
+              print(f'{kind}_valid={actual}')
+              if actual < minimum:
+                  raise SystemExit(f'{kind} valid records below minimum {minimum}')
+
+          required_axes = (
+              'expected_xi_roles',
+              'availability_and_replacement',
+              'process_capability',
+              'task_utility',
+              'matchup_interaction_gate',
+          )
+          for key in required_axes:
+              ready = bool(axis.get(key))
+              print(f'axis_{key}={ready}')
+              if not ready:
+                  raise SystemExit(f'axis not ready: {key}')
+
+          role_pair_count = int(status.get('fixtures_with_both_team_role_xi_same_freeze') or 0)
           record_count = int(status.get('record_count') or 0)
+          valid_count = int(status.get('valid_record_count') or 0)
           invalid_count = int(status.get('invalid_record_count') or 0)
-          print(f'task_utility_valid={valid_task}')
-          print(f'task_utility_axis_ready={task_ready}')
-          print(f'availability_and_replacement_valid={valid_availability}')
-          print(f'availability_and_replacement_axis_ready={availability_ready}')
-          print(f'process_capability_valid={valid_process}')
-          print(f'process_capability_axis_ready={process_ready}')
-          print(f'forward_record_count={record_count}')
+          final_status = str(status.get('status') or '')
+          print(f'role_pair_count={role_pair_count}')
+          print(f'record_count={record_count}')
+          print(f'valid_record_count={valid_count}')
           print(f'invalid_record_count={invalid_count}')
-          if valid_task < 2 or not task_ready:
-              raise SystemExit('task_utility evidence axis is not validator-ready')
-          if valid_availability < 1 or not availability_ready:
-              raise SystemExit('availability_and_replacement evidence axis is not validator-ready')
-          if valid_process < 2 or not process_ready:
-              raise SystemExit('process_capability evidence axis lacks two validator-valid team records')
-          if invalid_count != 0:
-              raise SystemExit('Forward-capture evidence contains invalid records')
+          print(f'blocking_axes={blockers}')
+          print(f'final_status={final_status}')
+
+          if role_pair_count < 1:
+              raise SystemExit('missing same-freeze both-team role XI pair')
+          if record_count < 7 or valid_count != record_count or invalid_count != 0:
+              raise SystemExit('forward-capture record validity invariant failed')
+          if blockers:
+              raise SystemExit(f'blocking axes remain: {blockers}')
+          if final_status != 'READY_FOR_SEPARATE_OOS_PREREGISTRATION':
+              raise SystemExit(f'unexpected final readiness status: {final_status}')
+
+          zero_fields = (
+              'target_match_labels_read',
+              'training_runs',
+              'scoring_runs',
+              'tuning_runs',
+              'provider_requests',
+              'paid_provider_requests',
+              'formal_weight',
+          )
+          for field in zero_fields:
+              value = int(status.get(field) or 0)
+              print(f'{field}={value}')
+              if value != 0:
+                  raise SystemExit(f'zero-label invariant violated: {field}={value}')
+          if status.get('automatic_oos_authorization') is not False:
+              raise SystemExit('automatic OOS authorization must remain false')
+          if status.get('independent_oos_authorized') is not False:
+              raise SystemExit('independent OOS authorization must remain false at data-readiness gate')
           PY
 
       - name: Enforce no automatic OOS authorization
