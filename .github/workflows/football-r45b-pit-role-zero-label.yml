@@ -12,7 +12,10 @@ on:
       - 'football-data/research/r45b_matchup_interaction_preregistration.json'
       - 'football-data/research/r45b_task_state_extractor_preregistration.json'
       - 'football-data/research/r45b_task_state_extractor.py'
+      - 'football-data/research/r45b_process_proxy_extractor_preregistration.json'
+      - 'football-data/research/r45b_process_proxy_extractor.py'
       - 'football-data/research/r45b_oos_governance_guard.py'
+      - 'football-data/processed/ESP_LaLiga/2025-26.csv'
       - 'football-data/evidence/r45b_forward_capture/**'
       - '.github/workflows/football-r45b-pit-role-zero-label.yml'
   workflow_dispatch:
@@ -41,6 +44,27 @@ jobs:
         shell: bash
         run: |
           python football-data/research/r45b_task_state_extractor.py --self-test
+
+      - name: Self-test preregistered process-proxy extractor
+        shell: bash
+        run: |
+          python football-data/research/r45b_process_proxy_extractor.py --self-test
+
+      - name: Generate zero-label SHOTS_SOT_PROXY process evidence
+        shell: bash
+        run: |
+          python football-data/research/r45b_process_proxy_extractor.py \
+            --csv football-data/processed/ESP_LaLiga/2025-26.csv \
+            --prereg football-data/research/r45b_process_proxy_extractor_preregistration.json \
+            --output football-data/evidence/r45b_forward_capture/ESP_LaLiga/alaves_getafe_20260815/process_capability_shots_sot_proxy_generated.json \
+            --competition-id ESP_LaLiga \
+            --fixture-key ESP_LaLiga__Deportivo_Alaves__Getafe_CF__20260815T173000Z \
+            --home-team 'Deportivo Alaves' \
+            --away-team 'Getafe CF' \
+            --kickoff-at-utc 2026-08-15T17:30:00Z \
+            --freeze-at-utc 2026-08-13T08:56:29Z \
+            --evidence-id r45b_esp_laliga_ala_get_20260815_process_shots_sot_20260813t085629z
+          cat football-data/evidence/r45b_forward_capture/ESP_LaLiga/alaves_getafe_20260815/process_capability_shots_sot_proxy_generated.json
 
       - name: Run first zero-label PIT input audit
         shell: bash
@@ -106,23 +130,37 @@ jobs:
           axis = status.get('axis_ready') or {}
           valid_task = int(valid_by_type.get('task_utility') or 0)
           valid_availability = int(valid_by_type.get('availability_and_replacement') or 0)
+          valid_process = int(valid_by_type.get('process_capability') or 0)
           task_ready = bool(axis.get('task_utility'))
           availability_ready = bool(axis.get('availability_and_replacement'))
+          process_ready = bool(axis.get('process_capability'))
           record_count = int(status.get('record_count') or 0)
           invalid_count = int(status.get('invalid_record_count') or 0)
           print(f'task_utility_valid={valid_task}')
           print(f'task_utility_axis_ready={task_ready}')
           print(f'availability_and_replacement_valid={valid_availability}')
           print(f'availability_and_replacement_axis_ready={availability_ready}')
+          print(f'process_capability_valid={valid_process}')
+          print(f'process_capability_axis_ready={process_ready}')
           print(f'forward_record_count={record_count}')
           print(f'invalid_record_count={invalid_count}')
           if valid_task < 2 or not task_ready:
               raise SystemExit('task_utility evidence axis is not validator-ready')
           if valid_availability < 1 or not availability_ready:
               raise SystemExit('availability_and_replacement evidence axis is not validator-ready')
+          if valid_process < 1 or not process_ready:
+              raise SystemExit('process_capability evidence axis is not validator-ready')
           if invalid_count != 0:
               raise SystemExit('Forward-capture evidence contains invalid records')
           PY
+
+      - name: Upload generated process evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45b-process-capability-evidence
+          path: football-data/evidence/r45b_forward_capture/ESP_LaLiga/alaves_getafe_20260815/process_capability_shots_sot_proxy_generated.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Enforce no automatic OOS authorization
         shell: bash
