@@ -3,27 +3,28 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 34
-- updated_at_utc: 2026-08-13T08:21:10Z
+- state_version: 35
+- updated_at_utc: 2026-08-13T08:45:19Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_R45B_ZERO_LABEL_FORWARD_CAPTURE
+- status_source: VERIFIED_R45B_TASK_UTILITY_FORWARD_EVIDENCE
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: WAITING
-- task: R45B 免费公开源前向零标签采集：首轮候选来源审计已完成，等待合同级可核验证据
+- task: R45B 免费公开源前向零标签采集：task_utility 已形成可执行主链并验证通过，继续补剩余合同级证据轴
 - branch: research/r45b-pit-role-availability-zero-label
-- exact_head: c1aa5fc54063562d32103354193b309f9dd2e7be
-- latest_action_run: 31674772403
-- latest_action_job: 94366845682
+- exact_head: 241c1f12b7f163d80df528e86ae90b1662bfa00a
+- latest_action_run: 31683350688
+- latest_action_job: 94393642748
 - latest_action_execution: completed/success
 - scientific_gate: STOP_FORWARD_CAPTURE_NOT_READY
-- current_step: 完成 Alaves vs Getafe 的首轮前向来源审计；未制造 validator evidence
-- next_action: 继续免费公开源前向零标签采集，只接受合同级可核验证据；若角色/替代/task/process 仍不足则继续 fail-closed
+- current_step: task_utility 已有 2 条 validator-valid prospective/query-time 记录；invalid_record_count=0；完整 readiness 仍未通过
+- next_action: 继续免费公开源前向零标签采集 expected_xi_roles、availability_and_replacement、process_capability；matchup_interaction 等待角色首发轴后再运行
 - formal_model_change: 0
 - formal_data_change: 0
-- config_change: 0
+- research_evidence_change: +2 task_utility forward records
+- config_change: 0（正式配置）；研究 workflow/extractor 有更新
 - CURRENT_change: 0
 
 ## 新对话永久接续治理
@@ -57,37 +58,44 @@
 - formal_weight: 0
 - detailed_roles: MISSING
 - replacement_gap: MISSING
-- matchup_interaction: MISSING
-- task_utility: MISSING
+- matchup_interaction: MISSING_WAITING_ROLE_AXIS
+- task_utility: PASS
+- task_utility_valid_record_count: 2
+- task_utility_invalid_record_count: 0
+- task_utility_extractor: R45B-TASK-STATE-EXTRACTOR-R1
 - process_capability: PARTIAL_NOT_PASS
-- forward_capture_record_count: 0
+- forward_capture_record_count: 2
 - independent_oos_authorized: false
 - source_audit_fixture: ESP_LaLiga__Deportivo_Alaves__Getafe_CF__20260815T173000Z
-- source_audit_artifact: football-data/research/r45b_forward_capture_source_audit_20260813.json
-- source_audit_ruling: NO_CONTRACT_VALID_VALIDATOR_RECORD_CREATED
+- task_evidence_freeze_at_utc: 2026-08-13T08:39:48Z
+- task_evidence_scope: schedule_fatigue for Deportivo Alaves and Getafe CF
+- task_evidence_ruling: VALIDATOR_ACCEPTED_AND_ASSERTED
 
 ## R45B本轮来源裁决
 
-- official LALIGA / Getafe CF: 可用于比赛身份与开球时点核验；不自动构成角色/替代/task evidence。
-- AS probable XI: 只支持可能首发姓名与宽泛分组；详细战术槽位不可人工补全，因此拒绝进入 expected_xi_roles evidence。
-- Cadena SER: 信息内容可作发现参考，但页面法律声明明确反对机械读取/AI 使用；本项目不把其正文灌入研究数据集。
-- Comuniate / Starting11: 当前抓取表示不足以提供合同级、两队同 freeze 的详细战术角色首发；拒绝进入 validator evidence。
+- official LALIGA / Getafe CF: 可用于比赛身份与开球时点核验；不自动构成角色/替代 evidence。
+- official Racing / Tottenham / Getafe / AS Monaco pre-season schedules: 允许作为严格赛前的 schedule_fatigue source-backed facts；已生成两条 task_utility 记录。
+- FotMob 当前可提供部分伤停/停赛身份，但缺合同要求的可靠 replacement candidate + depth/selection 证据，因此暂不进入 availability_and_replacement。
+- AS probable XI / Comuniate: 可作发现参考；目前仍不足以形成“两队同 freeze、11 人明确 role/position slot + formation/shape”的 expected_xi_roles 合同证据。
+- Cadena SER: 页面法律声明反对机械读取/AI 使用；不把其正文灌入研究数据集。
 - ESP_LaLiga process: repository readiness 只支持 `SHOTS_SOT_PROXY` shadow readiness；true_xg_ready=false；没有真实 target-fixture feature payload 时不得创建 process evidence。
-- task_utility: 未找到既有固定 executable extractor；禁止手工叙事打分。
+- task_utility: 已补固定可执行 extractor；只允许固定结构化事实，不允许人工 motivation/fatigue 权重。
 
 ## 最近工程状态
 
-- R45B source-audit research commit: `c1aa5fc54063562d32103354193b309f9dd2e7be`
-- source-audit 不在 `football-r45b-pit-role-zero-label.yml` 的 push path 中，因此没有新 workflow run；不得把旧 run 当成本轮重新验证。
-- App联调 PR #190 已关闭未合并。
-- GitGuardian、SonarQube Cloud、Codecov、DeepSource、Renovate 均已接收仓库事件。
-- Renovate 已有 PR #187 证明真实运行。
-- SimpleBackups 已由用户取消。
+- R45B current research HEAD: `241c1f12b7f163d80df528e86ae90b1662bfa00a`
+- 新增 `football-data/research/r45b_task_state_extractor.py`，固定版本 `R45B-TASK-STATE-EXTRACTOR-R1`。
+- workflow 已加入 task extractor self-test 与 validator-valid task evidence 硬断言。
+- latest Actions: run `31683350688` / job `94393642748`，completed/success。
+- 关键断言：至少 2 条 valid `task_utility`、`axis_ready.task_utility=true`、`invalid_record_count=0`；该步骤 success。
+- OOS guard 继续 success，但其含义是“未自动授权 OOS”，不是效果或科学 PASS。
+- App联调 PR #190 已关闭未合并；不影响本轮 R45B 研究。
+- 正式模型、正式数据、正式配置、CURRENT 均未改动。
 
 ## Airtable同步
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: rec9tUtwf3voJHCzM
-- airtable_state_version: 34
-- airtable_sync_status: R45B_ZERO_LABEL_SOURCE_AUDIT_RECORDED_FAIL_CLOSED
+- state_log_record_id: recK3US3485L1c2FD
+- airtable_state_version: 35
+- airtable_sync_status: R45B_TASK_UTILITY_FORWARD_AXIS_VALIDATED_REMAINING_AXES_FAIL_CLOSED
