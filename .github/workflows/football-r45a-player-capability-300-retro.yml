@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.2'
       - name: Reconstruct frozen inputs
         shell: bash
         run: |
@@ -40,22 +43,41 @@ jobs:
           git clone --depth 1 https://github.com/jasonsignolet/football.git "$D/external_football"
           cd "$D/external_football"
           git rev-parse HEAD | tee ../external_source_commit.txt
-      - name: Diagnose external date representation
+      - name: Convert RData with R-native date semantics
         shell: bash
         run: |
           set -euo pipefail
           D=football-data/research/r45a_player_capability_300_retro
           cd "$D"
-          python - <<'PY' | tee date_diagnostic.log
-          import pyreadr, pandas as pd
-          for fn in ['football_match.RData','player_attributes.RData','team_attributes.RData']:
-              df=next(iter(pyreadr.read_r('external_football/data/'+fn).values()))
-              s=df['date']
-              print(fn, 'dtype=',s.dtype, 'head=',s.head(5).tolist(), 'raw_min=',s.min(), 'raw_max=',s.max())
-              p=pd.to_datetime(s, errors='coerce')
-              print('pd_to_datetime head=',p.head(5).tolist(),'min=',p.min(),'max=',p.max())
-          sm=pd.read_csv('sample_market_min.csv')
-          print('sample date min/max=',sm['match_datetime'].min(),sm['match_datetime'].max())
+          Rscript - <<'RS'
+          files <- c('football_match.RData','team.RData','player_attributes.RData','team_attributes.RData')
+          for (f in files) {
+            e <- new.env(parent=emptyenv())
+            n <- load(file.path('external_football','data',f), envir=e)
+            stopifnot(length(n)==1)
+            x <- e[[n[[1]]]]
+            out <- file.path('external_football','data',sub('\\.RData$','.csv',f))
+            write.csv(x,out,row.names=FALSE,na='')
+            if ('date' %in% names(x)) cat(f, as.character(min(x$date,na.rm=TRUE)), as.character(max(x$date,na.rm=TRUE)), '\n')
+          }
+          RS
+      - name: Apply deterministic loader-only fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          cd "$D"
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, json
+          p=Path('run_r45a.py'); s=p.read_text()
+          old="""def read_rdata(name):\n    p=EXT/name\n    r=pyreadr.read_r(str(p))\n    dfs=[v for v in r.values() if isinstance(v,pd.DataFrame)]\n    if len(dfs)!=1: raise RuntimeError(f'{name}: expected 1 dataframe got keys={list(r.keys())}')\n    df=dfs[0]\n    print(name,df.shape,list(df.columns)[:12],flush=True)\n    return df\n"""
+          new="""def read_rdata(name):\n    p=EXT/name\n    csvp=p.with_suffix('.csv')\n    if not csvp.exists(): raise RuntimeError(f'{name}: R-native CSV missing')\n    df=pd.read_csv(csvp,low_memory=False)\n    print(name,df.shape,list(df.columns)[:12],flush=True)\n    return df\n"""
+          if old not in s: raise SystemExit('loader patch anchor not found')
+          s=s.replace(old,new,1); p.write_text(s)
+          receipt={'fix':'RDATA_DATE_LOADER_ONLY','reason':'pyreadr 0.5.3 converted R Date fields to 1970-01-01','sample_sha256':'bc58fcf4bf4a452d1769dacd9111b1cdf88e5039a45e706d339559a3627f163b','original_runner_sha256':'e4bce5f43ba3a6db80ff6e5c9386249d05f59fc61499dd052ca5180e63627ebe','patched_runner_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'model_feature_parameter_changes':0}
+          Path('engineering_fix_receipt.json').write_text(json.dumps(receipt,indent=2))
+          print(json.dumps(receipt,indent=2))
           PY
       - name: Run frozen retrospective study
         shell: bash
@@ -85,7 +107,7 @@ jobs:
           path: |
             football-data/research/r45a_player_capability_300_retro/r45a_output
             football-data/research/r45a_player_capability_300_retro/r45a_console.log
-            football-data/research/r45a_player_capability_300_retro/date_diagnostic.log
             football-data/research/r45a_player_capability_300_retro/r45a_output_sha256.txt
             football-data/research/r45a_player_capability_300_retro/external_source_commit.txt
+            football-data/research/r45a_player_capability_300_retro/engineering_fix_receipt.json
           if-no-files-found: warn
