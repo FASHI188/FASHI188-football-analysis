@@ -3,16 +3,16 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 37
-- updated_at_utc: 2026-08-13T09:45:00Z
+- state_version: 38
+- updated_at_utc: 2026-08-13T10:22:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_REFRESH_SAFE_EXECUTION_CHECKPOINT_GOVERNANCE
+- status_source: VERIFIED_FILE_LIBRARY_START_HERE_DUPLICATES_PENDING_REPLACEMENT
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: WAITING
-- task: R45B 已完成零标签 PIT 数据完整性门与独立 OOS 预注册；当前按冻结规则前向积累 300 场完全合格零标签样本
+- task: File Library START_HERE 重复副本清理；R45B 科学状态保持 1/300 暂停不变
 - branch: research/r45b-pit-role-availability-zero-label
 - exact_head: 028cbced2db6c8b7046114e36e1f09184e6c9a3d
 - latest_action_run: 31686297563
@@ -21,13 +21,29 @@
 - data_readiness_gate: PASS
 - oos_preregistration_gate: PASS
 - scientific_gate: OOS_SAMPLE_COVERAGE_CLOSED_1_OF_300
-- current_step: 刷新/断线精确续跑治理已完成；R45B 保持 1/300，等待从第2个合格 fixture 候选继续
-- next_action: 用户后续继续 R45B 时，先将 Airtable《执行检查点》写为 RUNNING，再从第2个合格 fixture 候选开始前向零标签采集；未达到覆盖门前不得读标签、训练或评分
+- current_step: 已核实 File Library 中两份同名 START_HERE 为独立上传且全文相同；新的唯一版已生成，等待用户删除两份旧副本并上传唯一版
+- next_action: 用户在资料库删除 07:30:28Z / 07:31:33Z 两份旧 START_HERE，上传 `足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`；随后重新检索 File Library 验证只剩一个启动器，再恢复 R45B 第2个合格 fixture 候选
 - formal_model_change: 0
 - formal_data_change: 0
-- research_evidence_change: 本轮仅接续治理，无新增研究样本
+- research_evidence_change: 本轮仅接续/File Library治理，无新增研究样本
 - config_change: 0（正式配置）
 - CURRENT_change: 0
+
+## File Library START_HERE 重复清理
+
+- old_copy_1_file_id: `file_00000000a99482068ad6a1a35d0a1fdc`
+- old_copy_1_created_at_utc: `2026-08-13T07:30:28Z`
+- old_copy_2_file_id: `file_0000000009a48211918f8823ff909f69`
+- old_copy_2_created_at_utc: `2026-08-13T07:31:33Z`
+- content_comparison: IDENTICAL
+- old_copy_status: BOTH_REPLACE
+- replacement_filename: `足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`
+- replacement_status: GENERATED_PENDING_USER_UPLOAD
+- cleanup_status: WAITING_FOR_USER_FILE_LIBRARY_UI_ACTION
+- reason: 两份旧副本都包含已过时的旧文件名管理段，并且尚未纳入 ACTIVE_CHECKPOINT 实时断线恢复顺序
+- legacy_filename_entity_existence: UNKNOWN_UNVERIFIED
+- legacy_filename_policy: 不再根据正文搜索命中、历史卡片标题或旧聊天转述断言旧文件实体存在；除非 File Library UI/文件身份元数据直接证明，否则不要求查找或删除
+- sole_CURRENT_protection: 唯一 `CURRENT_唯一正式规则` 不参与本次清理，禁止删除或替换
 
 ## 刷新/连接中断精确续跑治理
 
@@ -35,7 +51,7 @@
 - live_checkpoint_store: Airtable Base《足球项目接续》表《执行检查点》
 - live_checkpoint_table_id: `tblFMldlWUzFf3b3t`
 - active_checkpoint_record_id: `recIRxK7EIMjJdG4A`
-- checkpoint_state_version: 37
+- checkpoint_state_version: 38
 - checkpoint_version: RUNTIME_AUTHORITATIVE_IN_AIRTABLE（允许同一 state_version 内递增，不在本文件硬编码）
 - checkpoint_status: 以 Airtable 唯一激活《执行检查点》实时值为准
 - recovery_order: ACTIVE_CHECKPOINT协议 → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态/维护日志 → 必要时唯一CURRENT
@@ -44,24 +60,23 @@
 - after_atomic_step: 先核验真实结果，再写 COMPLETED/WAITING + 证据 + 新恢复位置
 - interrupted_running_rule: 先核验副作用是否已发生；已发生则禁止重复，未发生且可安全重试才重试；不确定则 BLOCKED_CHECKPOINT_SIDE_EFFECT_AMBIGUOUS
 - state_version_policy: 高频 checkpoint_version 不触发 PROJECT_CURRENT state_version；只有项目重要状态变化才升级 state_version
-- purpose: 防止连接中断/刷新后重新执行已完成子步骤，同时避免每个子步骤制造 main commit 和 Actions 噪声
 
 ## 新对话永久接续治理
 
-- 当前启动器：`足球项目_START_HERE_新对话永久接续启动器.txt`
+- 当前目标启动器：`足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`（待用户上传后成为唯一 File Library 启动器）
 - `ACTIVE_CHECKPOINT.md` + Airtable《执行检查点》：同一任务执行中断点。
 - `LAST_HANDOFF.md`：上一条对话末端接力层。
 - `PROJECT_CURRENT.md` + Airtable《当前状态》：状态验证层。
 - Airtable START HERE 只保存稳定 bootstrap，不保存动态 Rxx / HEAD / run。
 - LAST_HANDOFF 必须在每次实质进展、用户改变方向、阻塞和回答收尾滚动覆盖更新。
 
-## 正式规则与旧入口
+## 正式规则状态
 
 - sole_CURRENT: `足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx`
 - CURRENT_version: V5.2.0
 - CURRENT_count: 1
 - old_version_execution_weight: 0
-- `足球2.txt`: DEPRECATED_LEGACY_ENTRY，execution_weight=0；不得覆盖唯一CURRENT、ACTIVE_CHECKPOINT、LAST_HANDOFF、PROJECT_CURRENT或Airtable。
+- note: File Library START_HERE 清理不改变唯一 CURRENT，也不得通过旧文件名/正文搜索覆盖正式规则身份
 
 ## R45B 零标签数据完整性门
 
@@ -92,7 +107,7 @@
 - kickoff_at_utc: 2026-08-15T17:30:00Z
 - role_xi_same_freeze_at_utc: 2026-08-13T09:07:14Z
 - expected formations from source-backed current guides: Alaves 4-4-2；Getafe 5-3-2
-- role policy: 球员仅使用来源明确给出的标准 position slot；不得从阵型顺序人工推断本场 LCB/RCB/RWB/LWB/LM/RM 等部署
+- role policy: 球员仅使用来源明确给出的标准 position slot；不得从阵型顺序人工推本场 LCB/RCB/RWB/LWB/LM/RM 等部署
 - availability evidence: Lucas Boyé 赛前伤情 + Mariano / Aitor Mañas 明确替代候选链
 - process: 两队各自最近 10 场严格先验 HS/HST/AS/AST；只输出 SHOTS_SOT_PROXY；结果/进球列禁用
 - task: 两队严格赛前 schedule_fatigue 结构化事实；不人工赋予 fatigue/motivation 权重
@@ -160,7 +175,7 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recWekkA7FJxToE2P
+- state_log_record_id: rec5aWqcQL0xghvpw
 - execution_checkpoint_record_id: recIRxK7EIMjJdG4A
-- airtable_state_version: 37
-- airtable_sync_status: REFRESH_SAFE_EXECUTION_CHECKPOINT_GOVERNANCE_COMPLETE_R45B_1_OF_300_WAITING
+- airtable_state_version: 38
+- airtable_sync_status: START_HERE_DUPLICATE_CLEANUP_PENDING_USER_FILE_LIBRARY_REPLACEMENT
