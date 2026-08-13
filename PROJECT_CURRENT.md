@@ -90,4 +90,4 @@
 - current_state_record_id: recs1pQ1rhuwJQAzE
 - state_log_record_id: recOAtiyGCVi2svXq
 - airtable_state_version: 13
-- airtable_sync_status: STATE_SYNC_PENDING_GITHUB_WRITE
+- airtable_sync_status: STATE_SYNC_CLOSED
