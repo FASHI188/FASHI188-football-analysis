@@ -7,6 +7,8 @@ on:
     paths:
       - 'football-data/research/r45b_pit_role_availability_gate.py'
       - 'football-data/research/r45b_pit_role_deep_inventory.py'
+      - 'football-data/research/r45b_forward_capture_contract.json'
+      - 'football-data/research/r45b_forward_capture_validator.py'
       - '.github/workflows/football-r45b-pit-role-zero-label.yml'
   workflow_dispatch:
 
@@ -62,4 +64,21 @@ jobs:
           cat football-data/research/r45b_pit_role_deep_inventory_status.json
           if [ "$rc" -eq 2 ]; then
             echo "R45B deep inventory correctly fail-closed: one or more PIT axes remain incomplete."
+          fi
+
+      - name: Validate forward-capture readiness
+        shell: bash
+        run: |
+          set +e
+          python football-data/research/r45b_forward_capture_validator.py
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            echo "Unexpected forward-capture validator failure: rc=$rc"
+            exit "$rc"
+          fi
+          echo "forward_capture_exit_code=$rc"
+          cat football-data/research/r45b_forward_capture_validation_status.json
+          if [ "$rc" -eq 2 ]; then
+            echo "R45B forward capture is not ready; no OOS authorization is granted."
           fi
