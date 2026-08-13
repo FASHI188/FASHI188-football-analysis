@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Deterministic R45B SHOTS_SOT_PROXY extractor.
 
-Zero-label research utility. For a fixed historical league snapshot and freeze,
-it extracts exactly the last 10 eligible matches for each target team and emits
-only shots / shots-on-target process proxies. It never uses score/result fields.
+Zero-label research utility. For one target team, it extracts exactly the last
+10 eligible historical league matches and emits only shots / shots-on-target
+process proxies under the exact R45B forward-capture contract fields.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import argparse
 import csv
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,9 +29,11 @@ def parse_utc(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def iso_z(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def parse_match_dt(date_text: str, time_text: str) -> datetime:
-    # Source date/time are used only for deterministic ordering. Eligibility is
-    # conservatively decided on Date < freeze UTC calendar date.
     t = (time_text or "00:00").strip() or "00:00"
     return datetime.strptime(f"{date_text.strip()} {t}", "%d/%m/%Y %H:%M")
 
@@ -54,10 +56,15 @@ def load_prereg(path: Path) -> dict[str, Any]:
     obj = json.loads(path.read_text(encoding="utf-8"))
     if obj.get("schema_version") != PREREG_SCHEMA:
         raise ValueError("prereg_schema_mismatch")
-    if obj.get("scope", {}).get("feature_semantics") != "SHOTS_SOT_PROXY":
-        raise ValueError("feature_semantics_mismatch")
-    if int(obj.get("scope", {}).get("lookback_match_count") or 0) != 10:
+    scope = obj.get("scope") or {}
+    if scope.get("metric_semantics") != "SHOTS_SOT_PROXY":
+        raise ValueError("metric_semantics_mismatch")
+    if int(scope.get("lookback_match_count") or 0) != 10:
         raise ValueError("lookback_not_10")
+    if scope.get("record_granularity") != "one process_capability record per target team":
+        raise ValueError("record_granularity_mismatch")
+    if set(obj.get("required_contract_payload_fields") or []) != {"team", "metric_semantics", "strict_prior_history_cutoff", "features"}:
+        raise ValueError("contract_payload_field_mismatch")
     if set(obj.get("allowed_source_columns") or []) != ALLOWED:
         raise ValueError("allowed_column_contract_mismatch")
     if set(obj.get("forbidden_source_columns") or []) != FORBIDDEN:
@@ -74,15 +81,16 @@ def collect_team_rows(csv_path: Path, source_team: str, freeze: datetime) -> lis
         if missing:
             raise ValueError(f"missing_required_columns:{sorted(missing)}")
         for raw in reader:
-            # Do not read or copy any score/result value; project only the
-            # preregistered source columns immediately.
+            # Immediately project only the preregistered columns. No score/result
+            # field is referenced by name or copied into the process record.
             row = {k: raw.get(k) for k in ALLOWED}
-            if source_team not in {str(row["HomeTeam"] or "").strip(), str(row["AwayTeam"] or "").strip()}:
+            home = str(row["HomeTeam"] or "").strip()
+            away = str(row["AwayTeam"] or "").strip()
+            if source_team not in {home, away}:
                 continue
             match_dt = parse_match_dt(str(row["Date"] or ""), str(row["Time"] or ""))
             if match_dt.date() >= freeze.date():
                 continue
-            home = str(row["HomeTeam"] or "").strip()
             if home == source_team:
                 sf = as_float(row["HS"], "HS")
                 sotf = as_float(row["HST"], "HST")
@@ -98,7 +106,7 @@ def collect_team_rows(csv_path: Path, source_team: str, freeze: datetime) -> lis
                 "date": str(row["Date"] or "").strip(),
                 "time": str(row["Time"] or "").strip(),
                 "home_team": home,
-                "away_team": str(row["AwayTeam"] or "").strip(),
+                "away_team": away,
                 "shots_for": sf,
                 "shots_on_target_for": sotf,
                 "shots_against": sa,
@@ -110,7 +118,7 @@ def collect_team_rows(csv_path: Path, source_team: str, freeze: datetime) -> lis
     return rows[-10:]
 
 
-def features(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def extract_features(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "lookback_match_count": len(rows),
         "shots_for_mean": mean([x["shots_for"] for x in rows]),
@@ -133,26 +141,23 @@ def build_record(args: argparse.Namespace) -> dict[str, Any]:
     kickoff = parse_utc(args.kickoff_at_utc)
     if not freeze < kickoff:
         raise ValueError("freeze_must_precede_kickoff")
-    aliases = prereg.get("team_aliases") or {}
-    home_source = str(aliases.get(args.home_team) or "").strip()
-    away_source = str(aliases.get(args.away_team) or "").strip()
-    if not home_source or not away_source:
+    if args.team not in {args.home_team, args.away_team}:
+        raise ValueError("team_not_in_fixture")
+    source_team = str((prereg.get("team_aliases") or {}).get(args.team) or "").strip()
+    if not source_team:
         raise ValueError("missing_team_alias")
 
-    home_rows = collect_team_rows(args.csv, home_source, freeze)
-    away_rows = collect_team_rows(args.csv, away_source, freeze)
-    process_features = {
-        "home_team": {"team": args.home_team, "source_team_name": home_source, **features(home_rows)},
-        "away_team": {"team": args.away_team, "source_team_name": away_source, **features(away_rows)},
-    }
+    rows = collect_team_rows(args.csv, source_team, freeze)
+    cutoff = freeze - timedelta(seconds=1)
     payload = {
-        "feature_semantics": "SHOTS_SOT_PROXY",
-        "lookback_match_count": 10,
-        "strict_prior_cutoff_at_utc": args.freeze_at_utc,
+        "team": args.team,
+        "metric_semantics": "SHOTS_SOT_PROXY",
+        "strict_prior_history_cutoff": iso_z(cutoff),
+        "features": extract_features(rows),
         "target_match_excluded": True,
-        "process_features": process_features,
         "extractor_version": EXTRACTOR_VERSION,
         "preregistration_schema": PREREG_SCHEMA,
+        "source_team_name": source_team,
         "source_dataset": str(args.csv).replace("\\", "/"),
         "allowed_source_columns": sorted(ALLOWED),
         "forbidden_source_columns_used": [],
@@ -185,6 +190,8 @@ def self_test() -> None:
     assert ALLOWED.isdisjoint(FORBIDDEN)
     assert "FTHG" not in ALLOWED and "FTR" not in ALLOWED
     assert mean([1.0, 2.0, 3.0]) == 2.0
+    freeze = parse_utc("2026-08-13T08:56:29Z")
+    assert iso_z(freeze - timedelta(seconds=1)) == "2026-08-13T08:56:28Z"
     print("R45B_PROCESS_PROXY_EXTRACTOR_SELF_TEST_PASS")
 
 
@@ -198,6 +205,7 @@ def main() -> int:
     p.add_argument("--fixture-key")
     p.add_argument("--home-team")
     p.add_argument("--away-team")
+    p.add_argument("--team")
     p.add_argument("--kickoff-at-utc")
     p.add_argument("--freeze-at-utc")
     p.add_argument("--evidence-id")
@@ -208,7 +216,7 @@ def main() -> int:
     if args.self_test:
         self_test()
         return 0
-    required = ["csv", "prereg", "output", "competition_id", "fixture_key", "home_team", "away_team", "kickoff_at_utc", "freeze_at_utc", "evidence_id"]
+    required = ["csv", "prereg", "output", "competition_id", "fixture_key", "home_team", "away_team", "team", "kickoff_at_utc", "freeze_at_utc", "evidence_id"]
     missing = [name for name in required if getattr(args, name) in (None, "")]
     if missing:
         p.error("missing required arguments: " + ",".join(missing))
