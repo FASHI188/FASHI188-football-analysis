@@ -4,7 +4,7 @@
 
 - project_id: football-project
 - state_version: 37
-- updated_at_utc: 2026-08-13T09:40:00Z
+- updated_at_utc: 2026-08-13T09:45:00Z
 - updated_by: GPT-5.6 Sol
 - status_source: VERIFIED_REFRESH_SAFE_EXECUTION_CHECKPOINT_GOVERNANCE
 - project_current_sha256: RECORDED_IN_AIRTABLE
@@ -36,8 +36,8 @@
 - live_checkpoint_table_id: `tblFMldlWUzFf3b3t`
 - active_checkpoint_record_id: `recIRxK7EIMjJdG4A`
 - checkpoint_state_version: 37
-- checkpoint_version: 1（本轮最终同步后可递增）
-- checkpoint_status: WAITING
+- checkpoint_version: RUNTIME_AUTHORITATIVE_IN_AIRTABLE（允许同一 state_version 内递增，不在本文件硬编码）
+- checkpoint_status: 以 Airtable 唯一激活《执行检查点》实时值为准
 - recovery_order: ACTIVE_CHECKPOINT协议 → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态/维护日志 → 必要时唯一CURRENT
 - checkpoint_granularity: 只对可恢复原子步骤打点，不对每个只读工具调用打点
 - before_atomic_step: 写 RUNNING + 唯一操作ID/幂等键 + 目标对象 + 预期副作用 + 恢复位置 + 授权范围
