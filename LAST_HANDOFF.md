@@ -5,55 +5,48 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 9
-- state_version: 37
-- updated_at_utc: 2026-08-13T09:45:00Z
+- handoff_version: 10
+- state_version: 38
+- updated_at_utc: 2026-08-13T10:22:00Z
 - status: WAITING
 
 ## 用户最后明确目标
 
-- 用户反馈连接中断后刷新会重新从头执行，要求继续解决。
-- 本轮只做“同一任务中途刷新/断线后的精确子步骤续跑”治理，不推进新比赛样本、不读取标签、不训练。
+- 用户引用 Codex 判断，要求先处理 File Library 中重复的 START_HERE 文件。
+- 当前优先级临时从 R45B 切到 File Library 启动器去重；R45B 科学状态保持 1/300，不推进新样本、不读标签、不训练。
 
 ## 本轮已经完成
 
-1. 已确认真实项目停点是 state36 的 R45B 独立 OOS 零标签样本积累，首场 Alaves-Getafe 已完全合格，当前 1/300、剩余 299。
-2. 新增稳定协议文件 `ACTIVE_CHECKPOINT.md`。
-3. Airtable Base《足球项目接续》新增表《执行检查点》，表ID=`tblFMldlWUzFf3b3t`。
-4. 建立唯一激活检查点 `recIRxK7EIMjJdG4A`，当前 state_version=37；实时 checkpoint_version 与 status 只从 Airtable 读取，不在本文件硬编码。
-5. 检查点当前恢复位置固定为：从第2个合格 fixture 候选开始，不重做第1场、不重跑已通过的 readiness/OOS prereg。
-6. 已定义原子步骤幂等规则：开始前 RUNNING + 唯一操作ID；完成后先核验真实副作用再 COMPLETED/WAITING；若刷新时仍为 RUNNING/VERIFYING，必须先查副作用是否已发生，不能盲重试。
-7. 若副作用已发生，禁止重复执行；若明确未发生且可安全重试才允许重试；若无法判断则 BLOCKED_CHECKPOINT_SIDE_EFFECT_AMBIGUOUS。
-8. 检查点高频更新只递增 checkpoint_version，不递增 PROJECT_CURRENT state_version，也不为每个工具调用制造 main commit / Actions。
-9. `AGENTS.md` 已升级为四层接续：ACTIVE_CHECKPOINT → LAST_HANDOFF → PROJECT_CURRENT → Airtable；并保留唯一 CURRENT 硬门。
-10. `PROJECT_CURRENT.md` 已升级 state37；R45B 科学状态与正式资产均未改变。
-11. state-doc-integrity Workflow 已纳入 ACTIVE_CHECKPOINT.md，会同时计算 ACTIVE/PROJECT/LAST 三份 SHA-256 并校验 PROJECT_CURRENT/LAST_HANDOFF state_version 一致。
+1. File Library 精确检索确认存在两份独立上传的同名 `足球项目_START_HERE_新对话永久接续启动器.txt`：
+   - `file_00000000a99482068ad6a1a35d0a1fdc`，created `2026-08-13T07:30:28Z`；
+   - `file_0000000009a48211918f8823ff909f69`，created `2026-08-13T07:31:33Z`。
+2. 两份文件已完整打开比较，正文内容相同；不是同一文件的多个搜索片段，而是两个不同 file ID 的重复上传。
+3. 两份旧正文都带有已经不应继续使用的旧文件名管理段，并且未包含最新 ACTIVE_CHECKPOINT + Airtable《执行检查点》断线恢复顺序。
+4. 已生成新的唯一替换文件：`足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`。
+5. 新唯一版已移除旧文件名/V3.5.1 删除要求，新增规则：不能因为正文搜索命中某个旧文件名就推断旧文件实体一定存在。
+6. 新唯一版已纳入最新恢复顺序：ACTIVE_CHECKPOINT → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态/维护日志 → 必要时唯一CURRENT。
+7. 当前工具没有 ChatGPT File Library 删除/上传动作，因此两份旧副本的实际删除和新唯一版上传必须由用户在资料库 UI 完成。
+8. `PROJECT_CURRENT.md` 已升级 state38，撤销对旧文件实体存在性的断言，固定为 `UNKNOWN_UNVERIFIED`；不再要求用户寻找或删除无法由 File Library 身份元数据证明存在的旧文件实体。
+9. R45B 正式研究边界未改变：仍是 1/300、formal_weight=0、target labels/training/scoring/tuning=0。
 
-## 当前实时执行检查点
+## 当前 File Library 清理停点
 
-- protocol: `ACTIVE_CHECKPOINT.md`
-- Airtable table: `执行检查点`
-- table_id: `tblFMldlWUzFf3b3t`
-- active_record_id: `recIRxK7EIMjJdG4A`
-- checkpoint_state_version: 37
-- checkpoint_version: RUNTIME_AUTHORITATIVE_IN_AIRTABLE
-- checkpoint_status: RUNTIME_AUTHORITATIVE_IN_AIRTABLE
-- operation_id at current waiting baseline: `R45B-OOS-COLLECT-NEXT-FIXTURE`
-- last_completed_substep: 第1个完全合格样本 Alaves-Getafe 已注册并通过 validator，1/300
-- resume_from: 第2个合格 fixture 候选
-- pending_side_effect at governance closure: NONE
+- old_copy_1: `file_00000000a99482068ad6a1a35d0a1fdc` / 07:30:28Z
+- old_copy_2: `file_0000000009a48211918f8823ff909f69` / 07:31:33Z
+- old_copies_content: IDENTICAL
+- action: 两份都删除，不保留其中任一旧副本
+- replacement: `足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`
+- replacement_status: GENERATED_PENDING_USER_UPLOAD
+- sole_CURRENT: 必须保留，不参与此次清理
+- legacy_filename_entity_existence: UNKNOWN_UNVERIFIED
 
-## 当前项目真实停点
+## 当前项目研究停点（清理完成后恢复）
 
 - task: R45B 独立 OOS 研究样本前向积累
 - branch: `research/r45b-pit-role-availability-zero-label`
 - exact_head: `028cbced2db6c8b7046114e36e1f09184e6c9a3d`
 - data_readiness: PASS
-- data_readiness_run/job: `31685408164 / 94400180975`
 - oos_preregistration: PASS
-- prereg_run/job: `31686029804 / 94402185269`
-- oos_sample_manifest: OPEN_ZERO_LABEL_ACCUMULATING
-- sample_run/job: `31686297563 / 94403038637`
 - fully_eligible_fixture_count: 1
 - minimum_required: 300
 - remaining: 299
@@ -65,27 +58,19 @@
 
 ## 已完成、禁止重复
 
-- 不重做首场 Alaves-Getafe bundle。
+- 不再讨论“两个旧 START_HERE 哪个应保留”：两份正文相同且都已过时，两份都替换。
+- 不再根据正文搜索命中、历史卡片标题或旧聊天声称某个旧文件实体仍存在；没有直接身份元数据时统一写 UNKNOWN_UNVERIFIED。
+- 不删除唯一 `CURRENT_唯一正式规则`。
+- 不重做 R45B 首场 Alaves-Getafe bundle。
 - 不重跑已经 PASS 的 R45B data readiness 或重新设计已冻结 OOS prereg。
-- 不把 SHOTS_SOT_PROXY 写成 true xG。
-- 不把第一场 query-time research baseline 升级为正式市场快照。
-- 不读取 target labels、训练、评分、调参、结果后补数据、付费 Provider、改正式模型/权重/config/CURRENT。
-- 普通“继续”不等于 independent OOS 标签/训练授权。
-
-## 刷新/断线后的唯一恢复逻辑
-
-1. 先读 `ACTIVE_CHECKPOINT.md` 和 Airtable 唯一激活《执行检查点》。
-2. 若状态 WAITING/COMPLETED：从 `恢复位置/唯一下一步` 继续，不重做“已完成事项”。
-3. 若状态 RUNNING/VERIFYING：先查操作ID对应副作用是否真实发生；禁止直接重试。
-4. 只有明确未发生且 `可安全重试=true` 才重试；不确定则 BLOCKED。
-5. 再用本文件、PROJECT_CURRENT、Airtable 当前状态/维护日志和必要时唯一CURRENT交叉核验。
+- 不读取 target labels、训练、评分、调参、付费 Provider、改正式模型/权重/config/CURRENT。
 
 ## 唯一下一步
 
-- 本轮治理结束后保持 R45B WAITING。
-- 用户后续明确继续 R45B 时：先把 `recIRxK7EIMjJdG4A` 更新为 RUNNING（checkpoint_version+1），写入具体第2个 fixture 子步骤和唯一操作ID，再执行采集。
-- 每个 fixture bundle 完成并通过 validator 后，检查点写 COMPLETED/WAITING + 真实证据，再推进下一个 fixture。
-- 达到 >=300 且覆盖门通过后才允许冻结 sample identity；之后仍需单独明确 OOS 授权才能读标签/训练/评分。
+1. 用户在 ChatGPT 资料库中删除当前可见的两份旧 START_HERE：15:30 和 15:31 两份。
+2. 用户上传新的 `足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`。
+3. 用户回复“好了”后，重新搜索 File Library：必须只剩 1 个当前启动器；如果仍有重复，继续清理。
+4. 验收通过后恢复 R45B，从第2个合格 fixture 候选继续。
 
 ## 权威优先级
 
