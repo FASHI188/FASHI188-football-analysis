@@ -3,24 +3,24 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 25
-- updated_at_utc: 2026-08-13T06:26:00Z
+- state_version: 26
+- updated_at_utc: 2026-08-13T06:43:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_EXACT_HEAD_ACTIONS_ZERO_LABEL
+- status_source: VERIFIED_EXACT_HEAD_ACTIONS_AND_SCIENTIFIC_STOP
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
-- status: IN_PROGRESS
-- task: R45B零标签PIT角色可用性/替代差/对位交互研究
+- status: WAITING
+- task: R45B零标签PIT角色可用性/替代差/对位交互研究：数据就绪门已完成，效果验证停止
 - branch: research/r45b-pit-role-availability-zero-label
-- exact_head: 016b7b01180fb6f584757ccd4c3798c44e7c4336
-- action_run: 31673774317
-- action_job: 94363757773
-- action_execution: completed/success
-- scientific_gate: STOP_R45B_PIT_INPUTS_INCOMPLETE
-- current_step: 继续零标签深挖仓库，确认首轮未识别的细角色、替代差、对位交互、PIT xG/过程能力和任务效用资产是否存在
-- next_action: 若现有仓库仍无可证明赛前available_at的五个缺失轴，则形成明确forward-capture输入契约并停止效果验证；不得训练、评分或读取新结果标签
+- exact_head: b75678b7ec0eda7438f43339a58a0b94da32392c
+- latest_action_run: 31674772403
+- latest_action_job: 94366845682
+- latest_action_execution: completed/success
+- scientific_gate: STOP_FORWARD_CAPTURE_NOT_READY
+- current_step: R45B已完成现有仓库零标签PIT审计、深度资产盘点、前向采集合同与验证器；当前无合格forward-capture记录，因此不得进入效果验证
+- next_action: 等待用户选择：A) 单独预注册并授权只用免费公开源的前向零标签采集；B) 停止R45B，转向下一条已注册研究方向
 - source_thread: 足球研究进展
 - started_at: 2026-08-13T14:19:00+08:00
 - formal_model_change: 0
@@ -28,10 +28,10 @@
 - config_change: 0
 - CURRENT_change: 0
 
-## R45B零标签门实际结果
+## R45B最终零标签结果
 
-- stage: ZERO_LABEL_PIT_INPUT_GATE
-- labels_read: 0
+- stage: ZERO_LABEL_PIT_INPUT_GATE + ZERO_LABEL_DEEP_INVENTORY + FORWARD_CAPTURE_VALIDATION
+- target_match_labels_read: 0
 - training_runs: 0
 - scoring_runs: 0
 - tuning_runs: 0
@@ -41,29 +41,68 @@
 - independent_oos_authorized: false
 - automatic_promotion: false
 
-### 已通过输入轴
+### 当前可用输入
 
-- pit_availability: true
-- pit_predicted_xi: true
-- pit_synchronized_market: true
+- pit_availability: PASS
+- pit_predicted_xi: PASS
+- pit_synchronized_market: PASS
+- process_capability: PARTIAL
+  - strict-date shots/SOT proxy ready domains: 8
+  - true_xg_ready_domains: 0
+  - rule: shots/SOT proxy不得称为true xG
 
-### 当前缺失输入轴
+### 当前阻断输入
 
-- pit_detailed_roles: false
-- pit_replacement_gap_inputs: false
-- pit_matchup_interaction_inputs: false
-- pit_xg_process_capability: false
-- pit_task_utility: false
+- detailed_roles: MISSING
+- replacement_gap: MISSING
+- matchup_interaction: MISSING
+- task_utility: MISSING
+- process_capability: PARTIAL_NOT_PASS
 
-### 覆盖证据
+### 实际覆盖证据
 
-- match_context_live: 39份全部为赛前观察
-- match_context_live_availability: 32/39
-- match_context_live_predicted_xi_both: 26/39
-- synchronized_market_candidates: 29/29具备完整1X2+AH+OU、赛前时间戳和同窗surface时间
-- fpl_context_v519: 3040行；无row-level赛前available_at，RETROSPECTIVE_REFERENCE_ONLY
-- lineup_archive: 23个JSONL；Transfermarkt 16、StatsBomb Open 7；未证明原始赛前available_at前仅RETROSPECTIVE_REFERENCE_ONLY
-- team_configuration_weekly_latest_records: 334；首轮严格R45B detector未识别出可满足缺失核心轴的证据
+- team_configuration_weekly teams: 336
+- roster_18plus: 298
+- detailed_position_any: 33
+- role_rich_candidate: 0
+- depth_chart_nonempty: 0
+- match_context_live pre_kickoff: 39
+- match_context_live availability: 32/39
+- match_context_live both-team predicted XI: 26/39
+- match-specific role fields: 0
+- formation fields: 0
+- context task-state files scanned: 90
+- actual task-state records: 0
+- synchronized market candidates: 29/29 complete 1X2+AH+OU with pre-kickoff/same-window timestamps
+- FPL context: 3040 rows, no row-level pre-match available_at; RETROSPECTIVE_REFERENCE_ONLY
+- lineup archive: 23 JSONL, no proven original pre-match available_at; RETROSPECTIVE_REFERENCE_ONLY
+- forward_capture record_root: football-data/evidence/r45b_forward_capture
+- forward_capture record_count: 0
+- forward_capture valid_record_count: 0
+- forward_capture blocking_axes: expected_xi_roles, availability_and_replacement, process_capability, task_utility, matchup_interaction_gate
+
+## R45B前向采集合同
+
+- contract: football-data/research/r45b_forward_capture_contract.json
+- validator: football-data/research/r45b_forward_capture_validator.py
+- evidence root: football-data/evidence/r45b_forward_capture
+- timestamp rule: eligible_available_at <= freeze_at_utc < kickoff_at_utc
+- allowed provenance: PROSPECTIVE_QUERY_TIME / HISTORICAL_ORIGINAL_TIMESTAMP_VERIFIED / HISTORICAL_INDEPENDENT_OBSERVATION_VERIFIED
+- forbidden substitutes: dataset_build_time / match_date_without_time / retrospective_page_updated_at / synthetic_known_at / post_match_fetch_backdated_to_match_date
+- no automatic OOS authorization: true
+- ruling: 即使未来数据就绪PASS，也必须单独预注册并明确授权独立OOS后，才允许接触目标标签、训练或评分
+
+## Actions审计
+
+- first exact run: 31673774317 / job 94363757773 / success
+- deep inventory run: 31674565140 / job 94366210605 / success
+- engineering typo run: 31674696405 / job 94366616072 / failure
+- engineering typo reason: r45b_forward_capture_validator.py中Python布尔False误写为JSON风格false，触发NameError
+- typo scientific_effect: NONE
+- fixed exact head: b75678b7ec0eda7438f43339a58a0b94da32392c
+- final run: 31674772403 / job 94366845682 / completed/success
+- final steps: first zero-label audit PASS execution；deep inventory PASS execution；forward validator PASS execution
+- scientific outcomes remain STOP, because inputs are not ready
 
 ## R45A已验证结论
 
@@ -74,13 +113,6 @@
 - bootstrap_90ci: [+0.002937,+0.020333]
 - ruling: 原始绝对球员战斗力汇总不能作为无条件正式增量；formal_weight=0
 - hard_stop: 禁止继续在原299场事后调绝对评分或组合方式
-
-## PIT硬边界
-
-- 可证明available_at优先使用source-native且可验证发布时间；否则使用collector_first_observed_at
-- dataset build time、match date、retrospective page updated_at、synthetic known_at、赛后抓取回填均不得替代available_at
-- 历史静态首发/伤停若无原始赛前时间，只能作回顾参考
-- 同步市场只有在fixture/freeze身份独立绑定后才可进入后续研究
 
 ## 插件与工程治理收口
 
@@ -93,20 +125,22 @@
 ## 新对话接续硬门
 
 - 新对话先读取本文件和Airtable《足球项目接续》当前状态。
-- 只要 `status=IN_PROGRESS`，必须优先继续R45B缺失PIT输入轴的零标签深挖。
-- 当前零标签门是科学STOP，不是Actions失败。
-- 未补齐五个缺失轴前，禁止授权独立OOS训练/评分。
-- 禁止切回R45A的299场继续调球员绝对评分。
+- 当前status=WAITING，不得擅自启动R45B效果验证。
+- 若用户授权免费公开源前向零标签采集，必须先新建维护日志并登记IN_PROGRESS，再执行采集；继续保持labels/training/scoring/tuning=0。
+- 若用户选择停止R45B，则必须从权威维护日志/仓库状态确定下一条研究线，禁止凭聊天记忆跳转。
+- 禁止切回R45A原299场继续调绝对球员评分。
 - SimpleBackups已取消，不得重新作为阻塞项。
 
 ## 研究禁止事项
 
+- 禁止在forward_capture record_count=0时启动独立OOS效果验证。
 - 禁止修改唯一正式CURRENT。
 - 禁止修改正式模型、正式数据或正式config。
-- 禁止读取未授权盲测标签。
+- 禁止读取未授权目标标签。
 - 禁止访问付费Provider或新增付费API请求。
 - 禁止赛后信息倒灌赛前available_at。
 - 禁止人工补造伤停、首发时间戳、角色、xG、任务效用或市场同步证据。
+- 禁止把shots/SOT过程代理称为true xG。
 
 ## 正式规则状态
 
@@ -119,6 +153,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: rec9HGQZgyANxtVLW
-- airtable_state_version: 25
-- airtable_sync_status: R45B_ZERO_LABEL_GATE_STOP_INPUTS_INCOMPLETE_CONTINUE_INVENTORY
+- state_log_record_id: recN1LCQvDVQWgdDO
+- airtable_state_version: 26
+- airtable_sync_status: R45B_ZERO_LABEL_GATE_COMPLETE_EFFECT_VALIDATION_STOPPED_WAITING_DIRECTION
