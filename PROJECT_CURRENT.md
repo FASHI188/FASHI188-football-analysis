@@ -3,46 +3,93 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 17
-- updated_at_utc: 2026-08-13T05:31:00Z
+- state_version: 18
+- updated_at_utc: 2026-08-13T05:46:11Z
 - updated_by: GPT-5.6 Sol
-- status_source: USER_AUTHORIZED_CONTINUE_PREWORK_REGISTERED
+- status_source: VERIFIED_GITHUB_EXACT_HEAD_AND_CURRENT_MAIN
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: IN_PROGRESS
 - task: GitHub应用与Actions质量安全整改
-- completed_steps: 前三个GitHub App已由用户安装；仓库workflow/治理入口已盘点；无Secret质量安全guard已实现；Draft PR #186已建立并通过上一exact-HEAD Actions；插件/Actions职责已完成实时复核；Renovate已由PR #185确认接入生效；本轮用户已明确授权继续执行并完成PRE-WORK登记
-- current_step: 实时核验main/#186/#185后继续Action版本升级、Renovate治理、第三方App实际check验证与main强制门禁
-- next_action: 1) 实时核验main/#186/#185；2) PR #186将actions/checkout与actions/setup-python升级到v7并重跑exact-HEAD；3) 重新验收#186；4) 整改Renovate #185为禁止automerge、限制并发/频率、major人工批准；5) 逐项核验第三方App真实check；6) 建立main required status checks/branch protection或ruleset；7) 完成后回写真实HEAD、run/check与最终状态
+- completed_steps: 已完成PRE-WORK登记；已盘点main当前实际workflow；PR #186无Secret质量安全guard已实现；checkout/setup-python已升级到v7；#186已同步本轮current main并在最终exact HEAD重新通过质量安全与Repository Integrity；Renovate #185已改为治理配置并转Draft；第三方App实际check状态已复核；main branch/ruleset状态已实时核验
+- current_step: 工程整改已达到可合并候选状态，但任务尚未闭环：#186/#185均未合并，main强制required checks/ruleset仍不存在，第三方App除Renovate外尚无实际check验证
+- next_action: A) 用户明确授权后才合并PR #186；B) #186合并后刷新PR #185，使新guard实际检查Renovate配置，再由用户明确授权后合并#185；C) 在GitHub UI或未来具备仓库规则写权限的工具中为main建立required status checks/branch protection或ruleset，至少要求Changed-file quality and security guard与repository-integrity；D) 第三方App继续按三态验证，不把“安装”冒充“生效”
 - source_thread: 足球研究进展
 - started_at: 2026-08-13T13:02:00+08:00
 - resumed_at: 2026-08-13T13:31:00+08:00
-- exact_head: UNKNOWN
+- exact_head: f1ca05703c6a15bac4a189337c8149ef37c36f5b
 - branch: chore/github-actions-quality-security-r1
 - pull_request: #186
-- pull_request_state: Draft/Open/未合并
-- related_pull_request: #185 Renovate onboarding / Open / 未合并
-- acceptance: IN_PROGRESS_RESUMED_PENDING_REALTIME_VERIFY
+- pull_request_state: Draft/Open/未合并/mergeable
+- related_pull_request: #185 Renovate onboarding / Draft/Open/未合并/mergeable
+- renovate_head: e94168eeb379043f46958324ccaa9af4b37fcd91
+- acceptance: ENGINEERING_GOVERNANCE_READY_NOT_CLOSED
 - formal_model_change: 0
 - formal_data_change: 0
 - config_change: 0
 - CURRENT_change: 0
 
-## 上一阶段插件与Actions复核（待本轮实时复验）
+## PR #186最终工程证据
 
-- Renovate: 仓库证据确认接入；renovate[bot]已创建PR #185。
-- Renovate上一配置: `renovate.json`仅`extends: ["config:recommended"]`，不得原样合并。
-- Renovate上一计划: Python 3.14、actions/checkout v7、actions/setup-python v7。
-- PR #186上一exact-HEAD: 7b213f3b623d74000165304b237d5190b65c8e3c。
-- PR #186上一质量安全run: 31669557867 / job 94351192037 / success。
-- PR #186上一Repository Integrity run: 31669557872 / success。
-- PR #186上一警告: actions/checkout@v4与actions/setup-python@v5触发Node.js 20 deprecated warning，因此必须先升级再重验。
-- 上一exact-HEAD可见check: Changed-file quality and security guard、repository-integrity；两者均来自GitHub Actions。
-- 第三方App: 用户确认安装不等于仓库生效；必须分别记录“用户确认安装 / 仓库证据接入 / 实际Check验证通过”。
-- main上一实时状态: protected=false；required status checks enforcement=off。
-- 裁决: 本轮未完成实时复验前不得宣称全部治理完成。
+- exact_head: f1ca05703c6a15bac4a189337c8149ef37c36f5b
+- branch_sync_before_final_state_log: compare current-main...head = ahead，behind=0；实际代码差异仅3个工程护栏文件
+- quality_security_run: 31671362637
+- quality_security_check: 94356480452
+- quality_security_result: completed/success
+- quality_security_annotations: 0
+- repository_integrity_run: 31671362651
+- repository_integrity_check: 94356480741
+- repository_integrity_result: completed/success
+- repository_integrity_annotations: 0
+- action_runtime: actions/checkout@v7；actions/setup-python@v7
+- workflow_permissions: contents=read
+- paid_service: 0
+- extra_service_account: 0
+- repository_secret_reference: 0
+
+## Renovate #185治理状态
+
+- repository_integration_evidence: renovate[bot]真实创建并自动刷新PR #185
+- state: Draft/Open/未合并
+- head: e94168eeb379043f46958324ccaa9af4b37fcd91
+- automerge: disabled
+- major_updates: Dependency Dashboard approval required
+- python_runtime_updates: Dependency Dashboard approval required
+- github_actions_updates: never automerge
+- dependency_dashboard: enabled
+- pr_concurrent_limit: 2
+- pr_hourly_limit: 1
+- commit_hourly_limit: 1
+- sequencing_rule: #186合并后必须刷新#185并让新质量安全guard实际检查，才允许考虑#185合并
+
+## 当前main workflow审计
+
+- current_main_workflow_files: 14
+- current_main_permissions_ruling: 已审14份，均为`contents: read`，未发现仓库写权限或Secret写回链
+- legacy_entrypoints: ci.yml、forward.yml、research.yml、scheduled-data.yml均已为`workflow_dispatch`手工触发的治理裁决入口
+- formal_integrity: formal-core、platform-integrity、repository-integrity为只读验证；部分有PR/push/schedule触发但无仓库持久化权限
+- research_execution: unified-forward、fresh-challengers、context-conditioned-selector、context-materialize为manual-only；current-state/scope guard为只读审计
+- actions_registry_total: 281
+- registry_ruling: 281不是281个当前main文件；抽查旧登记workflow在main已404，属于GitHub历史登记残留，不得按281批量删除
+
+## 第三方App状态
+
+- 状态口径固定为：用户确认安装 / 仓库接入证据 / 实际Check或Review验证通过
+- Renovate: 仓库接入与真实bot行为已验证；作为依赖治理辅助层，不作为required status check
+- 其他用户已安装App: 当前PR #186最终exact HEAD未出现第三方check；PR评论与review亦无可验证第三方输出，因此不得宣称已形成保护
+- Codecov: 当前仓库未形成可核验coverage check，禁止制造覆盖率数字
+- DeepSource/其他质量App: 当前未形成可核验check/review证据，维持“安装/接入待验证”
+
+## main强制门禁状态
+
+- branch_protected: false
+- required_status_checks: off
+- repository_rulesets: []
+- ruling: Actions能运行并发现问题，但当前不能阻止直接合并/直接push，因此还不是正式强制合并门禁
+- connector_limit: 当前可用GitHub连接器89个动作没有branch protection/ruleset写入动作；不得伪造已建立门禁
+- required_future_checks: `Changed-file quality and security guard`；`repository-integrity`
 
 ## 新对话启动硬门
 
@@ -50,33 +97,24 @@
 - 只要存在 `status=IN_PROGRESS`，必须优先续做该任务。
 - `IN_PROGRESS` 未关闭前，禁止按旧研究“唯一下一步”另开研究路线。
 - 用户下达“开始处理”或明确继续执行后，必须先写入进行中任务到 Airtable 当前状态、维护日志和 PROJECT_CURRENT，再允许开始实际工作。
-- 进行中任务必须至少记录：task、completed_steps、current_step、next_action、source_thread、started_at、exact_head。
-- exact_head 未经实时核验时必须写 `UNKNOWN`，不得用旧聊天记忆冒充实时HEAD。
 - GitHub App状态禁止只写“已安装”；必须区分用户确认、仓库接入证据和实际check。
-
-## 本任务允许事项
-
-- 继续整改PR #186 Action版本并重跑exact-HEAD。
-- 只读核验第三方App实际check与仓库接入证据。
-- 整改Renovate #185配置，但未获用户明确授权不得合并。
-- 核验并实施main required checks/branch protection/ruleset工程治理；如GitHub权限/计划限制阻止则必须如实记录。
 
 ## 本任务禁止事项
 
-- 禁止未经当前治理验收就宣称“全部治理完成”。
-- 禁止直接合并PR #186或#185，除非用户后续明确授权合并。
-- 禁止把“用户确认安装”写成“已实际保护仓库”。
-- 禁止在main无required checks时宣称Actions已形成强制门禁。
+- 禁止当前宣称“全部治理完成”。
+- 禁止未获用户明确授权合并PR #186或#185。
+- 禁止把281个历史workflow登记当成281个main现行文件批量删除。
+- 禁止把第三方App安装状态冒充实际check。
+- 禁止在main无required checks/ruleset时宣称Actions已形成强制门禁。
 - 禁止修改正式足球模型、正式数据、config或唯一CURRENT。
 - 禁止启动足球研究、训练、评分、调参、读取新盲标签或访问付费Provider。
 - 禁止切回旧R45A研究路线。
 
-## 上一个已完成研究状态（仅背景，不得覆盖当前IN_PROGRESS）
+## 上一个已完成研究状态（仅背景）
 
 - previous_phase: R45A_RETROSPECTIVE_PLAYER_CAPABILITY_300_COMPLETE
 - previous_result: 原始绝对球员能力汇总为稳定负增量，不晋级，formal_weight=0。
 - previous_research_head: 39450499a501bad1fb5671812f89eb18379b99bf
-- previous_next_step: 暂停；仅在当前IN_PROGRESS任务关闭后才允许重新考虑。
 
 ## 正式规则状态
 
@@ -90,6 +128,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: reczW5eNQ4YAAc9x2
-- airtable_state_version: 17
-- airtable_sync_status: IN_PROGRESS_RESUMED_PREWORK_REGISTERED
+- state_log_record_id: recMThZQxh4qpiWsu
+- airtable_state_version: 18
+- airtable_sync_status: ENGINEERING_GOVERNANCE_READY_NOT_CLOSED
