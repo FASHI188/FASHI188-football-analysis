@@ -3,24 +3,11 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 43
-- updated_at_utc: 2026-08-13T16:22:00Z
+- state_version: 45
+- updated_at_utc: 2026-08-13T16:34:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: R24_MATURE_HISTORY_DRAW_TRANSITION_CONFIRM_PASS_TOP1_UNRESOLVED
-
-## 当前状态（最高优先级）
-
+- status_source: `T_CONDITIONED_DRAW_PROBABILITY_SIGNAL_POOLED_REPLICATED_BUT_NONSTATIONARY_TOP1_NOT_VALIDATED`
 - status: WAITING
-- latest_completed_task: R24成熟历史区间平局转移概率盲确认
-- latest_research_branch: `research/draw-subtype-mechanism-300-20260813`
-- latest_research_head: `c12c14b8f65b716aadbc650f90d0c787ca0eb009`
-- latest_research_pr: `#191` Draft / Open / Unmerged
-- latest_ruling: `R24_MATURE_HISTORY_DRAW_TRANSITION_CONFIRM_PASS_TOP1_UNRESOLVED`
-- formal_weight: 0
-- formal_model_change: 0
-- formal_data_change: 0
-- formal_config_change: 0
-- CURRENT_change: 0
 
 ## 正式规则状态
 
@@ -28,74 +15,79 @@
 - CURRENT_version: V5.2.0
 - CURRENT_count: 1
 - old_version_execution_weight: 0
+- formal model/data/config/CURRENT changes in state45: 0
+- formal_weight for all research below: 0
 
-## 用户上传历史数据包
+## 当前研究分支
+
+- branch: `research/draw-subtype-mechanism-300-20260813`
+- Draft PR: #191 / Open / Draft / Unmerged
+- latest research HEAD: `b80cb24edc73ba7aa80d4a6c97e3207d92b32cac`
+- latest summary: `football-data/research/draw_r34_r39_new_family_adjudication.md`
+
+## 用户历史数据
 
 - archive: `archive (1)(1).zip`
 - archive_sha256: `8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`
-- files: `closing_odds.csv.gz`, `odds_series.csv.gz`, `odds_series_b.csv.gz`, `odds_series_matches.csv.gz`, `odds_series_b_matches.csv.gz`
-- 平局研究主要使用 `closing_odds.csv.gz`，source rows = 479,440。
+- relevant sources: `closing_odds.csv.gz`, `odds_series.csv.gz`, `odds_series_b.csv.gz`, mapping files
 
-## 已确认的平局研究链
+## 已保留的正证据
 
-### 三组独立300场分机制确认（state42）
+### R24成熟历史概率确认
 
-同一候选/同一超参数在三组互不重叠300场上结果为：
+- fresh300 / history_n=30,395
+- HDA LL 0.9624433 -> 0.9536335, delta -0.0088098
+- Draw AUC 0.5653028 -> 0.5946972
+- bootstrap90 LL delta [-0.0173351,-0.0015384]
+- probability gate PASS
+- Top-1 Draw仍未解决
 
-1. 2015-06-13..2015-06-19：PASS。HDA LogLoss 0.9646813→0.9618955；Draw AUC 0.5784600→0.5862573；90%日期块bootstrap CI [-0.0042674,-0.0010880]。
-2. 2015-06-06..2015-06-12：近中性 FAIL。HDA LogLoss delta +0.0000962；CI跨0。
-3. 2015-05-30..2015-06-05：PASS。HDA LogLoss 0.9723148→0.9682864；Draw AUC 0.6525509→0.6609420；90% CI [-0.0088568,-0.0007849]。
+### R35-R38 Direct-T -> 条件D=0结构链
 
-裁决：2/3核心门通过，属于研究证据，不是正式晋级，Top-1 Draw覆盖仍很低。
+固定结构：直接预测 P(T=0,1,2,3,4,5,6,7+)，再预测条件 P(D=0|T,X)，最后自然汇总平局概率；不人工增加平局、不人工指定总进球分布。
 
-### R21探索证据
+- R35 fresh300: core PASS；LL delta -0.0044166；AUC delta +0.0148452；bootstrap90 [-0.0085493,-0.0019548]
+- R36 fresh300: LL -0.0041018；AUC +0.0028750；CI跨0，core FAIL/near-pass
+- R37 fresh300: LL -0.0015684；AUC +0.0020704；CI跨0，core FAIL/near-pass
+- R38 fresh1000: LL -0.0017259；AUC +0.0115026；CI跨0，core FAIL/directional
+- R35-R38 pooled 1900 diagnostic: LL delta -0.0025010；AUC delta +0.0092975；Brier delta -0.0016548；date-block bootstrap90 [-0.0044489,-0.0005596]
+- pooled audit was computed after individual tests, therefore diagnostic rather than a preregistered promotion gate.
 
-- R21共六个300窗口均改善LL/AUC。
-- 但R21预注册路径/日期字段存在治理错误，因此只能作探索证据，不能作为正式晋级依据。
-- R21后续冻结为R23/R24所需的候选结构来源，不允许用已查看窗口继续结果后调参。
+## 必须保留的反证
 
-### R23早期历史确认
+### Top-1 / selective execution family
 
-- history_n: 8,728
-- 使用全新早期历史窗口严格预注册。
-- HDA LogLoss delta: +0.0030867
-- Draw AUC delta: -0.00873
-- 置信区间跨0
-- ruling: FAIL
-- R23必须永久保留为失败证据，不得回炉该窗口调参或删除失败结果。
+R27B-R33连续fresh验证未能复制Top-1平局执行。R33 fresh1000 precision-first Top20仅5中：precision 25%，recall 2.22%，FAIL。
 
-### R24成熟历史区间盲确认
+### R34 32-book market microstructure
 
-- history_n: 30,395
-- 先排除所有既往 `*_predictions.csv` 已出现的 match_id。
-- 从4,060个未评分候选中以label-free哈希锁定全新300场。
-- R21的68个特征及参数完全冻结。
-- HDA LogLoss: 0.9624433 → 0.9536335
-- HDA LogLoss delta: -0.0088098
-- Draw LogLoss: 0.5189301 → 0.5101202
-- Draw AUC: 0.5653028 → 0.5946972
-- 90%日期块bootstrap CI: [-0.0173351,-0.0015384]
-- prereg core gate: PASS
-- Top-1状态：candidate argmax仅1场平局且未命中，Top-1执行层仍未解决。
+- fresh300
+- LL delta +0.0078691
+- AUC delta -0.0351843
+- bootstrap90 [0.0004084,0.0168185]
+- clear FAIL / sealed
 
-### state43科学裁决
+### R39 T-conditioned high-confidence selector
 
-- R24是当前第一组真正满足“严格预注册 + 未评分match_id不重叠 + 成熟历史窗口”的300场确认PASS。
-- 这支持“概率质量增量存在”，不支持“平局问题已解决”。
-- R23 FAIL与R24 PASS必须同时保留，不能选择性报告。
-- R21/R24概率候选冻结，不得在R24的300场上调阈值、调参数或做candidate search。
-- 当前唯一剩余主问题是：如何把R24已经确认的概率优势转化为可实际报出的Top-1平局，同时守住precision、recall和整体1X2准确率。
-- 本次state43接续治理不启动任何新的足球研究、样本读取、训练、评分或调参。
+- fresh1000
+- frozen rule: `qD / market_pD` top30 = 3% coverage forced Draw, others market argmax
+- selected30 / hits7
+- precision 23.33%
+- recall 2.78%
+- combined accuracy delta -0.80pp
+- probability layer in this later window also weakened: HDA LL delta +0.0005393; AUC delta -0.0015597
+- selector gate and probability guard both FAIL
 
-## GitHub证据
+## state45科学裁决
 
-- Draft PR: `#191`
-- branch: `research/draw-subtype-mechanism-300-20260813`
-- exact HEAD: `c12c14b8f65b716aadbc650f90d0c787ca0eb009`
-- PR state: Open / Draft / Unmerged
-- formal_weight: 0
-- R24 evidence source: Airtable维护日志 `recGS4AUjdYQwKwX6`
-- R24结果文件/summary已存在于研究分支；本次治理不修改研究分支内容。
+`T_CONDITIONED_DRAW_PROBABILITY_SIGNAL_POOLED_REPLICATED_BUT_NONSTATIONARY_TOP1_NOT_VALIDATED`
+
+- 平局概率建模已找到比直接Draw/Not-Draw更有依据的结构：分机制 + Direct-T -> 条件D=0。
+- 该结构在多个非重叠窗口方向一致，1900场合并诊断显著改善proper score/AUC/Brier。
+- 但R39证明该增量并非在所有晚期窗口稳定，且无法转化为可复制Top-1/高置信平局执行。
+- 因此不得写成“平局问题已解决”“Top-1平局已可用”或正式晋级。
+- R34-R39及此前Top-1 selector样本均禁止结果后继续调权重/阈值。
+- 下一步若继续，必须换更丰富PIT信息家族：完整首发/阵容角色、伤停与替代质量、赛前过程事件数据，或完整R45B历史PIT重建；不得继续在当前archive上做selector搜索。
 
 ## 完整R45B前向轨保持不变
 
@@ -106,34 +98,22 @@
 - independent_oos_authorized: false
 - target labels / training / scoring / tuning / Provider / paid Provider / formal_weight: 全部0
 
-## GitHub工程应用状态
+## 其他边界
 
-- GitHub Actions: ACTIVE / VERIFIED_REAL_RUNS
-- Renovate: ACTIVE / VERIFIED_BOT_PR
-- DeepSource: GitHub App连接与事件接收已验证；`.deepsource.toml` 已在main；DeepSource check-run仍为0，真实分析执行未验证
-- SonarQube Cloud / GitGuardian: 连接探针历史存在，但真实分析执行仍需单独验收
-
-## 当前硬禁区
-
-- 不重复R23或R24。
-- 不在R24这300场或其他已查看窗口上调参数、阈值或做candidate search。
-- 不把R24 PASS写成正式模型晋级、平局问题已解决或完整1X2达到某个高胜率。
-- 不修改 formal_weight、正式模型、正式config或CURRENT。
+- 总进球正式轨仍暂停；R35-R38 Direct-T仅为平局研究挑战层，不代表正式总进球主轨晋级。
 - 不调用付费Provider。
-- 总进球旁路继续暂停。
-- 本次接续治理禁止启动新的研究场次。
+- GitHub工程App不得作为足球预测效果证据。
 
-## 新对话恢复顺序
+## 新对话恢复
 
-- START_HERE唯一版 -> ACTIVE_CHECKPOINT协议 -> Airtable执行检查点 -> LAST_HANDOFF -> PROJECT_CURRENT -> Airtable当前状态及绑定维护日志 -> 必要时唯一CURRENT。
-- 新对话恢复时必须识别state43，并同时看到R23 FAIL、R24 PASS和Top-1未解决。
-- 若Airtable与GitHub状态版本再次不一致，必须先治理接续一致性，不得自行选择一个版本继续研究。
+START_HERE唯一版 -> ACTIVE_CHECKPOINT -> Airtable执行检查点 -> LAST_HANDOFF -> PROJECT_CURRENT -> Airtable当前状态/绑定维护日志 -> 唯一CURRENT。
 
-## Airtable同步锚点
+恢复时必须看到 state45，并同时保留：R24/R35概率正证据、R34/R39失败反证、Top-1仍未验证。
 
-- airtable_base: 足球项目接续
-- current_state_record_id: `recs1pQ1rhuwJQAzE`
-- state_log_record_id: `recGS4AUjdYQwKwX6`
-- execution_checkpoint_record_id: `recIRxK7EIMjJdG4A`
-- airtable_state_version: 43
-- execution_checkpoint_version_at_sync_start: 13
+## Airtable锚点
+
+- base: 足球项目接续
+- current_state_record: `recs1pQ1rhuwJQAzE`
+- maintenance_log: `recrxbfWLFr8VVfXC`
+- execution_checkpoint: `recIRxK7EIMjJdG4A`
+- airtable_state_version: 45
