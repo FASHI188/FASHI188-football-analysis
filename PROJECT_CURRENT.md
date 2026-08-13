@@ -3,10 +3,10 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 36
-- updated_at_utc: 2026-08-13T09:24:21Z
+- state_version: 37
+- updated_at_utc: 2026-08-13T09:40:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_R45B_ZERO_LABEL_READINESS_OOS_PREREG_AND_SAMPLE_1_OF_300
+- status_source: VERIFIED_REFRESH_SAFE_EXECUTION_CHECKPOINT_GOVERNANCE
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
@@ -21,21 +21,38 @@
 - data_readiness_gate: PASS
 - oos_preregistration_gate: PASS
 - scientific_gate: OOS_SAMPLE_COVERAGE_CLOSED_1_OF_300
-- current_step: 第 1 个前向 OOS 样本候选 Alaves-Getafe 已通过 sample manifest validator；fully_eligible=1，remaining=299，coverage_gate_pass=false
-- next_action: 继续按已冻结 R45B OOS prereg 前向采集剩余 299 个完全合格零标签 fixture bundle；未达到覆盖门前不得冻结 sample、不得读取标签、不得训练或评分
+- current_step: 刷新/断线精确续跑治理已完成；R45B 保持 1/300，等待从第2个合格 fixture 候选继续
+- next_action: 用户后续继续 R45B 时，先将 Airtable《执行检查点》写为 RUNNING，再从第2个合格 fixture 候选开始前向零标签采集；未达到覆盖门前不得读标签、训练或评分
 - formal_model_change: 0
 - formal_data_change: 0
-- research_evidence_change: forward records 7；新增研究 1X2 baseline 1；OOS sample manifest 1/300
-- config_change: 0（正式配置）；研究 extractor / validator / workflow / prereg 有更新
+- research_evidence_change: 本轮仅接续治理，无新增研究样本
+- config_change: 0（正式配置）
 - CURRENT_change: 0
+
+## 刷新/连接中断精确续跑治理
+
+- stable_protocol: `ACTIVE_CHECKPOINT.md`
+- live_checkpoint_store: Airtable Base《足球项目接续》表《执行检查点》
+- live_checkpoint_table_id: `tblFMldlWUzFf3b3t`
+- active_checkpoint_record_id: `recIRxK7EIMjJdG4A`
+- checkpoint_state_version: 37
+- checkpoint_version: 1（本轮最终同步后可递增）
+- checkpoint_status: WAITING
+- recovery_order: ACTIVE_CHECKPOINT协议 → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态/维护日志 → 必要时唯一CURRENT
+- checkpoint_granularity: 只对可恢复原子步骤打点，不对每个只读工具调用打点
+- before_atomic_step: 写 RUNNING + 唯一操作ID/幂等键 + 目标对象 + 预期副作用 + 恢复位置 + 授权范围
+- after_atomic_step: 先核验真实结果，再写 COMPLETED/WAITING + 证据 + 新恢复位置
+- interrupted_running_rule: 先核验副作用是否已发生；已发生则禁止重复，未发生且可安全重试才重试；不确定则 BLOCKED_CHECKPOINT_SIDE_EFFECT_AMBIGUOUS
+- state_version_policy: 高频 checkpoint_version 不触发 PROJECT_CURRENT state_version；只有项目重要状态变化才升级 state_version
+- purpose: 防止连接中断/刷新后重新执行已完成子步骤，同时避免每个子步骤制造 main commit 和 Actions 噪声
 
 ## 新对话永久接续治理
 
 - 当前启动器：`足球项目_START_HERE_新对话永久接续启动器.txt`
+- `ACTIVE_CHECKPOINT.md` + Airtable《执行检查点》：同一任务执行中断点。
 - `LAST_HANDOFF.md`：上一条对话末端接力层。
-- `PROJECT_CURRENT.md` + Airtable：状态验证层。
-- 新聊天固定读取顺序：LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态 → 绑定维护日志 → 最新维护日志 → 唯一CURRENT。
-- Airtable START HERE 为固定 bootstrap，不保存动态 Rxx / HEAD / run。
+- `PROJECT_CURRENT.md` + Airtable《当前状态》：状态验证层。
+- Airtable START HERE 只保存稳定 bootstrap，不保存动态 Rxx / HEAD / run。
 - LAST_HANDOFF 必须在每次实质进展、用户改变方向、阻塞和回答收尾滚动覆盖更新。
 
 ## 正式规则与旧入口
@@ -44,7 +61,7 @@
 - CURRENT_version: V5.2.0
 - CURRENT_count: 1
 - old_version_execution_weight: 0
-- `足球2.txt`: DEPRECATED_LEGACY_ENTRY，execution_weight=0；不得覆盖唯一CURRENT、LAST_HANDOFF、PROJECT_CURRENT或Airtable。
+- `足球2.txt`: DEPRECATED_LEGACY_ENTRY，execution_weight=0；不得覆盖唯一CURRENT、ACTIVE_CHECKPOINT、LAST_HANDOFF、PROJECT_CURRENT或Airtable。
 
 ## R45B 零标签数据完整性门
 
@@ -75,7 +92,7 @@
 - kickoff_at_utc: 2026-08-15T17:30:00Z
 - role_xi_same_freeze_at_utc: 2026-08-13T09:07:14Z
 - expected formations from source-backed current guides: Alaves 4-4-2；Getafe 5-3-2
-- role policy: 球员仅使用来源明确给出的标准 position slot；不得从阵型顺序人工推断 LCB/RCB/RWB/LWB/LM/RM 等本场部署
+- role policy: 球员仅使用来源明确给出的标准 position slot；不得从阵型顺序人工推断本场 LCB/RCB/RWB/LWB/LM/RM 等部署
 - availability evidence: Lucas Boyé 赛前伤情 + Mariano / Aitor Mañas 明确替代候选链
 - process: 两队各自最近 10 场严格先验 HS/HST/AS/AST；只输出 SHOTS_SOT_PROXY；结果/进球列禁用
 - task: 两队严格赛前 schedule_fatigue 结构化事实；不人工赋予 fatigue/motivation 权重
@@ -143,6 +160,7 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recAqUN9Mgn7Guztm
-- airtable_state_version: 36
-- airtable_sync_status: R45B_READINESS_AND_OOS_PREREG_PASS_SAMPLE_ACCUMULATING_1_OF_300
+- state_log_record_id: recWekkA7FJxToE2P
+- execution_checkpoint_record_id: recIRxK7EIMjJdG4A
+- airtable_state_version: 37
+- airtable_sync_status: REFRESH_SAFE_EXECUTION_CHECKPOINT_GOVERNANCE_COMPLETE_R45B_1_OF_300_WAITING
