@@ -3,62 +3,84 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 23
-- updated_at_utc: 2026-08-13T06:17:00Z
+- state_version: 24
+- updated_at_utc: 2026-08-13T06:19:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: USER_CANCELLED_SIMPLEBACKUPS_AND_RESUMED_RESEARCH
+- status_source: VERIFIED_NEXT_STEP_FROM_R45A_LOG
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: IN_PROGRESS
-- task: 足球研究接续：从R45A真实断点核验并直接继续
-- governance_transition: 用户明确取消SimpleBackups for GitHub安装；该项从计划中删除，不再阻塞
-- completed_steps: GitHub Actions质量安全guard #186已合并；Renovate #185已合并并真实运行；SonarQube Cloud仓库侧配置 #189已合并；GitGuardian、SonarQube Cloud、Renovate三个App保留；SimpleBackups=CANCELLED_BY_USER
-- current_step: 只读核验Airtable维护日志与GitHub真实仓库中R45A之后的最新研究断点、分支、HEAD、下一步
-- next_action: 核验后立即把明确研究任务、实时exact_head或UNKNOWN写回当前状态，再开始实际研究；不得从旧聊天猜测下一步
+- task: R45B零标签PIT角色可用性/替代差/对位交互研究
+- completed_steps: SimpleBackups已由用户取消；工程治理不再阻塞；Airtable最新R45A日志已核验，确认原始绝对球员评分层显著负增量且不得继续在原299场调参
+- current_step: 零标签盘点仓库现有角色/首发/伤停/xG事件/任务/同步市场资产及available_at证据，建立fail-closed PIT覆盖门
+- next_action: 建立独立research分支；只读盘点与零标签脚本化覆盖审计；不读新标签、不训练、不评分；门通过后才设计独立OOS授权
 - source_thread: 足球研究进展
-- started_at: 2026-08-13T14:17:00+08:00
+- started_at: 2026-08-13T14:19:00+08:00
 - exact_head: UNKNOWN
+- previous_research_head: 39450499a501bad1fb5671812f89eb18379b99bf
 - formal_model_change: 0
 - formal_data_change: 0
 - config_change: 0
 - CURRENT_change: 0
 
+## R45A已验证结论
+
+- phase: R45A_RETROSPECTIVE_PLAYER_CAPABILITY_300_COMPLETE
+- branch: research/r45a-player-capability-300-retro
+- head: 39450499a501bad1fb5671812f89eb18379b99bf
+- sample: 固定五大联赛各60场共300场；外部身份匹配299/300
+- result: M4球员绝对能力层相对M3 LogLoss恶化 +0.011655
+- bootstrap_90ci: [+0.002937,+0.020333]
+- ruling: 原始绝对球员战斗力汇总不能作为无条件正式增量；formal_weight=0
+- hard_stop: 禁止继续在本299场事后调绝对评分或组合方式
+
+## R45B预注册边界
+
+- stage_type: ZERO_LABEL_PIT_INPUT_GATE
+- primary_inputs:
+  - 角色可用性
+  - 替代差
+  - 对位交互
+  - 伤停
+  - 预计/确认首发 available_at
+  - xG/事件过程能力
+  - 比赛任务效用
+  - 同步市场
+- first_gate: 输入存在性、时间戳、比赛前可用性、覆盖率、身份一致性、重复/冲突检查
+- labels: 禁止读取新结果标签
+- training: 0
+- scoring: 0
+- tuning: 0
+- paid_provider: 0
+- formal_weight: 0
+- fail_closed: 缺少available_at或无法证明赛前可用时必须STOP，不人工补造
+
 ## 插件与工程治理收口
 
 - GitGuardian: USER_CONFIRMED_INSTALLED
-- SonarQube Cloud: USER_CONFIRMED_INSTALLED；repository config `.sonarcloud.properties` merged
-- Renovate: VERIFIED_RUNNING；renovate[bot]已真实创建依赖PR
-- SimpleBackups for GitHub: CANCELLED_BY_USER；不再要求安装、截图或运行验证
-- PR #186: merged
-- PR #185: merged
-- PR #189: merged
-- main branch protection/ruleset: 未建立；不作为当前研究启动阻塞
-
-## 上一个已确认研究状态
-
-- previous_phase: R45A_RETROSPECTIVE_PLAYER_CAPABILITY_300_COMPLETE
-- previous_result: 原始绝对球员能力汇总为稳定负增量，不晋级，formal_weight=0
-- previous_research_head: 39450499a501bad1fb5671812f89eb18379b99bf
-- continuation_status: 待从Airtable维护日志与GitHub实时状态核验，禁止凭记忆指定R45B或其他下一步
+- SonarQube Cloud: USER_CONFIRMED_INSTALLED；repository config merged
+- Renovate: VERIFIED_RUNNING
+- SimpleBackups for GitHub: CANCELLED_BY_USER
+- PR #186/#185/#189: merged
 
 ## 新对话接续硬门
 
 - 新对话先读取本文件和Airtable《足球项目接续》当前状态。
-- 只要 `status=IN_PROGRESS`，必须优先继续本研究接续任务。
-- SimpleBackups已被用户取消，不得重新作为阻塞项。
-- 研究下一步必须来自实时维护日志/仓库证据；历史聊天和记忆只能作线索。
-- 用户明确“开始/继续”时，先登记IN_PROGRESS，再执行实际工作。
+- 只要 `status=IN_PROGRESS`，必须优先继续R45B零标签PIT输入门。
+- 禁止切回R45A的299场继续调球员绝对评分。
+- 只有零标签PIT门通过后，才允许另行预注册并授权独立OOS效果验证。
+- SimpleBackups已取消，不得重新作为阻塞项。
 
 ## 研究禁止事项
 
-- 禁止修改唯一正式CURRENT，除非用户明确要求规则升级。
-- 禁止把研究challenger直接写入正式模型。
+- 禁止修改唯一正式CURRENT。
+- 禁止修改正式模型、正式数据或正式config。
 - 禁止读取未授权盲测标签。
 - 禁止访问付费Provider或新增付费API请求。
-- 禁止根据赛后结果倒灌研究输入。
-- 禁止把流程跑通、单场命中或ROI当作模型晋级证据。
+- 禁止赛后信息倒灌赛前available_at。
+- 禁止人工补造伤停、首发时间戳、xG、任务效用或市场同步证据。
 
 ## 正式规则状态
 
@@ -71,6 +93,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recJPon32w163JbQo
-- airtable_state_version: 23
-- airtable_sync_status: SIMPLEBACKUPS_CANCELLED_RESEARCH_RESUME_IN_PROGRESS
+- state_log_record_id: rec8nJC9Vzu3b2yox
+- airtable_state_version: 24
+- airtable_sync_status: R45B_PIT_ROLE_AVAILABILITY_ZERO_LABEL_STARTED
