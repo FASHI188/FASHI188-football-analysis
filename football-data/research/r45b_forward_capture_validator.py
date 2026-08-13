@@ -180,7 +180,7 @@ def main() -> int:
         "provider_requests": 0,
         "paid_provider_requests": 0,
         "formal_weight": 0,
-        "automatic_oos_authorization": false,
+        "automatic_oos_authorization": False,
         "ruling": "A data-readiness PASS still requires a separate preregistration and explicit independent OOS authorization before any target labels/training/scoring are accessed."
     }
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
