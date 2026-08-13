@@ -25,13 +25,19 @@ jobs:
       - name: Checkout exact main commit
         uses: actions/checkout@v7
 
-      - name: Compute state document SHA-256
+      - name: Compute state document SHA-256 and compare state versions
         shell: bash
         run: |
           set -euo pipefail
           test -s PROJECT_CURRENT.md
           test -s LAST_HANDOFF.md
           sha256sum PROJECT_CURRENT.md LAST_HANDOFF.md
-          grep -q -- '- state_version: 36' PROJECT_CURRENT.md
-          grep -q -- '- state_version: 36' LAST_HANDOFF.md
-          echo 'FOOTBALL_STATE36_DOC_INTEGRITY_PASS'
+          project_version="$(awk -F': ' '$1 == "- state_version" {print $2; exit}' PROJECT_CURRENT.md)"
+          handoff_version="$(awk -F': ' '$1 == "- state_version" {print $2; exit}' LAST_HANDOFF.md)"
+          test -n "$project_version"
+          test -n "$handoff_version"
+          test "$project_version" = "$handoff_version"
+          case "$project_version" in
+            *[!0-9]*) echo "Invalid state_version: $project_version"; exit 1 ;;
+          esac
+          echo "FOOTBALL_STATE_DOC_INTEGRITY_PASS state_version=$project_version"
