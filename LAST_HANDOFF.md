@@ -33,7 +33,7 @@
 13. 创建 sample manifest validator：逐场检查 7份PIT证据、bundle freeze、两队 XI 同 freeze、单一 bookmaker 完整 1X2、去水概率、重复 fixture、禁用 label keys、coverage 数学和零标签 invariant。
 14. first-sample workflow run `31686297563` / job `94403038637` completed/success；`fully_eligible=1/300`，coverage 仍强制关闭，sample 未冻结，authorization_ready=false，OOS guard success。
 15. 本轮 target labels=0、training=0、scoring=0、tuning=0、Provider=0、paid Provider=0、formal_weight=0；正式模型/正式数据/正式配置/CURRENT 改动=0。
-16. 已写 Airtable state36 维护日志 `recAqUN9Mgn7Guztm`；PROJECT_CURRENT 与 LAST_HANDOFF 正在同步 state36。
+16. 已写 Airtable state36 维护日志 `recAqUN9Mgn7Guztm`；PROJECT_CURRENT、LAST_HANDOFF 与 Airtable 当前状态均已同步为 state36，并由只读 SHA-256 完整性检查复核。
 
 ## 当前项目真实停点
 
