@@ -1,0 +1,73 @@
+name: football-r45a-player-capability-300-retro
+
+on:
+  push:
+    branches:
+      - research/r45a-player-capability-300-retro
+    paths:
+      - .github/workflows/football-r45a-player-capability-300-retro.yml
+
+permissions:
+  contents: read
+
+jobs:
+  r45a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reconstruct frozen inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          cat "$D"/encoded/run_r45a.py.b64.part* | base64 -d | gzip -d > "$D/run_r45a.py"
+          cat "$D"/encoded/sample_market_min.csv.b64.part* | base64 -d | gzip -d > "$D/sample_market_min.csv"
+          echo 'e4bce5f43ba3a6db80ff6e5c9386249d05f59fc61499dd052ca5180e63627ebe  '"$D/run_r45a.py" | sha256sum -c -
+          echo 'bc58fcf4bf4a452d1769dacd9111b1cdf88e5039a45e706d339559a3627f163b  '"$D/sample_market_min.csv" | sha256sum -c -
+      - name: Install fixed research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas==2.3.1 numpy==2.3.2 scipy==1.16.1 pyreadr==0.5.3 rapidfuzz==3.13.0 scikit-learn==1.9.0
+      - name: Fetch external historical capability source
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          git clone --depth 1 https://github.com/jasonsignolet/football.git "$D/external_football"
+          cd "$D/external_football"
+          git rev-parse HEAD | tee ../external_source_commit.txt
+      - name: Run frozen retrospective study
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          cd "$D"
+          EURO_FOOTBALL_DATA=external_football/data R45A_OUT=r45a_output python run_r45a.py | tee r45a_console.log
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('r45a_output/result.json')
+          x=json.loads(p.read_text())
+          assert x['formal_weight']==0
+          assert x['status']=='RETROSPECTIVE_RESEARCH_ONLY'
+          print(json.dumps({'coverage':x['coverage'],'metrics':x['metrics'],'bootstrap':x['bootstrap']},indent=2))
+          PY
+      - name: Hash outputs
+        if: always()
+        shell: bash
+        run: |
+          D=football-data/research/r45a_player_capability_300_retro
+          if [ -d "$D/r45a_output" ]; then find "$D/r45a_output" -type f -print0 | sort -z | xargs -0 sha256sum > "$D/r45a_output_sha256.txt"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r45a-player-capability-300-retro
+          path: |
+            football-data/research/r45a_player_capability_300_retro/r45a_output
+            football-data/research/r45a_player_capability_300_retro/r45a_console.log
+            football-data/research/r45a_player_capability_300_retro/r45a_output_sha256.txt
+            football-data/research/r45a_player_capability_300_retro/external_source_commit.txt
+          if-no-files-found: warn
