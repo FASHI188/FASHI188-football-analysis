@@ -93,7 +93,7 @@ jobs:
             echo "R45B forward capture is not ready; no OOS authorization is granted."
           fi
 
-      - name: Assert captured task-utility evidence validated
+      - name: Assert captured evidence axes validated
         shell: bash
         run: |
           python - <<'PY'
@@ -102,18 +102,24 @@ jobs:
 
           path = Path('football-data/research/r45b_forward_capture_validation_status.json')
           status = json.loads(path.read_text(encoding='utf-8'))
-          valid_task = int((status.get('valid_by_type') or {}).get('task_utility') or 0)
-          axis_ready = bool((status.get('axis_ready') or {}).get('task_utility'))
+          valid_by_type = status.get('valid_by_type') or {}
+          axis = status.get('axis_ready') or {}
+          valid_task = int(valid_by_type.get('task_utility') or 0)
+          valid_availability = int(valid_by_type.get('availability_and_replacement') or 0)
+          task_ready = bool(axis.get('task_utility'))
+          availability_ready = bool(axis.get('availability_and_replacement'))
           record_count = int(status.get('record_count') or 0)
           invalid_count = int(status.get('invalid_record_count') or 0)
           print(f'task_utility_valid={valid_task}')
-          print(f'task_utility_axis_ready={axis_ready}')
+          print(f'task_utility_axis_ready={task_ready}')
+          print(f'availability_and_replacement_valid={valid_availability}')
+          print(f'availability_and_replacement_axis_ready={availability_ready}')
           print(f'forward_record_count={record_count}')
           print(f'invalid_record_count={invalid_count}')
-          if valid_task < 2:
-              raise SystemExit('Expected at least two validated task_utility records')
-          if not axis_ready:
-              raise SystemExit('task_utility axis is not ready')
+          if valid_task < 2 or not task_ready:
+              raise SystemExit('task_utility evidence axis is not validator-ready')
+          if valid_availability < 1 or not availability_ready:
+              raise SystemExit('availability_and_replacement evidence axis is not validator-ready')
           if invalid_count != 0:
               raise SystemExit('Forward-capture evidence contains invalid records')
           PY
