@@ -1,0 +1,51 @@
+name: football-total-goals-fast100-replay-20260813
+
+on:
+  push:
+    branches:
+      - research/total-goals-fast100-replay-20260813
+    paths:
+      - '.github/workflows/football-total-goals-fast100-replay-20260813.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fast100:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run fixed-seed Fast100 total-goals diagnostic
+        run: python football-data/validation/v6_total_goals_fast100_v6193.py
+      - name: Print compact result
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_total_goals_fast100_v6193_status.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          out={
+            'status':d['status'],
+            'seed':d['seed'],
+            'candidate_count':d['candidate_count'],
+            'sample_count':d['sample_count'],
+            'summary':d['summary'],
+            'deltas_pp':d['deltas_pp'],
+            'diagnostic':d['diagnostic'],
+            'governance':d['governance'],
+          }
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload Fast100 result
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-goals-fast100-replay-20260813
+          path: football-data/manifests/v6_total_goals_fast100_v6193_status.json
+          if-no-files-found: error
