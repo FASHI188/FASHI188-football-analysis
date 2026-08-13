@@ -5,36 +5,37 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 3
-- state_version: 31
-- updated_at_utc: 2026-08-13T07:20:00Z
+- handoff_version: 4
+- state_version: 32
+- updated_at_utc: 2026-08-13T07:27:00Z
 - status: WAITING
 
 ## 用户最后明确目标
 
-- 解决长对话尤其达到上限后，新聊天无法接上上一条对话末端的问题。
-- 用户已授权继续整改。
+- 用户不想手动复制项目指令文本，要求助手把启动条款直接加进一个完整文件，传给他，并明确告诉他删除哪个旧文件。
 
-## 已完成
+## 本轮已经完成
 
-- 唯一 `LAST_HANDOFF.md` 已建立。
-- `AGENTS.md` 已把 LAST_HANDOFF 设为新聊天第一读取层。
-- Airtable `START HERE` 已改为固定启动协议，不再保存 R44/R45 等动态状态。
-- Airtable 已新增 LAST_HANDOFF SHA-256 字段。
-- `PROJECT_CURRENT.md` SHA 固定标记已修正。
-- 规则已要求每次实质进展/改方向/阻塞/回答收尾滚动更新本文件。
+1. 已生成完整项目源替换文件：`足球项目_START_HERE_新对话永久接续启动器.txt`。
+2. 文件包含固定 bootstrap、LAST_HANDOFF→PROJECT_CURRENT→Airtable 启动顺序、CURRENT 门、SHA 核验、长对话末端滚动保存纪律。
+3. 新文件 SHA-256：`b3bb1f11172f9901767974e883baa62410fdc7f5b2b7d59de3b7a233d4aa7ece`。
+4. 已确认当前旧项目源 `足球2.txt` 只有两行，内容只是历史 V3.5.1 Word 链接，不适合作为当前项目启动入口。
+5. 已把本次替换步骤写入 Airtable state 32 维护日志。
 
-## 目前唯一未闭环项
+## 用户现在只需要做一件事
 
-- ChatGPT 足球项目自定义指令属于平台层，当前工具没有写入权限。
-- 要保证每个新聊天第一动作就读取本文件，还需用户一次性把固定 bootstrap 条款加入足球项目指令。
-- 这不是要求用户重述历史，只是一次性增加启动规则。
+- 下载并上传 `足球项目_START_HERE_新对话永久接续启动器.txt` 到 ChatGPT 足球项目。
+- 新文件上传完成后，删除旧文件 `足球2.txt`。
+- 不要删除唯一正式 `CURRENT_唯一正式规则` 文件。
+- 完成后回复“好了”。
 
-## 需要加入项目指令的固定条款
+## 为什么必须删除足球2.txt
 
-每个足球项目新对话，无论首条消息是“继续”“接上上一条”“继续足球项目”还是具体任务，第一动作必须先读取 GitHub 仓库 FASHI188/FASHI188-football-analysis 根目录 LAST_HANDOFF.md，再读取 PROJECT_CURRENT.md，再读取 Airtable Base《足球项目接续》的唯一激活《当前状态》、与其 state_version 绑定的《维护日志》及最新一条维护日志。LAST_HANDOFF负责恢复上一条对话末端，PROJECT_CURRENT+Airtable负责验证。三层一致后，如果用户首条已经明确继续/开始/执行/整改/验收，直接从 LAST_HANDOFF 的唯一下一步继续，不得要求用户重新复述旧对话。冲突时停止为 BLOCKED_HANDOFF_STATE_MISMATCH。涉及正式预测/模型研究/训练/评分/晋级/CURRENT修改时，再完整读取 File Library 唯一 CURRENT。
+- `足球2.txt` 只指向历史 `V3.5.1` Word 规则链接。
+- 它与当前唯一正式 CURRENT 和新的 LAST_HANDOFF 接续体系不一致。
+- 同时保留会给新聊天制造旧入口和歧义。
 
-## 项目真实停点（bootstrap完成后恢复）
+## 项目真实停点（文件替换完成后恢复）
 
 - R45B branch: `research/r45b-pit-role-availability-zero-label`
 - exact_head: `b75678b7ec0eda7438f43339a58a0b94da32392c`
@@ -49,9 +50,9 @@
 - GitGuardian、SonarQube Cloud、Codecov、DeepSource、Renovate 已证明接收仓库事件。
 - Renovate PR #187 已证明实际运行。
 - SimpleBackups 已取消。
-- LAST_HANDOFF 持久层已经完成，不得回到 R44/R44L2 重新搭建。
+- LAST_HANDOFF 持久层已经完成。
 
 ## 唯一下一步
 
-- 用户把上面的固定条款加入足球项目指令后，回复“好了”即可。
-- 然后恢复 R45B WAITING；以后新聊天首条“继续”按本接力链执行。
+- 等用户完成新启动器文件上传并删除旧 `足球2.txt`。
+- 用户回复“好了”后，关闭 bootstrap 待办并恢复 R45B WAITING。
