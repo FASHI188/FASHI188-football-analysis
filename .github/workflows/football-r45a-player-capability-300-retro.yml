@@ -40,6 +40,23 @@ jobs:
           git clone --depth 1 https://github.com/jasonsignolet/football.git "$D/external_football"
           cd "$D/external_football"
           git rev-parse HEAD | tee ../external_source_commit.txt
+      - name: Diagnose external date representation
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          cd "$D"
+          python - <<'PY' | tee date_diagnostic.log
+          import pyreadr, pandas as pd
+          for fn in ['football_match.RData','player_attributes.RData','team_attributes.RData']:
+              df=next(iter(pyreadr.read_r('external_football/data/'+fn).values()))
+              s=df['date']
+              print(fn, 'dtype=',s.dtype, 'head=',s.head(5).tolist(), 'raw_min=',s.min(), 'raw_max=',s.max())
+              p=pd.to_datetime(s, errors='coerce')
+              print('pd_to_datetime head=',p.head(5).tolist(),'min=',p.min(),'max=',p.max())
+          sm=pd.read_csv('sample_market_min.csv')
+          print('sample date min/max=',sm['match_datetime'].min(),sm['match_datetime'].max())
+          PY
       - name: Run frozen retrospective study
         shell: bash
         run: |
@@ -68,6 +85,7 @@ jobs:
           path: |
             football-data/research/r45a_player_capability_300_retro/r45a_output
             football-data/research/r45a_player_capability_300_retro/r45a_console.log
+            football-data/research/r45a_player_capability_300_retro/date_diagnostic.log
             football-data/research/r45a_player_capability_300_retro/r45a_output_sha256.txt
             football-data/research/r45a_player_capability_300_retro/external_source_commit.txt
           if-no-files-found: warn
