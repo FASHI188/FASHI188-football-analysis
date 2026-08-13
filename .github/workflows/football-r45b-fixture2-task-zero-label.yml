@@ -1,0 +1,82 @@
+name: Football R45B Fixture 2 Task Zero-Label
+
+on:
+  push:
+    branches:
+      - research/r45b-pit-role-availability-zero-label
+    paths:
+      - '.github/workflows/football-r45b-fixture2-task-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  task-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Self-test registered extractor
+        run: python football-data/research/r45b_task_state_extractor.py --self-test
+      - name: Build source-backed zero-label inputs
+        shell: bash
+        run: |
+          mkdir -p /tmp/r45b-task
+          cat > /tmp/r45b-task/sevilla.json <<'JSON'
+          {
+            "schema_version":"R45B-TASK-STATE-INPUT-R1",
+            "team":"Sevilla FC",
+            "task_state_type":"schedule_fatigue",
+            "freeze_at_utc":"2026-08-13T10:56:46Z",
+            "target_kickoff_at_utc":"2026-08-15T19:30:00Z",
+            "strictly_prior_fixtures":[
+              {"kickoff_at_utc":"2026-08-02T12:30:00Z"},
+              {"kickoff_at_utc":"2026-08-08T13:30:00Z"}
+            ]
+          }
+          JSON
+          cat > /tmp/r45b-task/rayo.json <<'JSON'
+          {
+            "schema_version":"R45B-TASK-STATE-INPUT-R1",
+            "team":"Rayo Vallecano",
+            "task_state_type":"schedule_fatigue",
+            "freeze_at_utc":"2026-08-13T10:56:46Z",
+            "target_kickoff_at_utc":"2026-08-15T19:30:00Z",
+            "strictly_prior_fixtures":[
+              {"kickoff_at_utc":"2026-08-01T17:00:00Z"},
+              {"kickoff_at_utc":"2026-08-08T14:00:00Z"}
+            ]
+          }
+          JSON
+      - name: Execute fixed extractor
+        run: |
+          python football-data/research/r45b_task_state_extractor.py --input /tmp/r45b-task/sevilla.json --output /tmp/r45b-task/sevilla-out.json
+          python football-data/research/r45b_task_state_extractor.py --input /tmp/r45b-task/rayo.json --output /tmp/r45b-task/rayo-out.json
+          cat /tmp/r45b-task/sevilla-out.json
+          cat /tmp/r45b-task/rayo-out.json
+      - name: Assert exact zero-label results
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('/tmp/r45b-task/sevilla-out.json').read_text())
+          r=json.loads(Path('/tmp/r45b-task/rayo-out.json').read_text())
+          assert s['structured_facts']=={'hours_since_previous_fixture':174.0,'previous_fixture_kickoff_at_utc':'2026-08-08T13:30:00Z','prior_fixtures_last_7d':0,'prior_fixtures_last_14d':2}
+          assert r['structured_facts']=={'hours_since_previous_fixture':173.5,'previous_fixture_kickoff_at_utc':'2026-08-08T14:00:00Z','prior_fixtures_last_7d':0,'prior_fixtures_last_14d':1}
+          assert s['target_result_labels_used']==r['target_result_labels_used']==0
+          assert s['manual_adjustments_emitted']==r['manual_adjustments_emitted']==0
+          print('R45B_FIXTURE2_TASK_ZERO_LABEL_PASS')
+          PY
+      - name: Upload task outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45b-fixture2-task-zero-label
+          path: /tmp/r45b-task/*-out.json
+          if-no-files-found: error
