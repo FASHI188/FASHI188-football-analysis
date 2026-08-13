@@ -95,4 +95,4 @@ V5.2.0 仍是唯一正式规则；本次仅修复接续状态，不改变正式�
 - current_state_record_id: recs1pQ1rhuwJQAzE
 - state_log_record_id: rec0SbXebFVqwfXJZ
 - airtable_state_version: 9
-- airtable_sync_status: PENDING_GITHUB_STATE9_SYNC
+- airtable_sync_status: STATE_SYNC_VERIFIED
