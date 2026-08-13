@@ -46,7 +46,7 @@ jobs:
           python football-data/research/r45b_oos_sample_manifest_validator.py
           cat football-data/research/r45b_oos_sample_manifest_validation_status.json
 
-      - name: Assert first sample is valid but coverage remains closed
+      - name: Assert accumulating sample is valid while coverage remains closed
         shell: bash
         run: |
           python - <<'PY'
@@ -55,11 +55,14 @@ jobs:
           s = json.loads(Path('football-data/research/r45b_oos_sample_manifest_validation_status.json').read_text(encoding='utf-8'))
           if s.get('status') != 'PASS_ACCUMULATING_ZERO_LABEL_NOT_AUTHORIZABLE':
               raise SystemExit(f"unexpected sample status: {s.get('status')}")
-          if int(s.get('registered_fixture_count') or 0) < 1:
-              raise SystemExit('no registered fixture')
-          if int(s.get('fully_eligible_fixture_count') or 0) < 1:
-              raise SystemExit('no fully eligible fixture')
-          if int(s.get('minimum_fully_eligible_fixture_count') or 0) != 300:
+          n = int(s.get('registered_fixture_count') or 0)
+          eligible = int(s.get('fully_eligible_fixture_count') or 0)
+          minimum = int(s.get('minimum_fully_eligible_fixture_count') or 0)
+          if n < 1 or eligible < 1:
+              raise SystemExit('no registered fully eligible fixture')
+          if n != eligible:
+              raise SystemExit(f'accumulating manifest contains non-eligible fixture: registered={n} eligible={eligible}')
+          if minimum != 300:
               raise SystemExit('sample gate changed from 300')
           if s.get('coverage_gate_pass') is not False:
               raise SystemExit('coverage must remain closed below 300')
@@ -72,7 +75,7 @@ jobs:
           for field in ('target_match_labels_read','training_runs','scoring_runs','tuning_runs','provider_requests','paid_provider_requests','formal_weight'):
               if int(s.get(field) or 0) != 0:
                   raise SystemExit(f'zero-label invariant violated: {field}')
-          print('R45B_OOS_SAMPLE_1_OF_300_ZERO_LABEL_VALID_COVERAGE_CLOSED')
+          print(f'R45B_OOS_SAMPLE_{eligible}_OF_{minimum}_ZERO_LABEL_VALID_COVERAGE_CLOSED')
           PY
 
       - name: Enforce no automatic OOS authorization
