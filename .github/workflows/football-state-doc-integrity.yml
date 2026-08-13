@@ -1,0 +1,37 @@
+name: Football State Document Integrity
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'PROJECT_CURRENT.md'
+      - 'LAST_HANDOFF.md'
+      - '.github/workflows/football-state-doc-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-state-doc-integrity-main
+  cancel-in-progress: true
+
+jobs:
+  state-doc-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v7
+
+      - name: Compute state document SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s PROJECT_CURRENT.md
+          test -s LAST_HANDOFF.md
+          sha256sum PROJECT_CURRENT.md LAST_HANDOFF.md
+          grep -q -- '- state_version: 36' PROJECT_CURRENT.md
+          grep -q -- '- state_version: 36' LAST_HANDOFF.md
+          echo 'FOOTBALL_STATE36_DOC_INTEGRITY_PASS'
