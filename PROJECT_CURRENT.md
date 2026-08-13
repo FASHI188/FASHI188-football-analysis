@@ -3,18 +3,18 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 31
-- updated_at_utc: 2026-08-13T07:20:00Z
+- state_version: 32
+- updated_at_utc: 2026-08-13T07:27:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_PLATFORM_BOOTSTRAP_BOUNDARY
+- status_source: VERIFIED_BOOTSTRAP_REPLACEMENT_FILE_READY
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: WAITING
-- task: 新对话永久接续治理：持久接力层已完成，等待一次性项目指令bootstrap
-- current_step: GitHub+Airtable持久层已完成；ChatGPT足球项目自定义指令仍需加入固定启动条款
-- next_action: 用户一次性把bootstrap条款加入足球项目指令；随后恢复R45B WAITING
+- task: 新对话永久接续治理：替换项目源启动器文件已生成，等待用户上传
+- current_step: 完整启动器替换文件已生成；待上传到ChatGPT足球项目并删除旧足球2.txt
+- next_action: 用户上传《足球项目_START_HERE_新对话永久接续启动器.txt》，删除旧《足球2.txt》，然后回复“好了”
 - formal_model_change: 0
 - formal_data_change: 0
 - config_change: 0
@@ -29,11 +29,19 @@
 - `PROJECT_CURRENT.md` 的 SHA 标记已修正为 `RECORDED_IN_AIRTABLE`。
 - LAST_HANDOFF 必须每次实质进展/方向变化/阻塞/回答收尾滚动覆盖更新。
 
-## 尚未自动完成的平台层
+## 本轮生成的项目源替换文件
 
-- ChatGPT 足球项目自定义指令目前没有可用写入工具。
-- 若项目指令没有固定bootstrap，新聊天仍可能不主动读取 GitHub/Airtable，因此不能把“持久层完成”写成“平台自动启动100%完成”。
-- 最终只差一次性把固定bootstrap条款加入足球项目指令。
+- new_project_source: `足球项目_START_HERE_新对话永久接续启动器.txt`
+- local_sha256: `b3bb1f11172f9901767974e883baa62410fdc7f5b2b7d59de3b7a233d4aa7ece`
+- replacement_target: `足球2.txt`
+- old_file_reason: 旧文件仅包含历史 V3.5.1 Word 链接，不能承担当前跨对话启动职责。
+- user_action_required: 上传新文件到ChatGPT足球项目文件区后，删除旧`足球2.txt`。
+- CURRENT_safety: 唯一正式 CURRENT 不得删除、不改名、不由本启动器替代。
+
+## 平台能力边界
+
+- 当前工具可生成替换文件并提供下载，但不能直接把本地文件上传进 ChatGPT 项目文件区。
+- 因此本轮只剩一次用户界面上传/删除动作；不需要用户再复制粘贴规则文本。
 
 ## R45B保留停点
 
@@ -66,6 +74,6 @@
 
 - airtable_base: 足球项目接续
 - current_state_record_id: recs1pQ1rhuwJQAzE
-- state_log_record_id: recp6lpj9ZrmAjAA4
-- airtable_state_version: 31
-- airtable_sync_status: PERSISTENT_HANDOFF_COMPLETE_PLATFORM_BOOTSTRAP_PENDING
+- state_log_record_id: rects28xSR38KwrTJ
+- airtable_state_version: 32
+- airtable_sync_status: BOOTSTRAP_REPLACEMENT_FILE_READY_PENDING_PROJECT_UPLOAD
