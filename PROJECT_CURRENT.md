@@ -4,9 +4,9 @@
 
 - project_id: football-project
 - state_version: 41
-- updated_at_utc: 2026-08-13T12:34:00Z
+- updated_at_utc: 2026-08-13T12:36:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_DEEPSOURCE_REPO_CONFIGURED_EXTERNAL_ACTIVATION_PENDING
+- status_source: VERIFIED_DEEPSOURCE_CONNECTED_REPO_CONFIGURED_ANALYSIS_PENDING
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
@@ -30,15 +30,20 @@
 
 - GitHub Actions: ACTIVE / VERIFIED_REAL_RUNS
 - Renovate: ACTIVE / VERIFIED_BOT_PR
+- DeepSource_app_connection: CONNECTED_EVENT_RECEIVER_VERIFIED
+- DeepSource_old_probe_check_suite: `85928552613` on `e95ae087db34f9b0d47f63f4fa6e5d553f04bcf8`
 - DeepSource_repository_config: PRESENT_ON_DEFAULT_BRANCH
 - DeepSource_config_path: `.deepsource.toml`
 - DeepSource_config_commit: `fa67009d815baa9a5623c192b512a28e7fbcac89`
+- DeepSource_config_check_suite: `85995727246`
 - DeepSource_python_analyzer: enabled, runtime 3.12
 - DeepSource_scope: 代码与测试；排除 `.github`、缓存、CSV/Parquet/ZIP、benchmarks/evidence/forward/manifests/docs 等大体量非代码目录
-- DeepSource_check_on_config_commit: ABSENT
-- DeepSource_external_activation: UNVERIFIED / PENDING
-- DeepSource_ruling: `REPO_CONFIGURED_EXTERNAL_DASHBOARD_ACTIVATION_OR_CODE_REVIEW_ENABLEMENT_STILL_REQUIRED`
-- verification: config commit 仅出现 GitHub Actions `Changed-file quality and security guard`，完成 success；未出现 DeepSource app check/review/status
+- DeepSource_check_suite_status: PRESENT / queued
+- DeepSource_latest_check_runs_count: 0
+- DeepSource_analysis_execution: NOT_VERIFIED / NOT_STARTED_IN_GITHUB_EVIDENCE
+- DeepSource_external_activation_or_code_review: PENDING_CONFIRMATION
+- DeepSource_ruling: `CONNECTED_AND_REPO_CONFIGURED_BUT_ANALYSIS_CHECK_RUN_NOT_STARTED`
+- verification: 旧探针与新config commit均创建 `deepsource-io` check suite，证明App连接和事件接收；但两次均 `latest_check_runs_count=0`，因此不能称分析已执行。
 - boundary: DeepSource 属工程代码质量工具，不参与足球概率、训练特征、正式模型权重或CURRENT计算。
 
 ## 正式规则状态
@@ -156,12 +161,12 @@
 - START_HERE唯一版 → ACTIVE_CHECKPOINT协议 → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态及绑定维护日志 → 必要时唯一CURRENT。
 - 不恢复state38旧START_HERE清理阻塞。
 - 不重复本历史300场候选。
-- DeepSource只有在出现真实 DeepSource check/review/status 或读取其平台状态后，才能从 external activation pending 改为 ACTIVE。
+- DeepSource只有在出现真实 DeepSource check-run/review/status，或读取其平台状态确认分析已启用后，才能从 analysis pending 改为 ACTIVE_ANALYSIS。
 
 ## Airtable同步锚点
 
 - airtable_base: 足球项目接续
 - current_state_record_id: `recs1pQ1rhuwJQAzE`
-- state_log_record_id: PENDING_STATE41_AIRTABLE_LOG
+- state_log_record_id: `recrkAgPuiYnZa6iH`
 - execution_checkpoint_record_id: `recIRxK7EIMjJdG4A`
 - airtable_state_version: 41
