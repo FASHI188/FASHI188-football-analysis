@@ -29,7 +29,7 @@
 9. 因此 R45B `task_utility` 轴可正式从 MISSING 改为 PASS；forward capture 记录数=2，invalid=0。
 10. 完整科学门仍为 `STOP_FORWARD_CAPTURE_NOT_READY`：`expected_xi_roles`、`availability_and_replacement`、`process_capability` 仍缺；`matchup_interaction` 等待角色轴。
 11. 本轮 target labels=0、training=0、scoring=0、tuning=0、Provider=0、paid Provider=0、formal_weight=0。
-12. 已追加 Airtable state35 维护日志 `recK3US3485L1c2FD`，并准备同步 PROJECT_CURRENT / 当前状态。
+12. 已追加 Airtable state35 维护日志 `recK3US3485L1c2FD`；PROJECT_CURRENT 已更新到 state35；Airtable 当前状态与 LAST_HANDOFF 在本轮收尾同步为同一 state35。
 
 ## 当前项目真实停点
 
