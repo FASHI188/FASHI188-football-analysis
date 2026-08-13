@@ -11,7 +11,7 @@
 
 ## 当前状态
 
-- status: WAITING_AUTHORIZATION
+- status: WAITING
 - current_phase: R44L7C_SETPIECE_ROLE_EFFECT_PREREG_FROZEN_AWAITING_EXPLICIT_LABEL_AUTHORIZATION
 - current_objective: R44L7/R44L7B 已证明“近期角球/任意球实际执行职责是否被当前首发保留”这一新信息轴可以严格 prior-only、零目标标签地稳定重建并全量覆盖；R44L7C 已冻结未来一次“平局 vs 一球胜负”增量效果验证合同，但尚未获得新的目标标签访问授权，因此没有读取目标比分、没有模型拟合、没有候选概率或科学效果结论。
 - exact_head: 72f36df4b0318e419eebffa90a566b8182462740
