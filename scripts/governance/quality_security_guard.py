@@ -31,7 +31,7 @@ DANGEROUS_SHELL = (
     ("REMOTE_PIPE_TO_SHELL", re.compile(r"(?:curl|wget)[^\n|]*\|\s*(?:sudo\s+)?(?:bash|sh)\b", re.I)),
     ("CHMOD_777", re.compile(r"\bchmod\s+(?:-R\s+)?777\b", re.I)),
 )
-CONFLICT_MARKERS = ("<<<<<<< ", ">>>>>>> ")
+CONFLICT_MARKERS = (("<" * 7) + " ", (">" * 7) + " ")
 
 
 def git(*args: str) -> str:
