@@ -3,16 +3,16 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 40
-- updated_at_utc: 2026-08-13T12:16:00Z
+- state_version: 41
+- updated_at_utc: 2026-08-13T12:34:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_R45B_HIST300_ODDS_TRAJECTORY_FAIL
+- status_source: VERIFIED_DEEPSOURCE_REPO_CONFIGURED_EXTERNAL_ACTIVATION_PENDING
 - project_current_sha256: RECORDED_IN_AIRTABLE
 
 ## 当前状态（最高优先级）
 
 - status: WAITING
-- latest_completed_task: 用户指定的历史300场平局开发实验
+- latest_completed_task: DeepSource 仓库侧配置落地与真实回调核验
 - latest_research_branch: `research/r45b-hist300-odds-trajectory-20260813`
 - latest_research_head: `3cb6fe9ee859552d1b90d5b3cc01694214344d21`
 - latest_ruling: `HISTORICAL_ODDS_TRAJECTORY_DRAW_MASS_FAIL`
@@ -23,8 +23,23 @@
 - independent_oos_authorized: false
 - formal_model_change: 0
 - formal_data_change: 0
-- config_change: 0（正式配置）
+- config_change: 0（正式足球配置）；新增 `.deepsource.toml` 仅为工程静态分析配置
 - CURRENT_change: 0
+
+## GitHub 工程应用与 DeepSource 状态
+
+- GitHub Actions: ACTIVE / VERIFIED_REAL_RUNS
+- Renovate: ACTIVE / VERIFIED_BOT_PR
+- DeepSource_repository_config: PRESENT_ON_DEFAULT_BRANCH
+- DeepSource_config_path: `.deepsource.toml`
+- DeepSource_config_commit: `fa67009d815baa9a5623c192b512a28e7fbcac89`
+- DeepSource_python_analyzer: enabled, runtime 3.12
+- DeepSource_scope: 代码与测试；排除 `.github`、缓存、CSV/Parquet/ZIP、benchmarks/evidence/forward/manifests/docs 等大体量非代码目录
+- DeepSource_check_on_config_commit: ABSENT
+- DeepSource_external_activation: UNVERIFIED / PENDING
+- DeepSource_ruling: `REPO_CONFIGURED_EXTERNAL_DASHBOARD_ACTIVATION_OR_CODE_REVIEW_ENABLEMENT_STILL_REQUIRED`
+- verification: config commit 仅出现 GitHub Actions `Changed-file quality and security guard`，完成 success；未出现 DeepSource app check/review/status
+- boundary: DeepSource 属工程代码质量工具，不参与足球概率、训练特征、正式模型权重或CURRENT计算。
 
 ## 正式规则状态
 
@@ -133,6 +148,7 @@
 - 不删除或覆盖完整R45B前向2/300进度。
 - 完整R45B达到>=300并通过赛事覆盖门前，不得冻结前向sample identity；冻结后仍需单独明确independent OOS授权。
 - 不调用付费Provider，不改正式模型、formal_weight、正式config或CURRENT。
+- DeepSource/Sonar/GitGuardian/Renovate等工程工具不得被解释为足球预测效果证据。
 - 总进球旁路继续暂停。
 
 ## 新对话恢复顺序
@@ -140,11 +156,12 @@
 - START_HERE唯一版 → ACTIVE_CHECKPOINT协议 → Airtable执行检查点 → LAST_HANDOFF → PROJECT_CURRENT → Airtable当前状态及绑定维护日志 → 必要时唯一CURRENT。
 - 不恢复state38旧START_HERE清理阻塞。
 - 不重复本历史300场候选。
+- DeepSource只有在出现真实 DeepSource check/review/status 或读取其平台状态后，才能从 external activation pending 改为 ACTIVE。
 
 ## Airtable同步锚点
 
 - airtable_base: 足球项目接续
 - current_state_record_id: `recs1pQ1rhuwJQAzE`
-- state_log_record_id: `reckuEjWvGrNAe8EM`
+- state_log_record_id: PENDING_STATE41_AIRTABLE_LOG
 - execution_checkpoint_record_id: `recIRxK7EIMjJdG4A`
-- airtable_state_version: 40
+- airtable_state_version: 41
