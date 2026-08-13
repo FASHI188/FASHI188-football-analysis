@@ -3,19 +3,19 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 42
-- updated_at_utc: 2026-08-13T13:59:30Z
+- state_version: 43
+- updated_at_utc: 2026-08-13T16:22:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: VERIFIED_DRAW_SUBTYPE_SIGNAL_REPLICATED_2_OF_3_NOT_FORMAL
+- status_source: R24_MATURE_HISTORY_DRAW_TRANSITION_CONFIRM_PASS_TOP1_UNRESOLVED
 
 ## 当前状态（最高优先级）
 
 - status: WAITING
-- latest_completed_task: 用户上传历史数据包上的平局分机制研究与三组300场复制验证
+- latest_completed_task: R24成熟历史区间平局转移概率盲确认
 - latest_research_branch: `research/draw-subtype-mechanism-300-20260813`
-- latest_research_head: `ab0764b89fde17af996707d48718a0def238cb3b`
+- latest_research_head: `c12c14b8f65b716aadbc650f90d0c787ca0eb009`
 - latest_research_pr: `#191` Draft / Open / Unmerged
-- latest_ruling: `DRAW_SUBTYPE_SIGNAL_REPLICATED_2_OF_3_NOT_FORMAL`
+- latest_ruling: `R24_MATURE_HISTORY_DRAW_TRANSITION_CONFIRM_PASS_TOP1_UNRESOLVED`
 - formal_weight: 0
 - formal_model_change: 0
 - formal_data_change: 0
@@ -34,73 +34,68 @@
 - archive: `archive (1)(1).zip`
 - archive_sha256: `8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`
 - files: `closing_odds.csv.gz`, `odds_series.csv.gz`, `odds_series_b.csv.gz`, `odds_series_matches.csv.gz`, `odds_series_b_matches.csv.gz`
-- 本轮分机制研究使用 `closing_odds.csv.gz`，source rows = 479,440。
+- 平局研究主要使用 `closing_odds.csv.gz`，source rows = 479,440。
 
-## 旧历史300盘口轨迹候选
+## 已确认的平局研究链
 
-- branch: `research/r45b-hist300-odds-trajectory-20260813`
-- HEAD: `3cb6fe9ee859552d1b90d5b3cc01694214344d21`
-- ruling: `FAIL / SEALED_ON_THIS_300`
-- pooled OOS 181；multiclass LL delta +0.0345068；Draw AUC 0.576829 -> 0.497387；fold improvement 0/3。
-- 禁止回炉该300场调参。
+### 三组独立300场分机制确认（state42）
 
-## 新平局分机制候选
+同一候选/同一超参数在三组互不重叠300场上结果为：
 
-- candidate: `DRAW-SUBTYPE-MECHANISM-R1`
-- target classes: non-draw / 0-0 / 1-1 / 2-2 / 3-3+
-- draw probability: sum of draw-subtype probabilities, then residual around no-vig closing-market pD while preserving H:A ratio in non-draw mass
-- pre-match features: strict-prior cumulative team/league state + closing 1X2 market structure
-- feature_count: 49
-- training cap: 80,000 strictly earlier eligible matches
-- candidate search after confirmation start: 0
-- formal_weight: 0
+1. 2015-06-13..2015-06-19：PASS。HDA LogLoss 0.9646813→0.9618955；Draw AUC 0.5784600→0.5862573；90%日期块bootstrap CI [-0.0042674,-0.0010880]。
+2. 2015-06-06..2015-06-12：近中性 FAIL。HDA LogLoss delta +0.0000962；CI跨0。
+3. 2015-05-30..2015-06-05：PASS。HDA LogLoss 0.9723148→0.9682864；Draw AUC 0.6525509→0.6609420；90% CI [-0.0088568,-0.0007849]。
 
-### 300场窗口 A：2015-06-13..2015-06-19
+裁决：2/3核心门通过，属于研究证据，不是正式晋级，Top-1 Draw覆盖仍很低。
 
-- result: PASS
-- actual draws: 72 / 300
-- HDA LogLoss: 0.9646813 -> 0.9618955，delta -0.0027858
-- Draw LogLoss: 0.5458345 -> 0.5430487
-- Draw AUC: 0.5784600 -> 0.5862573
-- accuracy: 54.33% -> 54.67%
-- 90% calendar-date block bootstrap CI: `[-0.0042674, -0.0010880]`
+### R21探索证据
 
-### 300场窗口 B：2015-06-06..2015-06-12
+- R21共六个300窗口均改善LL/AUC。
+- 但R21预注册路径/日期字段存在治理错误，因此只能作探索证据，不能作为正式晋级依据。
+- R21后续冻结为R23/R24所需的候选结构来源，不允许用已查看窗口继续结果后调参。
 
-- result: near-neutral FAIL
-- actual draws: 75 / 300
-- HDA LogLoss delta: +0.0000962
-- Draw AUC: 0.6707556 -> 0.6594963
-- accuracy: 49.67% -> 50.00%
-- 90% CI: `[-0.0029275, +0.0009909]`
+### R23早期历史确认
 
-### 300场窗口 C：2015-05-30..2015-06-05
+- history_n: 8,728
+- 使用全新早期历史窗口严格预注册。
+- HDA LogLoss delta: +0.0030867
+- Draw AUC delta: -0.00873
+- 置信区间跨0
+- ruling: FAIL
+- R23必须永久保留为失败证据，不得回炉该窗口调参或删除失败结果。
 
-- result: PASS
-- actual draws: 82 / 300
-- HDA LogLoss: 0.9723148 -> 0.9682864，delta -0.0040285
-- Draw LogLoss: 0.5677405 -> 0.5637120
-- Draw AUC: 0.6525509 -> 0.6609420
-- accuracy: 51.00% -> 51.00%
-- 90% CI: `[-0.0088568, -0.0007849]`
+### R24成熟历史区间盲确认
 
-### 当前科学裁决
+- history_n: 30,395
+- 先排除所有既往 `*_predictions.csv` 已出现的 match_id。
+- 从4,060个未评分候选中以label-free哈希锁定全新300场。
+- R21的68个特征及参数完全冻结。
+- HDA LogLoss: 0.9624433 → 0.9536335
+- HDA LogLoss delta: -0.0088098
+- Draw LogLoss: 0.5189301 → 0.5101202
+- Draw AUC: 0.5653028 → 0.5946972
+- 90%日期块bootstrap CI: [-0.0173351,-0.0015384]
+- prereg core gate: PASS
+- Top-1状态：candidate argmax仅1场平局且未命中，Top-1执行层仍未解决。
 
-- 同一候选/同一超参数在3个互不重叠300场窗口中 **2/3核心门PASS**。
-- 这是当前平局研究中首次出现可复制的proper-score/AUC增量证据。
-- 不能写成“平局问题已经解决”或“正式模型已晋级”。
-- 当前增益主要体现在概率排序和校准；Top-1 Draw覆盖仍很低。
-- 下一步不得回炉这900场调参；应冻结候选，在新的未触碰样本或独立赛事域确认，或另外预注册Top-1平局选择器研究。
+### state43科学裁决
+
+- R24是当前第一组真正满足“严格预注册 + 未评分match_id不重叠 + 成熟历史窗口”的300场确认PASS。
+- 这支持“概率质量增量存在”，不支持“平局问题已解决”。
+- R23 FAIL与R24 PASS必须同时保留，不能选择性报告。
+- R21/R24概率候选冻结，不得在R24的300场上调阈值、调参数或做candidate search。
+- 当前唯一剩余主问题是：如何把R24已经确认的概率优势转化为可实际报出的Top-1平局，同时守住precision、recall和整体1X2准确率。
+- 本次state43接续治理不启动任何新的足球研究、样本读取、训练、评分或调参。
 
 ## GitHub证据
 
 - Draft PR: `#191`
 - branch: `research/draw-subtype-mechanism-300-20260813`
-- exact HEAD: `ab0764b89fde17af996707d48718a0def238cb3b`
-- script: `football-data/research/draw_subtype_mechanism_300_20260813.py`
-- script SHA-256: `b8d99d0de8660e7db30efea0e70e372c933530b0dcb533151bd709f6cfd9ca71`
-- confirmation lock SHA-256 R1: `658e4b0e6b8541392a8d53d5c30fd4af2278f6b16bc74bfbc63797c2718959ab`
-- confirmation lock SHA-256 R2: `16f68f24a85449f9ec1f783f2883515fea54f9ccdf12033b4f2d616fc4f0aca1`
+- exact HEAD: `c12c14b8f65b716aadbc650f90d0c787ca0eb009`
+- PR state: Open / Draft / Unmerged
+- formal_weight: 0
+- R24 evidence source: Airtable维护日志 `recGS4AUjdYQwKwX6`
+- R24结果文件/summary已存在于研究分支；本次治理不修改研究分支内容。
 
 ## 完整R45B前向轨保持不变
 
@@ -120,21 +115,25 @@
 
 ## 当前硬禁区
 
-- 不回炉旧盘口轨迹300或本次3x300窗口做结果后参数/特征搜索。
-- 不把2/3研究PASS写成正式模型晋级或完整平局问题解决。
+- 不重复R23或R24。
+- 不在R24这300场或其他已查看窗口上调参数、阈值或做candidate search。
+- 不把R24 PASS写成正式模型晋级、平局问题已解决或完整1X2达到某个高胜率。
 - 不修改 formal_weight、正式模型、正式config或CURRENT。
 - 不调用付费Provider。
 - 总进球旁路继续暂停。
+- 本次接续治理禁止启动新的研究场次。
 
 ## 新对话恢复顺序
 
 - START_HERE唯一版 -> ACTIVE_CHECKPOINT协议 -> Airtable执行检查点 -> LAST_HANDOFF -> PROJECT_CURRENT -> Airtable当前状态及绑定维护日志 -> 必要时唯一CURRENT。
-- 新对话应优先恢复PR #191的分机制平局候选状态，不得退回“平局完全无增量”的state41结论。
+- 新对话恢复时必须识别state43，并同时看到R23 FAIL、R24 PASS和Top-1未解决。
+- 若Airtable与GitHub状态版本再次不一致，必须先治理接续一致性，不得自行选择一个版本继续研究。
 
 ## Airtable同步锚点
 
 - airtable_base: 足球项目接续
 - current_state_record_id: `recs1pQ1rhuwJQAzE`
-- state_log_record_id: `recF5KnVP5bFBLW6I`
+- state_log_record_id: `recGS4AUjdYQwKwX6`
 - execution_checkpoint_record_id: `recIRxK7EIMjJdG4A`
-- airtable_state_version: 42
+- airtable_state_version: 43
+- execution_checkpoint_version_at_sync_start: 13
