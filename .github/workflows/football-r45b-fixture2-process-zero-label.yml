@@ -1,0 +1,82 @@
+name: Football R45B Fixture 2 Process Zero-Label
+
+on:
+  push:
+    branches:
+      - research/r45b-pit-role-availability-zero-label
+    paths:
+      - '.github/workflows/football-r45b-fixture2-process-zero-label.yml'
+      - 'football-data/research/r45b_process_proxy_extractor_preregistration.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-process-proxies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Self-test extractor
+        run: python football-data/research/r45b_process_proxy_extractor.py --self-test
+      - name: Generate Sevilla process proxy
+        shell: bash
+        run: |
+          python football-data/research/r45b_process_proxy_extractor.py \
+            --csv football-data/processed/ESP_LaLiga/2025-26.csv \
+            --prereg football-data/research/r45b_process_proxy_extractor_preregistration.json \
+            --output football-data/evidence/r45b_forward_capture/ESP_LaLiga/sevilla_rayo_20260815/process_capability_sevilla_fc_shots_sot_proxy_generated.json \
+            --competition-id ESP_LaLiga \
+            --fixture-key ESP_LaLiga__Sevilla_FC__Rayo_Vallecano__20260815T193000Z \
+            --home-team 'Sevilla FC' \
+            --away-team 'Rayo Vallecano' \
+            --team 'Sevilla FC' \
+            --kickoff-at-utc 2026-08-15T19:30:00Z \
+            --freeze-at-utc 2026-08-13T10:56:46Z \
+            --evidence-id R45B-ESP-LALIGA-SEV-RAY-20260815-PROCESS-SEV-001
+      - name: Generate Rayo process proxy
+        shell: bash
+        run: |
+          python football-data/research/r45b_process_proxy_extractor.py \
+            --csv football-data/processed/ESP_LaLiga/2025-26.csv \
+            --prereg football-data/research/r45b_process_proxy_extractor_preregistration.json \
+            --output football-data/evidence/r45b_forward_capture/ESP_LaLiga/sevilla_rayo_20260815/process_capability_rayo_vallecano_shots_sot_proxy_generated.json \
+            --competition-id ESP_LaLiga \
+            --fixture-key ESP_LaLiga__Sevilla_FC__Rayo_Vallecano__20260815T193000Z \
+            --home-team 'Sevilla FC' \
+            --away-team 'Rayo Vallecano' \
+            --team 'Rayo Vallecano' \
+            --kickoff-at-utc 2026-08-15T19:30:00Z \
+            --freeze-at-utc 2026-08-13T10:56:46Z \
+            --evidence-id R45B-ESP-LALIGA-SEV-RAY-20260815-PROCESS-RAY-001
+      - name: Assert zero-label and forbidden-source guard
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('football-data/evidence/r45b_forward_capture/ESP_LaLiga/sevilla_rayo_20260815')
+          files = sorted(root.glob('process_capability_*_generated.json'))
+          if len(files) != 2:
+              raise SystemExit(f'expected 2 process records, got {len(files)}')
+          for p in files:
+              x = json.loads(p.read_text(encoding='utf-8'))
+              q = x['payload']
+              if q.get('metric_semantics') != 'SHOTS_SOT_PROXY': raise SystemExit('semantics fail')
+              if int(q.get('target_result_labels_used') or 0) != 0: raise SystemExit('label invariant fail')
+              if q.get('forbidden_source_columns_used') != []: raise SystemExit('forbidden columns used')
+              if int((q.get('features') or {}).get('lookback_match_count') or 0) != 10: raise SystemExit('lookback fail')
+          print('R45B_FIXTURE2_PROCESS_ZERO_LABEL_PASS')
+          PY
+      - name: Upload process records
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45b-fixture2-process-zero-label
+          path: football-data/evidence/r45b_forward_capture/ESP_LaLiga/sevilla_rayo_20260815/process_capability_*_generated.json
+          if-no-files-found: error
