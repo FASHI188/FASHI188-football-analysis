@@ -1,0 +1,136 @@
+{
+  "schema_version": "R45B-FORWARD-CAPTURE-CONTRACT-R1",
+  "purpose": "Define the minimum verifiable pre-match PIT evidence required before any R45B independent OOS effect test may be authorized.",
+  "research_only": true,
+  "formal_weight": 0,
+  "provider_requests_authorized": false,
+  "paid_provider_requests_authorized": false,
+  "target_result_labels_authorized": false,
+  "training_authorized": false,
+  "scoring_authorized": false,
+  "tuning_authorized": false,
+  "record_root": "football-data/evidence/r45b_forward_capture",
+  "common_required_fields": [
+    "schema_version",
+    "evidence_id",
+    "competition_id",
+    "fixture_key",
+    "home_team",
+    "away_team",
+    "kickoff_at_utc",
+    "freeze_at_utc",
+    "evidence_type",
+    "source_name",
+    "source_url",
+    "source_domain",
+    "source_tier",
+    "source_published_at_utc",
+    "collector_first_observed_at_utc",
+    "accessed_at_utc",
+    "payload_sha256",
+    "provenance_class",
+    "payload"
+  ],
+  "timestamp_rule": {
+    "eligible_available_at": "source_published_at_utc when independently verifiable, otherwise collector_first_observed_at_utc",
+    "hard_rule": "eligible_available_at <= freeze_at_utc < kickoff_at_utc",
+    "forbidden_substitutes": [
+      "dataset_build_time",
+      "match_date_without_time",
+      "retrospective_page_updated_at",
+      "synthetic_known_at",
+      "post_match_fetch_backdated_to_match_date"
+    ]
+  },
+  "provenance_classes_allowed": [
+    "PROSPECTIVE_QUERY_TIME",
+    "HISTORICAL_ORIGINAL_TIMESTAMP_VERIFIED",
+    "HISTORICAL_INDEPENDENT_OBSERVATION_VERIFIED"
+  ],
+  "evidence_types": {
+    "expected_xi_roles": {
+      "required_payload_fields": [
+        "team",
+        "xi_status",
+        "formation_or_shape",
+        "players"
+      ],
+      "player_required_fields": [
+        "player_id_or_unambiguous_name",
+        "role_or_position_slot"
+      ],
+      "minimum_players_per_team": 11,
+      "rule": "Both teams must have role-assigned expected/confirmed XI at the same freeze. Name-only XI does not satisfy this gate."
+    },
+    "availability_and_replacement": {
+      "required_payload_fields": [
+        "team",
+        "unavailable_or_doubtful_players",
+        "replacement_candidates"
+      ],
+      "unavailable_player_required_fields": [
+        "player_id_or_unambiguous_name",
+        "availability_status",
+        "role_or_position_slot"
+      ],
+      "replacement_candidate_required_fields": [
+        "player_id_or_unambiguous_name",
+        "role_or_position_slot",
+        "selection_or_depth_evidence"
+      ],
+      "rule": "Replacement gap cannot be inferred from market value or an absolute player score alone; same-freeze role/depth evidence is mandatory."
+    },
+    "process_capability": {
+      "required_payload_fields": [
+        "team",
+        "metric_semantics",
+        "strict_prior_history_cutoff",
+        "features"
+      ],
+      "allowed_metric_semantics": [
+        "SHOTS_SOT_PROXY",
+        "TRUE_XG_VERIFIED"
+      ],
+      "rule": "Shots/SOT proxy must never be labelled xG. Target fixture own post-match statistics are forbidden."
+    },
+    "task_utility": {
+      "required_payload_fields": [
+        "team",
+        "task_state_type",
+        "structured_facts",
+        "extractor_version"
+      ],
+      "allowed_task_state_types": [
+        "schedule_fatigue",
+        "travel",
+        "rotation",
+        "motivation_task_state",
+        "aggregate_or_qualification_state"
+      ],
+      "rule": "No free-form sentiment, manual probability override, or manual goal adjustment. Facts must be source-backed and extracted by a fixed executable rule."
+    }
+  },
+  "matchup_interaction_gate": {
+    "requires": [
+      "expected_xi_roles for both teams at same freeze",
+      "fixed formation/zone mapping",
+      "interaction definition preregistered before target labels"
+    ],
+    "manual_matchup_scores_forbidden": true
+  },
+  "minimum_oos_authorization_gate": {
+    "all_required_axes": [
+      "expected_xi_roles",
+      "availability_and_replacement",
+      "process_capability",
+      "task_utility",
+      "matchup_interaction_gate"
+    ],
+    "identity_errors_allowed": 0,
+    "post_freeze_evidence_allowed": 0,
+    "duplicate_evidence_id_allowed": 0,
+    "missing_payload_sha256_allowed": 0,
+    "automatic_authorization": false,
+    "rule": "Even after data readiness passes, a separate preregistration and explicit independent OOS authorization are required before labels/training/scoring are touched."
+  }
+}
