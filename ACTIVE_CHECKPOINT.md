@@ -92,7 +92,33 @@
 
 这样可以避免为了保存第几个子步骤而产生大量 main 提交和 Actions。
 
-## 6. 失败关闭
+## 6. state_version 双边发布闭环
+
+凡是会产生新的 `state_version` 的实质状态变化，必须视为一次不可拆散的“状态发布事务”。新版本只有在 GitHub 与 Airtable 双边都真实落盘并完成回读一致性核验后，才算已发布。
+
+### 新 state_version 的完成条件
+
+以下条件必须同时成立：
+
+1. Airtable《维护日志》中存在建立该 `state_version` 的绑定日志，且其 record ID 已写入《当前状态》的“状态日志记录ID”；
+2. GitHub main 的 `PROJECT_CURRENT.md` 明确写入同一 `state_version`；
+3. GitHub main 的 `LAST_HANDOFF.md` 明确写入同一 `state_version`；
+4. Airtable《当前状态》的“状态版本”与 GitHub 两个接续文件一致；
+5. Airtable《当前状态》的“main SHA”必须等于 GitHub `main` 分支真实 HEAD；研究分支 HEAD 必须单独写入“当前HEAD”，禁止把研究 HEAD 冒充 main SHA；
+6. Airtable保存的 `PROJECT_CURRENT.md SHA-256` 与 `LAST_HANDOFF.md SHA-256` 必须与 GitHub main 上对应文件完整 UTF-8 内容一致；
+7. Airtable《当前状态》的“执行检查点版本”必须等于唯一激活《执行检查点》的 `checkpoint_version`；
+8. 完成后必须回读 GitHub main、两个接续文件、Airtable《当前状态》和唯一激活《执行检查点》，确认上述值真实一致。
+
+### 发布纪律
+
+- 新 `state_version` 发布开始前，执行检查点必须先进入 `RUNNING`。
+- 双边闭环完成前，不得把该步骤标记为 `COMPLETED / WAITING`，也不得在新对话中把该版本当作已发布状态继续研究。
+- 推荐顺序：检查点 `RUNNING` → 追加建立新state的维护日志 → 更新 `PROJECT_CURRENT.md` → 更新 `LAST_HANDOFF.md` → 更新 Airtable《当前状态》的版本、真实 main SHA、研究 HEAD、绑定日志ID、两个文件SHA与checkpoint_version → 全量回读核验 → 检查点 `COMPLETED / WAITING`。
+- 若中途任何一边写入失败，检查点必须保持 `RUNNING / VERIFYING`；无法在当前执行中补齐时改为 `BLOCKED`，原因固定为 `BLOCKED_STATE_PUBLICATION_INCOMPLETE`。
+- 若发布过程中发现另一个对话已经生成更高 `state_version`，立即停止当前写入，禁止用较低版本覆盖较高版本；先重新读取更高版本并重新做一致性核验。
+- 聊天内“已经完成”、历史记忆或旧对话摘要不能替代上述双边发布闭环。
+
+## 7. 失败关闭
 
 出现以下情况必须停止：
 
@@ -101,9 +127,10 @@
 - 检查点状态版本高于 PROJECT_CURRENT；
 - RUNNING 步骤的副作用无法判断是否发生；
 - 检查点要求重复执行 LAST_HANDOFF/PROJECT_CURRENT 已明确完成且禁止重复的事项；
-- 检查点扩大用户授权范围。
+- 检查点扩大用户授权范围；
+- 新 `state_version` 只写入 GitHub 或只写入 Airtable，未完成第6节双边发布闭环。
 
-## 7. 当前长期硬约束
+## 8. 当前长期硬约束
 
 执行检查点不能绕过唯一 CURRENT、研究预注册、标签门、训练授权、Provider预算、PR合并授权或任何正式硬门。
 
