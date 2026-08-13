@@ -1,0 +1,49 @@
+name: Football R45B Forward Capture 14-Record Gate
+
+on:
+  push:
+    branches:
+      - research/r45b-pit-role-availability-zero-label
+    paths:
+      - '.github/workflows/football-r45b-forward-capture-14-record-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-forward-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Run registered forward-capture validator
+        run: python football-data/research/r45b_forward_capture_validator.py
+      - name: Assert two complete fixture bundles and zero forbidden activity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/r45b_forward_capture_validation_status.json').read_text(encoding='utf-8'))
+          assert s['status']=='READY_FOR_SEPARATE_OOS_PREREGISTRATION'
+          assert s['record_count']==14 and s['valid_record_count']==14 and s['invalid_record_count']==0
+          assert s['valid_by_type']=={'task_utility':4,'availability_and_replacement':2,'process_capability':4,'expected_xi_roles':4}
+          assert s['fixtures_with_both_team_role_xi_same_freeze']==2
+          assert all(s['axis_ready'].values()) and s['blocking_axes']==[] and s['validation_errors']==[]
+          for k in ('target_match_labels_read','training_runs','scoring_runs','tuning_runs','provider_requests','paid_provider_requests','formal_weight'):
+              assert int(s[k] or 0)==0, (k,s[k])
+          assert s['independent_oos_authorized'] is False
+          print('R45B_FORWARD_CAPTURE_2_FIXTURES_14_RECORDS_ZERO_LABEL_PASS')
+          PY
+      - name: Upload validation status
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45b-forward-capture-2-fixtures-validation
+          path: football-data/research/r45b_forward_capture_validation_status.json
+          if-no-files-found: error
