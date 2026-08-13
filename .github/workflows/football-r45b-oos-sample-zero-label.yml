@@ -1,0 +1,81 @@
+name: Football R45B OOS Sample Zero-Label Gate
+
+on:
+  push:
+    branches:
+      - research/r45b-pit-role-availability-zero-label
+    paths:
+      - 'football-data/research/r45b_oos_sample_manifest.json'
+      - 'football-data/research/r45b_oos_sample_manifest_validator.py'
+      - 'football-data/research/r45b_oos_baselines/**'
+      - 'football-data/research/r45b_independent_oos_preregistration.json'
+      - 'football-data/research/r45b_independent_oos_prereg_validator.py'
+      - 'football-data/research/r45b_oos_governance_guard.py'
+      - 'football-data/evidence/r45b_forward_capture/**'
+      - '.github/workflows/football-r45b-oos-sample-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r45b-oos-sample-zero-label-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sample-zero-label-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Revalidate OOS preregistration first
+        shell: bash
+        run: |
+          python football-data/research/r45b_independent_oos_prereg_validator.py
+
+      - name: Validate accumulating zero-label sample manifest
+        shell: bash
+        run: |
+          python football-data/research/r45b_oos_sample_manifest_validator.py
+          cat football-data/research/r45b_oos_sample_manifest_validation_status.json
+
+      - name: Assert first sample is valid but coverage remains closed
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s = json.loads(Path('football-data/research/r45b_oos_sample_manifest_validation_status.json').read_text(encoding='utf-8'))
+          if s.get('status') != 'PASS_ACCUMULATING_ZERO_LABEL_NOT_AUTHORIZABLE':
+              raise SystemExit(f"unexpected sample status: {s.get('status')}")
+          if int(s.get('registered_fixture_count') or 0) < 1:
+              raise SystemExit('no registered fixture')
+          if int(s.get('fully_eligible_fixture_count') or 0) < 1:
+              raise SystemExit('no fully eligible fixture')
+          if int(s.get('minimum_fully_eligible_fixture_count') or 0) != 300:
+              raise SystemExit('sample gate changed from 300')
+          if s.get('coverage_gate_pass') is not False:
+              raise SystemExit('coverage must remain closed below 300')
+          if s.get('sample_frozen') is not False or s.get('authorization_ready') is not False:
+              raise SystemExit('sample must remain open and unauthorized')
+          if s.get('independent_oos_authorized') is not False:
+              raise SystemExit('independent OOS must remain unauthorized')
+          if s.get('errors') not in ([], None):
+              raise SystemExit(f"sample validation errors: {s.get('errors')}")
+          for field in ('target_match_labels_read','training_runs','scoring_runs','tuning_runs','provider_requests','paid_provider_requests','formal_weight'):
+              if int(s.get(field) or 0) != 0:
+                  raise SystemExit(f'zero-label invariant violated: {field}')
+          print('R45B_OOS_SAMPLE_1_OF_300_ZERO_LABEL_VALID_COVERAGE_CLOSED')
+          PY
+
+      - name: Enforce no automatic OOS authorization
+        shell: bash
+        run: |
+          python football-data/research/r45b_oos_governance_guard.py
