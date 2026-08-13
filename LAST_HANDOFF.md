@@ -5,82 +5,67 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 11
-- state_version: 39
-- updated_at_utc: 2026-08-13T11:12:30Z
+- handoff_version: 12
+- state_version: 40
+- updated_at_utc: 2026-08-13T12:16:30Z
 - status: WAITING
 
 ## 用户最后明确目标
 
-- 用户明确要求：`R45B 继续这个吧，总进球先放一放`。
-- 当前唯一研究主任务恢复为 R45B prospective zero-label sample accumulation。
-- 总进球 Fast100 旁路诊断暂停，不得在普通“继续”时抢占 R45B。
-- 本授权不包含 target labels、训练、评分、调参或 independent OOS execution。
+- 用户纠正研究方向：R45B训练/历史研究先用其下载的数据包，不应主要等未来比赛。
+- 用户明确将本轮样本量固定为 **300场**。
+- 本轮已完成固定300场历史盘口轨迹开发实验并保存GitHub证据。
+- 总进球继续暂停。
 
-## 本轮已经完成
+## 本轮已完成
 
-1. File Library 已重新检索确认只剩一份当前 START_HERE 唯一版：`足球项目_START_HERE_新对话与断线永久接续启动器_唯一版.txt`，file id `file_00000000df6c8209b954fe071f813fa0`。state38 的旧重复文件治理阻塞已解除，禁止再恢复。
-2. R45B 第2个合格前向 fixture 已完成：Sevilla FC vs Rayo Vallecano，kickoff `2026-08-15T19:30:00Z`，bundle freeze `2026-08-13T10:56:46Z`。
-3. 第2场完成7份 PIT 证据：2 expected_xi_roles、1 availability_and_replacement、2 process_capability、2 task_utility；另有同 bundle-freeze research-only complete 1X2 baseline。
-4. process extractor 真运行 PASS：Run/Job `31693452191 / 94425743387`，Artifact `9178330392`，SHA256 `3a3b7a250f22902394e8dba9880ae765de63ce674e8fb30b93f329fdf0118cd4`。
-5. task-state extractor 真运行 PASS：Run/Job `31693783226 / 94426786006`，Artifact `9178463002`，SHA256 `0067224b7e70ba3a269a3c3e27c5d4280ac0462bade35cbecc5c9ac5b5832319`。
-6. forward-capture 全量验证 PASS：Run/Job `31694149181 / 94427925007`，Artifact `9178600254`，SHA256 `30c4fab20849d52d4dc715f57f4ce959aaef5edb8db9f0a05fcc2d5acad3b849`；14 records / 14 valid / 0 invalid，2 fixtures 均有双队同 freeze XI，所有 axis ready，blocking=[]。
-7. OOS sample gate 真验证 PASS：Run/Job `31694083580 / 94427719914`，状态 `PASS_ACCUMULATING_ZERO_LABEL_NOT_AUTHORIZABLE`；registered=2，fully eligible=2，remaining=298，coverage=false，sample_frozen=false，authorization_ready=false。
-8. sample workflow 已从硬编码“1 of 300”修为动态计数，不改变300场门、预注册、算法或权限。
-9. research branch 当前精确 HEAD：`c5625410463436c2d2bfa10b67634d92644dfdc6`。
-10. target labels / training / scoring / tuning / Provider / paid Provider / formal_weight 均保持0；independent_oos_authorized=false。
+1. 读取用户上传 `archive (1)(1).zip`，SHA256=`8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`。
+2. 确认包内有 `closing_odds.csv.gz`、`odds_series.csv.gz`、`odds_series_b.csv.gz` 及两份match mapping；盘口轨迹表含最终比分标签，但不含完整R45B的预计首发/角色、伤停替代、process/task字段。
+3. 固定历史开发候选：`HIST300_DRAW_MASS_LOGIT_OFFSET_ODDS_TRAJECTORY_R1`；不是完整R45B候选。
+4. `odds_series.csv.gz` 共31,074场；固定检查点24/48/71，每个时点至少3家完整H/D/A后可用池15,513场。
+5. seed=20260813等概率抽300场，抽样不使用赛果值；之后按时间顺序排列，边界119/178/238/300，形成119初始训练 + 59/60/62三OOS折。
+6. 使用固定8个盘口轨迹/分歧特征；L2 lambda=1.0；无candidate search、threshold tuning、结果后feature selection。
+7. pooled OOS n=181：市场baseline multiclass LL=0.9683259，challenger=1.0028327，delta=+0.0345068（恶化）；90%按日期block bootstrap CI=[+0.0115370,+0.0584115]，整段>0。
+8. Draw binary LL同样恶化+0.0345068；Draw AUC从0.576829降到0.497387；accuracy从54.14%降到51.93%。
+9. 三折proper-score改善0/3；Top1 Draw从0场增到7场，但只命中1场，precision14.29%、recall2.44%，不能视为进步。
+10. 研究分支：`research/r45b-hist300-odds-trajectory-20260813`；HEAD=`3cb6fe9ee859552d1b90d5b3cc01694214344d21`。
+11. GitHub已保存脚本、结果JSON、181场逐场OOS预测：
+   - `football-data/research/r45b_hist300_odds_trajectory_r1.py`
+   - `football-data/research/r45b_hist300_odds_trajectory_result.json`
+   - `football-data/research/r45b_hist300_odds_trajectory_oos181.csv`
+12. 该candidate裁决：`FAIL / SEALED_ON_THIS_300`，formal_weight=0。
 
-## 当前样本进度
+## 关键解释
 
-- manifest: `football-data/research/r45b_oos_sample_manifest.json`
-- manifest_status: OPEN_ZERO_LABEL_ACCUMULATING
-- manifest_sha256_current_open_state: `5c5f5ce0859a95aa9450a467a048cdd59632493e0225f2fb41f9b1db277cafda`
-- fully_eligible_fixture_count: 2
-- minimum_required: 300
+- 用户的数据包确实可以用于历史训练/开发；之前“只能等未来300场”是把训练开发和独立前向验证混在了一起。
+- 但该数据包当前只证明可以研究“盘口轨迹→平局概率”，不能冒充完整R45B，因为缺少预计首发/角色、伤停替代、过程能力和任务状态等字段。
+- 本次失败只封存“盘口轨迹直接修平局质量”这一候选，不等于所有历史数据路线失败。
+
+## 完整R45B前向轨仍保持
+
+- branch: `research/r45b-pit-role-availability-zero-label`
+- HEAD: `c5625410463436c2d2bfa10b67634d92644dfdc6`
+- fully eligible: 2 / 300
 - remaining: 298
-- competition_count: 1
-- coverage_gate_pass: false
+- completed: #1 Alaves–Getafe；#2 Sevilla–Rayo
 - sample_frozen: false
-- authorization_ready: false
 - independent_oos_authorized: false
-- scientific_gate: `OOS_SAMPLE_COVERAGE_CLOSED_2_OF_300`
+- target labels / training / scoring / tuning / Provider / paid Provider / formal_weight: 全部0
 
-## 已完成 fixtures，禁止重复
+## 禁止重复
 
-### #1 Alaves–Getafe
-- fixture_key: `ESP_LaLiga__Deportivo_Alaves__Getafe_CF__20260815T173000Z`
-- bundle freeze: `2026-08-13T09:20:03Z`
-- status: fully eligible / target label unread
+- 不得在同一300场上根据结果继续换特征、调阈值、调lambda、candidate search或反复重训。
+- 不得把Top1 Draw 0→7当成成功，因为proper-score、AUC、accuracy均明显恶化且7场只命中1场。
+- 不得把本历史300场称为independent OOS或完整R45B验证。
+- 不重做完整R45B前向fixture #1/#2。
+- 不调用付费Provider，不修改正式模型/formal_weight/config/CURRENT。
 
-### #2 Sevilla–Rayo
-- fixture_key: `ESP_LaLiga__Sevilla_FC__Rayo_Vallecano__20260815T193000Z`
-- bundle freeze: `2026-08-13T10:56:46Z`
-- expected XI pair same freeze: `2026-08-13T10:56:46Z`
-- process Sevilla: shots 12.4 / SOT 3.0 / against 9.8 / against SOT 3.3
-- process Rayo: shots 15.1 / SOT 5.5 / against 12.8 / against SOT 4.8
-- task Sevilla: 174.0h since prior fixture
-- task Rayo: 173.5h since prior fixture
-- availability chain: Marcão unavailable; source-backed Sevilla CB replacement/depth chain recorded
-- research baseline: bet365 2.25 / 3.10 / 3.20, no-vig H 0.41170367296119526 / D 0.2988171819879643 / A 0.28947914505084044
-- formal_market_snapshot: false（no native quote timestamp）
-- status: fully eligible / target label unread
+## 下一步选择
 
-## 已完成、禁止重复
-
-- 不再恢复 START_HERE 重复清理任务。
-- 不重做 fixture #1 / #2 bundle。
-- 不重跑已 PASS 的 data-readiness/prereg 设计来冒充新进展。
-- 不读取 target labels，不训练、不评分、不调参。
-- 不降低300场门，不做结果后 candidate search/feature selection/threshold tuning。
-- 不调用付费 Provider，不修改正式模型/formal_weight/正式 config/CURRENT。
-- 不把2/300的数据完整性进展表述为“平局模型已经有效”。
-
-## 唯一下一步
-
-- 从 **fixture #3** 开始继续收集 fully eligible prospective zero-label R45B bundle。
-- 每场仍必须满足：2 XI + 1 availability chain + 2 process + 2 task + 同 bundle-freeze complete research 1X2 baseline + manifest validator PASS。
-- 达到 >=300 且赛事覆盖门通过后才允许冻结 sample identity；冻结后仍需用户单独明确 independent OOS 授权，普通“继续”不算授权。
+- 若用户继续“用历史数据研究平局”：必须换**新的信息源/特征家族**并先固定新预注册，不得回炉调本300场。
+- 若用户说“继续完整R45B/继续前向”：从fixture #3恢复2/300前向积累。
+- 若用户问这300场结果：直接报告“仅盘口轨迹draw-mass方案明确失败”，并给上述proper-score/AUC证据。
 
 ## 权威优先级
 
-用户当前明确指令 > 唯一正式 CURRENT（正式规则事项） > ACTIVE_CHECKPOINT实时断点 > LAST_HANDOFF对话末端 > PROJECT_CURRENT + Airtable状态验证 > 历史聊天/旧文件/记忆。
+用户当前明确指令 > 唯一正式CURRENT（正式规则事项） > ACTIVE_CHECKPOINT实时断点 > LAST_HANDOFF > PROJECT_CURRENT + Airtable当前状态/绑定维护日志 > 历史聊天/旧文件/记忆。
