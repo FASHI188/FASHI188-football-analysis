@@ -5,41 +5,54 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 12
-- state_version: 40
-- updated_at_utc: 2026-08-13T12:16:30Z
+- handoff_version: 13
+- state_version: 41
+- updated_at_utc: 2026-08-13T12:34:30Z
 - status: WAITING
 
 ## 用户最后明确目标
 
-- 用户纠正研究方向：R45B训练/历史研究先用其下载的数据包，不应主要等未来比赛。
-- 用户明确将本轮样本量固定为 **300场**。
-- 本轮已完成固定300场历史盘口轨迹开发实验并保存GitHub证据。
-- 总进球继续暂停。
+- 用户询问 DeepSource 是否真正工作，并明确要求：若没有工作，也把它配置上。
+- 已完成仓库侧 `.deepsource.toml` 配置与真实回调核验。
+- 本任务属于工程治理，不修改足球正式模型、正式数据、正式配置、formal_weight 或 CURRENT。
+- 平局历史300实验仍保持 FAIL/SEALED；完整R45B前向仍2/300；总进球继续暂停。
 
-## 本轮已完成
+## DeepSource 本轮执行结果
 
-1. 读取用户上传 `archive (1)(1).zip`，SHA256=`8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`。
-2. 确认包内有 `closing_odds.csv.gz`、`odds_series.csv.gz`、`odds_series_b.csv.gz` 及两份match mapping；盘口轨迹表含最终比分标签，但不含完整R45B的预计首发/角色、伤停替代、process/task字段。
-3. 固定历史开发候选：`HIST300_DRAW_MASS_LOGIT_OFFSET_ODDS_TRAJECTORY_R1`；不是完整R45B候选。
-4. `odds_series.csv.gz` 共31,074场；固定检查点24/48/71，每个时点至少3家完整H/D/A后可用池15,513场。
-5. seed=20260813等概率抽300场，抽样不使用赛果值；之后按时间顺序排列，边界119/178/238/300，形成119初始训练 + 59/60/62三OOS折。
-6. 使用固定8个盘口轨迹/分歧特征；L2 lambda=1.0；无candidate search、threshold tuning、结果后feature selection。
-7. pooled OOS n=181：市场baseline multiclass LL=0.9683259，challenger=1.0028327，delta=+0.0345068（恶化）；90%按日期block bootstrap CI=[+0.0115370,+0.0584115]，整段>0。
-8. Draw binary LL同样恶化+0.0345068；Draw AUC从0.576829降到0.497387；accuracy从54.14%降到51.93%。
-9. 三折proper-score改善0/3；Top1 Draw从0场增到7场，但只命中1场，precision14.29%、recall2.44%，不能视为进步。
-10. 研究分支：`research/r45b-hist300-odds-trajectory-20260813`；HEAD=`3cb6fe9ee859552d1b90d5b3cc01694214344d21`。
-11. GitHub已保存脚本、结果JSON、181场逐场OOS预测：
-   - `football-data/research/r45b_hist300_odds_trajectory_r1.py`
-   - `football-data/research/r45b_hist300_odds_trajectory_result.json`
-   - `football-data/research/r45b_hist300_odds_trajectory_oos181.csv`
-12. 该candidate裁决：`FAIL / SEALED_ON_THIS_300`，formal_weight=0。
+1. 配置前核验当前 main commit `8b67964a0036ea9ee3e300b54c12183bf6155c56`：仅存在 GitHub Actions checks，没有 DeepSource check，因此不能称 DeepSource 正在工作。
+2. 查阅 DeepSource 当前官方文档确认：`.deepsource.toml` 可作为仓库侧分析配置；使用 TOML 时必须进入默认分支；实际持续分析仍要求 DeepSource 侧激活仓库并启用 Code Review。
+3. 已在默认分支 main 创建 `.deepsource.toml`，commit=`fa67009d815baa9a5623c192b512a28e7fbcac89`。
+4. 配置启用 Python analyzer，runtime 3.12；设置测试模式；排除 `.github`、缓存、CSV/Parquet/ZIP、benchmarks/evidence/forward/manifests/docs 等大体量非代码内容，避免首次全库分析被历史数据拖慢。
+5. config commit 上 GitHub Actions `Changed-file quality and security guard` 已真实 completed/success。
+6. config commit 的 check-runs 仍只有 GitHub Actions，没有 DeepSource app check/review/status。
+7. 当前裁决：`DEEPSOURCE_REPO_CONFIGURED_EXTERNAL_ACTIVATION_PENDING`。
+8. 下一次只有在出现真实 DeepSource check/review/status，或能读取 DeepSource 平台仓库状态确认 Code Review active 后，才能改写为 `ACTIVE`。
+9. DeepSource 当前缺口不是代码仓库配置，而是 DeepSource Dashboard/VCS connection 侧的仓库激活/Code Review enablement；ChatGPT 当前 GitHub connector 无 DeepSource Dashboard 控制能力，不能伪报已经打开。
 
-## 关键解释
+## 其他 GitHub 工程工具状态
 
-- 用户的数据包确实可以用于历史训练/开发；之前“只能等未来300场”是把训练开发和独立前向验证混在了一起。
-- 但该数据包当前只证明可以研究“盘口轨迹→平局概率”，不能冒充完整R45B，因为缺少预计首发/角色、伤停替代、过程能力和任务状态等字段。
-- 本次失败只封存“盘口轨迹直接修平局质量”这一候选，不等于所有历史数据路线失败。
+- GitHub Actions：真实在用。
+- Renovate：真实在用，已有 bot PR 证据。
+- SonarQube Cloud：仓库配置存在，但第三方自动分析尚未完成真实验收。
+- GitGuardian：安装/探针历史存在，但尚无真实第三方回调验收。
+- DeepSource：本轮仓库配置已落地；外部激活仍待确认。
+
+## 历史300场研究状态保持不变
+
+- 数据源：用户上传 `archive (1)(1).zip`
+- branch: `research/r45b-hist300-odds-trajectory-20260813`
+- HEAD: `3cb6fe9ee859552d1b90d5b3cc01694214344d21`
+- fixed sample: 300
+- pooled OOS: 181
+- baseline multiclass LL: 0.9683259
+- challenger multiclass LL: 1.0028327
+- delta: +0.0345068（恶化）
+- 90% CI: `[+0.0115370,+0.0584115]`
+- draw AUC: 0.576829 → 0.497387
+- fold improvement: 0/3
+- Top1 Draw: 7，命中1
+- ruling: `FAIL / SEALED_ON_THIS_300`
+- formal_weight: 0
 
 ## 完整R45B前向轨仍保持
 
@@ -52,19 +65,18 @@
 - independent_oos_authorized: false
 - target labels / training / scoring / tuning / Provider / paid Provider / formal_weight: 全部0
 
-## 禁止重复
+## 禁止重复/误报
 
-- 不得在同一300场上根据结果继续换特征、调阈值、调lambda、candidate search或反复重训。
-- 不得把Top1 Draw 0→7当成成功，因为proper-score、AUC、accuracy均明显恶化且7场只命中1场。
-- 不得把本历史300场称为independent OOS或完整R45B验证。
-- 不重做完整R45B前向fixture #1/#2。
-- 不调用付费Provider，不修改正式模型/formal_weight/config/CURRENT。
+- 不得把 `.deepsource.toml` 已提交说成 DeepSource 已真实扫描。
+- 不得因为用户安装过 DeepSource GitHub App 就自动视为 active；必须看真实回调或平台状态。
+- 不在同一历史300场上根据结果继续换特征、调阈值、调lambda、candidate search或反复重训。
+- 不把工程App状态作为足球模型准确率或科学晋级证据。
+- 不调用付费Provider，不修改正式模型/formal_weight/正式 config/CURRENT。
 
-## 下一步选择
+## 唯一下一步
 
-- 若用户继续“用历史数据研究平局”：必须换**新的信息源/特征家族**并先固定新预注册，不得回炉调本300场。
-- 若用户说“继续完整R45B/继续前向”：从fixture #3恢复2/300前向积累。
-- 若用户问这300场结果：直接报告“仅盘口轨迹draw-mass方案明确失败”，并给上述proper-score/AUC证据。
+- 如果继续处理 DeepSource：用户需要在 DeepSource Dashboard 对 `FASHI188/FASHI188-football-analysis` 激活仓库并启用 Code Review；仓库侧无需再补配置。完成后重新核验 GitHub check-runs。
+- 如果用户回到平局研究：按用户新指令决定是新历史信息家族还是恢复完整R45B前向2/300；不得回炉本300场。
 
 ## 权威优先级
 
