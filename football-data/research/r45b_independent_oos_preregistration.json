@@ -1,0 +1,226 @@
+{
+  "schema_version": "R45B-INDEPENDENT-OOS-PREREG-R1",
+  "registered_at_utc": "2026-08-13T09:15:35Z",
+  "status": "PREREGISTERED_ZERO_LABEL_WAITING_SAMPLE_MANIFEST_AND_EXPLICIT_AUTHORIZATION",
+  "research_only": true,
+  "formal_weight": 0,
+  "governance": {
+    "current_rule_version": "V5.2.0",
+    "current_rule_file": "足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx",
+    "promotion_gate_path": "football-data/governance/model_promotion_gate_v520.json",
+    "forward_capture_contract_path": "football-data/research/r45b_forward_capture_contract.json",
+    "data_readiness_required_status": "READY_FOR_SEPARATE_OOS_PREREGISTRATION",
+    "automatic_oos_authorization": false,
+    "independent_oos_authorized": false
+  },
+  "estimand": {
+    "settlement_scope": "90_MINUTES_INCLUDING_STOPPAGE_TIME_ONLY",
+    "target": "H_D_A_PROBABILITY_DISTRIBUTION_WITH_DRAW_INCREMENT_FOCUS",
+    "primary_estimand": "paired mean multiclass H/D/A LogLoss difference, challenger minus frozen baseline, on chronological OOS test fixtures",
+    "improvement_sign": "NEGATIVE_IS_BETTER",
+    "draw_specific_required_estimand": "paired mean binary Draw-vs-Not-Draw LogLoss difference, challenger minus frozen baseline",
+    "claim_scope": "predictive increment of the preregistered PIT information family only; no formal promotion authority"
+  },
+  "information_family": {
+    "name": "R45B_AUTHENTIC_PIT_ROLE_AVAILABILITY_PROCESS_TASK_MATCHUP",
+    "required_axes": [
+      "expected_xi_roles",
+      "availability_and_replacement",
+      "process_capability",
+      "task_utility",
+      "matchup_interaction_gate"
+    ],
+    "allowed_inputs": [
+      "same-freeze source-backed expected/confirmed XI standard role slots",
+      "same-freeze unavailable/doubtful identities and source-backed replacement candidates",
+      "strict-prior SHOTS_SOT_PROXY process features; never relabeled as xG",
+      "deterministic source-backed schedule_fatigue task facts",
+      "deterministic fixed role-zone matchup interaction representation",
+      "same-freeze complete 1X2 market prices used only as the frozen baseline"
+    ],
+    "forbidden_inputs": [
+      "target or future match results before their chronological update point",
+      "post-match target statistics",
+      "retrospective-only lineup or injury states without admissible pre-kickoff availability time",
+      "manual motivation scores",
+      "manual fatigue weights",
+      "manual matchup advantage scores",
+      "manual role inference from formation order",
+      "player-name identity memorization features",
+      "closing odds substituted retrospectively when no same-freeze baseline snapshot exists"
+    ]
+  },
+  "baseline": {
+    "baseline_id": "SAME_FREEZE_NO_VIG_COMPLETE_1X2_R1",
+    "input_requirement": "complete home/draw/away decimal prices observed at the same admissible freeze as the R45B fixture feature bundle",
+    "formula": "r_i=1/odds_i for i in H,D,A; p_i=r_i/(r_H+r_D+r_A)",
+    "fallback": "NONE_FAIL_CLOSED",
+    "stale_or_retrospective_price_policy": "EXCLUDE_FIXTURE",
+    "baseline_parameters_fitted": 0
+  },
+  "candidate_catalog": [
+    {
+      "candidate_id": "R45B_DRAW_MASS_LOGIT_OFFSET_R1",
+      "candidate_count": 1,
+      "architecture": "binary Draw-mass logistic offset on top of the frozen 1X2 baseline; home/away residual mass keeps the baseline H:A ratio",
+      "equations": [
+        "eta_D = log(p_D/(1-p_D)) + beta_0 + beta^T z",
+        "q_D = sigmoid(eta_D)",
+        "q_H = (1-q_D) * p_H/(p_H+p_A)",
+        "q_A = (1-q_D) * p_A/(p_H+p_A)"
+      ],
+      "feature_vector": {
+        "xi_zone_count_differences": "home minus away counts for every fixed normalized role zone except goalkeeper",
+        "unavailable_zone_count_differences": "home minus away unavailable/doubtful counts by the same non-goalkeeper zones",
+        "replacement_zone_count_differences": "home minus away replacement-candidate counts by the same non-goalkeeper zones",
+        "process_differences": [
+          "shots_for_mean_home - shots_for_mean_away",
+          "shots_on_target_for_mean_home - shots_on_target_for_mean_away",
+          "shots_against_mean_home - shots_against_mean_away",
+          "shots_on_target_against_mean_home - shots_on_target_against_mean_away"
+        ],
+        "schedule_fatigue_differences": [
+          "hours_since_previous_fixture_home - hours_since_previous_fixture_away",
+          "prior_fixtures_last_7d_home - prior_fixtures_last_7d_away",
+          "prior_fixtures_last_14d_home - prior_fixtures_last_14d_away"
+        ],
+        "matchup_pair_features": "for each preregistered interaction pair, product of the two source-backed zone player counts; no manually signed advantage score",
+        "formation_string_feature": "EXCLUDED",
+        "player_identity_feature": "EXCLUDED"
+      },
+      "missing_feature_policy": "EXCLUDE_FIXTURE_BEFORE_LABEL_ACCESS; NO_IMPUTATION",
+      "probability_floor_for_scoring": 1e-12
+    }
+  ],
+  "hyperparameter_policy": {
+    "candidate_search": "NONE",
+    "class_weight": "NONE",
+    "feature_standardization": "fit mean/std on each fold training history only; zero-variance features fixed to standardized value 0",
+    "objective": "binary Draw cross-entropy induced by the offset model plus L2 penalty on beta excluding the intercept",
+    "l2_lambda": 1.0,
+    "optimizer": "L-BFGS",
+    "max_iterations": 2000,
+    "gradient_tolerance": 1e-8,
+    "random_seed": 20260813,
+    "threshold_tuning": "FORBIDDEN",
+    "feature_selection_after_labels": "FORBIDDEN",
+    "model_selection_after_labels": "FORBIDDEN"
+  },
+  "train_policy_test_split": {
+    "design": "expanding chronological OOS with three sequential test folds",
+    "minimum_fully_eligible_fixture_count": 300,
+    "initial_training_target_count": 120,
+    "test_fold_target_count": 60,
+    "test_fold_count": 3,
+    "same_day_rule": "all fixtures sharing the same UTC kickoff calendar date remain in one block; boundaries extend forward to the end of the boundary date and no outcome from that date may update another prediction on the same date",
+    "fold_1": "fit on initial chronological training block; score next test block",
+    "fold_2": "refit on all strictly earlier completed blocks only; score next test block",
+    "fold_3": "refit on all strictly earlier completed blocks only; score final test block",
+    "post_test_refit_for_report": "FORBIDDEN",
+    "minimum_competitions_overall": 4,
+    "minimum_competitions_per_test_fold": 3,
+    "maximum_single_competition_share": 0.5
+  },
+  "primary_metric": {
+    "name": "MULTICLASS_HDA_LOGLOSS",
+    "comparison": "challenger minus baseline",
+    "pooled_success_rule": "paired 90% calendar-date-block bootstrap interval upper bound must be < 0",
+    "fold_stability_rule": "at least 2 of 3 chronological test folds must have mean delta < 0",
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 20260813
+  },
+  "secondary_metrics": {
+    "required_proper_scores": [
+      "binary Draw-vs-Not-Draw LogLoss",
+      "multiclass Brier score",
+      "RPS"
+    ],
+    "draw_required_rule": "pooled Draw binary LogLoss delta must be < 0 and at least 2 of 3 folds must be <= 0",
+    "brier_non_material_worse_rule": "pooled challenger-minus-baseline multiclass Brier delta <= 0.001",
+    "rps_non_material_worse_rule": "pooled challenger-minus-baseline RPS delta <= 0.001",
+    "calibration_required": [
+      "Draw calibration intercept",
+      "Draw calibration slope",
+      "reliability table by preregistered deciles where sample size permits"
+    ],
+    "diagnostic_only": [
+      "accuracy",
+      "Top-1 Draw count",
+      "Draw precision",
+      "Draw recall",
+      "Draw AUC",
+      "PR-AUC",
+      "Top-k",
+      "ROI",
+      "single-match hit"
+    ]
+  },
+  "bootstrap_unit": {
+    "unit": "UTC_KICKOFF_CALENDAR_DATE_BLOCK",
+    "reason": "preserve within-day dependence and enforce the same-day no-leakage policy",
+    "paired_resampling": true
+  },
+  "coverage_gate": {
+    "required_before_any_target_label_access": true,
+    "minimum_fully_eligible_fixture_count": 300,
+    "required_valid_axes_per_fixture": 5,
+    "complete_same_freeze_1x2_baseline_required": true,
+    "invalid_record_tolerance": 0,
+    "duplicate_fixture_tolerance": 0,
+    "if_gate_fails": "STOP_DATA_COVERAGE; DO_NOT LOWER SAMPLE GATE; DO NOT FIT; DO NOT READ TARGET LABELS"
+  },
+  "stopping_rule": {
+    "pre_label": "continue prospective zero-label capture until the frozen coverage gate and sample identity manifest are complete; otherwise STOP_DATA_COVERAGE",
+    "post_authorization": "execute all three folds; no score-based early stopping and no candidate replacement",
+    "scientific_pass": "all primary rules plus draw-required secondary rule plus Brier/RPS non-material-worse rules must pass",
+    "scientific_fail": "any required scientific rule fails after authorized complete execution",
+    "after_fail": "seal the exact candidate on consumed labels; do not retune and reuse the same test identities"
+  },
+  "sample_identity_policy": {
+    "selection": "prospective chronological fixtures only; fixture must be registered before kickoff and must satisfy all R45B evidence contracts plus same-freeze baseline requirement",
+    "ordering": "kickoff_at_utc ascending, then competition_id, then immutable fixture_key",
+    "same_fixture_once": true,
+    "identity_manifest_required_before_authorization": true,
+    "identity_manifest_sha256_required": true,
+    "sample_manifest_status": "NOT_YET_FROZEN",
+    "target_labels_in_manifest": "FORBIDDEN",
+    "overlap_with_confirmation_sample": 0
+  },
+  "post_result_authorization": {
+    "scientific_component_pass_effect": "research evidence only; formal_weight remains 0",
+    "confirmation_required_before_formal_promotion": true,
+    "allowed_confirmation": [
+      "untouched protected fixed sample",
+      "new strictly forward sample",
+      "genuinely unseen external competition/season domain"
+    ],
+    "failed_test_reuse_for_retuning": "FORBIDDEN",
+    "formal_promotion_without_explicit_receipt": "FORBIDDEN"
+  },
+  "authorization_gate": {
+    "current_state": "NOT_AUTHORIZED",
+    "requirements_before_authorization_file_may_exist": [
+      "this preregistration is immutable and validation-passed",
+      "forward sample identity manifest satisfies coverage gate and has SHA-256",
+      "exact research HEAD is recorded",
+      "explicit independent OOS authorization is provided after the first three requirements"
+    ],
+    "authorization_file_must_bind": [
+      "preregistration_sha256",
+      "sample_manifest_sha256",
+      "exact_research_head",
+      "authorized_scope"
+    ],
+    "generic_continue_is_authorization": false
+  },
+  "zero_label_invariants": {
+    "target_match_labels_read": 0,
+    "training_runs": 0,
+    "scoring_runs": 0,
+    "tuning_runs": 0,
+    "provider_requests": 0,
+    "paid_provider_requests": 0,
+    "formal_weight": 0,
+    "independent_oos_authorized": false
+  }
+}
