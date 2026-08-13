@@ -93,6 +93,31 @@ jobs:
             echo "R45B forward capture is not ready; no OOS authorization is granted."
           fi
 
+      - name: Assert captured task-utility evidence validated
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('football-data/research/r45b_forward_capture_validation_status.json')
+          status = json.loads(path.read_text(encoding='utf-8'))
+          valid_task = int((status.get('valid_by_type') or {}).get('task_utility') or 0)
+          axis_ready = bool((status.get('axis_ready') or {}).get('task_utility'))
+          record_count = int(status.get('record_count') or 0)
+          invalid_count = int(status.get('invalid_record_count') or 0)
+          print(f'task_utility_valid={valid_task}')
+          print(f'task_utility_axis_ready={axis_ready}')
+          print(f'forward_record_count={record_count}')
+          print(f'invalid_record_count={invalid_count}')
+          if valid_task < 2:
+              raise SystemExit('Expected at least two validated task_utility records')
+          if not axis_ready:
+              raise SystemExit('task_utility axis is not ready')
+          if invalid_count != 0:
+              raise SystemExit('Forward-capture evidence contains invalid records')
+          PY
+
       - name: Enforce no automatic OOS authorization
         shell: bash
         run: |
