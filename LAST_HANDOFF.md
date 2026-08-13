@@ -5,60 +5,68 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 6
-- state_version: 34
-- updated_at_utc: 2026-08-13T08:21:10Z
+- handoff_version: 7
+- state_version: 35
+- updated_at_utc: 2026-08-13T08:45:19Z
 - status: WAITING
 
 ## 用户最后明确目标
 
-- 用户在本轮明确说“继续”。
-- 已按唯一 CURRENT V5.2.0 完成新对话启动验收，并按 state33 的唯一下一步继续 R45B 免费公开源、前向、零标签采集。
-- 不得擅自切换到效果验证、训练、评分、调参或正式权重变更。
+- 用户本轮明确说“继续”。
+- 已按唯一 CURRENT V5.2.0 完成启动验收，并从 state34 的唯一下一步继续 R45B 免费公开源、前向、零标签采集。
+- 不得擅自切换到效果验证、训练、评分、调参、正式权重或 CURRENT 变更。
 
 ## 本轮已经完成
 
-1. 重新核验唯一 CURRENT、main runtime integrity、GitHub/Airtable state33 与绑定维护日志，启动状态通过。
-2. 核实 R45B 研究分支原 HEAD `b75678b7ec0eda7438f43339a58a0b94da32392c`、Actions `31674772403 / 94366845682` 与 `STOP_FORWARD_CAPTURE_NOT_READY`。
-3. 动态读取 R45B forward-capture contract、validator、deep inventory 与 Action 日志；确认 validator evidence record_count=0。
-4. 确认 8 个 shots/SOT proxy-ready 赛事域；`ESP_LaLiga` 可作为 process proxy 域，但 true xG 域仍为 0。
-5. 选定近期未开赛候选 `Deportivo Alaves vs Getafe CF`，开球 `2026-08-15T17:30:00Z`，仅用于前向零标签来源审计。
-6. 对官方 LALIGA/Getafe 赛程源、AS、Cadena SER、Comuniate、Starting11 做来源与可识别性审计。
-7. 拒绝把 AS 可能首发的姓名顺序人工映射成详细战术槽位；拒绝把动机类新闻人工转成 task_utility。
-8. Cadena SER 页面法律声明明确反对机械读取/AI 使用，因此只保留为发现参考，不把正文灌入 R45B 数据集。
-9. 新增 `football-data/research/r45b_forward_capture_source_audit_20260813.json`，研究分支新 HEAD 为 `c1aa5fc54063562d32103354193b309f9dd2e7be`。
-10. 本轮没有创建任何伪装成合格 evidence 的 validator record；合格记录仍为 0，科学门继续 fail-closed。
+1. 重新核验 `LAST_HANDOFF.md`、`PROJECT_CURRENT.md`、Airtable 当前状态/绑定日志与唯一 CURRENT，state34 启动一致性通过。
+2. 实时核验 main 与旧 R45B Actions；确认旧绿灯只是工程执行成功，不能当数据 readiness 或科学 PASS。
+3. 读取 R45B forward-capture contract、task-state preregistration 与 validator，确认 `task_utility` 缺口的根因是“已有固定规则但没有可执行 extractor”。
+4. 新增 `football-data/research/r45b_task_state_extractor.py`，版本固定为 `R45B-TASK-STATE-EXTRACTOR-R1`；仅输出结构化 schedule/travel/rotation/competition facts，禁止人工概率、进球、motivation/fatigue 权重。
+5. workflow 加入 extractor self-test；run `31682993809 / 94392521087` completed/success。
+6. 用赛前公开官方赛程事实为 Deportivo Alaves 与 Getafe CF 生成 2 条 prospective/query-time `schedule_fatigue` task_utility 证据，freeze=`2026-08-13T08:39:48Z`。
+7. 为避免把 validator 的 fail-closed 绿灯误读成数据通过，进一步加入硬断言：`valid task_utility >= 2`、`axis_ready.task_utility=true`、`invalid_record_count=0`。
+8. exact HEAD `241c1f12b7f163d80df528e86ae90b1662bfa00a` 的 Actions run `31683350688` / job `94393642748` 全部 success，且 `Assert captured task-utility evidence validated` 单独 success。
+9. 因此 R45B `task_utility` 轴可正式从 MISSING 改为 PASS；forward capture 记录数=2，invalid=0。
+10. 完整科学门仍为 `STOP_FORWARD_CAPTURE_NOT_READY`：`expected_xi_roles`、`availability_and_replacement`、`process_capability` 仍缺；`matchup_interaction` 等待角色轴。
+11. 本轮 target labels=0、training=0、scoring=0、tuning=0、Provider=0、paid Provider=0、formal_weight=0。
+12. 已追加 Airtable state35 维护日志 `recK3US3485L1c2FD`，并准备同步 PROJECT_CURRENT / 当前状态。
 
 ## 当前项目真实停点
 
-- task: R45B 免费公开源前向零标签采集：首轮候选来源审计已完成，等待合同级可核验证据
+- task: R45B 免费公开源前向零标签采集：task_utility 已验证通过，继续补剩余合同级证据轴
 - branch: `research/r45b-pit-role-availability-zero-label`
-- exact_head: `c1aa5fc54063562d32103354193b309f9dd2e7be`
-- latest_action_run/job: `31674772403 / 94366845682`（本轮 source-audit 文件路径不触发该 workflow，未伪称产生新 run）
+- exact_head: `241c1f12b7f163d80df528e86ae90b1662bfa00a`
+- latest_action_run/job: `31683350688 / 94393642748`
+- latest_action_execution: `completed/success`
 - scientific_gate: `STOP_FORWARD_CAPTURE_NOT_READY`
-- forward_capture_record_count: 0
-- 结果标签读取 0；训练 0；评分 0；调参 0；Provider 0；付费 Provider 0；formal_weight=0。
-- detailed_roles / replacement_gap / matchup_interaction / task_utility: MISSING
-- process_capability: PARTIAL_NOT_PASS（ESP_LaLiga 可用 `SHOTS_SOT_PROXY`，不得称为 true xG）
+- forward_capture_record_count: 2
+- task_utility: PASS（2 valid / 0 invalid）
+- detailed_roles: MISSING
+- replacement_gap: MISSING
+- process_capability: PARTIAL_NOT_PASS
+- matchup_interaction: MISSING_WAITING_ROLE_AXIS
+- independent_oos_authorized: false
+- target labels / 训练 / 评分 / 调参 / Provider / 付费 Provider / formal_weight 全部 0。
 
 ## 已完成、禁止重复
 
+- task_utility 不再是“无 extractor”问题；固定 extractor 已实现并经 Actions self-test。
+- 不要再手工给 motivation、fatigue、travel 打权重；只能按固定 extractor 输出 source-backed 结构化事实。
 - 不得再次把姓名列表或阵型习惯人工变成 target-fixture 详细战术角色。
-- 不得把来源叙述人工转换成 task_utility、replacement gap 或 matchup score。
-- 不得把 Cadena SER 正文灌入研究数据集；其本轮仅作为来源发现参考。
-- 不得把 `SHOTS_SOT_PROXY` 改称 xG。
+- 不得把伤停名单直接等同于 replacement gap；必须有同 freeze 的角色、可靠替代候选和选择/深度证据。
+- 不得把 `SHOTS_SOT_PROXY` 改称 true xG。
 - 不得为了让 validator 变绿而创建只有 schema 元数据、没有真实 feature payload 的 process record。
 - 不得读取目标赛果标签、训练、评分、调参、调用付费 Provider 或改变 formal_weight。
-- 旧 `足球2.txt` 继续 `DEPRECATED_LEGACY_ENTRY`、execution_weight=0，不再阻塞接续。
+- 旧 `足球2.txt` 继续 `DEPRECATED_LEGACY_ENTRY`、execution_weight=0。
 
 ## 唯一下一步
 
-- 继续 R45B 免费公开源前向零标签采集，但只接受合同级可核验证据。
-- `expected_xi_roles`：必须两队同一 freeze 下有明确 role/position slot，且有 formation/shape；仅姓名或需要人工推断时继续拒绝。
-- `availability_and_replacement`：必须同 freeze 的 unavailable/doubtful 身份、角色、可靠 replacement candidate 与选择/深度证据。
-- `process_capability`：只可用严格先验的真实 feature payload；LaLiga 当前只能标 `SHOTS_SOT_PROXY`。
-- `task_utility`：先有固定可执行 extractor，再采集 source-backed facts；不得手工打动机分。
-- 即使数据 readiness 后续 PASS，也必须另行预注册并获得明确 independent OOS authorization，才允许读目标标签/训练/评分。
+- 继续 R45B 免费公开源、前向、零标签采集剩余阻塞轴。
+- `expected_xi_roles`：必须两队同一 freeze 下各 11 人有明确 role/position slot，并有 formation/shape；仅姓名或需人工推断则拒绝。
+- `availability_and_replacement`：必须同 freeze unavailable/doubtful 身份、角色、可靠 replacement candidate 与 selection/depth evidence。
+- `process_capability`：必须严格先验的真实 feature payload；LaLiga 当前只能标 `SHOTS_SOT_PROXY`，true xG 不得虚构。
+- `matchup_interaction`：等角色首发轴合法后，按已预注册 interaction 规则运行，不手工打分。
+- 即使完整数据 readiness 后续 PASS，也必须另行预注册并获得明确 independent OOS authorization，才允许读取目标标签/训练/评分。
 
 ## 权威优先级
 
