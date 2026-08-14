@@ -1,0 +1,38 @@
+name: football-r55-ou-zero-label-match
+
+on:
+  push:
+    branches:
+      - research/r55-ou-matched300-20260814
+    paths:
+      - 'football-data/research/r55_candidate_identity_part*.csv'
+      - 'football-data/research/r55_match_independent_ou_zero_label_20260814.py'
+      - '.github/workflows/football-r55-ou-zero-label-match.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-match:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match archive identities to pinned independent OU
+        run: python football-data/research/r55_match_independent_ou_zero_label_20260814.py
+      - name: Verify label-access declaration
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/r55_independent_ou_matched300_zero_label.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['frozen_count']==300
+          assert all(v==0 for v in d['label_access'].values())
+          print(d['status'], d['sample_id_sha256'], d['time_window'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r55-independent-ou-matched300-zero-label
+          path: football-data/research/r55_independent_ou_matched300_zero_label.json
+          if-no-files-found: error
+          retention-days: 14
