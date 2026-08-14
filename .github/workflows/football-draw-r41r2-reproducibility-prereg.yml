@@ -1,0 +1,37 @@
+name: Football Draw R41R2 Reproducibility Prereg
+
+on:
+  push:
+    branches: [research/draw-pit-availability-zero-label-20260814]
+    paths:
+      - 'football-data/research/r41_legacy_reproducibility_seal_20260814.md'
+      - 'football-data/research/r41r2_pit_availability_transition_prereg_20260814.json'
+      - 'football-data/research/validate_r41r2_reproducibility_prereg_20260814.py'
+      - '.github/workflows/football-draw-r41r2-reproducibility-prereg.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draw-r41r2-reproducibility-prereg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Validate sealed legacy R41 and frozen R41R2 prereg
+        run: python football-data/research/validate_r41r2_reproducibility_prereg_20260814.py
+      - name: Enforce zero-label research-only invariants
+        run: >-
+          python -c "import json; p=json.load(open('r41r2-prereg-validation/receipt.json',encoding='utf-8')); assert p['confirmation_labels_open'] is False; assert p['training_runs']==0; assert p['scoring_runs']==0; assert p['tuning_runs']==0; assert p['formal_weight']==0"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draw-r41r2-reproducibility-prereg
+          path: r41r2-prereg-validation/
