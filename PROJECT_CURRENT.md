@@ -4,10 +4,10 @@
 
 - project_id: football-project
 - state_version: 53
-- updated_at_utc: 2026-08-14T10:14:00Z
+- updated_at_utc: 2026-08-14T13:46:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: `STATE53_R55_HARD_OU_PROJECTION_FAIL_RANKING_SIGNAL_PRESENT`
-- status: WAITING
+- status_source: `STATE53_R55B_EXECUTION_DISPATCH_GAP_VERIFIED`
+- status: BLOCKED
 - state_log_record_id: `recU6blnhI73XIRWo`
 
 ## 正式规则状态
@@ -17,13 +17,15 @@
 - CURRENT_count: 1
 - old_version_execution_weight: 0
 - formal model/data/config/CURRENT changes in state53: 0
-- all R55 work remains research-only, formal_weight=0
+- all R55/R55B work remains research-only, formal_weight=0
 
 ## 接续治理
 
 state51的“实质科学结论前置发布硬门”继续生效：任何新的PASS/FAIL/STOP/封存、瓶颈变化或唯一下一方向变化产生后，必须先完成新的state_version双边发布，之后才允许下一研究原子步骤。
 
-本state53严格按该门执行：R55固定300结果产生后先发布state53，未直接在同一300上调OU权重。
+2026-08-14 20:48+08核验发现：R55B prereg 已存在，但没有真实 R55B Actions run、没有 run_id/job_id、没有 result；此前 checkpoint31 被过早标记 RUNNING。已在 Airtable 将唯一激活检查点纠正为 checkpoint32 / BLOCKED / VERIFIED_ABSENT。科学设计、固定300、sample hash 和 alpha 规则均未修改。
+
+后续状态纪律新增一条执行门：**没有 concrete run_id/job_id 时，不得把研究执行状态标记为 RUNNING。**
 
 ## R55：独立OU固定300增量试验
 
@@ -99,17 +101,33 @@ OU本身并非无信息：在同一300场上，预测 `T>=3` 的排序AUC：
 
 不得把OU AUC提升单独写成R55模型PASS。
 
+## R55B 预注册状态
+
+- branch: `research/r55-ou-matched300-20260814`
+- prereg: `football-data/research/r55b_pretarget_ou_alpha_prereg_20260814.json`
+- frozen target n: 300
+- frozen target sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
+- alpha: single global scalar in [0,1]
+- alpha fitting data: only strict pre-target historical OU overlap before 2016-03-01
+- target300 may not be used to select alpha
+- current execution state: `BLOCKED_EXECUTION_DISPATCH_GAP`
+- R55B run_id: absent
+- R55B job_id: absent
+- R55B result: absent
+
 ## 唯一下一研究方向
 
-R55B / 下一原子步骤只能研究：
+保持R55B冻结设计不变，只补齐可持久化执行链：
 
 `pre-target historical OU overlap -> learn fixed OU residual strength/calibration -> freeze strength -> apply to same frozen300 -> Direct-T -> conditional draw -> natural H/D/A`
 
-约束：
-1. OU注入强度必须完全由目标300之前的独立OU重叠历史学习；
-2. 禁止在这300场搜索权重、阈值或挑最佳强度；
-3. 300场只允许一次应用冻结参数并评分；
-4. 若前置历史无法支持稳定强度估计，必须STOP而不是人工指定权重。
+执行顺序：
+1. 构造/持久化 R55B runner 与 workflow；
+2. 使用现有历史OU输入，不访问付费Provider；
+3. 真实 dispatch 并取得 concrete run_id/job_id 后，才把状态改为 RUNNING；
+4. 前置校准 n<300 则标签/评分前 STOP；
+5. alpha 冻结后仅一次应用固定300；
+6. 任何新的科学 PASS/FAIL/STOP 产生后，必须先发布新 state_version。
 
 ## 当前禁止事项
 
@@ -119,7 +137,7 @@ R55B / 下一原子步骤只能研究：
 - 不读取新的2025/26确认窗；
 - 不调用付费Provider；
 - 不修改正式模型、正式数据、正式config或CURRENT；
-- 不正式晋级R55。
+- 不正式晋级R55/R55B。
 
 ## Airtable锚点
 
@@ -127,7 +145,7 @@ R55B / 下一原子步骤只能研究：
 - current_state_record: `recs1pQ1rhuwJQAzE`
 - state53 maintenance_log: `recU6blnhI73XIRWo`
 - execution_checkpoint: `recIRxK7EIMjJdG4A`
-- checkpoint_version: 30
+- checkpoint_version: 32
 
 ## 权威优先级
 
