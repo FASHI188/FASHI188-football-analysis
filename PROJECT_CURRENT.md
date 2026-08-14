@@ -4,9 +4,9 @@
 
 - project_id: football-project
 - state_version: 53
-- updated_at_utc: 2026-08-14T13:46:00Z
+- updated_at_utc: 2026-08-14T15:56:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: `STATE53_R55B_EXECUTION_DISPATCH_GAP_VERIFIED`
+- status_source: `STATE53_R55B_RAW_ARCHIVE_REATTACH_BLOCKER_VERIFIED`
 - status: BLOCKED
 - state_log_record_id: `recU6blnhI73XIRWo`
 
@@ -23,9 +23,9 @@
 
 state51的“实质科学结论前置发布硬门”继续生效：任何新的PASS/FAIL/STOP/封存、瓶颈变化或唯一下一方向变化产生后，必须先完成新的state_version双边发布，之后才允许下一研究原子步骤。
 
-2026-08-14 20:48+08核验发现：R55B prereg 已存在，但没有真实 R55B Actions run、没有 run_id/job_id、没有 result；此前 checkpoint31 被过早标记 RUNNING。已在 Airtable 将唯一激活检查点纠正为 checkpoint32 / BLOCKED / VERIFIED_ABSENT。科学设计、固定300、sample hash 和 alpha 规则均未修改。
+state53的科学结论没有变化。本次只修复同一state53内已经发生的接续漂移：Airtable实时执行检查点已推进到R55B输入恢复穷尽审计，但GitHub本文件仍停留在更早的“dispatch gap”描述。后续实时原子步骤仍以Airtable唯一激活《执行检查点》为准；高频checkpoint_version本身不要求递增state_version。
 
-后续状态纪律新增一条执行门：**没有 concrete run_id/job_id 时，不得把研究执行状态标记为 RUNNING。**
+另确认一项绑定纪律：`state_log_record_id`只绑定建立state53的维护日志`recU6blnhI73XIRWo`，不得被后续普通维护日志覆盖。
 
 ## R55：独立OU固定300增量试验
 
@@ -93,7 +93,7 @@ OU本身并非无信息：在同一300场上，预测 `T>=3` 的排序AUC：
 
 但OU组概率硬替换的二元LogLoss反而略差：0.67911110 vs 0.67818525。
 
-因此科学结论从“是否需要独立OU”进一步收敛为：
+因此科学结论保持：
 **OU存在正交排序信息，但直接100%硬投影的注入强度/校准不合适。**
 
 固定裁决：
@@ -104,36 +104,58 @@ OU本身并非无信息：在同一300场上，预测 `T>=3` 的排序AUC：
 ## R55B 预注册状态
 
 - branch: `research/r55-ou-matched300-20260814`
+- exact research HEAD: `2e786c66cfd1678d592bb6e16f666eabf70db611`
 - prereg: `football-data/research/r55b_pretarget_ou_alpha_prereg_20260814.json`
 - frozen target n: 300
 - frozen target sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
 - alpha: single global scalar in [0,1]
 - alpha fitting data: only strict pre-target historical OU overlap before 2016-03-01
 - target300 may not be used to select alpha
-- current execution state: `BLOCKED_EXECUTION_DISPATCH_GAP`
+- current execution state: `WAITING_RAW_ARCHIVE_REATTACH`
 - R55B run_id: absent
 - R55B job_id: absent
 - R55B result: absent
 
+## R55B 输入恢复状态
+
+已穷尽当前仓库/Git历史/Actions/File Library可无损恢复路径：
+
+- calibration完整恢复475条；
+- calibration-min完整恢复471条；
+- 两者均只到2015-11-28；
+- R55 fixed target300独立OU逐场输入已从Artifact `9215167178`完整恢复；
+- Git历史只确认现存`cal_01/cal_02/calmin_01`分片；
+- Actions未发现可替代的R55逐场archive grid71评分/1X2中间Artifact。
+
+当前缺失且不可人工替代：
+
+- 2015-11-28之后至2016-02-29的pre-target archive grid71校准尾段；
+- fixed target300对应的archive grid71 `qH/qD/qA`输入。
+
+因此当前不能合法拟合alpha或评分target300；R55B模型计算尚未启动。
+
 ## 唯一下一研究方向
 
-保持R55B冻结设计不变，只补齐可持久化执行链：
+保持R55B冻结科学设计和固定300完全不变：
 
-`pre-target historical OU overlap -> learn fixed OU residual strength/calibration -> freeze strength -> apply to same frozen300 -> Direct-T -> conditional draw -> natural H/D/A`
-
-执行顺序：
-1. 构造/持久化 R55B runner 与 workflow；
-2. 使用现有历史OU输入，不访问付费Provider；
-3. 真实 dispatch 并取得 concrete run_id/job_id 后，才把状态改为 RUNNING；
-4. 前置校准 n<300 则标签/评分前 STOP；
-5. alpha 冻结后仅一次应用固定300；
-6. 任何新的科学 PASS/FAIL/STOP 产生后，必须先发布新 state_version。
+1. 重新附加同一 `archive (1)(1).zip`；
+2. 第一动作只校验SHA-256，必须等于 `8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`；
+3. SHA不匹配立即STOP，不使用近似archive；
+4. SHA匹配后，确定性补齐缺失pre-target tail与target300 archive grid71输入；
+5. 再落R55B runner/workflow；
+6. 真实dispatch并取得concrete run_id/job_id后，才允许执行状态标记RUNNING；
+7. 前置校准n<300则按预注册STOP；
+8. alpha冻结后仅一次应用原固定300；
+9. 任何新的科学PASS/FAIL/STOP产生后，先发布新state_version。
 
 ## 当前禁止事项
 
+- 不重新抽300场；
+- 不用471条截断校准集直接拟合alpha；
+- 不用Football-Data 1X2、近似公式或其他来源替代archive grid71；
 - 不在固定300上搜索OU权重；
 - 不forced draw / Top-k / class weight / 人工1-1奖励；
-- 不把OU排序AUC提升冒充最终HDA增益；
+- 不把输入审计run称为R55B模型run；
 - 不读取新的2025/26确认窗；
 - 不调用付费Provider；
 - 不修改正式模型、正式数据、正式config或CURRENT；
@@ -143,9 +165,10 @@ OU本身并非无信息：在同一300场上，预测 `T>=3` 的排序AUC：
 
 - base: `足球项目接续`
 - current_state_record: `recs1pQ1rhuwJQAzE`
-- state53 maintenance_log: `recU6blnhI73XIRWo`
-- execution_checkpoint: `recIRxK7EIMjJdG4A`
-- checkpoint_version: 32
+- state53 creation log: `recU6blnhI73XIRWo`
+- latest R55B recovery maintenance log: `rec1LbQyn0bQzXrR3`
+- execution_checkpoint_record: `recIRxK7EIMjJdG4A`
+- realtime checkpoint_version: 以Airtable唯一激活记录为准，不在本文件内写死
 
 ## 权威优先级
 
