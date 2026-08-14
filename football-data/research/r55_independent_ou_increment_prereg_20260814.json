@@ -1,0 +1,86 @@
+{
+  "schema": "R55_INDEPENDENT_OU_INCREMENT_MATCHED300_PREREG_R1",
+  "created_utc": "2026-08-14T09:56:00Z",
+  "formal_weight": 0,
+  "purpose": "Measure the incremental information in an independent historical OU2.5 market for Direct-T and natural draw probabilities on a pre-frozen 300-match sample.",
+  "source_archive_sha256": "8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1",
+  "target_freeze": {
+    "n": 300,
+    "sample_id_sha256": "7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb",
+    "time_window": ["2016-03-01 20:45:00", "2016-04-16 16:00:00"],
+    "selection_used_labels": false,
+    "zero_label_actions_run": 31790299125,
+    "zero_label_artifact_id": 9215167178,
+    "zero_label_json_sha256": "b6fbc6bd2b1d9cae6af36bf968d11476fe9330a3a1a4041faa829913835140b9"
+  },
+  "independent_ou": {
+    "source": "jokecamp/FootballData mirror of football-data.co.uk 2015-16",
+    "field_pair": ["BbAv>2.5", "BbAv<2.5"],
+    "devig": "normalize inverse over/under prices",
+    "pinned_blob_shas": {
+      "England: Premier League": "6d94d4ae4e3a995261b5c3aa92e48ddf05d46e74",
+      "England: Championship": "57cf8071f86b45870018bf90554f612c66b281d1",
+      "England: League One": "c7f3399aa0f6b7ca8c8b10844fc7bbba78de9ab2",
+      "England: League Two": "3aa62ec193d7e590004c34ff08e91c2b57122c76"
+    },
+    "evidence_class": "RETROSPECTIVE_REFERENCE_ONLY_NO_ORIGINAL_QUOTE_TIMESTAMP"
+  },
+  "training": {
+    "source": "archive closing_odds.csv.gz only",
+    "eligible_leagues": ["England: Premier League", "England: Championship", "England: League One", "England: League Two"],
+    "training_end_inclusive": "2015-06-30",
+    "target_overlap": 0,
+    "features": [
+      "strength=log(qH/qA)",
+      "qD",
+      "market_entropy",
+      "pmax",
+      "openness=log(sqrt(qH*qA)/qD)",
+      "four fixed league one-hot indicators"
+    ],
+    "market_probability": "qH,qD,qA from inverse avg_odds_home_win/avg_odds_draw/avg_odds_away_win then normalized",
+    "direct_t_target": ["0","1","2","3","4","5","6","7+"],
+    "direct_t_model": "StandardScaler + sklearn LogisticRegression L2, C=1.0, solver=lbfgs, max_iter=5000, tol=1e-8; no class_weight",
+    "conditional_draw": {
+      "T=0": 1.0,
+      "T=1,3,5": 0.0,
+      "T=2,4,6,7+": "separate StandardScaler + LogisticRegression L2 with the same features; C=1.0, solver=lbfgs, max_iter=5000, tol=1e-8; target is match draw conditional on total category"
+    },
+    "home_away_residual": "after structural draw mass, split 1-pD in proportion to target grid71 qH:qA"
+  },
+  "target_market_features": {
+    "source": "archive odds_series_b.csv.gz grid71 only",
+    "construction": "for each bookmaker with a complete H/D/A triple, convert to inverse odds; average implied probabilities by outcome then normalize across H/D/A",
+    "minimum_complete_bookmakers": 8,
+    "target_score_columns_access_before_prereg": 0
+  },
+  "ou_projection": {
+    "type": "two-group KL/I-projection preserving within-group prior ratios",
+    "under_group": ["0","1","2"],
+    "over_group": ["3","4","5","6","7+"],
+    "formula_under": "p_new(t)=p_old(t)*q_under/sum_{k<=2}p_old(k)",
+    "formula_over": "p_new(t)=p_old(t)*q_over/sum_{k>=3}p_old(k)",
+    "no_manual_distribution_creation": true
+  },
+  "primary_metrics": [
+    "Direct-T 8-class LogLoss delta OU-minus-baseline",
+    "Direct-T RPS delta",
+    "HDA LogLoss delta",
+    "Draw binary LogLoss delta",
+    "Draw Brier delta",
+    "Draw AUC delta",
+    "natural argmax draw count/hits/precision/recall"
+  ],
+  "uncertainty": "2000 iid bootstrap resamples with fixed seed 20260814; report 90% interval for Direct-T LL and HDA LL deltas",
+  "hard_prohibitions": [
+    "no threshold search",
+    "no forced draw",
+    "no Top-k override",
+    "no class weights",
+    "no target-driven feature selection",
+    "no artificial 1-1 reward",
+    "no 2025/26 confirmation access",
+    "no formal promotion from this retrospective sample"
+  ],
+  "decision_rule": "OU is a positive R55 increment only if Direct-T LogLoss improves and HDA/Draw proper scores do not materially worsen; natural Top-1 draw behavior is reported but is not optimized."
+}
