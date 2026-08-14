@@ -1,0 +1,30 @@
+{
+  "protocol": "DRAW_MARKET_TRAJECTORY_RESIDUAL_FIXED300_R1",
+  "created_at": "2026-08-14T13:14:00+08:00",
+  "data_source": "user-uploaded archive (1)(1).zip; odds_series*.csv.gz only",
+  "scope": "research_only",
+  "formal_weight": 0,
+  "selection_manifest_sha256": "68bb5abe56861493d4600737d3e2d8e5a21c45b1d5f4c1e275fc12e6dec1b795",
+  "holdout_ids_sha256": "2d421f44045177d7f8ece084a3c1d9d35d14bace62138a6d150650fb1d417edb",
+  "labels_read_before_freeze": 0,
+  "train_rule": "all eligible rows strictly earlier in sorted eligible table except frozen last300; same feature rules",
+  "holdout_rule": "latest 300 chronologically among rows with >=8 complete books at grid 48,60,66,71 and >=8 common books at 48/71",
+  "baseline": {"name":"grid71_32book_consensus_no_vig","definition":"For each bookmaker with complete H/D/A odds at grid71, convert odds to normalized implied H/D/A probabilities; take median across books; renormalize three medians to sum1."},
+  "challenger": {
+    "family":"fixed-offset draw logistic residual",
+    "equation":"logit(qD)=logit(pD_close)+intercept+beta^T z",
+    "features_order":["f_dpd_48_71","f_dpd_60_71","f_disp_change_48_71","f_balance_change_48_71","f_draw_up_share_c","f_draw_accel_late"],
+    "standardization":"training mean and population sd only; sd floor 1e-12",
+    "fit":"L2 penalized logistic by IRLS/Newton; intercept unpenalized; lambda=1.0; max_iter=50; tol=1e-8",
+    "h_a_allocation":"after qD, preserve baseline H:A ratio: qH=(1-qD)*pH/(pH+pA), qA=(1-qD)*pA/(pH+pA)",
+    "decision":"natural argmax(qH,qD,qA) only",
+    "forbidden":["threshold_search","forced_draw","forced_topk","feature_search_on_holdout","post-label_weight_tuning"]
+  },
+  "metrics":["HDA_logloss","Draw_logloss","Draw_Brier","Draw_AUC","overall_top1_accuracy","natural_draw_count","natural_draw_precision","natural_draw_recall"],
+  "primary_gate": {
+    "probability_layer_pass":"HDA_logloss_delta<0 AND Draw_logloss_delta<0 AND Draw_Brier_delta<0 AND Draw_AUC_delta>0",
+    "top1_execution_signal":"natural_draw_count>=10 AND natural_draw_precision>baseline_natural_draw_precision AND overall_top1_accuracy_delta>=0",
+    "note":"both reported separately; no promotion from one alone"
+  },
+  "independence_caveat":"Repository-wide historical consumption overlap cannot be proven from currently recoverable manifests; therefore this fixed300 is NOT labeled independent OOS unless exact overlap audit later proves zero overlap."
+}
