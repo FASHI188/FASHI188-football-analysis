@@ -5,79 +5,125 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 18
-- state_version: 47
-- updated_at_utc: 2026-08-14T02:03:00Z
+- handoff_version: 19
+- state_version: 51
+- updated_at_utc: 2026-08-14T09:21:00Z
 - status: WAITING
 
 ## 用户最后指令
 
-检查GitHub账户中已安装的GitHub Apps是否真正工作，并把未接通的仓库端集成补齐。当前已开始执行，禁止为了测试乱合并PR、改正式模型或添加不必要Secret。
+用户要求把第二次出现的接续状态不同步彻底“修齐”，并说明为什么会重复发生。当前只做治理修复，不启动新的R55实验。
 
-## 本轮最后实际动作
+## 本轮实际发现
 
-### Codecov已真实接通
+第二次失步的直接证据：
 
-- 新建治理分支：`chore/github-apps-integration-r1`
-- HEAD：`07dced6e25a4e8e5af025fb9388936c44f4f5899`
-- 新建Draft PR：`#192` / Open / Draft / Unmerged
-- 唯一代码改动：`.github/workflows/football-codecov-coverage.yml`
-- 采用GitHub OIDC，不使用`CODECOV_TOKEN`：`contents: read` + `id-token: write`
-- Actions run：`31762424361`
-- job：`94651393044`
-- coverage生成：success
-- Codecov OIDC upload：success
-- Codecov真实Check Run：`94651474018` / `codecov/patch` / success
-- repository-integrity：success
-- changed-file quality/security guard：success
+- 唯一CURRENT仍为V5.2.0，数量1，无版本冲突；
+- GitHub `PROJECT_CURRENT.md` 与 `LAST_HANDOFF.md` 停在state47；
+- Airtable《当前状态》也停在state47；
+- Airtable《当前状态》保存的执行检查点版本为21；
+- 唯一激活《执行检查点》实际已经到version27；
+- 维护日志已经实际推进R51、R52、R53、R54。
 
-结论：Codecov不再是“仅安装App/空suite”，已经有真实coverage上传和PR Check结果。
+所以问题不是研究丢了，而是**高频层和低频正式接续层脱节**。
 
-### 其他已安装Apps状态
+## 为什么会第二次发生
 
-- ChatGPT Codex连接器：真实工作，仓库读写/PR/Actions/Artifact链已验证。
-- Mend Renovate：真实工作，Dependency Dashboard #188与PR #187均由Renovate创建。
-- GitGuardian：能收到GitHub push/PR事件并创建Check Suite；无secret告警不等于失效。
-- DeepSource：默认分支已有`.deepsource.toml`，Python analyzer配置存在；App收到事件，但无实际Check Run。官方要求在DeepSource服务端启用Code Review/analysis。
-- SonarQubeCloud：默认分支已有`.sonarcloud.properties`；App收到事件，但无实际Check Run。官方Automatic Analysis要求先在SonarQubeCloud导入GitHub仓库并启用项目分析。
+原协议虽然写了“重要状态变化要更新PROJECT_CURRENT/LAST_HANDOFF”，但没有在“下一研究原子步骤启动前”做机器式硬门。
 
-## 当前停点
+因此出现了这条错误路径：
 
-仓库端能直接完成的CodeCov缺口已经修复并验收。
+`R51完成 -> 写维护日志/检查点 -> 直接R52 -> R53 -> R54`
 
-DeepSource和SonarQubeCloud不应通过新增冗余scanner或Secret来伪造“已接通”；当前真正缺口在两个服务的网站端项目激活。
+而没有强制执行：
+
+`实质科学结论 -> state publication -> 回读一致 -> 才能下一研究步骤`
+
+结果维护日志和实时检查点越走越前，正式接续层仍旧停在state47。
+
+## 本轮修复
+
+1. 新建绑定维护日志state51：`recrFkhQsfbpetHcw`。
+2. 唯一激活检查点进入修复事务，checkpoint_version=28。
+3. `ACTIVE_CHECKPOINT.md`加入“实质科学结论前置发布硬门”。
+4. `PROJECT_CURRENT.md`升级到state51，并正式写入R51-R54真实科学状态。
+5. `LAST_HANDOFF.md`升级到state51，恢复点固定在R54完成/R55未开始。
+6. state51完成后，任何新的PASS/FAIL/STOP/封存/瓶颈变化/唯一研究方向变化，下一研究步骤启动前必须先做state publication；否则 `BLOCKED_STATE_PUBLICATION_LAG`。
+
+## 当前科学接力点
+
+### R52
+
+Oracle定位显示：给定真实总进球T后，现有条件D|T结构能自然产生大量平局；主要瓶颈收敛到赛前P(T)质量与锐度，而不是继续强攻平局阈值。
+
+### R53
+
+1X2开放度轴有微弱排序价值，但同源1X2信息不足以把P(T)锐化到自然Top-1平局执行层。
+
+### R54
+
+- branch: `research/draw-r54-direct-t-rolling900-20260814`
+- commit: `5654a015746e06e33580299052949132db34c7d9`
+- sample hash: `d23cc3fe92d8461490d63b1402a8a7ac15ceea2b2f316df390d4543a260ef61b`
+- 900场/242平
+- candidate T LL 1.832234 vs old 1.830746，变差+0.001488
+- HDA LL 0.989507 vs market0.987263，变差+0.002244
+- Draw AUC 0.566204 vs market0.581970，变差-0.015766
+- 自然Top1平局7报2中，precision28.57%、recall0.83%
+- HDA LL bootstrap90% [0.000982,0.004186]，明确有害
+- Oracle真实T仅用于定位：305报平/193中，precision63.28%、recall79.75%、overall HDA accuracy63.44%
+
+固定裁决：`FAIL_R54_ARCHIVE_ONLY_NO_BREAKTHROUGH_DO_NOT_CONFIRM`。
+
+**最新科学结论：同一1X2轨迹包已经基本榨干；真正缺的是独立赛前总进球/机会量信息。**
 
 ## 唯一下一步
 
-1. 用户在DeepSource中选择 `FASHI188/FASHI188-football-analysis`，进入Repository Settings > Code Review，启用Code Review/analysis；若已有`.deepsource.toml`但仍卡住，按官方建议关闭再重新启用analysis。
-2. 用户在SonarQubeCloud中Import `FASHI188/FASHI188-football-analysis`，选择/启用Automatic Analysis。
-3. 用户完成以上点击后，直接回复“好了”；下一轮立即对PR/新commit的Check Suite和Check Run做只读验收，不需要用户再解释。
-4. PR #192继续保持Draft/Open/Unmerged；未经明确授权不得Ready或合并。
+R55尚未开始。
 
-## 足球研究状态保持不变
+下一研究方向固定为：
 
-- 唯一CURRENT：V5.2.0，未修改。
-- PIT research branch：`research/draw-pit-availability-zero-label-20260814`
-- research HEAD：`2091fbd1e67bc581bf77525b076d3966a8adabef`
-- Draft PR #191：Open / Draft / Unmerged / formal_weight=0。
-- R40静态伤停FAIL；R41在已消费609条探索中自然Top-1 Draw 25报11中/44%，但未独立确认且全局LL/AUC未改善。
-- R41继续冻结；不得在609条上调阈值、权重、特征或forced Top-k。
-- 后续若恢复平局研究：第三时间段零标签PIT覆盖门 -> 同一R41候选原样复核。
+`独立OU市场 -> OU residual / Total Surprise -> Direct-T prior修正 -> 条件D|T -> 自然H/D/A`
 
-## 正式资产变化
+优先研究：
 
-- formal model/data/config/CURRENT change=0
-- research labels/training/scoring change=0
-- Secret新增=0
-- Provider/paid API=0
-- PR #192仅工程治理workflow，未合并
+- 去水OU2.5绝对水平；
+- OU开盘到收盘变化；
+- Pinnacle/Bet365/Avg/Max等OU分歧；
+- `OU信息 - 1X2隐含开放度` 的正交Total Surprise；
+- 若历史数据有多线OU，进一步约束总进球CDF；
+- 第二顺位才是严格赛前射门/射正/xG/机会质量等PIT机会量。
+
+OU不得人工拆分制造0-7+分布，只能修正已有Direct-T prior或作为可审计约束。
+
+## 当前禁止事项
+
+- 不继续在R50/R51/R53/R54同窗调阈值、forced draw、Top-k、class weight或人工比分奖励；
+- 不继续从同一1X2轨迹包堆复杂模型；
+- 不把Oracle结果写成可预测结果；
+- 不读取新的2025/26确认标签；
+- 不调用付费Provider；
+- 不修改正式模型、正式数据、正式config或CURRENT；
+- DeepSource/Sonar治理暂停；PR #192保持Draft/Open/Unmerged。
+
+## 新对话恢复硬门
+
+启动研究前必须确认：
+
+`PROJECT_CURRENT.state_version = LAST_HANDOFF.state_version = Airtable当前状态.state_version = 激活检查点.state_version = 51`
+
+并且：
+
+`Airtable当前状态.执行检查点版本 = 激活检查点.checkpoint_version`
+
+如不一致，不得研究，固定停止为 `BLOCKED_STATE_PUBLICATION_LAG`。
 
 ## Airtable恢复锚点
 
-- current_state `recs1pQ1rhuwJQAzE` / state47
-- maintenance log `recM2AreYV6vPfHxQ`
-- execution checkpoint `recIRxK7EIMjJdG4A` / state47
+- current_state: `recs1pQ1rhuwJQAzE`
+- state51 maintenance log: `recrFkhQsfbpetHcw`
+- execution checkpoint: `recIRxK7EIMjJdG4A`
 
 ## 权威优先级
 
-用户当前明确指令 > 唯一正式CURRENT > ACTIVE_CHECKPOINT实时断点 > LAST_HANDOFF > PROJECT_CURRENT + Airtable当前状态/绑定维护日志 > 历史聊天/旧文件/记忆。
+用户当前明确指令 > 唯一正式CURRENT > ACTIVE_CHECKPOINT实时协议与唯一激活检查点 > LAST_HANDOFF > PROJECT_CURRENT + Airtable当前状态/绑定维护日志 > 历史聊天/旧文件/记忆。
