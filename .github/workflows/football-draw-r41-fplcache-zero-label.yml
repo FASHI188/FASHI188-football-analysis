@@ -1,0 +1,87 @@
+name: Football Draw R41 High-Frequency FPL Cache Zero-Label Audit
+
+on:
+  push:
+    branches: [research/draw-pit-availability-zero-label-20260814]
+    paths:
+      - 'football-data/research/draw_pit_availability_r41_fplcache_zero_label_audit_20260814.py'
+      - '.github/workflows/football-draw-r41-fplcache-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draw-r41-fplcache-zero-label-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Sparse-clone public six-hour FPL cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/Randdalf/fplcache.git external-fplcache
+          git -C external-fplcache sparse-checkout set \
+            cache/2025/8 cache/2025/9 cache/2025/10 cache/2025/11 cache/2025/12 \
+            cache/2026/1 cache/2026/2 cache/2026/3 cache/2026/4 cache/2026/5
+          git -C external-fplcache rev-parse HEAD > fplcache_head.txt
+          test -s fplcache_head.txt
+
+      - name: Fetch score-free pre-season fixture identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p external-fixtures
+          curl --fail --silent --show-error --location \
+            'https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/46277afda009b340e738336dabc4b0822dd80c57/data/2025-26/fixtures.csv' \
+            --output external-fixtures/fixtures.csv
+          test -s external-fixtures/fixtures.csv
+
+      - name: Run zero-label high-frequency source coverage audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python football-data/research/draw_pit_availability_r41_fplcache_zero_label_audit_20260814.py \
+            --cache-dir external-fplcache/cache \
+            --fixtures-csv external-fixtures/fixtures.csv \
+            --cache-head "$(cat fplcache_head.txt)" \
+            --out r41-fplcache-zero-label-audit
+
+      - name: Enforce zero-label and formal-isolation invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('r41-fplcache-zero-label-audit/coverage_receipt.json')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          assert d['target_labels_read'] == 0
+          assert d['target_score_values_accessed'] == 0
+          assert d['model_fits'] == 0
+          assert d['training_runs'] == 0
+          assert d['scoring_runs'] == 0
+          assert d['tuning_runs'] == 0
+          assert d['provider_requests'] == 0
+          assert d['paid_provider_requests'] == 0
+          assert d['formal_weight'] == 0
+          assert d['formal_model_data_config_current_changes'] == [0, 0, 0, 0]
+          assert d['minimum_lead_hours'] == 6.0
+          assert d['maximum_staleness_days'] == 10.0
+          print(d['status'])
+          print('eligible_fixture_count=', d['eligible_fixture_count'])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draw-r41-fplcache-zero-label-coverage
+          path: r41-fplcache-zero-label-audit/
