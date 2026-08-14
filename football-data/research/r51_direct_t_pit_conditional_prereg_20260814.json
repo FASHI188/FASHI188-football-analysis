@@ -1,0 +1,131 @@
+{
+  "schema_version": "R51-DIRECT-T-PIT-CONDITIONAL-DEV-R1",
+  "created_at": "2026-08-14T13:51:00+08:00",
+  "classification": "RESEARCH_ONLY_VIEWED_DEVELOPMENT",
+  "formal_weight": 0,
+  "scientific_question": "Does pre-match PIT availability state change add useful information when mapped through direct total-goals and conditional zero-margin structure, rather than directly perturbing H/D/A?",
+  "governance": {
+    "development_label_access": ["2021-22", "2022-23", "2023-24", "2024-25"],
+    "confirmation_2025_26_label_access": false,
+    "confirmation_2025_26_score_access": false,
+    "provider_requests": 0,
+    "paid_provider_requests": 0,
+    "formal_model_data_config_current_changes": [0, 0, 0, 0],
+    "forbidden": [
+      "manual draw probability boost",
+      "forced draw threshold",
+      "Top-k draw override",
+      "manual expected goals",
+      "sum of two invented team goal means as Direct-T",
+      "2025/26 result or score access before separate confirmation preregistration"
+    ]
+  },
+  "historical_anchor": {
+    "r35_summary_path": "football-data/research/draw_t_conditioned_r35_r39_summary.md",
+    "r35_result_sha256": "4d8a28e08d4b08f8c1341dcc9186d3190b2f24ad1460b42e15af36093d98af93",
+    "r35_scorer_sha256_recorded_but_not_persisted_as_git_blob": "95736ba9085a550f3aeac44ee7e522a978cc503d4e5b1722e9412b4468aa33b0",
+    "persisted_conditional_structure_reference_commit": "d43646fb1f13cb3ac4e0d784fcea02b9def8ea92",
+    "interpretation": "R51 is a new reproducible structural family consistent with the R35 Direct-T -> conditional D=0 hypothesis. It is not claimed to be byte-identical R35 replication."
+  },
+  "data_contract": {
+    "competition": "ENG_PremierLeague",
+    "market_files": "football-data/processed/ENG_PremierLeague/{season}.csv",
+    "market_inputs": {
+      "one_x_two": "closing no-vig probabilities; priority AvgC, B365C, MaxC, PSC",
+      "ou_2_5": "closing no-vig Over/Under 2.5; priority AvgC, B365C, MaxC, P closing"
+    },
+    "pit_source": "vaastav/Fantasy-Premier-League Git history",
+    "pit_current_snapshot": "latest valid snapshot >=6h before kickoff and <=10d stale",
+    "pit_previous_snapshot": "immediately preceding distinct valid snapshot",
+    "target": "90-minute H/D/A and total goals",
+    "strict_prior": "team and league history features are computed before updating with target-match result"
+  },
+  "direct_t": {
+    "classes": ["0", "1", "2", "3", "4", "5", "6", "7+"],
+    "model": "multinomial softmax logistic trained directly on total-goal class",
+    "optimizer": "L-BFGS-B",
+    "l2": 2.0,
+    "max_iter": 500,
+    "tolerance": 1e-9,
+    "base_features": [
+      "no_vig_pH", "no_vig_pD", "no_vig_pA", "no_vig_pOver2.5", "one_x_two_overround", "side_balance", "market_entropy",
+      "home_prior_gf", "home_prior_ga", "home_prior_total", "home_prior_draw", "home_prior_low2", "home_prior_btts", "home_prior_absdiff", "log1p_home_prior_n",
+      "away_prior_gf", "away_prior_ga", "away_prior_total", "away_prior_draw", "away_prior_low2", "away_prior_btts", "away_prior_absdiff", "log1p_away_prior_n",
+      "pair_total_sum", "pair_total_absdiff", "pair_draw_mean", "pair_draw_absdiff", "pair_low2_mean", "pair_low2_absdiff",
+      "league_prior_total", "league_prior_draw", "league_prior_low2"
+    ]
+  },
+  "conditional_zero_margin": {
+    "definition": "P(D=0 | T, X)",
+    "deterministic": {"T0": 1.0, "T1": 0.0, "T3": 0.0, "T5": 0.0},
+    "modeled_buckets": ["T2", "T4", "T6", "T7+"],
+    "model": "joint fixed logistic with total-bucket indicators plus standardized Direct-T base features",
+    "optimizer": "L-BFGS-B",
+    "l2": 2.0,
+    "max_iter": 500,
+    "tolerance": 1e-9,
+    "final_draw_probability": "P(T=0)+P(T=2)q2+P(T=4)q4+P(T=6)q6+P(T=7+)q7plus",
+    "non_draw_allocation": "preserve closing-market H:A ratio inside 1-P(draw) for HDA evaluation only"
+  },
+  "pit_transition_features": {
+    "X1": "delta mean regular risk share",
+    "X2": "delta absolute regular-risk-share imbalance",
+    "X3": "delta mean attacking-player BPS-at-risk share",
+    "X4": "delta absolute attacking-risk imbalance",
+    "X5": "delta sum log available attacking BPS",
+    "X6": "delta absolute log-available-attacking-BPS imbalance",
+    "standardization": "training-fold PIT rows only; zero sd -> 1",
+    "residual_l2": 2.0,
+    "residual_intercept": false
+  },
+  "candidates": [
+    {
+      "id": "A_PIT_TO_DIRECT_T_ONLY",
+      "definition": "Direct-T baseline probabilities receive an offset multinomial PIT residual using X1..X6; conditional D|T remains baseline."
+    },
+    {
+      "id": "B_PIT_TO_CONDITIONAL_D_ONLY",
+      "definition": "Direct-T remains baseline; modeled conditional D=0 logits receive a PIT residual using X1..X6."
+    },
+    {
+      "id": "C_FACTORIZED_PIT_TO_T_AND_D",
+      "definition": "Direct-T PIT residual uses intensity features X1,X3,X5; conditional D|T PIT residual uses symmetry/imbalance features X2,X4,X6."
+    }
+  ],
+  "rolling_origin": [
+    {"train": ["2021-22"], "test": "2022-23"},
+    {"train": ["2021-22", "2022-23"], "test": "2023-24"},
+    {"train": ["2021-22", "2022-23", "2023-24"], "test": "2024-25"}
+  ],
+  "evaluation": {
+    "baseline": "same structural Direct-T + conditional D|T chain without PIT residual",
+    "proper_score_gate": [
+      "pooled HDA LogLoss delta < 0",
+      "pooled Draw binary LogLoss delta < 0",
+      "pooled Draw Brier delta < 0",
+      "pooled Draw AUC delta > 0",
+      "HDA LogLoss non-worse in at least 2 of 3 folds"
+    ],
+    "structural_gate": [
+      "probability sum max abs residual <= 1e-10",
+      "Direct-T probabilities sum to 1 per match",
+      "all conditional probabilities in [0,1]",
+      "no candidate may use target-match result in features"
+    ],
+    "execution_gate": [
+      "natural Top-1 Draw count >= max(10, ceil(0.01*pooled_test_n))",
+      "natural Top-1 Draw precision >= max(pooled_draw_prevalence+0.08, 0.35)",
+      "natural Top-1 Draw recall >= 0.05",
+      "overall HDA accuracy delta >= -0.005"
+    ],
+    "selection": "Only candidates passing proper-score, structural and execution gates are eligible. Select the eligible candidate with lowest pooled HDA LogLoss. If none pass, winner is NONE and 2025/26 remains label-closed.",
+    "bootstrap": {"unit": "calendar_date", "replicates": 5000, "seed": 20260814, "ci": 0.90}
+  },
+  "confirmation_protection": {
+    "season": "2025-26",
+    "zero_label_eligible_rows": 380,
+    "kickoff_identity_manifest_sha256": "4e22607eee2f0f4729f26cfee826bedac74a3ce5012160a1643c46429a69860e",
+    "labels_open": false,
+    "rule": "A separate immutable confirmation preregistration naming exactly one R51 winner is required before any 2025/26 outcome/score access."
+  }
+}
