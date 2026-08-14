@@ -3,12 +3,12 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 52
-- updated_at_utc: 2026-08-14T09:30:00Z
+- state_version: 53
+- updated_at_utc: 2026-08-14T10:14:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: `STATE52_R55_ARCHIVE_DATA_GATE_FAIL_NO_OU`
+- status_source: `STATE53_R55_HARD_OU_PROJECTION_FAIL_RANKING_SIGNAL_PRESENT`
 - status: WAITING
-- state_log_record_id: `rectVxackbVvNDUxq`
+- state_log_record_id: `recU6blnhI73XIRWo`
 
 ## 正式规则状态
 
@@ -16,124 +16,118 @@
 - CURRENT_version: V5.2.0
 - CURRENT_count: 1
 - old_version_execution_weight: 0
-- formal model/data/config/CURRENT changes in state52: 0
-- all research below remains formal_weight=0
+- formal model/data/config/CURRENT changes in state53: 0
+- all R55 work remains research-only, formal_weight=0
 
-## 接续治理状态
+## 接续治理
 
-state51已完成第二次接续失步治理，并新增“实质科学结论前置发布硬门”：
-任何新的PASS/FAIL/STOP/封存、瓶颈变化、研究主线变化或数据门变化产生后，下一研究原子步骤启动前必须完成新的state_version双边发布；否则停止为 `BLOCKED_STATE_PUBLICATION_LAG`。
+state51的“实质科学结论前置发布硬门”继续生效：任何新的PASS/FAIL/STOP/封存、瓶颈变化或唯一下一方向变化产生后，必须先完成新的state_version双边发布，之后才允许下一研究原子步骤。
 
-本state52严格按该门执行：R55数据门产生新结论后，没有继续下一实验，而是先发布state52。
+本state53严格按该门执行：R55固定300结果产生后先发布state53，未直接在同一300上调OU权重。
 
-## R55：同一archive的独立OU数据门
+## R55：独立OU固定300增量试验
 
-用户明确要求继续使用本轮上传 `archive (1)(1).zip` 找300场试验。
+### 零标签冻结
 
-### 零标签审计
+- source archive: `archive (1)(1).zip`
+- archive SHA-256: `8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`
+- independent OU: Football-Data 2015/16 `BbAv>2.5 / BbAv<2.5`
+- zero-label run: `31790299125`
+- zero-label Artifact: `9215167178`
+- strict matched: 340 / 400 candidates
+- frozen sample: 300
+- sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
+- time window: `2016-03-01 20:45:00` to `2016-04-16 16:00:00`
+- actual labels opened only after freeze/prereg
+- actual H/D/A: 120 / 88 / 92
 
-本轮在冻结样本前只读取：
-- ZIP文件名；
-- CSV表头；
-- match_id / date / time / league / home_team / away_team；
-- 32家1X2在grid71的H/D/A完整度。
+### 预注册与算法
 
-明确未读取：
-- `score_home`
-- `score_away`
-- `home_score`
-- `away_score`
-- `score`
-- `detailed_score`
-- 任何其他赛果/比分标签
+- prereg commit: `aeb5d4f615c11a7521059234acf8dc850b4bda81`
+- result commit: `ff96f9b7f33d189995d68bcd2c6304cae1c5cc76`
+- training: 2005-2015 England Premier/Championship/League One/League Two, n=19,422, target overlap=0
+- Direct-T: direct 8-class T=0,1,2,3,4,5,6,7+ logistic model; no class weight
+- conditional draw: T0 deterministic; odd T impossible; fixed historical models for T2/T4/T6/T7+
+- H:A residual split by target grid71 market H:A ratio
+- OU: de-vigged `BbAv>2.5/<2.5`, two-group KL/I-projection preserving within-group Direct-T ratios
+- forced draw=false; threshold search=false; Top-k override=false
 
-archive SHA-256:
-`8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`
+### 固定300结果
 
-archive内仅有5个文件：
-1. `closing_odds.csv.gz`
-2. `odds_series.csv.gz`
-3. `odds_series_b.csv.gz`
-4. `odds_series_b_matches.csv.gz`
-5. `odds_series_matches.csv.gz`
+Direct-T baseline:
+- LogLoss = 1.79696725
+- RPS = 0.11963025
+- Top1 = 23.6667%
 
-schema审计结果：
-- `closing_odds.csv.gz`: 只有closing 1X2及其平均/最大/来源数量信息；
-- `odds_series.csv.gz`: 32家×72网格的H/D/A 1X2轨迹；
-- `odds_series_b.csv.gz`: 同类32家×72网格H/D/A轨迹；
-- 两个matches文件只提供比赛身份与结果字段；
-- OU / Over / Under / totals / O-U 价格字段数量：**0**。
+Direct-T + hard OU projection:
+- LogLoss = 1.79789309
+- delta = +0.00092584 (worse)
+- RPS = 0.11957135
+- delta = -0.00005890 (tiny improvement)
+- Top1 = 23.3333%
 
-因此该archive不能提供R55要求的“独立赛前OU总进球市场”。
+HDA:
+- baseline LL = 1.04789111
+- OU LL = 1.04854976
+- delta = +0.00065866 (worse)
+- accuracy = 44.6667% both
+- natural Top1 Draw = 0 both
 
-### 300场零标签冻结
+Draw layer:
+- baseline LL = 0.60494761; Brier=0.20737666; AUC=0.50734348
+- OU LL = 0.60560627; Brier=0.20764474; AUC=0.48986921
+- OU minus baseline: LL +0.00065866; Brier +0.00026808; AUC -0.01747427
 
-固定规则：
-- source: `odds_series_b.csv.gz`
-- start date: `2016-04-01`
-- grid71至少8家同时存在有效Home/Draw/Away报价；
-- 按 `match_date, match_time, match_id` 升序；
-- 取前300场；
-- 不使用赛果进行筛选。
+Bootstrap 90%:
+- Direct-T LL delta: [-0.0055223, 0.0072826]
+- HDA LL delta: [-0.0012598, 0.0025594]
+- both cross zero
 
-冻结结果：
-- sample count: 300
-- 时间窗: `2016-04-01 00:30:00` 至 `2016-04-02 14:00:00`
-- 联赛数: 125
-- sample SHA-256:
-`0954c122748d93576f96bbd3b526c4b4ecff7fec3ecd1f26ee3538bdb1a91ce3`
-- zero-label manifest SHA-256:
-`ed7b1a6b8be7cabb58b2dd86799df31d1f11eeab0e575f19a42eaed4f445e784`
+### 关键新发现
 
-### 数据门裁决
+OU本身并非无信息：在同一300场上，预测 `T>=3` 的排序AUC：
+- 1X2-only Direct-T group mass = 0.57250850
+- independent OU = 0.58545804
 
-`R55_ARCHIVE_DATA_GATE_FAIL_NO_OU`
+但OU组概率硬替换的二元LogLoss反而略差：0.67911110 vs 0.67818525。
 
-因为R55的唯一新增信息族必须是与1X2正交的真实OU/Total数据，而本archive的OU覆盖为0：
+因此科学结论从“是否需要独立OU”进一步收敛为：
+**OU存在正交排序信息，但直接100%硬投影的注入强度/校准不合适。**
 
-- target labels opened: 0
-- model fits: 0
-- scoring runs: 0
-- threshold search: 0
-- forced draw / Top-k: 0
+固定裁决：
+`FAIL_R55_HARD_OU_PROJECTION_NO_STABLE_INCREMENT`
 
-没有为了“凑一个300场结果”把1X2开放度、轨迹或同源微观结构重新命名成OU。
+不得把OU AUC提升单独写成R55模型PASS。
 
-## 保留的科学结论
+## 唯一下一研究方向
 
-- R35-R38：Direct-T -> 条件D=0仍是当前唯一具有较稳定概率层正证据的平局结构；
-- R52 Oracle定位：主要瓶颈在赛前 `P(T=0..7+)` 的质量与锐度；
-- R53：1X2开放度轴有微弱排序信息，但不足以解决自然Top-1平局；
-- R54：同包1X2轨迹 + 球队/联赛历史残差叠加明确FAIL；
-- 因此下一条有信息增量意义的路线必须引入真实独立OU/Total或严格赛前机会量信息。
+R55B / 下一原子步骤只能研究：
 
-## 唯一下一步
+`pre-target historical OU overlap -> learn fixed OU residual strength/calibration -> freeze strength -> apply to same frozen300 -> Direct-T -> conditional draw -> natural H/D/A`
 
-R55模型验证尚未执行。
-
-如果继续R55：
-1. 必须获得真实赛前OU/Total数据（优先OU2.5，最好有多线OU）；
-2. 该OU数据必须与冻结/新冻结比赛身份严格匹配；
-3. OU只可修正已有Direct-T prior或作为可审计市场约束，不能人工拆出0-7+分布；
-4. 再用互斥时间前推样本验证 Direct-T LL、HDA/Draw proper score、自然Top-1 Draw precision/recall；
-5. 未获得OU前，不重复R53/R54同源1X2实验。
+约束：
+1. OU注入强度必须完全由目标300之前的独立OU重叠历史学习；
+2. 禁止在这300场搜索权重、阈值或挑最佳强度；
+3. 300场只允许一次应用冻结参数并评分；
+4. 若前置历史无法支持稳定强度估计，必须STOP而不是人工指定权重。
 
 ## 当前禁止事项
 
-- 不把同源1X2开放度或轨迹冒充OU；
-- 不在冻结300场上做结果后阈值搜索、forced draw、Top-k、class weight或人工比分奖励；
-- 不打开新的2025/26确认窗；
+- 不在固定300上搜索OU权重；
+- 不forced draw / Top-k / class weight / 人工1-1奖励；
+- 不把OU排序AUC提升冒充最终HDA增益；
+- 不读取新的2025/26确认窗；
 - 不调用付费Provider；
 - 不修改正式模型、正式数据、正式config或CURRENT；
-- 不把本数据门FAIL写成OU模型已经测试失败。
+- 不正式晋级R55。
 
 ## Airtable锚点
 
 - base: `足球项目接续`
 - current_state_record: `recs1pQ1rhuwJQAzE`
-- state52 maintenance_log: `rectVxackbVvNDUxq`
+- state53 maintenance_log: `recU6blnhI73XIRWo`
 - execution_checkpoint: `recIRxK7EIMjJdG4A`
-- checkpoint_version: 29
+- checkpoint_version: 30
 
 ## 权威优先级
 
