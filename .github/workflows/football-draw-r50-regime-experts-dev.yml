@@ -1,0 +1,55 @@
+name: Football Draw R50 Regime Experts Dev
+
+on:
+  push:
+    branches: [research/draw-r50-regime-experts-20260814]
+
+permissions:
+  contents: read
+
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install fixed dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.3.2
+      - name: Clone public PIT history
+        run: git clone --quiet https://github.com/vaastav/Fantasy-Premier-League.git external-fpl
+      - name: Enforce protected confirmation window
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/r50_pit_draw_architecture_dev_prereg_20260814.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['confirmation_protection']['labels_open'] is False
+          assert x['authorization']['confirmation_2025_26_label_access'] is False
+          assert '2025-26' not in [f['test'] for f in x['rolling_origin']]
+          print('PROTECTED_2025_26_LABEL_WINDOW_CLOSED')
+          PY
+      - name: Run frozen R50 development architecture race
+        run: python football-data/research/r50_pit_draw_architecture_dev_20260814.py --fpl-repo external-fpl --repo-root . --out r50-output
+      - name: Verify receipt keeps confirmation closed
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('r50-output/r50_receipt.json').read_text(encoding='utf-8'))
+          assert x['confirmation_2025_26_label_access'] == 0
+          assert x['confirmation_window_remains_closed'] is True
+          print(x)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draw-r50-regime-experts-development
+          path: r50-output/
+          if-no-files-found: error
