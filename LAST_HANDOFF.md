@@ -5,89 +5,78 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 17
-- state_version: 46
-- updated_at_utc: 2026-08-14T01:19:00Z
+- handoff_version: 18
+- state_version: 47
+- updated_at_utc: 2026-08-14T02:03:00Z
 - status: WAITING
 
-## 当前真实断点
+## 用户最后指令
 
-- 唯一CURRENT：V5.2.0，未修改。
-- 最新研究支线：`research/draw-pit-availability-zero-label-20260814`
-- latest persisted research HEAD：`2091fbd1e67bc581bf77525b076d3966a8adabef`
-- 既有draw研究分支：`research/draw-subtype-mechanism-300-20260813` / HEAD `b80cb24edc73ba7aa80d4a6c97e3207d92b32cac`
-- Draft PR #191：Open / Draft / Unmerged / formal_weight=0。
-- 正式模型、正式数据、正式config、CURRENT改动=0。
+检查GitHub账户中已安装的GitHub Apps是否真正工作，并把未接通的仓库端集成补齐。当前已开始执行，禁止为了测试乱合并PR、改正式模型或添加不必要Secret。
 
-## 必须恢复的既有科学结论
+## 本轮最后实际动作
 
-### 正证据
+### Codecov已真实接通
 
-1. R24成熟历史fresh300概率确认PASS：LL delta -0.0088098，Draw AUC +0.0293944，CI90全<0。
-2. R35 Direct-T 0-7+ -> 条件D=0 fresh300 core PASS：LL -0.0044166，AUC +0.0148452，CI90全<0。
-3. R36/R37 fresh300及R38 fresh1000方向总体与R35一致，但单独bootstrap门未全部通过。
-4. R35-R38非重叠1900场合并诊断：LL -0.0025010，AUC +0.0092975，Brier -0.0016548，date-block CI90 [-0.0044489,-0.0005596]。
+- 新建治理分支：`chore/github-apps-integration-r1`
+- HEAD：`07dced6e25a4e8e5af025fb9388936c44f4f5899`
+- 新建Draft PR：`#192` / Open / Draft / Unmerged
+- 唯一代码改动：`.github/workflows/football-codecov-coverage.yml`
+- 采用GitHub OIDC，不使用`CODECOV_TOKEN`：`contents: read` + `id-token: write`
+- Actions run：`31762424361`
+- job：`94651393044`
+- coverage生成：success
+- Codecov OIDC upload：success
+- Codecov真实Check Run：`94651474018` / `codecov/patch` / success
+- repository-integrity：success
+- changed-file quality/security guard：success
 
-### 必须保留的反证
+结论：Codecov不再是“仅安装App/空suite”，已经有真实coverage上传和PR Check结果。
 
-1. R27B-R33 Top-1/选择性执行连续fresh验证未复制。
-2. R34 32-book盘口微观结构明确FAIL。
-3. R39固定 `qD/market_pD` Top30：7中，precision23.33%、recall2.78%、整体准确率-0.8pp；FAIL并封存。
+### 其他已安装Apps状态
 
-## state46新增进展
+- ChatGPT Codex连接器：真实工作，仓库读写/PR/Actions/Artifact链已验证。
+- Mend Renovate：真实工作，Dependency Dashboard #188与PR #187均由Renovate创建。
+- GitGuardian：能收到GitHub push/PR事件并创建Check Suite；无secret告警不等于失效。
+- DeepSource：默认分支已有`.deepsource.toml`，Python analyzer配置存在；App收到事件，但无实际Check Run。官方要求在DeepSource服务端启用Code Review/analysis。
+- SonarQubeCloud：默认分支已有`.sonarcloud.properties`；App收到事件，但无实际Check Run。官方Automatic Analysis要求先在SonarQubeCloud导入GitHub仓库并启用项目分析。
 
-### R40：历史PIT伤停/可用性数据门
+## 当前停点
 
-- 公开FPL历史Git快照可恢复真实赛前PIT。
-- 2020/21-2024/25共1,738场满足零标签PIT可用门，五季均>=150。
-- zero-label run `31726018581` success；Artifact `9191280711`。
-- R40静态伤停存量候选明确FAIL：619行，HDA LL +0.030129，Draw AUC -0.050148，bootstrap90全为正。
-- 裁决：静态伤停数量/静态攻击缺口不再继续。
+仓库端能直接完成的CodeCov缺口已经修复并验收。
 
-### R41：可用性“变化冲击”稀疏Top-1假设
-
-- 不用静态存量，只比较上一份PIT快照到本场PIT快照的状态变化：新伤、恶化、恢复、攻击角色可用性变化。
-- transition PIT约1,686场可恢复。
-- 当前探索诊断为2023/24+2024/25共609条已消费标签，因此不是独立OOS确认。
-- 全局HDA LL +0.002107、Draw AUC -0.002534，概率层门未过。
-- 但自然argmax出现25次Top-1 Draw，命中11次：precision44.0%、recall8.27%。
-- 2023/24为10报5中；2024/25为15报6中。
-- 未forced Top-k、未结果后阈值搜索。
-
-## 当前裁决
-
-`STATIC_AVAILABILITY_FAILS_BUT_AVAILABILITY_CHANGE_MAY_BE_SPARSE_TOP1_GATE_NOT_CONFIRMED`
-
-最准确表述：
-- 平局概率结构已有实质进展，但Top-1仍未正式解决。
-- 静态伤停存量已被否定。
-- “赛前可用性短期变化”第一次出现值得第三时间段验证的稀疏Top-1信号。
-- 25报11中/44%不能写成独立确认或可用模型，因为609条标签已被消费且全局LL/AUC未改善。
-- R41必须冻结，禁止在当前609条上调阈值、权重、特征或forced Top-k。
+DeepSource和SonarQubeCloud不应通过新增冗余scanner或Secret来伪造“已接通”；当前真正缺口在两个服务的网站端项目激活。
 
 ## 唯一下一步
 
-若用户继续研究：
+1. 用户在DeepSource中选择 `FASHI188/FASHI188-football-analysis`，进入Repository Settings > Code Review，启用Code Review/analysis；若已有`.deepsource.toml`但仍卡住，按官方建议关闭再重新启用analysis。
+2. 用户在SonarQubeCloud中Import `FASHI188/FASHI188-football-analysis`，选择/启用Automatic Analysis。
+3. 用户完成以上点击后，直接回复“好了”；下一轮立即对PR/新commit的Check Suite和Check Run做只读验收，不需要用户再解释。
+4. PR #192继续保持Draft/Open/Unmerged；未经明确授权不得Ready或合并。
 
-1. 先找第三个未参与R41选择的时间段；
-2. 只做零标签覆盖门；
-3. 保持同一候选、同一特征、同一PIT门；
-4. 原样复核；
-5. 覆盖不足就放弃该时间段，不放宽 `>=6h` 且 `<=10天陈旧`。
+## 足球研究状态保持不变
 
-2025/26公开FPL历史只有约12个players_raw提交，第三时间段覆盖是否足够尚未完成零标签审计。
+- 唯一CURRENT：V5.2.0，未修改。
+- PIT research branch：`research/draw-pit-availability-zero-label-20260814`
+- research HEAD：`2091fbd1e67bc581bf77525b076d3966a8adabef`
+- Draft PR #191：Open / Draft / Unmerged / formal_weight=0。
+- R40静态伤停FAIL；R41在已消费609条探索中自然Top-1 Draw 25报11中/44%，但未独立确认且全局LL/AUC未改善。
+- R41继续冻结；不得在609条上调阈值、权重、特征或forced Top-k。
+- 后续若恢复平局研究：第三时间段零标签PIT覆盖门 -> 同一R41候选原样复核。
 
-## 本轮治理边界
+## 正式资产变化
 
-- 当前用户只要求把项目进展修齐，避免成果丢失。
-- 本轮不继续研究、不读新标签、不训练、不评分、不调参。
-- formal model/data/config/CURRENT change=0；formal_weight=0。
+- formal model/data/config/CURRENT change=0
+- research labels/training/scoring change=0
+- Secret新增=0
+- Provider/paid API=0
+- PR #192仅工程治理workflow，未合并
 
 ## Airtable恢复锚点
 
-- current_state `recs1pQ1rhuwJQAzE` / state46
-- maintenance log `recV6fQUxqADTqycH`
-- execution checkpoint `recIRxK7EIMjJdG4A` / state46 / WAITING
+- current_state `recs1pQ1rhuwJQAzE` / state47
+- maintenance log `recM2AreYV6vPfHxQ`
+- execution checkpoint `recIRxK7EIMjJdG4A` / state47
 
 ## 权威优先级
 
