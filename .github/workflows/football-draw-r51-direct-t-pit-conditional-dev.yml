@@ -1,0 +1,68 @@
+name: Football Draw R51 Direct-T PIT Conditional Dev
+
+on:
+  push:
+    branches: [research/draw-r51-direct-t-pit-conditional-20260814]
+
+permissions:
+  contents: read
+
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install fixed numerical dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.2 scipy==1.16.1
+      - name: Clone public FPL PIT history
+        run: git clone --quiet https://github.com/vaastav/Fantasy-Premier-League.git external-fpl
+      - name: Verify confirmation window closed before execution
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/r51_direct_t_pit_conditional_prereg_20260814.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['confirmation_protection']['labels_open'] is False
+          assert x['governance']['confirmation_2025_26_label_access'] is False
+          assert x['governance']['confirmation_2025_26_score_access'] is False
+          assert all('2025-26' not in f['train'] and f['test']!='2025-26' for f in x['rolling_origin'])
+          print('R51_2025_26_CONFIRMATION_WINDOW_CLOSED')
+          PY
+      - name: Run frozen R51 development
+        shell: bash
+        run: |
+          mkdir -p r51-output
+          set +e
+          python football-data/research/r51_direct_t_pit_conditional_dev_20260814.py --repo-root . --fpl-repo external-fpl --out r51-output >r51-output/execution.log 2>&1
+          code=$?
+          set -e
+          cat r51-output/execution.log
+          echo "$code" >r51-output/execution_exit_code.txt
+          echo "R51_EXIT_CODE=$code"
+      - name: Verify no confirmation labels were opened
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('r51-output/r51_receipt.json')
+          if not p.exists():
+              print('NO_SCIENCE_RECEIPT_EXECUTION_FAILED_BEFORE_RESULT')
+          else:
+              x=json.loads(p.read_text(encoding='utf-8'))
+              assert x['confirmation_2025_26_label_access']==0
+              assert x['confirmation_window_remains_closed'] is True
+              print(x)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: draw-r51-direct-t-pit-conditional-development
+          path: r51-output/
+          if-no-files-found: error
