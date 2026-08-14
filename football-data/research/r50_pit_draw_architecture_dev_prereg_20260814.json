@@ -1,0 +1,88 @@
+{
+  "schema_version": "R50-PIT-DRAW-ARCHITECTURE-DEV-R1",
+  "created_at": "2026-08-14T13:32:00+08:00",
+  "classification": "RESEARCH_ONLY_VIEWED_DEVELOPMENT_ARCHITECTURE_SELECTION",
+  "formal_weight": 0,
+  "authorization": {
+    "development_label_access_2020_21_to_2024_25": true,
+    "confirmation_2025_26_label_access": false,
+    "provider_requests": 0,
+    "paid_provider_requests": 0,
+    "formal_promotion": false,
+    "formal_model_data_config_current_changes": [0, 0, 0, 0]
+  },
+  "purpose": "Use already-consumed historical seasons only to select one architecture before spending the untouched 2025/26 PIT confirmation window.",
+  "source_contract": {
+    "availability": "vaastav/Fantasy-Premier-League Git history; current snapshot is latest valid pre-match snapshot with lead>=6h and staleness<=10d; previous is immediately preceding valid snapshot",
+    "market": "Football-Data E0 closing 1X2 retrospective market reference only; priority AvgC then B365C then MaxC then PSC; reciprocal no-vig normalization",
+    "target": "90-minute H/D/A",
+    "forbidden": ["2025/26 result or score", "post-kickoff availability/news", "ep_this", "ep_next", "xP", "manual draw offset", "forced draw threshold", "Top-k override"]
+  },
+  "base_transition_state": {
+    "S1": "mean(home.regular_risk_share,away.regular_risk_share)",
+    "S2": "abs(home.regular_risk_share-away.regular_risk_share)",
+    "S3": "mean(home.attack_bps_at_risk_share,away.attack_bps_at_risk_share)",
+    "S4": "abs(home.attack_bps_at_risk_share-away.attack_bps_at_risk_share)",
+    "S5": "home.log_available_attack_bps+away.log_available_attack_bps",
+    "S6": "abs(home.log_available_attack_bps-away.log_available_attack_bps)",
+    "X": ["S1_current-S1_previous", "S2_current-S2_previous", "S3_current-S3_previous", "S4_current-S4_previous", "S5_current-S5_previous", "S6_current-S6_previous"],
+    "signed_U": [
+      "(home.regular_risk_share_current-home.regular_risk_share_previous)-(away.regular_risk_share_current-away.regular_risk_share_previous)",
+      "(home.attack_bps_at_risk_share_current-home.attack_bps_at_risk_share_previous)-(away.attack_bps_at_risk_share_current-away.attack_bps_at_risk_share_previous)",
+      "(home.log_available_attack_bps_current-home.log_available_attack_bps_previous)-(away.log_available_attack_bps_current-away.log_available_attack_bps_previous)"
+    ]
+  },
+  "shared_fit": {
+    "standardization": "training-fold only mean/sd; zero sd -> 0",
+    "binary_fit": "fixed-offset logistic IRLS",
+    "l2_lambda": 1.0,
+    "max_iter": 50,
+    "tolerance": 1e-8,
+    "top1": "natural argmax only"
+  },
+  "candidate_set_frozen": [
+    {
+      "id": "A_R41R2_ADDITIVE_DRAW_RESIDUAL",
+      "definition": "logit(qD)=logit(market_pD)+beta0+beta*Z(X1..X6); preserve market H:A ratio in 1-qD"
+    },
+    {
+      "id": "B_SHOCK_REGIME_TWO_DRAW_EXPERTS",
+      "definition": "shock_score=sqrt(sum(Z(X1..X6)^2)); shock gate=training-fold 75th percentile computed without labels; fit separate fixed-offset draw logistic experts in calm and shock rows; prediction uses the deterministic gate; preserve market H:A ratio in 1-qD",
+      "shock_quantile": 0.75
+    },
+    {
+      "id": "C_OUTCOME_SPECIFIC_THREE_EXPERTS",
+      "definition": "fit separate one-vs-rest fixed-offset binary experts: draw uses Z(X1..X6) offset logit(market_pD); home uses Z(U1..U3) offset logit(market_pH); away uses Z(-U1..-U3) offset logit(market_pA); convert each expert logit to raw probability then normalize the three raw probabilities to sum 1"
+    }
+  ],
+  "rolling_origin": [
+    {"train": ["2020-21"], "test": "2021-22"},
+    {"train": ["2020-21", "2021-22"], "test": "2022-23"},
+    {"train": ["2020-21", "2021-22", "2022-23"], "test": "2023-24"},
+    {"train": ["2020-21", "2021-22", "2022-23", "2023-24"], "test": "2024-25"}
+  ],
+  "evaluation": {
+    "proper_score_gate": [
+      "pooled HDA LogLoss delta < 0",
+      "pooled Draw binary LogLoss delta < 0",
+      "pooled Draw Brier delta < 0",
+      "pooled Draw AUC delta > 0",
+      "HDA LogLoss non-worse in at least 3 of 4 folds"
+    ],
+    "natural_top1_gate": [
+      "natural Top-1 Draw count >= max(10, ceil(0.01*pooled_test_n))",
+      "natural Top-1 Draw precision >= max(pooled_draw_prevalence+0.08, 0.35)",
+      "natural Top-1 Draw recall >= 0.05",
+      "overall HDA accuracy delta >= -0.005"
+    ],
+    "selection": "Only candidates passing both gates are eligible; select the one with lowest pooled HDA LogLoss. If none pass, select NONE and keep 2025/26 labels closed.",
+    "bootstrap": {"unit": "calendar_date", "replicates": 5000, "seed": 20260814, "confidence_interval": 0.90, "diagnostic": true}
+  },
+  "confirmation_protection": {
+    "period": "2025/26",
+    "zero_label_eligible_rows": 380,
+    "kickoff_identity_manifest_sha256": "4e22607eee2f0f4729f26cfee826bedac74a3ce5012160a1643c46429a69860e",
+    "labels_open": false,
+    "rule": "No 2025/26 outcome/score access unless exactly one development winner is frozen in a separate confirmation preregistration before label opening."
+  }
+}
