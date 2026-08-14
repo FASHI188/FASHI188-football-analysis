@@ -1,0 +1,146 @@
+{
+  "authorization": {
+    "paid_provider_requests": 0,
+    "provider_requests": 0,
+    "this_file_authorizes_formal_promotion": false,
+    "this_file_authorizes_label_opening": false,
+    "this_file_authorizes_scoring": false,
+    "this_file_authorizes_training": false
+  },
+  "candidate": {
+    "id": "R41R2_PIT_AVAILABILITY_TRANSITION_RESIDUAL_R1",
+    "market_baseline": {
+      "classification": "RETROSPECTIVE_MARKET_REFERENCE_ONLY_UNLESS_ORIGINAL_PIT_TIMESTAMP_EXISTS",
+      "formal_market_snapshot": false,
+      "price_priority": [
+        "AvgC",
+        "B365C",
+        "MaxC",
+        "PSC"
+      ],
+      "source_family": "Football-Data E0 closing 1X2",
+      "transform": "normalize reciprocal H/D/A odds to no-vig probabilities"
+    },
+    "model": {
+      "equation": "logit(qD)=logit(market_pD)+beta0+sum_j beta_j*Z_j",
+      "fit": "fixed-offset binary logistic IRLS with intercept beta0 and L2 on beta1..beta6 only",
+      "ha_ratio": "preserve baseline market pH:pA ratio inside non-draw mass",
+      "l2_lambda": 1.0,
+      "max_iter": 50,
+      "non_draw_mass": "1-qD",
+      "standardization": "Z_j=(X_j-train_mean_j)/train_sd_j using training rows only; zero-sd => Z_j=0",
+      "tolerance": 1e-08,
+      "top1_rule": "argmax(qH,qD,qA); no threshold, no forced draw selector, no Top-k override"
+    },
+    "pit_snapshot_rule": {
+      "current": "latest score-free, not-started/not-finished availability snapshot with lead_hours>=6 and staleness<=10 days",
+      "future_news_timestamp_allowed": false,
+      "previous": "immediately preceding valid availability snapshot before current",
+      "required_columns": [
+        "status",
+        "news",
+        "news_added",
+        "team",
+        "element_type",
+        "starts",
+        "minutes",
+        "bps"
+      ],
+      "target_score_access_before_label_open": 0
+    },
+    "relationship_to_legacy_r41": "NEW_CANDIDATE_SAME_HYPOTHESIS_FAMILY_NOT_A_RECONSTRUCTION",
+    "snapshot_match_state": [
+      "S1=mean(home.regular_risk_share,away.regular_risk_share)",
+      "S2=abs(home.regular_risk_share-away.regular_risk_share)",
+      "S3=mean(home.attack_bps_at_risk_share,away.attack_bps_at_risk_share)",
+      "S4=abs(home.attack_bps_at_risk_share-away.attack_bps_at_risk_share)",
+      "S5=home.log_available_attack_bps+away.log_available_attack_bps",
+      "S6=abs(home.log_available_attack_bps-away.log_available_attack_bps)"
+    ],
+    "features": [
+      "X1=S1_current-S1_previous",
+      "X2=S2_current-S2_previous",
+      "X3=S3_current-S3_previous",
+      "X4=S4_current-S4_previous",
+      "X5=S5_current-S5_previous",
+      "X6=S6_current-S6_previous"
+    ],
+    "forbidden_features": [
+      "ep_this",
+      "ep_next",
+      "xP",
+      "target result",
+      "target score",
+      "post-kickoff news",
+      "injury_end_date",
+      "days_missed",
+      "games_missed",
+      "forced Top-k indicator"
+    ],
+    "target": "90-minute H/D/A draw-mass residual",
+    "team_state_definitions": {
+      "at_risk": "status nonempty and status!='a' OR chance_of_playing_this_round<100 when available",
+      "attack_bps_at_risk_share": "attack_bps_at_risk/max(attack_bps_at_risk+attack_bps_available,1e-9)",
+      "attacker": "element_type in {3,4}",
+      "log_available_attack_bps": "log1p(attack_bps_available)",
+      "regular": "starts>=3 OR minutes>=270",
+      "regular_risk_share": "regular_risk_count/max(regular_count,1)"
+    }
+  },
+  "classification": "RESEARCH_ONLY_ZERO_LABEL_PREREGISTRATION",
+  "created_at": "2026-08-14T12:41:00+08:00",
+  "development_and_confirmation": {
+    "confirmation_identity_manifest_sha256": "4e22607eee2f0f4729f26cfee826bedac74a3ce5012160a1643c46429a69860e",
+    "confirmation_labels_currently_open": false,
+    "confirmation_period": "2025/26",
+    "confirmed_source_snapshot_count": 1210,
+    "confirmed_zero_label_eligible_rows": 380,
+    "development_labels": "2020/21-2024/25 strict-PIT historical rows may be used only to fit the frozen R41R2 model; they are not confirmation evidence",
+    "minimum_confirmation_rows": 150,
+    "no_feature_or_parameter_change_after_label_open": true
+  },
+  "evaluation": {
+    "bootstrap": {
+      "confidence_interval": 0.9,
+      "replicates": 5000,
+      "seed": 20260814,
+      "unit": "calendar_date"
+    },
+    "diagnostic_only": [
+      "natural Top-1 Draw count",
+      "natural Top-1 Draw hits",
+      "natural Top-1 Draw precision",
+      "natural Top-1 Draw recall"
+    ],
+    "pass_gate": [
+      "pooled HDA LogLoss delta < 0",
+      "pooled Draw binary LogLoss delta < 0",
+      "pooled Draw Brier delta < 0",
+      "pooled Draw AUC delta > 0",
+      "bootstrap90 upper bound for HDA LogLoss delta < 0"
+    ],
+    "primary": "HDA multiclass LogLoss delta vs frozen market reference",
+    "secondary": [
+      "Draw binary LogLoss delta",
+      "Draw Brier delta",
+      "Draw AUC delta",
+      "HDA accuracy delta"
+    ],
+    "top1_precision_is_not_a_pass_gate": true
+  },
+  "formal_weight": 0,
+  "legacy_r41": {
+    "full_prereg_recovered": false,
+    "inherit_old_effect_as_prior_or_gate": false,
+    "known_draw_auc_delta": -0.002534,
+    "known_exploratory_rows": 609,
+    "known_global_hda_logloss_delta": 0.002107,
+    "known_natural_top1_draw_count": 25,
+    "known_natural_top1_draw_hits": 11,
+    "known_precision": 0.44,
+    "known_recall": 0.0827,
+    "original_prereg_sha256_recorded": "eea489b77ca4c89a9ab44681599c636f5dbc8d4df60040825798670b860fede1",
+    "status": "SEALED_REPRODUCIBILITY_FAILURE"
+  },
+  "schema_version": "R41R2-PIT-AVAILABILITY-TRANSITION-PREREG-R1"
+}
