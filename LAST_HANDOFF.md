@@ -1,102 +1,65 @@
 # 足球项目最后对话接力点
 
-> 实时原子步骤断点优先读取 `ACTIVE_CHECKPOINT.md` + Airtable《执行检查点》；正式规则仍以唯一 CURRENT 为最高依据。
+> 实时原子步骤断点优先读取 `ACTIVE_CHECKPOINT.md` + Airtable《执行检查点》；长期启动/长任务规则读取 `AGENTS.md`；正式规则仍以唯一 CURRENT 为最高依据。
 
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 23
+- handoff_version: 24
 - state_version: 53
-- updated_at_utc: 2026-08-14T15:56:00Z
+- updated_at_utc: 2026-08-14T16:10:00Z
 - status: BLOCKED
 
 ## 用户最后指令
 
-用户要求对足球项目做治理维护：只修可证明的问题；没有问题的地方不要强改，避免治理本身制造混乱。
+用户要求解决“让GPT干一个较大的事，一条对话很快就满”的问题。要求继续遵守最小治理：有真实问题才修，不为完善而强改。
 
-## 本轮治理审计结论
+## 本轮治理结果
 
-确认两项真实接续问题，未发现需要扩大治理范围的其他硬错误：
+已确认原治理只有“断线后恢复”，没有“对话达到上限前主动换挡”的硬门。现做最小持久化修复：
 
-1. **GitHub接力漂移**：Airtable实时断点已经完成R55B输入恢复穷尽审计，但GitHub `PROJECT_CURRENT.md` / `LAST_HANDOFF.md`仍停在更早的checkpoint32“dispatch gap”阶段，导致新对话可能恢复到旧位置。
-2. **state53绑定日志被误覆盖**：Airtable《当前状态》的`状态日志记录ID`本应固定绑定建立state53的日志`recU6blnhI73XIRWo`，却被后来的R55B恢复维护日志`rec1LbQyn0bQzXrR3`覆盖。原state53建立日志仍完整存在。
+1. `AGENTS.md` 新增第11节“长任务防对话溢出协议”；
+2. 长任务改为可恢复执行块，每块开始/结束使用现有 Airtable《执行检查点》，不新增表或字段；
+3. 优先精确文件/字段/run/job/关键词查询，避免无必要整库、整PR、整日志读取；
+4. 连续完成两个实质执行块，或下一阶段明显属于大日志/大Artifact/批量处理时，完成当前块后主动形成安全换对话点，不再硬塞第三个重阶段；
+5. 新对话只需说“继续”，从唯一检查点的“唯一下一步”直接恢复，不要求重述任务、不重跑已完成事项；
+6. 模型无法可靠读取ChatGPT UI精确剩余上下文，因此使用行为门提前留余量，不伪造token百分比。
 
-未修改以下已经正确的治理规则：
+本治理只改变任务分段与上下文使用方式；CURRENT、模型、数据、config、研究权限和R55B科学设计均0改动。
 
-- `AGENTS.md`；
-- `ACTIVE_CHECKPOINT.md`；
-- 唯一CURRENT；
-- state_version=53；
-- R55/R55B科学设计、固定300、sample hash、alpha定义和权限边界。
+## 当前研究真实断点
 
-检查点`WAITING`与项目状态`BLOCKED`语义兼容：前者表示当前原子步骤等待外部输入，后者表示R55B项目级技术阻塞，因此不做字面统一。
+R55B仍为research-only，模型计算尚未启动。
 
-## 已完成科学状态
-
-R55固定300硬OU投影已经完成并正式发布state53：
-- Direct-T LL 1.79696725 -> 1.79789309，变差 +0.00092584；
-- HDA LL 1.04789111 -> 1.04854976，变差 +0.00065866；
-- natural Top1 Draw 0 -> 0；
-- OU对T>=3排序AUC 0.58545804，高于1X2-only Direct-T 0.57250850；
-- 固定裁决 `FAIL_R55_HARD_OU_PROJECTION_NO_STABLE_INCREMENT`。
-
-科学判断保持：OU存在正交排序信息，但100%硬投影注入过强/校准不匹配。
-
-## R55B 冻结设计
-
-- branch: `research/r55-ou-matched300-20260814`
-- exact research HEAD: `2e786c66cfd1678d592bb6e16f666eabf70db611`
-- prereg: `football-data/research/r55b_pretarget_ou_alpha_prereg_20260814.json`
-- target n=300
-- sample hash=`7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
-- 单一全局 alpha ∈ [0,1]
-- alpha 只能使用 2016-03-01 前严格历史OU重叠窗学习
-- 目标300禁止参与alpha选择
-- 校准n<300则STOP
-- 冻结alpha后只允许一次应用固定300
-- forced draw / Top-k / class weight / 人工1-1奖励全部禁止
-- 2025/26 confirmation仍关闭
-- formal_weight=0
-
-## 最新真实执行断点
-
-R55B模型计算仍未启动。已完成的恢复工作为：
-
-- calibration恢复475条完整记录；
-- calibration-min恢复471条完整记录；
+已恢复：
+- calibration 475条完整记录；
+- calibration-min 471条完整记录；
 - 两者均止于2015-11-28；
-- fixed target300独立OU逐场输入已从Artifact `9215167178`完整恢复；
-- Git历史与Actions均未找到可无损替代的剩余archive grid71输入。
+- fixed target300独立OU逐场输入已从Artifact `9215167178`完整恢复。
 
-当前真实缺口：
-
+仍缺：
 - 2015-11-28之后至2016-02-29的pre-target archive grid71校准尾段；
-- fixed target300对应archive grid71的`qH/qD/qA`。
-
-因此不能用现有471条截断集直接拟合alpha，也不能用近似1X2替代。
+- fixed target300对应archive grid71 `qH/qD/qA`。
 
 ## 唯一下一步
 
-保持R55B冻结科学设计和固定300完全不变：
+重新附加同一 `archive (1)(1).zip`，第一动作只校验SHA-256：
 
-1. 重新附加同一 `archive (1)(1).zip`；
-2. 第一动作只校验SHA-256，必须等于 `8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`；
-3. SHA不匹配立即停止；
-4. 匹配后确定性补齐缺失pre-target tail与target300 archive grid71输入；
-5. 再落runner/workflow；
-6. 真实dispatch且取得concrete run_id/job_id后才允许标记RUNNING；
-7. 得出alpha/result后按原预注册门裁决；
-8. 如产生新的科学PASS/FAIL/STOP，先发布新state_version。
+`8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1`
+
+- SHA不匹配：立即停止；
+- SHA匹配：确定性补齐缺失pre-target tail与target300 archive grid71输入；
+- 之后才落runner/workflow；
+- 只有真实取得run_id/job_id后才能标记R55B RUNNING；
+- 新科学PASS/FAIL/STOP产生后先发布新state_version。
 
 ## 禁止重复
 
 - 不重新抽300；
-- 不改sample hash；
-- 不改alpha定义/范围/目标函数；
+- 不改sample hash或alpha定义/范围/目标函数；
 - 不用471条截断集直接拟合；
-- 不用Football-Data 1X2或近似公式代替archive grid71；
+- 不用Football-Data 1X2或近似公式替代archive grid71；
 - 不在固定300调权重；
-- 不重复R55硬投影；
 - 不调用付费Provider；
 - 不打开2025/26确认窗；
 - 不改正式模型、权重、config或CURRENT。
@@ -106,15 +69,13 @@ R55B模型计算仍未启动。已完成的恢复工作为：
 - unique CURRENT: V5.2.0 / count=1
 - state_version: 53
 - state53 creation log: `recU6blnhI73XIRWo`
-- latest R55B recovery log: `rec1LbQyn0bQzXrR3`
-- R55 branch: `research/r55-ou-matched300-20260814`
-- research HEAD: `2e786c66cfd1678d592bb6e16f666eabf70db611`
-- R55 prereg: `aeb5d4f615c11a7521059234acf8dc850b4bda81`
-- R55 result: `ff96f9b7f33d189995d68bcd2c6304cae1c5cc76`
-- R55B prereg blob: `ed365d820788d13c36813d114e29631e27bf1998`
 - current_state: `recs1pQ1rhuwJQAzE`
 - execution_checkpoint: `recIRxK7EIMjJdG4A`
-- realtime checkpoint_version: 以Airtable唯一激活记录为准，不在本文件写死
+- research branch: `research/r55-ou-matched300-20260814`
+- research HEAD: `2e786c66cfd1678d592bb6e16f666eabf70db611`
+- frozen target n: 300
+- sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
+- R55B prereg blob: `ed365d820788d13c36813d114e29631e27bf1998`
 
 ## 正式资产变化
 
@@ -126,11 +87,4 @@ R55B模型计算仍未启动。已完成的恢复工作为：
 
 ## 恢复硬门
 
-新对话研究前至少确认：
-
-- `PROJECT_CURRENT.state_version = LAST_HANDOFF.state_version = Airtable当前状态.state_version = 激活检查点.state_version = 53`；
-- Airtable当前状态绑定的state53日志必须为`recU6blnhI73XIRWo`；
-- Airtable当前状态的执行检查点版本必须等于唯一激活检查点实时版本；
-- GitHub/Airtable的唯一下一步不得冲突。
-
-通过后只能从原archive重附SHA校验处继续，不得退回更早的dispatch-gap阶段。
+新对话先按AGENTS顺序核验四层状态；通过后直接从实时检查点继续。长任务同时执行AGENTS第11节：到安全换对话门时先落检查点再换对话，禁止等到上下文耗尽才写接力。
