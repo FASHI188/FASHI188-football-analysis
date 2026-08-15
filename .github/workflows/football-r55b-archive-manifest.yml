@@ -1,0 +1,94 @@
+name: Football R55B Archive Manifest
+
+on:
+  push:
+    branches:
+      - research/r55-ou-matched300-20260814
+    paths:
+      - .github/workflows/football-r55b-archive-manifest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download already-verified frozen archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output archive.1.1.zip \
+            'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
+
+      - name: Inspect target archive members and CSV headers only
+        shell: python
+        run: |
+          import csv
+          import gzip
+          import io
+          import json
+          import struct
+          import zipfile
+          from pathlib import PurePosixPath
+
+          archive = 'archive.1.1.zip'
+          wanted = {'closing_odds.csv.gz', 'odds_series_b.csv.gz'}
+          found = {name: [] for name in sorted(wanted)}
+
+          with zipfile.ZipFile(archive, 'r') as zf:
+              for info in zf.infolist():
+                  base = PurePosixPath(info.filename).name
+                  if base not in wanted:
+                      continue
+
+                  # Read only the gzip member bytes and the first decompressed CSV line.
+                  # No match rows, scores, results, alpha fitting, or target scoring are accessed.
+                  gz_bytes = zf.read(info)
+                  if len(gz_bytes) < 4:
+                      raise SystemExit(f'gzip member too short: {info.filename}')
+                  gzip_uncompressed_size_mod_2_32 = struct.unpack('<I', gz_bytes[-4:])[0]
+                  with gzip.GzipFile(fileobj=io.BytesIO(gz_bytes), mode='rb') as gf:
+                      header_raw = gf.readline()
+                  header_text = header_raw.decode('utf-8-sig', errors='replace').rstrip('\r\n')
+                  columns = next(csv.reader([header_text])) if header_text else []
+
+                  found[base].append({
+                      'zip_path': info.filename,
+                      'zip_compressed_size': info.compress_size,
+                      'zip_member_size_gzip_bytes': info.file_size,
+                      'gzip_uncompressed_size_mod_2_32': gzip_uncompressed_size_mod_2_32,
+                      'csv_header_column_count': len(columns),
+                      'csv_header_columns': columns,
+                  })
+
+          counts = {k: len(v) for k, v in found.items()}
+          status = 'PASS_UNIQUE_TARGET_MEMBERS' if all(v == 1 for v in counts.values()) else 'REVIEW_MEMBER_MULTIPLICITY'
+          payload = {
+              'schema': 'R55B_ARCHIVE_MANIFEST_R1',
+              'scope': 'archive structure and CSV headers only; no row values, scores, results, alpha fitting, or target scoring',
+              'release_tag': 'football-data-archive-v1',
+              'asset_name': 'archive.1.1.zip',
+              'release_sha_recheck_performed': False,
+              'target_member_counts': counts,
+              'targets': found,
+              'status': status,
+          }
+          with open('r55b_archive_manifest.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+              f.write('\n')
+          print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+          if not all(v >= 1 for v in counts.values()):
+              raise SystemExit('required archive member missing')
+
+      - name: Upload archive manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r55b-archive-manifest
+          path: r55b_archive_manifest.json
+          if-no-files-found: error
+          retention-days: 30
