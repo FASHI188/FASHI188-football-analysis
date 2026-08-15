@@ -14,18 +14,46 @@ permissions:
 
 jobs:
   probe-r55-baseline-env:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: sk172_sp117
+            python: '3.13'
+            numpy: '2.3.5'
+            scipy: '1.17.0'
+            sklearn: '1.7.2'
+          - label: sk180_sp1163
+            python: '3.13'
+            numpy: '2.3.5'
+            scipy: '1.16.3'
+            sklearn: '1.8.0'
+          - label: sk172_sp1163
+            python: '3.13'
+            numpy: '2.3.5'
+            scipy: '1.16.3'
+            sklearn: '1.7.2'
+          - label: older_stack
+            python: '3.12'
+            numpy: '2.2.6'
+            scipy: '1.15.3'
+            sklearn: '1.7.2'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    name: probe-${{ matrix.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
-      - name: Install candidate original numerical environment
+          python-version: ${{ matrix.python }}
+      - name: Install candidate numerical environment
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check 'numpy==2.3.5' 'scipy==1.17.0' 'scikit-learn==1.8.0'
+          python -m pip install --disable-pip-version-check \
+            'numpy==${{ matrix.numpy }}' \
+            'scipy==${{ matrix.scipy }}' \
+            'scikit-learn==${{ matrix.sklearn }}'
       - name: Download already-verified frozen archive
         shell: bash
         run: |
@@ -37,4 +65,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'matrix_label=${{ matrix.label }}'
           python football-data/research/r55_baseline_env_fingerprint_probe_20260816.py --archive archive.1.1.zip
