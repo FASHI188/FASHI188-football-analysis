@@ -30,39 +30,31 @@ jobs:
           python - <<'PY'
           import csv,gzip,io,json,zipfile
           from collections import Counter
-          def read_member(z,name,encoding='latin1'):
-            raw=z.open(name); gz=gzip.GzipFile(fileobj=raw); text=io.TextIOWrapper(gz,encoding=encoding,newline='')
-            rd=csv.DictReader(text); rd.fieldnames=[x.strip() for x in rd.fieldnames]
-            return raw,gz,text,rd
           with zipfile.ZipFile('archive.1.1.zip') as z:
-            raw,gz,text,rd=read_member(z,'odds_series_b.csv.gz','utf-8')
             b_ids=set(); b_dates=[]; b_rows=0; pre_rows=0
-            try:
-              for r in rd:
-                b_rows+=1; d=(r.get('match_date') or '').strip(); mid=(r.get('match_id') or '').strip()
+            with z.open('odds_series_b.csv.gz') as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+              rd=csv.reader(text); header=next(rd)
+              idx={x.strip():i for i,x in enumerate(header)}
+              print('b_first5_header=',json.dumps(header[:5]))
+              for row in rd:
+                b_rows+=1; mid=row[idx['match_id']].strip(); d=row[idx['match_date']].strip()
                 if d:b_dates.append(d)
                 if d and d<'2016-03-01': pre_rows+=1; b_ids.add(mid)
-            finally:
-              text.close(); gz.close(); raw.close()
-            print('b_header=',json.dumps(rd.fieldnames))
             print('b_rows=',b_rows,'b_date_min=',min(b_dates),'b_date_max=',max(b_dates),'b_pretarget_rows=',pre_rows,'b_pretarget_unique_ids=',len(b_ids))
 
-            raw,gz,text,rd2=read_member(z,'odds_series_matches.csv.gz','latin1')
-            m_rows=0; m_dates=[]; mapped=0; mapped_samples=[]; eligible_leagues=Counter()
-            try:
-              print('matches_header=',json.dumps(rd2.fieldnames,ensure_ascii=False))
-              for r in rd2:
+            m_rows=0; m_dates=[]; mapped=0; mapped_samples=[]; mapped_leagues=Counter()
+            with z.open('odds_series_matches.csv.gz') as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='latin1',newline='') as text:
+              rd=csv.DictReader(text); rd.fieldnames=[x.strip() for x in rd.fieldnames]
+              print('matches_header=',json.dumps(rd.fieldnames,ensure_ascii=False))
+              for r in rd:
                 r={k:(v.strip() if isinstance(v,str) else v) for k,v in r.items()}
                 m_rows+=1; dt=r.get('match_datetime',''); mid=r.get('match_id','')
                 if dt:m_dates.append(dt)
                 if mid in b_ids:
-                  mapped+=1
-                  eligible_leagues[r.get('league','')]+=1
+                  mapped+=1; mapped_leagues[r.get('league','')]+=1
                   if len(mapped_samples)<20: mapped_samples.append(r)
-            finally:
-              text.close(); gz.close(); raw.close()
             print('matches_rows=',m_rows,'matches_date_min=',min(m_dates) if m_dates else None,'matches_date_max=',max(m_dates) if m_dates else None)
             print('b_pretarget_ids_mapped=',mapped)
-            print('mapped_league_top=',json.dumps(eligible_leagues.most_common(30),ensure_ascii=False))
+            print('mapped_league_top=',json.dumps(mapped_leagues.most_common(30),ensure_ascii=False))
             print('mapped_samples=',json.dumps(mapped_samples,ensure_ascii=False))
           PY
