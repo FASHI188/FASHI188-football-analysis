@@ -14,7 +14,7 @@ permissions:
 jobs:
   probe-calibration-identity:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - name: Download already-verified frozen release archive
@@ -24,37 +24,84 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 \
             --output archive.1.1.zip \
             'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
-      - name: Probe pre-target match-id mapping chain
+      - name: Compare pre-target and target archive series
         shell: bash
         run: |
           python - <<'PY'
-          import csv,gzip,io,json,zipfile
+          import base64,csv,gzip,hashlib,html,io,json,math,re,urllib.request,zipfile
           from collections import Counter
-          with zipfile.ZipFile('archive.1.1.zip') as z:
-            b_ids=set(); b_dates=[]; b_rows=0; pre_rows=0
-            with z.open('odds_series_b.csv.gz') as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
-              rd=csv.reader(text); header=next(rd)
-              idx={x.strip():i for i,x in enumerate(header)}
-              print('b_first5_header=',json.dumps(header[:5]))
-              for row in rd:
-                b_rows+=1; mid=row[idx['match_id']].strip(); d=row[idx['match_date']].strip()
-                if d:b_dates.append(d)
-                if d and d<'2016-03-01': pre_rows+=1; b_ids.add(mid)
-            print('b_rows=',b_rows,'b_date_min=',min(b_dates),'b_date_max=',max(b_dates),'b_pretarget_rows=',pre_rows,'b_pretarget_unique_ids=',len(b_ids))
+          from datetime import datetime
+          SOURCES={
+            'England: Premier League':'6d94d4ae4e3a995261b5c3aa92e48ddf05d46e74',
+            'England: Championship':'57cf8071f86b45870018bf90554f612c66b281d1',
+            'England: League One':'c7f3399aa0f6b7ca8c8b10844fc7bbba78de9ab2',
+            'England: League Two':'3aa62ec193d7e590004c34ff08e91c2b57122c76'}
+          ALIASES={'newcastleutd':'newcastle','sheffieldutd':'sheffieldunited','cambridgeutd':'cambridge','oxfordutd':'oxford','gillinghamfc':'gillingham','nottingham':'nottmforest','nottinghamforest':'nottmforest','miltonkeynesdons':'mkdons','dagenhamred':'dagenhamredbridge','dagenhamredbridge':'dagenhamredbridge','hullcity':'hull','stokecity':'stoke','swansea':'swansea','crawleytown':'crawleytown'}
+          def norm(s):
+            s=html.unescape(s or '').lower().replace('&',' and '); s=re.sub(r'\bfc\b','',s); s=re.sub(r'[^a-z0-9]+','',s); return ALIASES.get(s,s)
+          def pd(s):
+            for f in ('%d/%m/%y','%d/%m/%Y'):
+              try:return datetime.strptime(s.strip(),f).date().isoformat()
+              except:pass
+            raise ValueError(s)
+          def fodd(v):
+            try:
+              x=float(v); return x if math.isfinite(x) and x>1 else None
+            except:return None
+          ou={}
+          for lg,sha in SOURCES.items():
+            req=urllib.request.Request(f'https://api.github.com/repos/jokecamp/FootballData/git/blobs/{sha}',headers={'Accept':'application/vnd.github+json','User-Agent':'r55b-series-probe/1.0'})
+            with urllib.request.urlopen(req,timeout=60) as resp:o=json.load(resp)
+            raw=base64.b64decode(o['content']); assert hashlib.sha1((f'blob {len(raw)}\0').encode()+raw).hexdigest()==sha
+            for r in csv.DictReader(io.StringIO(raw.decode('latin1'))):
+              try: over=float(r.get('BbAv>2.5') or 0); under=float(r.get('BbAv<2.5') or 0)
+              except: continue
+              if over<=1 or under<=1: continue
+              key=(lg,pd(r['Date']),norm(r['HomeTeam']),norm(r['AwayTeam']))
+              if key in ou: raise SystemExit(f'duplicate OU {key}')
+              ou[key]=(r['HomeTeam'],r['AwayTeam'])
 
-            m_rows=0; m_dates=[]; mapped=0; mapped_samples=[]; mapped_leagues=Counter()
+          with zipfile.ZipFile('archive.1.1.zip') as z:
+            strict={}; score_samples=[]; match_dates=[]
             with z.open('odds_series_matches.csv.gz') as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='latin1',newline='') as text:
               rd=csv.DictReader(text); rd.fieldnames=[x.strip() for x in rd.fieldnames]
-              print('matches_header=',json.dumps(rd.fieldnames,ensure_ascii=False))
               for r in rd:
-                r={k:(v.strip() if isinstance(v,str) else v) for k,v in r.items()}
-                m_rows+=1; dt=r.get('match_datetime',''); mid=r.get('match_id','')
-                if dt:m_dates.append(dt)
-                if mid in b_ids:
-                  mapped+=1; mapped_leagues[r.get('league','')]+=1
-                  if len(mapped_samples)<20: mapped_samples.append(r)
-            print('matches_rows=',m_rows,'matches_date_min=',min(m_dates) if m_dates else None,'matches_date_max=',max(m_dates) if m_dates else None)
-            print('b_pretarget_ids_mapped=',mapped)
-            print('mapped_league_top=',json.dumps(mapped_leagues.most_common(30),ensure_ascii=False))
-            print('mapped_samples=',json.dumps(mapped_samples,ensure_ascii=False))
+                r={k:(v.strip() if isinstance(v,str) else v) for k,v in r.items()}; dt=r['match_datetime']; match_dates.append(dt)
+                if r['league'] not in SOURCES or not (dt<'2016-03-01 00:00:00'): continue
+                key=(r['league'],dt[:10],norm(r['home_team']),norm(r['away_team']))
+                if key in ou:
+                  strict[r['match_id']]=r
+                  if len(score_samples)<20: score_samples.append(r['score'])
+            print('matches_range=',min(match_dates),max(match_dates),'strict_ou_identity=',len(strict))
+            print('score_samples=',json.dumps(score_samples,ensure_ascii=False))
+
+            def header_meta(name):
+              with z.open(name) as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+                header=[x.strip() for x in next(csv.reader(text))]
+              g71=[x for x in header if re.fullmatch(r'(home|draw|away)_b\d+_71',x)]
+              books=sorted({int(re.search(r'_b(\d+)_71$',x).group(1)) for x in g71})
+              return header,g71,books
+            ah,ag,ab=header_meta('odds_series.csv.gz'); bh,bg,bb=header_meta('odds_series_b.csv.gz')
+            print('series_columns=',len(ah),'series_grid71_columns=',len(ag),'series_grid71_books=',ab)
+            print('series_b_columns=',len(bh),'series_b_grid71_columns=',len(bg),'series_b_grid71_books=',bb)
+            print('grid71_column_sets_equal=',set(ag)==set(bg))
+
+            idx={x:i for i,x in enumerate(ah)}; recovered=[]; dates=[]; series_rows=0
+            with z.open('odds_series.csv.gz') as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+              rd=csv.reader(text); next(rd)
+              for row in rd:
+                series_rows+=1; mid=row[idx['match_id']].strip(); d=row[idx['match_date']].strip()
+                if d:dates.append(d)
+                if mid not in strict: continue
+                n=0; hs=[]; ds=[]; aas=[]
+                for b in range(1,33):
+                  needed=[f'home_b{b}_71',f'draw_b{b}_71',f'away_b{b}_71']
+                  if not all(k in idx for k in needed): continue
+                  h=fodd(row[idx[needed[0]]]); dr=fodd(row[idx[needed[1]]]); a=fodd(row[idx[needed[2]]])
+                  if None in (h,dr,a): continue
+                  n+=1; hs.append(1/h); ds.append(1/dr); aas.append(1/a)
+                if n>=8: recovered.append((mid,d,n))
+            print('series_rows=',series_rows,'series_date_min=',min(dates),'series_date_max=',max(dates))
+            print('strict_grid71_recovered=',len(recovered),'min_complete_books=',min((x[2] for x in recovered),default=None),'max_date=',max((x[1] for x in recovered),default=None))
+            print('recovered_preview=',json.dumps(recovered[:20]))
           PY
