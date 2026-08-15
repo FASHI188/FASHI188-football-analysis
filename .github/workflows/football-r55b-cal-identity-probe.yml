@@ -17,21 +17,30 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Decode persisted calibration format only
+      - name: Download already-verified frozen release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output archive.1.1.zip \
+            'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
+      - name: Probe closing odds identity representation only
         shell: bash
         run: |
           python - <<'PY'
-          import base64,gzip,json
-          from pathlib import Path
-          p=Path('football-data/research/r55b_inputs')
-          text=''.join(x.read_text(encoding='ascii').strip() for x in [p/'cal_01.b64part',p/'cal_02.b64part'])
-          obj=json.loads(gzip.decompress(base64.b64decode(text,validate=True)))
-          rows=obj if isinstance(obj,list) else next((obj[k] for k in ('rows','calibration','data') if isinstance(obj.get(k),list)),[])
-          print('json_type=',type(obj).__name__)
-          if isinstance(obj,dict): print('top_keys=',sorted(obj.keys()))
-          print('row_count=',len(rows))
-          for label,row in [('first',rows[0]),('middle',rows[len(rows)//2]),('last',rows[-1])]:
-              print(label+'_keys=',sorted(row.keys()))
-              safe={k:row.get(k) for k in ('match_id','league','match_date','match_datetime','date','home_team','away_team','source_home','source_away') if k in row}
-              print(label+'_identity=',json.dumps(safe,ensure_ascii=False,sort_keys=True))
+          import csv,gzip,io,json,zipfile
+          from collections import Counter
+          with zipfile.ZipFile('archive.1.1.zip') as z:
+              hits=[n for n in z.namelist() if n.rsplit('/',1)[-1]=='closing_odds.csv.gz']
+              assert len(hits)==1,hits
+              with z.open(hits[0]) as raw, gzip.GzipFile(fileobj=raw) as gz, io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+                  reader=csv.DictReader(text)
+                  leagues=Counter(); samples=[]; rows=0
+                  for r in reader:
+                      rows+=1; leagues[r['league']]+=1
+                      if len(samples)<20 and ('2015' in r['match_date'] or '2016' in r['match_date']):
+                          samples.append({k:r.get(k) for k in ('match_id','league','match_date','home_team','away_team')})
+                  print('row_count=',rows)
+                  print('league_top=',json.dumps(leagues.most_common(30),ensure_ascii=False))
+                  print('date_identity_samples=',json.dumps(samples,ensure_ascii=False))
           PY
