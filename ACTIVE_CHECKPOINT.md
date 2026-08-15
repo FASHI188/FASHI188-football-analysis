@@ -125,4 +125,21 @@ FAST_BOOTSTRAP 通过时，新对话不需要读取全部长期层。长期层�
 
 普通“继续”只恢复既有授权；不得自动获得新的独立OOS、标签读取、训练、评分、正式晋级或付费接口权限。
 
-本协议仅优化恢复路径，不改变模型、数据、CURRENT、科学设计或正式权重。
+## 10. EXECUTION_LITE 执行链硬门
+
+FAST_BOOTSTRAP 通过后，所有跨系统连续执行还必须遵守仓库 `EXECUTION_LITE.md`。
+
+默认执行块：
+- FAST_BOOTSTRAP 的3个小读取不计预算；
+- 每个后续执行块最多6次外部工具调用；
+- 每块最多1次重型读取、1个主要副作用动作；
+- 第5次调用时若仍需新的重型读取，先写 WAITING/适当终态再进入下一块；
+- 同一用户回合默认最多连续2个执行块，达到后先形成安全断点。
+
+窄任务禁止递归整仓库树、整表扫描、整Actions历史、重复connector schema discovery或反复展开相同大日志/Artifact。已知 record ID、path、HEAD、PR/run/job/Artifact ID 时必须精确读取。
+
+ZIP/raw bytes、大批数据、大日志、大Artifact与批量模型计算优先下放 GitHub Actions/容器，聊天只负责冻结输入、精确核验结果和写 checkpoint。
+
+出现输出截断、连续connector错误/超时、需要下一次重型查询或已完成两个执行块时，必须尽快收口为 WAITING/适当终态，禁止继续无限叠加工具调用。
+
+本协议仅优化恢复路径与执行负载，不改变模型、数据、CURRENT、科学设计或正式权重。
