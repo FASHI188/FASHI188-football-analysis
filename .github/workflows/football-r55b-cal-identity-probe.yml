@@ -24,13 +24,25 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 \
             --output archive.1.1.zip \
             'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
-      - name: List candidate archive identity members
+      - name: Inspect odds-series-b identity map
         shell: bash
         run: |
           python - <<'PY'
-          import json,zipfile
+          import csv,gzip,io,json,zipfile
+          from collections import Counter
+          target='odds_series_b_matches.csv.gz'
           with zipfile.ZipFile('archive.1.1.zip') as z:
-              names=z.namelist()
-              print('member_count=',len(names))
-              print('members=',json.dumps(names,ensure_ascii=False))
+            with z.open(target) as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+              rd=csv.DictReader(text); print('header=',json.dumps(rd.fieldnames,ensure_ascii=False))
+              n=0; dates=[]; samples=[]; leagues=Counter()
+              for r in rd:
+                n+=1
+                if 'league' in r: leagues[r['league']]+=1
+                d=r.get('match_date') or r.get('match_datetime') or r.get('date') or ''
+                if d: dates.append(d)
+                if len(samples)<20 and ('2015' in d or '2016' in d): samples.append(r)
+              print('row_count=',n)
+              print('date_min=',min(dates) if dates else None,'date_max=',max(dates) if dates else None)
+              print('league_top=',json.dumps(leagues.most_common(20),ensure_ascii=False))
+              print('samples=',json.dumps(samples[:20],ensure_ascii=False))
           PY
