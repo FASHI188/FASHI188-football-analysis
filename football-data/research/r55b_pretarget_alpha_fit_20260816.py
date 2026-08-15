@@ -12,6 +12,8 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+import scipy
+import sklearn
 from scipy.optimize import minimize_scalar
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
@@ -29,7 +31,9 @@ LEAGUES = [
 ]
 EXPECTED_TRAIN_N = 19422
 EXPECTED_CLASS_COUNTS = {0:1522,1:3745,2:4914,3:4231,4:2714,5:1421,6:569,7:306}
+EXPECTED_TRAIN_DATE_MIN = '2005-01-01'
 EXPECTED_TRAIN_DATE_MAX = '2015-05-25'
+EXPECTED_DIRECT_T_ITERATIONS = 370
 TRAIN_END = '2015-06-30'
 EPS = 1e-12
 
@@ -102,8 +106,8 @@ def load_training(archive):
         raise SystemExit(f'BASELINE_TRAIN_N_FAIL expected={EXPECTED_TRAIN_N} actual={len(y)}')
     if counts != EXPECTED_CLASS_COUNTS:
         raise SystemExit(f'BASELINE_CLASS_COUNTS_FAIL expected={EXPECTED_CLASS_COUNTS} actual={counts}')
-    if max(dates) != EXPECTED_TRAIN_DATE_MAX:
-        raise SystemExit(f'BASELINE_DATE_MAX_FAIL expected={EXPECTED_TRAIN_DATE_MAX} actual={max(dates)}')
+    if min(dates) != EXPECTED_TRAIN_DATE_MIN or max(dates) != EXPECTED_TRAIN_DATE_MAX:
+        raise SystemExit(f'BASELINE_DATE_RANGE_FAIL expected={EXPECTED_TRAIN_DATE_MIN}..{EXPECTED_TRAIN_DATE_MAX} actual={min(dates)}..{max(dates)}')
     return X, y, min(dates), max(dates), counts
 
 
@@ -117,6 +121,9 @@ def fit_direct_t(X, y):
     clf.fit(Xs, y)
     if list(map(int, clf.classes_)) != list(range(8)):
         raise SystemExit(f'BASELINE_CLASS_ORDER_FAIL: {clf.classes_.tolist()}')
+    nit = int(np.max(clf.n_iter_))
+    if nit != EXPECTED_DIRECT_T_ITERATIONS:
+        raise SystemExit(f'BASELINE_ITERATION_FINGERPRINT_FAIL expected={EXPECTED_DIRECT_T_ITERATIONS} actual={nit}')
     return scaler, clf
 
 
@@ -206,6 +213,11 @@ def main():
         'input_recovery':'football-data/research/r55b_grid71_input_recovery_20260816.json',
         'target_application_performed':False,
         'target_rows_used_for_alpha':0,
+        'runtime':{
+            'numpy':np.__version__,
+            'scipy':scipy.__version__,
+            'sklearn':sklearn.__version__,
+        },
         'training':{
             'n':int(len(ytr)),
             'date_min':dmin,
@@ -230,6 +242,7 @@ def main():
         },
         'ruling':ruling,
         'audit':{
+            'baseline_fingerprint_gate':True,
             'alpha_bounds':[0.0,1.0],
             'optimizer':'scipy minimize_scalar bounded xatol=1e-8',
             'single_global_alpha':True,
