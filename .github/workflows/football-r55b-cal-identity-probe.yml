@@ -1,0 +1,37 @@
+name: Football R55B Calibration Identity Probe
+
+on:
+  push:
+    branches:
+      - research/r55-ou-matched300-20260814
+    paths:
+      - .github/workflows/football-r55b-cal-identity-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-calibration-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode persisted calibration format only
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64,gzip,json
+          from pathlib import Path
+          p=Path('football-data/research/r55b_inputs')
+          text=''.join(x.read_text(encoding='ascii').strip() for x in [p/'cal_01.b64part',p/'cal_02.b64part'])
+          obj=json.loads(gzip.decompress(base64.b64decode(text,validate=True)))
+          rows=obj if isinstance(obj,list) else next((obj[k] for k in ('rows','calibration','data') if isinstance(obj.get(k),list)),[])
+          print('json_type=',type(obj).__name__)
+          if isinstance(obj,dict): print('top_keys=',sorted(obj.keys()))
+          print('row_count=',len(rows))
+          for label,row in [('first',rows[0]),('middle',rows[len(rows)//2]),('last',rows[-1])]:
+              print(label+'_keys=',sorted(row.keys()))
+              safe={k:row.get(k) for k in ('match_id','league','match_date','match_datetime','date','home_team','away_team','source_home','source_away') if k in row}
+              print(label+'_identity=',json.dumps(safe,ensure_ascii=False,sort_keys=True))
+          PY
