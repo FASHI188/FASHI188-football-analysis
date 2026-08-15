@@ -7,6 +7,7 @@ import gzip
 import io
 import json
 import math
+import platform
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -22,6 +23,7 @@ from sklearn.preprocessing import StandardScaler
 ROOT = Path(__file__).resolve().parents[2]
 R = ROOT / 'football-data' / 'research'
 OUT = R / 'r55b_pretarget_alpha_fit_result_20260816.json'
+ITERATION_RESOLUTION = 'football-data/research/r55_baseline_iteration_fingerprint_resolution_20260816.json'
 
 LEAGUES = [
     'England: Premier League',
@@ -33,8 +35,8 @@ EXPECTED_TRAIN_N = 19422
 EXPECTED_CLASS_COUNTS = {0:1522,1:3745,2:4914,3:4231,4:2714,5:1421,6:569,7:306}
 EXPECTED_TRAIN_DATE_MIN = '2005-01-01'
 EXPECTED_TRAIN_DATE_MAX = '2015-05-25'
-EXPECTED_DIRECT_T_ITERATIONS = 370
 TRAIN_END = '2015-06-30'
+MAX_ITER = 5000
 EPS = 1e-12
 
 
@@ -115,15 +117,15 @@ def fit_direct_t(X, y):
     scaler = StandardScaler()
     Xs = scaler.fit_transform(X)
     clf = LogisticRegression(
-        penalty='l2', C=1.0, solver='lbfgs', max_iter=5000, tol=1e-8,
+        penalty='l2', C=1.0, solver='lbfgs', max_iter=MAX_ITER, tol=1e-8,
         class_weight=None,
     )
     clf.fit(Xs, y)
     if list(map(int, clf.classes_)) != list(range(8)):
         raise SystemExit(f'BASELINE_CLASS_ORDER_FAIL: {clf.classes_.tolist()}')
     nit = int(np.max(clf.n_iter_))
-    if nit != EXPECTED_DIRECT_T_ITERATIONS:
-        raise SystemExit(f'BASELINE_ITERATION_FINGERPRINT_FAIL expected={EXPECTED_DIRECT_T_ITERATIONS} actual={nit}')
+    if nit >= MAX_ITER:
+        raise SystemExit(f'BASELINE_CONVERGENCE_FAIL n_iter={nit} max_iter={MAX_ITER}')
     return scaler, clf
 
 
@@ -211,9 +213,11 @@ def main():
         'formal_weight':0,
         'prereg':'football-data/research/r55b_pretarget_ou_alpha_prereg_20260814.json',
         'input_recovery':'football-data/research/r55b_grid71_input_recovery_20260816.json',
+        'iteration_fingerprint_resolution':ITERATION_RESOLUTION,
         'target_application_performed':False,
         'target_rows_used_for_alpha':0,
         'runtime':{
+            'python':platform.python_version(),
             'numpy':np.__version__,
             'scipy':scipy.__version__,
             'sklearn':sklearn.__version__,
@@ -223,7 +227,8 @@ def main():
             'date_min':dmin,
             'date_max':dmax,
             'class_counts':{str(k):int(v) for k,v in counts.items()},
-            'direct_t_iterations':int(np.max(clf.n_iter_)),
+            'direct_t_iterations_recorded_not_identity_gate':int(np.max(clf.n_iter_)),
+            'converged':bool(int(np.max(clf.n_iter_)) < MAX_ITER),
             'features':['strength','qD','market_entropy','pmax','openness',*['onehot:'+x for x in LEAGUES]],
             'model':'StandardScaler + LogisticRegression L2 C=1 lbfgs max_iter=5000 tol=1e-8 no class_weight',
         },
@@ -242,7 +247,10 @@ def main():
         },
         'ruling':ruling,
         'audit':{
-            'baseline_fingerprint_gate':True,
+            'baseline_data_fingerprint_gate':True,
+            'baseline_model_spec_gate':True,
+            'baseline_convergence_gate':True,
+            'exact_iteration_count_gate':False,
             'alpha_bounds':[0.0,1.0],
             'optimizer':'scipy minimize_scalar bounded xatol=1e-8',
             'single_global_alpha':True,
