@@ -1,0 +1,61 @@
+name: Football R55B Release Raw-byte Verify
+
+on:
+  push:
+    branches:
+      - research/r55-ou-matched300-20260814
+    paths:
+      - .github/workflows/football-r55b-release-rawbyte-verify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release-raw-bytes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download frozen archive release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output archive.1.1.zip \
+            'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
+
+      - name: Recompute and verify frozen SHA-256
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1'
+          actual="$(sha256sum archive.1.1.zip | awk '{print $1}')"
+          bytes="$(stat -c '%s' archive.1.1.zip)"
+          status='FAIL'
+          if [ "$actual" = "$expected" ]; then
+            status='PASS'
+          fi
+          cat > r55b_release_rawbyte_verify.json <<EOF
+          {
+            "schema": "R55B_RELEASE_RAWBYTE_VERIFY_R1",
+            "release_tag": "football-data-archive-v1",
+            "asset_name": "archive.1.1.zip",
+            "bytes": ${bytes},
+            "expected_sha256": "${expected}",
+            "actual_sha256": "${actual}",
+            "status": "${status}",
+            "inspection_scope": "raw-byte identity only; ZIP contents not opened"
+          }
+          EOF
+          cat r55b_release_rawbyte_verify.json
+          test "$actual" = "$expected"
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r55b-release-rawbyte-verify
+          path: r55b_release_rawbyte_verify.json
+          if-no-files-found: error
+          retention-days: 30
