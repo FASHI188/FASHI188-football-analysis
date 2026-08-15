@@ -24,23 +24,54 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 \
             --output archive.1.1.zip \
             'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
-      - name: Probe closing odds identity representation only
+      - name: Probe strict calibration identity join layers
         shell: bash
         run: |
           python - <<'PY'
-          import csv,gzip,io,json,zipfile
-          from collections import Counter
+          import base64,csv,gzip,hashlib,html,io,json,re,urllib.request,zipfile
+          from collections import Counter,defaultdict
+          from datetime import datetime
+          SOURCES={
+            'England: Premier League':'6d94d4ae4e3a995261b5c3aa92e48ddf05d46e74',
+            'England: Championship':'57cf8071f86b45870018bf90554f612c66b281d1',
+            'England: League One':'c7f3399aa0f6b7ca8c8b10844fc7bbba78de9ab2',
+            'England: League Two':'3aa62ec193d7e590004c34ff08e91c2b57122c76'}
+          ALIASES={'newcastleutd':'newcastle','sheffieldutd':'sheffieldunited','cambridgeutd':'cambridge','oxfordutd':'oxford','gillinghamfc':'gillingham','nottingham':'nottmforest','nottinghamforest':'nottmforest','miltonkeynesdons':'mkdons','dagenhamred':'dagenhamredbridge','dagenhamredbridge':'dagenhamredbridge','hullcity':'hull','stokecity':'stoke','swansea':'swansea','crawleytown':'crawleytown'}
+          def norm(s):
+            s=html.unescape(s or '').lower().replace('&',' and '); s=re.sub(r'\bfc\b','',s); s=re.sub(r'[^a-z0-9]+','',s); return ALIASES.get(s,s)
+          def pd(s):
+            for f in ('%d/%m/%y','%d/%m/%Y'):
+              try:return datetime.strptime(s.strip(),f).date().isoformat()
+              except:pass
+            raise ValueError(s)
+          ou=defaultdict(list)
+          for lg,sha in SOURCES.items():
+            req=urllib.request.Request(f'https://api.github.com/repos/jokecamp/FootballData/git/blobs/{sha}',headers={'Accept':'application/vnd.github+json','User-Agent':'r55b-id-probe/1.0'})
+            with urllib.request.urlopen(req,timeout=60) as resp:o=json.load(resp)
+            raw=base64.b64decode(o['content']); assert hashlib.sha1((f'blob {len(raw)}\0').encode()+raw).hexdigest()==sha
+            for r in csv.DictReader(io.StringIO(raw.decode('latin1'))):
+              if r.get('BbAv>2.5') and r.get('BbAv<2.5'):
+                ou[(lg,pd(r['Date']))].append((norm(r['HomeTeam']),norm(r['AwayTeam']),r['HomeTeam'],r['AwayTeam']))
+          counts=Counter(); misses=[]; strict=[]
           with zipfile.ZipFile('archive.1.1.zip') as z:
-              hits=[n for n in z.namelist() if n.rsplit('/',1)[-1]=='closing_odds.csv.gz']
-              assert len(hits)==1,hits
-              with z.open(hits[0]) as raw, gzip.GzipFile(fileobj=raw) as gz, io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
-                  reader=csv.DictReader(text)
-                  leagues=Counter(); samples=[]; rows=0
-                  for r in reader:
-                      rows+=1; leagues[r['league']]+=1
-                      if len(samples)<20 and ('2015' in r['match_date'] or '2016' in r['match_date']):
-                          samples.append({k:r.get(k) for k in ('match_id','league','match_date','home_team','away_team')})
-                  print('row_count=',rows)
-                  print('league_top=',json.dumps(leagues.most_common(30),ensure_ascii=False))
-                  print('date_identity_samples=',json.dumps(samples,ensure_ascii=False))
+            n=[x for x in z.namelist() if x.rsplit('/',1)[-1]=='closing_odds.csv.gz'][0]
+            with z.open(n) as raw,gzip.GzipFile(fileobj=raw) as gz,io.TextIOWrapper(gz,encoding='utf-8',newline='') as text:
+              for r in csv.DictReader(text):
+                if r['league'] not in SOURCES or not ('2015-07-01' <= r['match_date'] < '2016-03-01'): continue
+                counts['archive_eligible_window']+=1
+                day=ou.get((r['league'],r['match_date']),[])
+                if not day: continue
+                counts['same_league_date']+=1
+                h=norm(r['home_team']); a=norm(r['away_team'])
+                hm=[x for x in day if x[0]==h]
+                if hm: counts['home_norm_match']+=1
+                am=[x for x in hm if x[1]==a]
+                if am:
+                  counts['strict_identity']+=1
+                  if len(strict)<10: strict.append({'archive':[r['home_team'],r['away_team']],'fd':[am[0][2],am[0][3]],'date':r['match_date'],'league':r['league']})
+                elif len(misses)<20:
+                  misses.append({'date':r['match_date'],'league':r['league'],'archive':[r['home_team'],r['away_team']],'archive_norm':[h,a],'fd_same_day':[[x[2],x[3],x[0],x[1]] for x in day[:15]]})
+          print('join_counts=',json.dumps(counts,sort_keys=True))
+          print('strict_samples=',json.dumps(strict,ensure_ascii=False))
+          print('miss_samples=',json.dumps(misses,ensure_ascii=False))
           PY
