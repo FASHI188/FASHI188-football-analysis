@@ -8,6 +8,7 @@ on:
       - "football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py"
       - "football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py"
       - "football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py"
+      - "football-data/validation/audit_v6503_settlement_gaps_r1.py"
       - ".github/workflows/football-direct-t-parity-gd-fixed500-r1.yml"
   pull_request:
     branches: ["research/direct-t-gd-fixed200-20260816"]
@@ -16,6 +17,7 @@ on:
       - "football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py"
       - "football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py"
       - "football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py"
+      - "football-data/validation/audit_v6503_settlement_gaps_r1.py"
       - ".github/workflows/football-direct-t-parity-gd-fixed500-r1.yml"
   workflow_dispatch:
 
@@ -51,8 +53,38 @@ jobs:
           python -m py_compile football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py
           python -m py_compile football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py
           python -m py_compile football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py
+          python -m py_compile football-data/validation/audit_v6503_settlement_gaps_r1.py
       - name: Rebuild audited historical ledger
         run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Audit frozen V6503 settlement gaps
+        run: python football-data/validation/audit_v6503_settlement_gaps_r1.py
+      - name: Verify settlement gap audit boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/v6503_settlement_gap_audit_r1.json').read_text(encoding='utf-8'))
+          assert x['classification']=='REPOSITORY_LOCAL_READ_ONLY_SETTLEMENT_GAP_DIAGNOSTIC'
+          assert x['event_count']>=x['unmatched_count']
+          g=x['governance']
+          assert g['formal_weight']==0
+          assert g['provider_requests']==0
+          assert g['new_data_collection'] is False
+          assert g['new_outcome_source_opened'] is False
+          assert g['latest_confirmation_block_opened'] is False
+          assert g['model_fit_performed'] is False
+          assert g['parameter_search_performed'] is False
+          assert g['formal_asset_changes']==0
+          print(json.dumps({
+              'event_count':x['event_count'],
+              'result_inbox_count':x['result_inbox_count'],
+              'status_counts':x['status_counts'],
+              'unmatched_count':x['unmatched_count'],
+              'unmatched_reason_signals':x['unmatched_reason_signals'],
+              'unmatched_by_competition':x['unmatched_by_competition'],
+              'unmatched_by_date':x['unmatched_by_date'],
+          },ensure_ascii=False,indent=2))
+          PY
       - name: Run frozen fixed500 evaluation
         run: python football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py
       - name: Verify frozen contracts
@@ -158,6 +190,7 @@ jobs:
         with:
           name: direct-t-parity-gd-fixed500-r1-${{ github.sha }}
           path: |
+            football-data/manifests/v6503_settlement_gap_audit_r1.json
             football-data/manifests/direct_t_parity_gd_fixed500_r1_status.json
             football-data/manifests/direct_t_parity_gd_fixed500_r1_rows.csv
             football-data/manifests/direct_t_parity_gd_fixed500_oracles_r1.json
