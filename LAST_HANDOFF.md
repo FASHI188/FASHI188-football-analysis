@@ -1,85 +1,69 @@
 # 足球项目最后接力点
 
-> 这是重要接力说明；实时断点以 Airtable《当前状态》+《执行检查点》为准。新对话或新项目首先执行 FAST_BOOTSTRAP，不扫描旧聊天。
+> 最近语境只看上一工作对话末尾；真正恢复点以 Airtable《当前状态》+唯一《执行检查点》为准。禁止扫描整个旧项目聊天。
 
 ## 接力身份
 
 - project_id: `football-project`
-- handoff_version: **28**
-- state_version: **57**
-- checkpoint_version: **82**
-- updated_at_utc: `2026-08-16T09:02:36Z`
+- handoff_version: **29**
+- state_version: **58**
+- checkpoint_version: **84**
+- updated_at_utc: `2026-08-16T13:39:55Z`
 - status: `WAITING`
-- state_log_record_id: `recRUK2uiHlNQBllf`
+- state_log_record_id: `recnkUIaxylA6KRiZ`
 
-## 当前真实断点
+## 已完成
 
-研究主线仍是：**寻找真正能提升总进球 T 的赛前信息。**
-
-最新持久化推进：
-
-- multi-OU 公开源技术可行性已经记录为 PASS；
-- 这只证明单赛事/少量赛事可以拿到多档 OU 市场信息；
-- **批量未来赛事 coverage / synchronization gate 尚未完成**；
-- 因此不能启动正式 forward 标签积累，也不能把市场源路线宣布为已可用。
-
-## 唯一下一步
-
-批量抽取未来未开赛赛事，验证同一短时间窗口内能否稳定获得：
-
-- Match Odds；
-- OU1.5 / 2.5 / 3.5 / 4.5；
-- back / lay；
-- matched amount；
-- observed_at；
-- kickoff；
-- source / hash。
+本轮完成 multi-OU 批量未来赛事零标签 coverage/synchronization gate。
 
 裁决：
 
-- PASS → 启动 forward 多线 OU 冻结与后续 settlement 验证；
-- FAIL → 停止市场源路线，转 observed_at XI / injury / availability。
+**`STOP_DATA/COVERAGE`**
 
-## 禁止重复/越界
+原因不是“盘口不存在”或“市场无效”，而是当前公开免密钥链无法提供可审计的逐场同窗 `Match Odds + OU1.5/2.5/3.5/4.5 + back/lay + matched + observed_at + source/hash`。
 
-- 不重复已有 multi-OU 技术可行性探测；
-- 不把批量 coverage gate 写成已经 PASS；
-- 不恢复独立 Parity 硬分类作为主任务；
-- 不用 Direct-T logistic / 层级 / 桶壳搜索代替信息源研究；
-- 不读赛果完成未来赛事覆盖门；
-- 不新增付费 Provider；
-- 不修改 formal model/data/config/CURRENT；
-- 不因旧聊天、旧项目或记忆出现更详细文字就回退到更低 state/checkpoint。
+关键边界：
 
-## 为什么从 state56 升到 state57
+- 搜索缓存页不能冒充实时 PIT first_observed_at；
+- 当前未来赛事 Exchange 页面未稳定逐场暴露四档核心 OU；
+- 官方 Exchange API 需要账号、App Key、session token，Live Key另涉及激活费用；
+- 本轮全程未读取赛果标签、未训练、未评分；
+- 因此按 CURRENT 在 coverage gate 停止，属于数据可用性 STOP，不是科学 FAIL。
 
-Airtable 已经推进到 checkpoint81 和新的 multi-OU 技术 PASS，但 GitHub `PROJECT_CURRENT.md` / `LAST_HANDOFF.md` 仍停在 checkpoint76，state_version 仍为56。按项目硬门，新的科学 PASS 或唯一下一步变化必须发布新 state_version。
+## 当前唯一下一步
 
-state57 只修复这次接续漂移并固化跨项目恢复；formal资产改动为0。
+切换到：
 
-## 跨项目恢复
+**observed_at XI / injury / availability 公开源零标签 coverage gate**
 
-以后即使“足球2”满了并新建“足球3/4”，**不要复制旧项目聊天历史**。新项目直接使用同一外部身份：
+具体先做：
 
-- GitHub: `FASHI188/FASHI188-football-analysis`
-- Airtable: `足球项目接续` (`appLXF9IBvSCEUjJV`)
+1. 从未来未开赛赛事中冻结样本；
+2. 查官方联赛/俱乐部/球队一手来源；
+3. 验证赛前 XI、伤停、停赛、availability 是否能在比赛前稳定获得；
+4. 保存 source URL、published_at/first_observed_at、retrieved_at、正文或原始响应 hash；
+5. 只做覆盖与 PIT 审计，不读赛果；
+6. coverage 通过后，才允许进入 forward 冻结与后续增量价值验证。
 
-默认只做3个小读取：
+## 禁止重复
 
-1. Airtable《当前状态》唯一激活记录；
-2. 按其中“执行检查点记录ID”精确读唯一检查点；
-3. 核验 GitHub main HEAD。
+- 不再重复 multi-OU 单赛事技术探测；
+- 不用搜索缓存拼出“伪同步”；
+- 不请求/使用付费 Live API；
+- 不读赛果标签；
+- 不恢复 Direct-T / Parity 模型壳搜索；
+- 不修改 formal model/data/config/CURRENT。
 
-`project_id / state_version / checkpoint_version / main SHA` 一致即恢复成功。旧项目记忆不是接续前提。
+## 恢复方式
 
-## 关键锚点
+新聊天用户只需说“继续”。
 
-- current_state: `recs1pQ1rhuwJQAzE`
-- execution_checkpoint: `recIRxK7EIMjJdG4A`
-- state57 creation log: `recRUK2uiHlNQBllf`
-- state_version: **57**
-- checkpoint_version: **82**
+恢复顺序：
 
-## 新对话/新项目收到“继续”时
+1. 上一工作对话最后一小段（若可直接获得，仅作最近语境）；
+2. Airtable《当前状态》；
+3. 精确读取唯一《执行检查点》；
+4. 核验 GitHub main；
+5. 从 XI / injury / availability 零标签覆盖门继续。
 
-只执行 FAST_BOOTSTRAP。通过后直接从批量 multi-OU coverage / synchronization gate 继续；不得要求用户重新讲历史，也不得先回放旧研究。
+更早历史仅按需查维护日志，不全量回放旧聊天。
