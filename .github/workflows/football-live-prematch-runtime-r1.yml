@@ -1,4 +1,4 @@
-name: Football Live Prematch Runtime R1.2
+name: Football Live Prematch Runtime R1.3
 
 on:
   workflow_dispatch:
@@ -9,10 +9,15 @@ on:
       - football-data/config/promotion_coldstart_calibration_r1.json
       - football-data/engine/live_prematch_runtime_r1.py
       - football-data/engine/live_prematch_runtime_r12.py
+      - football-data/engine/live_prematch_runtime_r13.py
       - football-data/engine/promotion_coldstart_fallback_r1.py
+      - football-data/engine/market_pit_coldstart_fallback_r1.py
+      - football-data/engine/market_kl_projection_v463.py
       - football-data/validation/validate_live_prematch_runtime_r12.py
       - football-data/validation/validate_live_prematch_mw1_coverage_r1.py
       - football-data/research/live_prematch_runtime_r1_arsenal_mancity_20260816.json
+      - football-data/research/live_prematch_runtime_r13_racing_villarreal_20260816.json
+      - football-data/evidence/markets_prospective/ESP_LaLiga__Racing_Santander__Villarreal__marathonbet__2026-07-28T085052+0000.json
       - .github/workflows/football-live-prematch-runtime-r1.yml
 
 permissions:
@@ -35,12 +40,15 @@ jobs:
         run: |
           python -m py_compile football-data/engine/live_prematch_runtime_r1.py
           python -m py_compile football-data/engine/live_prematch_runtime_r12.py
+          python -m py_compile football-data/engine/live_prematch_runtime_r13.py
           python -m py_compile football-data/engine/promotion_coldstart_fallback_r1.py
+          python -m py_compile football-data/engine/market_pit_coldstart_fallback_r1.py
+          python -m py_compile football-data/engine/market_kl_projection_v463.py
           python -m py_compile football-data/validation/validate_live_prematch_runtime_r12.py
           python -m py_compile football-data/validation/validate_live_prematch_mw1_coverage_r1.py
-      - name: Run R1.2 engineering acceptance suite
+      - name: Preserve R1.2 engineering acceptance
         run: python football-data/validation/validate_live_prematch_runtime_r12.py
-      - name: Run zero-label MW1 operational coverage diagnostic
+      - name: Preserve zero-label MW1 operational coverage
         run: |
           python football-data/validation/validate_live_prematch_mw1_coverage_r1.py
           python - <<'PY'
@@ -51,24 +59,52 @@ jobs:
               raise SystemExit(f"MW1 coverage gate failed: {d['pass_count']}/10")
           print('MW1_COVERAGE_GATE=10/10')
           PY
-      - name: Produce Community Shield operational-shadow output
+      - name: Produce Community Shield R1.2 regression output
         run: |
           python football-data/engine/live_prematch_runtime_r12.py \
             --input football-data/research/live_prematch_runtime_r1_arsenal_mancity_20260816.json \
             --output football-data/research/artifacts/live_prematch_runtime_r1/arsenal_mancity_20260816_output.json
-      - name: Show compact prediction
+      - name: Produce Racing-Villarreal R1.3 output
+        run: |
+          python football-data/engine/live_prematch_runtime_r13.py \
+            --input football-data/research/live_prematch_runtime_r13_racing_villarreal_20260816.json \
+            --output football-data/research/artifacts/live_prematch_runtime_r1/racing_villarreal_20260816_output.json
+      - name: Gate Racing-Villarreal PIT market route
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          d=json.loads(Path('football-data/research/artifacts/live_prematch_runtime_r1/arsenal_mancity_20260816_output.json').read_text(encoding='utf-8'))
-          print(json.dumps({'status':d['status'],'runtime':d['runtime_version'],'route':d['route'],'one_x_two':d['probabilities']['one_x_two'],'total_goals':d['probabilities']['total_goals'],'top_scores':d['conclusions']['top_scores'],'formal_weight':d['formal_weight']},ensure_ascii=False,indent=2))
+          p=Path('football-data/research/artifacts/live_prematch_runtime_r1/racing_villarreal_20260816_output.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          assert d['status'] == 'PASS'
+          assert d['runtime_version'] == 'LIVE_PREMATCH_RUNTIME_R1_3'
+          assert d['route']['selected'] == 'PIT_MARKET_COLD_START_FALLBACK'
+          assert d['route']['pit_market_fallback_used'] is True
+          assert d['audit']['market_probability_mutation'] is True
+          a=d['audit']['pit_market_coldstart']
+          assert a['market_snapshot']['source_observed_at_utc'] < d['event_identity']['freeze_time_utc']
+          assert a['projection']['converged'] is True
+          assert a['projection']['max_abs_constraint_residual'] <= 1e-7
+          s=sum(d['probabilities']['one_x_two'].values())
+          assert abs(s-1.0) <= 1e-9
+          print(json.dumps({
+            'status': d['status'],
+            'runtime': d['runtime_version'],
+            'route': d['route'],
+            'one_x_two': d['probabilities']['one_x_two'],
+            'total_goals': d['probabilities']['total_goals'],
+            'btts_yes': d['probabilities']['btts_yes'],
+            'top_scores': d['conclusions']['top_scores'],
+            'market_audit': a['market_snapshot'],
+            'projection': a['projection'],
+            'formal_weight': d['formal_weight'],
+          }, ensure_ascii=False, indent=2))
           PY
       - name: Upload acceptance artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: live-prematch-runtime-r12
+          name: live-prematch-runtime-r13
           path: football-data/research/artifacts/live_prematch_runtime_r1/
           if-no-files-found: error
           retention-days: 30
