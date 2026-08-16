@@ -1,4 +1,4 @@
-# research-only capability gate; mock schema only, no target fixture access
+# research-only capability probe; mock schema only, no target fixture access
 name: Football Confirmed XI Source Capability R1
 
 on:
@@ -72,6 +72,7 @@ jobs:
       - name: Write capability adjudication
         shell: bash
         run: |
+          set +e
           python - <<'PY'
           import hashlib, json
           from datetime import datetime, timezone
@@ -81,6 +82,7 @@ jobs:
           mock = json.loads((root/'golazo_match_mock.json').read_text(encoding='utf-8'))
           text = json.dumps(mock, ensure_ascii=False).casefold()
           markers = {k: (k in text) for k in ('lineup','formation','starter','player')}
+          xi_surface = any(markers[k] for k in ('lineup','formation','starter'))
           payload = {
               'schema_version': 'xi-confirmed-lineup-capability-r1',
               'research_only': True,
@@ -93,15 +95,24 @@ jobs:
               'capabilities_sha256': hashlib.sha256((root/'golazo_capabilities.json').read_bytes()).hexdigest(),
               'mock_match_sha256': hashlib.sha256((root/'golazo_match_mock.json').read_bytes()).hexdigest(),
               'mock_structure_markers': markers,
+              'xi_surface_detected': xi_surface,
               'scientific_claim': 'NONE',
               'confirmed_xi_claim': False,
-              'verdict': 'PASS_SOURCE_SCHEMA_CAPABILITY_ONLY' if markers['player'] else 'STOP_SOURCE_SCHEMA_CAPABILITY',
-              'next_if_pass': 'Build fixture-manifest-decoupled real T-75 capture; do not access target results and do not call mock data confirmed XI evidence.'
+              'verdict': 'PASS_CLI_XI_SURFACE_CAPABILITY_ONLY' if xi_surface else 'STOP_CLI_MOCK_NO_XI_SURFACE',
+              'interpretation': (
+                  'Mock structured match surface contains an XI-specific marker.'
+                  if xi_surface else
+                  'Golazo v0.32.0 mock structured match surface exposes no lineup/formation/starter field; generic player/event/statistics data is insufficient to validate confirmed XI capture.'
+              ),
+              'next': 'Use frozen target FotMob match-page URLs and inspect raw pre-kickoff page __NEXT_DATA__; keep all target result labels inaccessible.'
           }
           (root/'capability_status.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
           print(json.dumps(payload, ensure_ascii=False, indent=2))
-          raise SystemExit(0 if payload['verdict'].startswith('PASS_') else 2)
+          raise SystemExit(0 if xi_surface else 2)
           PY
+          rc=$?
+          echo "ADJUDICATION_EXIT_CODE=$rc" >> "$GITHUB_ENV"
+          exit 0
 
       - name: Upload capability evidence
         if: always()
@@ -111,6 +122,15 @@ jobs:
           path: football-data/research/artifacts/xi_confirmed_lineup_capability_r1/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Enforce capability verdict
+        if: always()
+        shell: bash
+        run: |
+          if [ "${ADJUDICATION_EXIT_CODE:-99}" -ne 0 ]; then
+            echo "confirmed-XI CLI capability gate STOP: ${ADJUDICATION_EXIT_CODE:-99}"
+            exit "${ADJUDICATION_EXIT_CODE:-99}"
+          fi
 
       - name: Confirm no repository persistence
         if: always()
