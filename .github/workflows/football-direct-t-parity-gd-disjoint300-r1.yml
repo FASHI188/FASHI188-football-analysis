@@ -16,16 +16,27 @@ permissions:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/validation
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install research dependencies
-        run: pip install numpy pandas scikit-learn
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
       - name: Compile evaluator
         run: python -m py_compile football-data/validation/evaluate_direct_t_parity_gd_disjoint300_r1.py
+      - name: Rebuild audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Run frozen disjoint300 replay
         run: python football-data/validation/evaluate_direct_t_parity_gd_disjoint300_r1.py
       - name: Gate sample integrity only
@@ -40,8 +51,10 @@ jobs:
           assert s['overlap_with_parent_fixed500'] == 0
           assert s['overlap_with_PR196_fixed200'] == 0
           assert s['latest_position4_confirmation_opened'] is False
+          assert s['hash_rank_slice_one_based'] == [501, 800]
           assert d['formal_weight'] == 0
           assert d['governance']['provider_requests'] == 0
+          assert d['governance']['new_data_collection'] is False
           print('DISJOINT300_SAMPLE_INTEGRITY=PASS')
           print('SCIENTIFIC_VERDICT=' + d['scientific_verdict'])
           PY
@@ -55,6 +68,8 @@ jobs:
             football-data/manifests/direct_t_parity_gd_disjoint300_r1_rows.csv
           if-no-files-found: error
           retention-days: 30
-      - name: Confirm no repository persistence
+      - name: Confirm no tracked runtime mutation
         if: always()
-        run: git status --short
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
