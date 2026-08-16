@@ -189,6 +189,11 @@ def run() -> dict[str, Any]:
     flat_hda = hda_metrics(rows, "flat")
     oracle_parity_hda = hda_metrics(rows, "oracle_parity")
     oracle_t_hda = hda_metrics(rows, "oracle_t")
+    # hda_metrics exposes per-row LL arrays for bootstrap use in the main evaluator;
+    # strip those internal ndarrays from this JSON-only diagnostic receipt.
+    flat_hda.pop("_ll_rows", None)
+    oracle_parity_hda.pop("_ll_rows", None)
+    oracle_t_hda.pop("_ll_rows", None)
     flat_score = score_metrics(rows, "flat")
     oracle_parity_score = score_metrics(rows, "oracle_parity")
     oracle_t_score = score_metrics(rows, "oracle_t")
