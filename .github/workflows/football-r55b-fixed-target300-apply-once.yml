@@ -1,0 +1,79 @@
+name: Football R55B Fixed Target300 Apply Once
+
+on:
+  push:
+    branches:
+      - research/r55-ou-matched300-20260814
+    paths:
+      - football-data/research/r55b_fixed_target300_apply_once_20260816.py
+      - .github/workflows/football-r55b-fixed-target300-apply-once.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  apply-frozen-alpha-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install pinned research dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            'numpy==2.3.5' \
+            'scipy==1.17.0' \
+            'scikit-learn==1.8.0'
+
+      - name: Download already-verified frozen release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output archive.1.1.zip \
+            'https://github.com/FASHI188/FASHI188-football-analysis/releases/download/football-data-archive-v1/archive.1.1.zip'
+          echo '8bb898c3c067dfca4c4e50f7e0fb3f01104b52a1d748c27ea7973ec96b36cab1  archive.1.1.zip' | sha256sum --check --strict
+
+      - name: Download existing zero-label recovery artifact without rerunning recovery
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            --output recovery.zip \
+            'https://api.github.com/repos/FASHI188/FASHI188-football-analysis/actions/artifacts/9250066819/zip'
+          mkdir -p recovery-artifact
+          unzip -q recovery.zip -d recovery-artifact
+          test -f recovery-artifact/r55b_grid71_input_recovery_20260816.json
+
+      - name: Apply frozen alpha to frozen target300 exactly once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python football-data/research/r55b_fixed_target300_apply_once_20260816.py \
+            --archive archive.1.1.zip \
+            --recovery-json recovery-artifact/r55b_grid71_input_recovery_20260816.json \
+            --alpha-result football-data/research/r55b_pretarget_alpha_fit_result_20260816.json
+
+      - name: Upload one-shot target result
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r55b-fixed-target300-apply-once
+          path: football-data/research/r55b_fixed_target300_result_20260816.json
+          if-no-files-found: error
+          retention-days: 30
