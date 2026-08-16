@@ -3,175 +3,118 @@
 ## 身份
 
 - project_id: football-project
-- state_version: 55
-- updated_at_utc: 2026-08-16T03:29:00Z
+- state_version: 56
+- updated_at_utc: 2026-08-16T08:12:00Z
 - updated_by: GPT-5.6 Sol
-- status_source: `STATE55_R55B_FIXED_TARGET300_MIXED_NO_PROMOTION`
+- status_source: `STATE56_HANDOFF_REPAIR_POST500_T_INFORMATION_PRIORITY`
 - status: WAITING
-- state_log_record_id: `recncQm7qWc0E5o6D`
+- state_log_record_id: `recxp2m0KCfSbChhW`
+- predecessor_state: 55
 
-## 正式规则状态
+## 正式规则与正式资产
 
 - sole_CURRENT: `足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx`
 - CURRENT_version: V5.2.0
 - CURRENT_count: 1
-- old_version_execution_weight: 0
-- formal model/data/config/CURRENT changes in state55: 0
-- R55/R55B remain research-only; formal_weight=0
+- formal model/data/config/CURRENT changes in state56: 0
+- formal_weight changes in state56: 0
 
-## state55 结论
+本次 state56 只修复接续状态，不修改正式模型、正式数据、正式配置或 CURRENT，也不启动新实验。
 
-R55B 已按预注册约束完成 frozen target300 的一次性应用。结果为**混合、不得晋级**，不能表述为模型 PASS，更不能表述为平局问题已解决。
+## 为什么发布 state56
 
-- research branch: `research/r55-ou-matched300-20260814`
-- result commit: `d07bd55ec818dda4efe1b627e77871f658d82357`
-- result: `football-data/research/r55b_fixed_target300_result_20260816.json`
-- ruling: `R55B_PARTIAL_OU_MIXED_TARGET_RESULT_REQUIRES_PREREG_INTERPRETATION`
-- formal_weight: 0
+上一对话的实际研究已经越过 state55/checkpoint75：完成了一轮 500 场 T / Parity / GD 诊断，并据此改变了下一研究主方向；但该结论没有及时写入 Airtable/GitHub 接续层。新对话因此按旧 FAST_BOOTSTRAP 错误恢复到“仓库减负治理”。
 
-## 冻结设计与样本身份
+state56 的目的就是把**真实最新研究断点**写回持久化层，并增加强制落盘门，防止再次因对话满/刷新而倒退。
 
-- frozen global alpha: `0.27198933241466033`
-- alpha refit after target visibility: false
-- alpha search on target: false
-- target n: 300
-- target sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
-- target resampled: false
-- sample hash changed: false
-- target window: `2016-03-01 20:45:00` to `2016-04-16 16:00:00`
-- actual H/D/A: 120 / 88 / 92
-- actual draws: 88
-- 2025/26 confirmation access: 0
+## 最新500场诊断断点
 
-## 成功执行证据
+证据分类：`REPORTED_NOT_VERIFIED`。
 
-- successful workflow run: `31924215428`
-- job: `95109102754`
-- Artifact: `9257327236`
-- Artifact digest: `sha256:05b29bfa7cfe6be08ead1e4cf7bf411d4c14505048625fc2258bfee1fdd11ff1`
-- result JSON SHA-256: `13798b7c5a1c365378fe7c061254bcf7d402b9cd81ce1864c5034be3c00a8684`
-- runtime: Python 3.13.15 / NumPy 2.3.5 / SciPy 1.17.0 / scikit-learn 1.8.0
+原因：当前用户已在本对话明确重述上一对话末端结论，但当前仓库代码搜索未定位到该最新500场诊断对应的精确 result file / commit / run / job / Artifact。以下精确结果不得伪装为 VERIFIED；以后若找到原结果锚点，再追加证据，不改变当前恢复方向。
 
-成功 run 全步骤通过，包括原 frozen target300 应用和唯一结果 Artifact 上传。
+用户确认的上一对话末端结论：
 
-## R55B 指标
+1. **知道真实 Parity（总进球奇偶）时，性能大幅恢复。**
+2. **知道完整真实 T（总进球数）时，性能进一步大幅恢复。**
+3. **现有 X 连 Parity 都预测不出来。**
+4. 因此主要瓶颈已从“Direct-T 算法外壳/模型结构”转向：**缺少真正解释比赛总进球状态的赛前信息。**
+5. 即使知道真实 T，GD 仍未解决：
+   - 模型预测平局 201 场；
+   - 其中 81 场是假平局；
+   - 2:2 仅识别 17/32；
+   - 高比分平局更差。
+6. 500 场诊断的核心价值：把“模型结构有毛病”与“输入信息不够”分开。
 
-### Direct-T
+## 当前研究优先级
 
-Baseline:
-- LogLoss = `1.7969674347148699`
-- RPS = `0.11963024950838064`
-- Top-1 accuracy = `0.23666666666666666`
+优先级固定为：
 
-Partial OU:
-- LogLoss = `1.7967403733078462`
-- RPS = `0.1195555944280619`
-- Top-1 accuracy = `0.23333333333333334`
+### 第一优先
+**寻找真正能够提升 T 的赛前信息源。**
 
-Delta partial - baseline:
-- LogLoss = `-0.0002270614070236654`（微幅改善）
-- RPS = `-0.0000746550803187307`（微幅改善）
-- Top-1 accuracy = `-0.3333333333333327 pp`（变差）
+研究问题变为：
+> 什么在开赛前可获得、严格 PIT 合法的信息，能够解释比赛总进球状态 T？
 
-### HDA
+不再把主要时间花在同一批 X 上继续更换：
+- logistic；
+- Direct-T 层级；
+- 分类桶；
+- 其他只改变算法外壳但不增加信息量的变体。
 
-Baseline:
-- LogLoss = `1.0478911519820855`
-- Brier = `0.631361792403141`
-- accuracy = `0.44666666666666666`
-- draw_n = `0`
+### 第二优先
+**偶数 T 条件下继续解决 `GD=0` vs `GD=±2` 的分配。**
 
-Partial OU:
-- LogLoss = `1.048022940199128`
-- Brier = `0.6314631255891882`
-- accuracy = `0.44666666666666666`
-- draw_n = `0`
+即使 T 为 oracle，平局/非平局分配仍有明显剩余误差，尤其高比分平局。
 
-Delta partial - baseline:
-- LogLoss = `+0.00013178821704240562`（变差）
-- Brier = `+0.0001013331860471034`（变差）
-- accuracy = `0 pp`
+### 明确停止的主路线
+**不再做独立 Parity 硬分类作为主研究路线。**
 
-### Draw
-
-Baseline:
-- LogLoss = `0.6049476557427765`
-- Brier = `0.20737667470234286`
-- AUC = `0.5073434819897085`
-
-Partial OU:
-- LogLoss = `0.6050794439598187`
-- Brier = `0.20743239883457343`
-- AUC = `0.504127358490566`
-
-Delta partial - baseline:
-- LogLoss = `+0.00013178821704218358`（变差）
-- Brier = `+0.000055724132230566825`（变差）
-- AUC = `-0.0032161234991424648`（变差）
-
-## Bootstrap 解释
-
-90% bootstrap 不能支持稳定增益：
-
-- Direct-T LL delta: p05=`-0.0019769387995008957`, median=`-0.00026376905838918017`, p95=`+0.0014920857999691506`, P(delta<0)=`0.5985`
-- HDA LL delta: p05=`-0.00038915851250222346`, median=`+0.00013266531136338393`, p95=`+0.0006466047395584438`, P(delta<0)=`0.336`
-- Draw LL delta: P(delta<0)=`0.336`
-
-因此 Direct-T 的微弱改善不稳定，且没有传递为 HDA/Draw 改善。
-
-## 科学解释
-
-R55 已证明独立 OU 在 T>=3 分组上存在一定正交信息，但 full hard projection 无稳定增益。R55B 用 pre-target 数据冻结部分 alpha 后，在原300上再次看到：
-
-1. OU/T>=3 分组和 Direct-T LogLoss/RPS存在极弱改善；
-2. HDA LogLoss/Brier反而变差；
-3. Draw LogLoss/Brier/AUC反而变差；
-4. HDA Top-1 平局预测仍为 0；
-5. bootstrap 区间跨 0，没有稳定证据。
-
-结论：**OU残差信号目前不能作为平局问题的可用解法，也没有达到 clean increment 晋级条件。** 不允许继续用已经打开的 target300 搜索 alpha、阈值或其他目标驱动参数。
-
-## 技术可复现性裁决
-
-R55B 的最终科学结论没有通过放宽科学标准得到。执行中发现两类数值环境复现问题，并单独做了 research-only 技术裁决：
-
-- `r55_baseline_iteration_fingerprint_resolution_20260816.json`：精确 solver `n_iter_` 是数值环境敏感元数据，不是模型身份指纹；身份门仍要求精确训练数据、特征、模型规格、class order 与收敛。
-- `r55b_endpoint_reproduction_gate_resolution_20260816.json`：连续旧 endpoint 使用绝对容差 `1e-6`；AUC 因排序统计量不连续，仅允许最多 1 个 positive-negative pair 的排序漂移，且始终报告实际计算 AUC，不替换为历史值。
-
-这些裁决不改变 alpha、样本、模型规格、指标定义、最终 ruling 或正式权重。
-
-## 当前禁止事项
-
-- 不重新拟合或搜索 R55B alpha；
-- 不根据 target300 结果修改 alpha；
-- 不重新抽300或改 sample hash；
-- 不做 per-league alpha；
-- 不做 threshold search / forced draw / Top-k / class weight；
-- 不把 R55B 写成模型 PASS 或平局问题解决；
-- 不据此正式晋级；
-- 不打开2025/26 confirmation；
-- 不调用付费 Provider；
-- 不修改正式模型、正式数据、正式 config 或 CURRENT。
+Parity 只保留为诊断证据：它证明 T 状态信息有价值，但最终目标是获得更完整的 T 信息，而不是先造一个奇偶分类器再绕回来。
 
 ## 唯一下一步
 
-R55B 研究原子步骤关闭。下一步只做**足球仓库减负治理的只读审计**：
+从现有历史数据和已有赛前可得字段开始，系统盘点并测试**能够提升 T 的真实赛前信息源**：
 
-1. 精确列出当前活跃入口与依赖；
-2. 对历史 workflow / research assets / governance docs / branches / PR 做保留、归档、删除候选分类；
-3. 先只读，不立即删除；
-4. 默认禁止递归整仓库 tree scan；已知 path/HEAD/run/Artifact 时必须精确读取；
-5. 治理不得改变正式模型、数据、config、CURRENT或任何科学结论。
+1. 优先现有数据，不新增付费 Provider；
+2. 逐类盘点当前未进入 T 研究的赛前字段/信息；
+3. 严格 PIT，禁止赛后泄漏；
+4. 在固定历史样本上做小步增量测试；
+5. 先判断信息是否增加对 T 的可预测性，再讨论模型形式；
+6. 第一优先未有结果前，不切回独立 Parity 硬分类或 Direct-T 外壳搜索。
 
-在仓库治理审计形成明确方案前，不启动新的 R55B target 驱动实验。
+## 接续强制落盘门
+
+从 state56 起执行以下硬门：
+
+1. 任何研究结果只要改变**当前瓶颈、主方向、优先级、停止条件或唯一下一步**，就属于重要状态变化；
+2. 这种变化必须在同一工作回合内先写入 Airtable《执行检查点》；若构成主方向变化，同时发布新 `state_version`；
+3. 不允许等到对话快满才补接力；
+4. 在状态尚未持久化前，不得对用户声称“新对话可以直接接上”；
+5. 若持久化失败，必须明确输出 `HANDOFF_NOT_PERSISTED`，并保留当前对话，不得假装已经安全接续；
+6. 长任务每个实质执行块结束后都更新 checkpoint 的“上一已完成 / 恢复位置 / 唯一下一步 / 禁止重复”；
+7. 新对话 FAST_BOOTSTRAP 只以最新持久化 state/checkpoint 为恢复点，旧 state 不得覆盖更高 state_version。
+
+## 当前禁止事项
+
+- 不把 state55 的“仓库治理”恢复成当前研究主线；
+- 不重复 R55B；
+- 不把上述500场精确指标标成 VERIFIED，除非找到原 result/commit/run/Artifact 锚点；
+- 不新增付费 Provider；
+- 不修改正式模型、正式数据、正式 config 或 CURRENT；
+- 不独立启动 Parity 硬分类作为主路线；
+- 不继续把换 logistic / 层级 / 分类桶当作 T 问题的首要解法。
 
 ## Airtable锚点
 
 - base: `足球项目接续`
 - current_state_record: `recs1pQ1rhuwJQAzE`
-- state55 creation log: `recncQm7qWc0E5o6D`
+- state56 creation log: `recxp2m0KCfSbChhW`
 - execution_checkpoint_record: `recIRxK7EIMjJdG4A`
+- checkpoint_version: 76
 
 ## 权威优先级
 
-当前用户明确指令 > 唯一正式 CURRENT > ACTIVE_CHECKPOINT实时协议与唯一激活检查点 > LAST_HANDOFF > PROJECT_CURRENT + Airtable当前状态/绑定维护日志 > 历史聊天/旧文件/记忆。
+当前用户明确指令 > 唯一正式 CURRENT > 最新 Airtable state/checkpoint > LAST_HANDOFF > PROJECT_CURRENT + 绑定维护日志 > 历史聊天/旧文件/记忆。
+
+对“从哪里继续”这一问题，**更高 state_version 永远覆盖更低 state_version**；不得因旧 checkpoint 内容更详细而回退。
