@@ -4,7 +4,8 @@
 This module deliberately does NOT mutate CURRENT or formal weights. It closes the
 engineering gap between a frozen prematch question and an auditable probability
 artifact when the formal single-match path cannot run because the event domain is
-one-off, the target season is in cold start, or the venue is neutral.
+one-off, the target season is in cold start, the club lacks top-flight history, or
+the venue is neutral.
 
 Core policy:
 * event identity is separate from the competition used as the strength reference;
@@ -12,6 +13,8 @@ Core policy:
 * same-season history is preferred when it can run the existing frozen engine math;
 * otherwise all prior strength-reference seasons are passed to the same frozen
   V4.6 score engine as a research-only cold-start bridge;
+* if that bridge cannot identify a club (for example a newly promoted club), an
+  independently trained date-safe ClubElo cross-league fallback may run;
 * neutral venues are symmetrized by averaging both orientations after mirroring;
 * evidence observed after freeze fails closed;
 * availability / XI / market evidence is audit context only in R1 and cannot
@@ -25,6 +28,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from clubelo_coldstart_fallback_r1 import predict_clubelo_coldstart
 from football_v460_engine import load_config, load_model_artifact, predict_from_history
 from platform_core import (
     ROOT,
@@ -203,6 +207,8 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
     params, parameter_audit = _parameter_set(strength_competition_id, target_season)
 
     normal_error = None
+    cross_season_error = None
+    clubelo_audit = None
     selected_history = same_season
     route = "SAME_SEASON_NORMAL_SHADOW"
     try:
@@ -231,27 +237,52 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
         normal_error = f"{type(exc).__name__}: {exc}"
         selected_history = prior_history
         route = "CROSS_SEASON_COLD_START_BRIDGE"
-        forward = _predict(
-            prior_history,
-            strength_competition_id,
-            "ALL_PRIOR_SEASONS_SHADOW",
-            strength_home,
-            strength_away,
-            freeze,
-            params,
-        )
-        reverse = (
-            _predict(
+        try:
+            forward = _predict(
                 prior_history,
                 strength_competition_id,
                 "ALL_PRIOR_SEASONS_SHADOW",
-                strength_away,
                 strength_home,
+                strength_away,
                 freeze,
                 params,
             )
-            if neutral else None
-        )
+            reverse = (
+                _predict(
+                    prior_history,
+                    strength_competition_id,
+                    "ALL_PRIOR_SEASONS_SHADOW",
+                    strength_away,
+                    strength_home,
+                    freeze,
+                    params,
+                )
+                if neutral else None
+            )
+        except Exception as cross_exc:
+            cross_season_error = f"{type(cross_exc).__name__}: {cross_exc}"
+            route = "CLUBELO_CROSS_LEAGUE_COLD_START_FALLBACK"
+            forward = predict_clubelo_coldstart(
+                prior_history,
+                strength_competition_id,
+                strength_home,
+                strength_away,
+                freeze,
+            )
+            reverse = (
+                predict_clubelo_coldstart(
+                    prior_history,
+                    strength_competition_id,
+                    strength_away,
+                    strength_home,
+                    freeze,
+                )
+                if neutral else None
+            )
+            clubelo_audit = {
+                "forward": forward.get("audit"),
+                "reverse": reverse.get("audit") if reverse else None,
+            }
 
     if neutral:
         if reverse is None:
@@ -273,7 +304,7 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
 
     config = load_config()
     return {
-        "schema_version": "live-prematch-runtime-r1.0",
+        "schema_version": "live-prematch-runtime-r1.1",
         "runtime_version": RUNTIME_VERSION,
         "classification": CLASSIFICATION,
         "formal_weight": 0,
@@ -296,7 +327,9 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
             "same_season_history_matches": len(same_season),
             "selected_history_matches": len(selected_history),
             "normal_route_failure": normal_error,
-            "cold_start_bridge_used": route == "CROSS_SEASON_COLD_START_BRIDGE",
+            "cross_season_route_failure": cross_season_error,
+            "cold_start_bridge_used": route != "SAME_SEASON_NORMAL_SHADOW",
+            "clubelo_fallback_used": route == "CLUBELO_CROSS_LEAGUE_COLD_START_FALLBACK",
             "date_only_same_day_rows_excluded": True,
         },
         "probabilities": {
@@ -322,9 +355,14 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
             "evidence": evidence_audit,
             "parameter_source": parameter_audit,
             "neutral_venue": neutral_audit,
+            "clubelo_coldstart": clubelo_audit,
             "history_season_counts": _season_counts(selected_history),
             "selected_history_latest_date": max(m.date for m in selected_history).date().isoformat(),
-            "engine_math": "football_v460_engine.predict_from_history",
+            "engine_math": (
+                "clubelo_coldstart_fallback_r1 + three_stage_core_v6260"
+                if route == "CLUBELO_CROSS_LEAGUE_COLD_START_FALLBACK"
+                else "football_v460_engine.predict_from_history"
+            ),
             "engine_config_version": config.get("engine_version"),
             "availability_xi_probability_mutation": False,
             "market_probability_mutation": False,
@@ -333,9 +371,9 @@ def run_live_prematch(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "limitations": [
             "Research operational shadow only; formal CURRENT and formal weights are unchanged.",
-            "Cold-start bridge reuses prior strength-reference seasons with the frozen V4.6 engine math; it is not a promoted cross-season scientific model.",
+            "Cross-season V4.6 bridge and ClubElo fallback are operational cold-start mechanisms, not promoted formal probability models.",
+            "ClubElo fallback is currently limited to ENG_PremierLeague and requires strict point-in-time provider identity/rating coverage.",
             "Availability, confirmed XI and market evidence are frozen/audited but have zero numeric probability effect in R1 pending OOS validation.",
-            "Teams with no usable prior history in the chosen strength-reference competition may still fail closed.",
         ],
     }
 
