@@ -1,0 +1,74 @@
+name: Football XI Availability Public Coverage R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/xi-availability-public-coverage-r1
+    paths:
+      - football-data/research/eng_pl_2026_27_mw1_fixture_freeze_20260816.json
+      - football-data/research/xi_availability_public_coverage_r1.py
+      - .github/workflows/football-xi-availability-public-coverage-r1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-xi-availability-public-coverage-r1
+  cancel-in-progress: true
+
+jobs:
+  zero-label-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/xi-availability-public-coverage-r1
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile collector
+        run: python -m py_compile football-data/research/xi_availability_public_coverage_r1.py
+
+      - name: Run zero-label public availability coverage gate
+        shell: bash
+        run: |
+          set +e
+          python football-data/research/xi_availability_public_coverage_r1.py
+          rc=$?
+          echo "COLLECTOR_EXIT_CODE=$rc" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Show adjudication
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/research/artifacts/xi_availability_public_coverage_r1/coverage_status.json')
+          if not p.exists():
+              raise SystemExit('coverage_status.json missing')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          print('verdict=', d.get('verdict'))
+          print('coverage=', json.dumps(d.get('coverage'), ensure_ascii=False, sort_keys=True))
+          print('hard_violations=', json.dumps(d.get('hard_violations'), ensure_ascii=False))
+          print('source_errors=', json.dumps(d.get('source_errors'), ensure_ascii=False))
+          PY
+
+      - name: Upload zero-label evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xi-availability-public-coverage-r1
+          path: football-data/research/artifacts/xi_availability_public_coverage_r1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm research-only no repository persistence
+        if: always()
+        run: git status --short
