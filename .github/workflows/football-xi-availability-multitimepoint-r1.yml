@@ -1,0 +1,94 @@
+name: Football XI Availability Multi-Timepoint R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/xi-availability-multitimepoint-r1
+    paths:
+      - football-data/research/eng_pl_2026_27_mw1_fixture_freeze_20260816.json
+      - football-data/research/xi_availability_public_coverage_r1.py
+      - football-data/research/xi_availability_multitimepoint_r1.py
+      - football-data/research/xi_availability_capture_trigger_r1.json
+      - .github/workflows/football-xi-availability-multitimepoint-r1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-xi-availability-multitimepoint-r1
+  cancel-in-progress: false
+
+jobs:
+  timed-availability-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/xi-availability-multitimepoint-r1
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile zero-label collectors
+        run: |
+          python -m py_compile football-data/research/xi_availability_public_coverage_r1.py
+          python -m py_compile football-data/research/xi_availability_multitimepoint_r1.py
+
+      - name: Run PIT availability capture contract
+        shell: bash
+        run: |
+          set +e
+          python football-data/research/xi_availability_multitimepoint_r1.py
+          rc=$?
+          echo "CAPTURE_EXIT_CODE=$rc" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Show capture adjudication
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('football-data/research/artifacts/xi_availability_multitimepoint_r1')
+          files = sorted(root.glob('*/capture_status.json'))
+          if not files:
+              raise SystemExit('capture_status.json missing')
+          p = files[-1]
+          d = json.loads(p.read_text(encoding='utf-8'))
+          print('capture_status=', p)
+          print('capture_id=', d.get('capture_id'))
+          print('slot=', d.get('slot'))
+          print('timing_verdict=', d.get('timing_verdict'))
+          print('verdict=', d.get('verdict'))
+          print('collector_verdict=', d.get('collector_verdict'))
+          print('coverage=', json.dumps(d.get('coverage'), ensure_ascii=False, sort_keys=True))
+          print('source_errors=', json.dumps(d.get('source_errors'), ensure_ascii=False))
+          print('hard_violations=', json.dumps(d.get('hard_violations'), ensure_ascii=False))
+          PY
+
+      - name: Upload zero-label PIT evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xi-availability-multitimepoint-r1
+          path: football-data/research/artifacts/xi_availability_multitimepoint_r1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce capture result
+        if: always()
+        shell: bash
+        run: |
+          if [ "${CAPTURE_EXIT_CODE:-99}" -ne 0 ]; then
+            echo "capture failed with exit code ${CAPTURE_EXIT_CODE:-99}"
+            exit "${CAPTURE_EXIT_CODE:-99}"
+          fi
+
+      - name: Confirm research-only no repository persistence
+        if: always()
+        run: git status --short
