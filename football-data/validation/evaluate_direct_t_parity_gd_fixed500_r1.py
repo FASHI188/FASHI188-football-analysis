@@ -244,7 +244,8 @@ def run() -> dict[str, Any]:
     if len(sample) != int(exp["sample_n"]):
         raise ResearchError("fixed500 label attachment changed sample size")
 
-    raw_scores = raw[KEYS + ["home_goals_90", "away_goals_90", "goal_difference", "total_goals"]].copy()
+    # goal_difference already exists on the frozen feature frame; attach only score/total fields here.
+    raw_scores = raw[KEYS + ["home_goals_90", "away_goals_90", "total_goals"]].copy()
     raw_scores["season"] = raw_scores["season"].astype(str)
     sample["season"] = sample["season"].astype(str)
     sample = sample.merge(raw_scores, on=KEYS, how="left", validate="one_to_one")
