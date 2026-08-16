@@ -1,0 +1,89 @@
+name: Football Direct-T High-T Hurdle Disjoint200 R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/direct-t-hight-hurdle-disjoint200-20260817
+    paths:
+      - football-data/config/direct_t_hight_hurdle_disjoint200_r1.json
+      - football-data/validation/evaluate_direct_t_hight_hurdle_disjoint200_r1.py
+      - .github/workflows/football-direct-t-hight-hurdle-disjoint200-r1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-direct-t-hight-hurdle-disjoint200-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile evaluator
+        run: python -m py_compile football-data/validation/evaluate_direct_t_hight_hurdle_disjoint200_r1.py
+      - name: Rebuild audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen High-T hurdle disjoint200 replay
+        run: python football-data/validation/evaluate_direct_t_hight_hurdle_disjoint200_r1.py
+      - name: Gate sample and governance integrity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/direct_t_hight_hurdle_disjoint200_r1_status.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          s=d['sample']
+          assert d['status']=='COMPLETED_RESEARCH_ONLY'
+          assert d['formal_weight']==0
+          assert s['n']==200
+          assert s['hash_rank_slice_one_based']==[801,1000]
+          assert s['labels_used_for_identity_selection'] is False
+          assert s['overlap_with_parent_fixed500']==0
+          assert s['overlap_with_prior_disjoint300']==0
+          assert s['overlap_with_PR196_fixed200']==0
+          assert s['latest_position4_confirmation_opened'] is False
+          g=d['governance']
+          assert g['formal_weight']==0
+          assert g['provider_requests']==0
+          assert g['new_data_collection'] is False
+          assert g['formal_model_mutation'] is False
+          assert g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False
+          assert g['current_mutation'] is False
+          assert g['main_mutation'] is False
+          print('HIGHT_HURDLE_DISJOINT200_INTEGRITY=PASS')
+          print('SCIENTIFIC_VERDICT=' + d['scientific_verdict'])
+          PY
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-hight-hurdle-disjoint200-r1
+          path: |
+            football-data/manifests/direct_t_hight_hurdle_disjoint200_r1_status.json
+            football-data/manifests/direct_t_hight_hurdle_disjoint200_r1_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        if: always()
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
