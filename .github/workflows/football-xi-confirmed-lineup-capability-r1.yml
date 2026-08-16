@@ -1,0 +1,116 @@
+name: Football Confirmed XI Source Capability R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/xi-availability-multitimepoint-r1
+    paths:
+      - .github/workflows/football-xi-confirmed-lineup-capability-r1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-xi-confirmed-lineup-capability-r1
+  cancel-in-progress: true
+
+jobs:
+  zero-label-source-capability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/xi-availability-multitimepoint-r1
+          fetch-depth: 1
+
+      - name: Install pinned Golazo binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/0xjuanma/golazo/releases/download/v0.32.0/golazo-linux-amd64'
+          curl -fL --retry 3 --connect-timeout 15 "$url" -o /tmp/golazo
+          echo 'f618bd7c757f944e66418c763ee94b2313628668b23cbbf521ef741a979f0b81  /tmp/golazo' | sha256sum -c -
+          chmod +x /tmp/golazo
+          /tmp/golazo --version || true
+
+      - name: Freeze CLI capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/artifacts/xi_confirmed_lineup_capability_r1
+          GOLAZO_AGENT=1 /tmp/golazo capabilities > football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_capabilities.json
+          sha256sum football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_capabilities.json > football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_capabilities.sha256
+
+      - name: Freeze mock match-detail schema only
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOLAZO_AGENT=1 /tmp/golazo match 2001 --mock > football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_match_mock.json
+          sha256sum football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_match_mock.json > football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_match_mock.sha256
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/research/artifacts/xi_confirmed_lineup_capability_r1/golazo_match_mock.json')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          def shape(x, depth=0):
+              if depth >= 4:
+                  return type(x).__name__
+              if isinstance(x, dict):
+                  return {k: shape(v, depth+1) for k, v in x.items()}
+              if isinstance(x, list):
+                  return {'_list_len': len(x), '_item': shape(x[0], depth+1) if x else None}
+              return type(x).__name__
+          s = shape(d)
+          out = Path('football-data/research/artifacts/xi_confirmed_lineup_capability_r1/mock_schema_shape.json')
+          out.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Write capability adjudication
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          root = Path('football-data/research/artifacts/xi_confirmed_lineup_capability_r1')
+          cap = json.loads((root/'golazo_capabilities.json').read_text(encoding='utf-8'))
+          mock = json.loads((root/'golazo_match_mock.json').read_text(encoding='utf-8'))
+          text = json.dumps(mock, ensure_ascii=False).casefold()
+          markers = {k: (k in text) for k in ('lineup','formation','starter','player')}
+          payload = {
+              'schema_version': 'xi-confirmed-lineup-capability-r1',
+              'research_only': True,
+              'label_access': False,
+              'target_fixture_access': False,
+              'mock_only': True,
+              'generated_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'golazo_version_pin': 'v0.32.0',
+              'golazo_linux_amd64_sha256': 'f618bd7c757f944e66418c763ee94b2313628668b23cbbf521ef741a979f0b81',
+              'capabilities_sha256': hashlib.sha256((root/'golazo_capabilities.json').read_bytes()).hexdigest(),
+              'mock_match_sha256': hashlib.sha256((root/'golazo_match_mock.json').read_bytes()).hexdigest(),
+              'mock_structure_markers': markers,
+              'scientific_claim': 'NONE',
+              'confirmed_xi_claim': False,
+              'verdict': 'PASS_SOURCE_SCHEMA_CAPABILITY_ONLY' if markers['player'] else 'STOP_SOURCE_SCHEMA_CAPABILITY',
+              'next_if_pass': 'Build fixture-manifest-decoupled real T-75 capture; do not access target results and do not call mock data confirmed XI evidence.'
+          }
+          (root/'capability_status.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps(payload, ensure_ascii=False, indent=2))
+          raise SystemExit(0 if payload['verdict'].startswith('PASS_') else 2)
+          PY
+
+      - name: Upload capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xi-confirmed-lineup-capability-r1
+          path: football-data/research/artifacts/xi_confirmed_lineup_capability_r1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository persistence
+        if: always()
+        run: git status --short
