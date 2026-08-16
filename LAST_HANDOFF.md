@@ -5,101 +5,73 @@
 ## 接力身份
 
 - project_id: football-project
-- handoff_version: 25
-- state_version: 54
-- updated_at_utc: 2026-08-15T17:25:00Z
+- handoff_version: 26
+- state_version: 55
+- updated_at_utc: 2026-08-16T03:30:00Z
 - status: WAITING
+- state_log_record_id: `recncQm7qWc0E5o6D`
 
-## 用户最后指令
+## 用户当前授权
 
-用户说“开始吧”，即继续既有R55B research-only授权，从已闭合的943场pre-target calibration进入唯一全局alpha拟合与冻结。不得重新设计实验、不得提前用fixed target300调参。
+用户已授权先完成 R55B，再进行足球仓库减负治理。R55B 已完成并关闭；下一步只允许仓库治理**只读审计**，先列保留/归档/删除候选，不直接大删。
 
-## 本轮已完成
+## R55B 已完成
 
-### 1. R55B alpha执行链
-
-- alpha runner: `football-data/research/r55b_pretarget_alpha_fit_20260816.py`
-- persistent alpha result: `football-data/research/r55b_pretarget_alpha_fit_result_20260816.json`
-- current research HEAD: `1ef58235de14071387d6e6382237b51f72c0cd6c`
-- pinned numerical environment: Python3.13 / NumPy2.3.5 / SciPy1.17.0 / scikit-learn1.8.0
-
-### 2. R55旧370迭代指纹技术裁决
-
-R55结果曾记录`direct_t_iterations=370`。本轮没有直接删除该门，而是先做独立环境probe：同一19,422训练数据、同一特征、同一模型规格，在不同数值栈下得到360/362/396迭代。因此`n_iter_`是环境敏感求解器元数据，不是预注册科学身份。
-
-- resolution: `football-data/research/r55_baseline_iteration_fingerprint_resolution_20260816.json`
-- resolution commit: `8be35e9beaac982446395adb3fce5793eb5ca405`
-- scientific rule change: 0
-- replacement gate: exact training fingerprint + exact feature/model spec + class order + convergence
-- environment selection did not use calibration alpha/loss or target300 result
-
-### 3. alpha冻结真实结果
-
-- run: `31898043150`
-- job: `95044288985`
-- Artifact: `9250346172`
-- Artifact SHA-256: `24590c2b42db9e9f4ae72ab492ca75f637d301981efe5b1b43759612f94316e1`
-- calibration n: 943
-- frozen global alpha: `0.27198933241466033`
-- baseline binary LL: `0.688465669649886`
-- fitted binary LL: `0.6883337105775551`
-- LL gain: `0.00013195907233087834`
-- stop rule triggered: false
-- ruling: `ALPHA_FROZEN_READY_FOR_TARGET_APPLICATION`
-
-3段时间稳定性诊断：
-
-1. 315场：alpha=`0.07725465867076434`，LL gain=`0.000010738423192435675`
-2. 314场：alpha=`0.9999999700466811`，LL gain=`0.00255106875386224`
-3. 314场：alpha=`3.737685985848599e-09`，LL gain≈`-6.58e-12`
-
-结论必须准确表述：**全943场有非常小的正LL增益，但时间稳定性弱。** stop rule未触发，所以按预注册可以进入一次性fixed target300应用；这不等于R55B模型PASS，更不等于平局问题解决。
-
-## target300隔离状态
-
-截至state54发布：
-
-- target rows used for alpha: 0
-- target application performed: false
-- target score access during alpha fit: 0
-- target tuning: false
-- frozen target n: 300
-- sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
-
-## 唯一下一步
-
-先完成state54 GitHub + Airtable双边回读一致性核验。只有 `HANDOFF_STATE_SYNC_VERIFIED` 后，才允许下一研究原子步骤：
-
-1. 固定使用alpha=`0.27198933241466033`，不得重拟合；
-2. 一次性应用原fixed target300；
-3. 按R55同口径计算Direct-T / HDA / Draw指标与bootstrap；
-4. target结果可见后禁止任何alpha搜索或修改；
-5. 新科学PASS/FAIL/STOP产生后先发布下一state_version。
-
-## 禁止重复/越界
-
-- 不重做943场输入恢复；
-- 不重复环境矩阵probe；
-- 不重新拟合/搜索alpha；
-- 不用target300选择数值环境或alpha；
-- 不重新抽300或改sample hash；
-- 不per-league alpha / threshold / forced draw / Top-k / class weight；
-- 不打开2025/26 confirmation；
-- 不调用付费Provider；
-- 不修改正式模型、数据、config或CURRENT；
-- 不将state54表述成模型PASS。
-
-## 关键锚点
-
-- unique CURRENT: V5.2.0 / count=1
-- state_version: 54
-- state54 creation log: `recSphqybYbluBFEN`
-- current_state: `recs1pQ1rhuwJQAzE`
-- execution_checkpoint: `recIRxK7EIMjJdG4A`
 - research branch: `research/r55-ou-matched300-20260814`
-- research HEAD: `1ef58235de14071387d6e6382237b51f72c0cd6c`
-- R55B prereg blob: `ed365d820788d13c36813d114e29631e27bf1998`
-- alpha run/job/artifact: `31898043150 / 95044288985 / 9250346172`
+- current research/result HEAD: `d07bd55ec818dda4efe1b627e77871f658d82357`
+- result file: `football-data/research/r55b_fixed_target300_result_20260816.json`
+- frozen alpha: `0.27198933241466033`
+- fixed target n: 300
+- sample hash: `7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb`
+- target resampled: false
+- alpha refit/search after target: false
+- formal_weight: 0
+
+Successful execution:
+- run: `31924215428`
+- job: `95109102754`
+- Artifact: `9257327236`
+- Artifact digest: `sha256:05b29bfa7cfe6be08ead1e4cf7bf411d4c14505048625fc2258bfee1fdd11ff1`
+- result JSON SHA-256: `13798b7c5a1c365378fe7c061254bcf7d402b9cd81ce1864c5034be3c00a8684`
+
+## 真实科学结论
+
+Ruling:
+`R55B_PARTIAL_OU_MIXED_TARGET_RESULT_REQUIRES_PREREG_INTERPRETATION`
+
+关键结果：
+
+- Direct-T LogLoss delta partial-baseline = `-0.0002270614070236654`：微幅改善；
+- Direct-T RPS delta = `-0.0000746550803187307`：微幅改善；
+- Direct-T Top-1 accuracy = `-0.3333333333333327 pp`：变差；
+- HDA LogLoss delta = `+0.00013178821704240562`：变差；
+- HDA Brier delta = `+0.0001013331860471034`：变差；
+- Draw LogLoss delta = `+0.00013178821704218358`：变差；
+- Draw Brier delta = `+0.000055724132230566825`：变差；
+- Draw AUC delta = `-0.0032161234991424648`：变差；
+- HDA draw_n = `0`，仍没有 Top-1 平局预测。
+
+Bootstrap：
+- Direct-T P(delta<0)=`0.5985`，90%区间跨0；
+- HDA P(delta<0)=`0.336`；
+- Draw P(delta<0)=`0.336`。
+
+结论必须表述为：**R55B 在 Direct-T/OU 分组上只有极弱、不稳定的改善，但没有转化为 HDA/Draw 改善；平局问题仍未解决，R55B 不得晋级。**
+
+## 执行中技术复现问题
+
+以下失败属于技术门，不属于新的科学实验：
+
+1. run `31923136286`：alpha audit字段读取错误，未进入 target；
+2. run `31923236804`：已读取原300，在旧 R55 连续 endpoint 的过严 `2e-9` 复现门失败；
+3. run `31924132200`：连续 endpoint 在 `1e-6` 内均通过，只剩 `draw_hard_auc` 相差恰好一个 positive-negative pair 排序量子；
+4. run `31924215428`：采用预先落盘的 portable reproduction gate 后成功。
+
+技术裁决文件：
+- `football-data/research/r55_baseline_iteration_fingerprint_resolution_20260816.json`
+- `football-data/research/r55b_endpoint_reproduction_gate_resolution_20260816.json`
+
+边界：这些裁决不改 alpha、样本、模型规格、指标定义、ruling 或正式权重；AUC始终报告实际计算值。
 
 ## 正式资产变化
 
@@ -109,6 +81,41 @@ R55结果曾记录`direct_t_iterations=370`。本轮没有直接删除该门，�
 - CURRENT: 0
 - formal_weight: 0
 
+unique CURRENT 仍为 V5.2.0 / count=1。
+
+## 禁止重复/越界
+
+- 不重新拟合或搜索 R55B alpha；
+- 不根据已经打开的 target300 结果修改 alpha；
+- 不重抽300、不改 sample hash；
+- 不做 per-league alpha / threshold / forced draw / Top-k / class weight；
+- 不重新跑 R55B 来挑有利数值环境；
+- 不将 R55B 表述为模型 PASS 或平局问题解决；
+- 不正式晋级；
+- 不打开2025/26 confirmation；
+- 不调用付费 Provider；
+- 不修改正式模型、数据、config或CURRENT。
+
+## 唯一下一步
+
+启动**足球仓库减负治理只读审计**，不是继续 R55B：
+
+1. 只点读明确入口和目录，不做 recursive full-tree scan；
+2. 识别当前真正活跃的 workflow / 状态文件 / research 入口；
+3. 对历史 workflow、研究资产、治理文档、branches、PR 分类为“保留 / 归档 / 删除候选”；
+4. 先出方案，不立即执行破坏性删除；
+5. 治理本身不得改变科学结论或正式资产。
+
+## 关键锚点
+
+- state_version: 55
+- state55 creation log: `recncQm7qWc0E5o6D`
+- current_state: `recs1pQ1rhuwJQAzE`
+- execution_checkpoint: `recIRxK7EIMjJdG4A`
+- research branch: `research/r55-ou-matched300-20260814`
+- research result HEAD: `d07bd55ec818dda4efe1b627e77871f658d82357`
+- successful run/job/artifact: `31924215428 / 95109102754 / 9257327236`
+
 ## 新对话恢复
 
-新对话收到“继续/开始”时先走 `AGENTS.md` FAST_BOOTSTRAP。若state54双边同步已经验证，直接从“冻结alpha一次性应用fixed target300”继续；不得退回输入恢复、环境probe或重新拟合alpha。
+新对话收到“继续/开始”时走 `AGENTS.md` FAST_BOOTSTRAP。若 state55 双边同步已验证，**不要再恢复 R55B target300**；从“仓库减负治理只读审计”继续。
