@@ -1,0 +1,60 @@
+name: Football Direct-T Parity GD Disjoint300 R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/direct-t-parity-gd-disjoint300-20260817
+    paths:
+      - football-data/config/direct_t_parity_gd_disjoint300_r1.json
+      - football-data/validation/evaluate_direct_t_parity_gd_disjoint300_r1.py
+      - .github/workflows/football-direct-t-parity-gd-disjoint300-r1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install research dependencies
+        run: pip install numpy pandas scikit-learn
+      - name: Compile evaluator
+        run: python -m py_compile football-data/validation/evaluate_direct_t_parity_gd_disjoint300_r1.py
+      - name: Run frozen disjoint300 replay
+        run: python football-data/validation/evaluate_direct_t_parity_gd_disjoint300_r1.py
+      - name: Gate sample integrity only
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/direct_t_parity_gd_disjoint300_r1_status.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          s=d['sample']
+          assert s['n'] == 300
+          assert s['overlap_with_parent_fixed500'] == 0
+          assert s['overlap_with_PR196_fixed200'] == 0
+          assert s['latest_position4_confirmation_opened'] is False
+          assert d['formal_weight'] == 0
+          assert d['governance']['provider_requests'] == 0
+          print('DISJOINT300_SAMPLE_INTEGRITY=PASS')
+          print('SCIENTIFIC_VERDICT=' + d['scientific_verdict'])
+          PY
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-parity-gd-disjoint300-r1
+          path: |
+            football-data/manifests/direct_t_parity_gd_disjoint300_r1_status.json
+            football-data/manifests/direct_t_parity_gd_disjoint300_r1_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        if: always()
+        run: git status --short
