@@ -54,7 +54,7 @@ def run() -> dict:
     actual = raw[KEYS + ["home_goals_90", "away_goals_90", "total_goals", "goal_difference"]].copy()
     actual["season"] = actual["season"].astype(str)
     sample["season"] = sample["season"].astype(str)
-    sample = sample.merge(actual, on=KEYS, how="left", validate="one_to_one")
+    sample = sample.merge(actual, on=KEYS, how="left", validate="one_to_one", suffixes=("", "_actual"))
     if sample[["home_goals_90", "away_goals_90"]].isna().any().any():
         raise ResearchError("final-score join failure")
 
