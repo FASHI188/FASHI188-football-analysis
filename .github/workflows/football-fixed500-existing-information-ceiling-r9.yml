@@ -1,0 +1,64 @@
+name: Football Fixed500 Existing Information Ceiling R9
+
+on:
+  push:
+    branches: ["research/fixed500-existing-market-t-r1"]
+    paths:
+      - "football-data/validation/audit_fixed500_existing_information_ceiling_r9.py"
+      - ".github/workflows/football-fixed500-existing-information-ceiling-r9.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/fixed500-existing-market-t-r1
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile
+        run: python -m py_compile football-data/validation/audit_fixed500_existing_information_ceiling_r9.py
+      - name: Run existing-information inventory and evidence audit
+        run: python football-data/validation/audit_fixed500_existing_information_ceiling_r9.py
+      - name: Verify governance boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/fixed500_existing_information_ceiling_r9.json').read_text(encoding='utf-8'))
+          assert x['sample_anchor']['fixed500_n']==500
+          assert x['sample_anchor']['same_market_cohort_n']==220
+          assert x['interpretation_guard']['not_a_new_model_fit'] is True
+          assert x['interpretation_guard']['does_not_claim_mathematical_impossibility'] is True
+          assert x['interpretation_guard']['historical_market_references_not_strict_PIT'] is True
+          assert x['interpretation_guard']['oracle_results_not_deployable'] is True
+          assert x['governance']['new_data_collection'] is False
+          assert x['governance']['new_sample_consumed'] is False
+          assert x['governance']['main_mutation'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'inventory_counts':x['processed_header_inventory']['counts'],
+            'categories':{k:len(v) for k,v in x['processed_header_inventory']['categories'].items()},
+            'unclassified':x['processed_header_inventory']['categories'].get('unclassified',[]),
+            'family_status':x['family_status'],
+            'boundary':x['scientific_boundary'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed500-existing-information-ceiling-r9
+          path: football-data/manifests/fixed500_existing_information_ceiling_r9.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
