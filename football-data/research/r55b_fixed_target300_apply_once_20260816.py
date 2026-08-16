@@ -128,7 +128,7 @@ def assert_close(name,a,b,tol=2e-9):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--archive',required=True); ap.add_argument('--recovery-json',required=True); ap.add_argument('--alpha-result',required=True); args=ap.parse_args()
     frozen=json.loads(Path(args.alpha_result).read_text()); a=float(frozen['calibration']['full_fit']['alpha'])
-    if abs(a-FROZEN_ALPHA)>1e-15 or frozen.get('target_application_performed') is not False: raise SystemExit(f'FROZEN_ALPHA_GATE_FAIL {a}')
+    if abs(a-FROZEN_ALPHA)>1e-15 or frozen.get('audit',{}).get('target_application_performed') is not False: raise SystemExit(f'FROZEN_ALPHA_GATE_FAIL {a}')
     Xtr,ytr,dtr=load_training(args.archive); scT,clfT,cond=fit_models(Xtr,ytr,dtr); rows,sha=load_target(args.recovery_json,args.archive)
     X=np.asarray([features((r['qH'],r['qD'],r['qA']),r['league']) for r in rows],float); qou=np.asarray([r['q_over_2_5'] for r in rows],float); qha=np.asarray([[r['qH'],r['qD'],r['qA']] for r in rows],float)
     yt=np.asarray([r['t_class'] for r in rows],int); yh=np.asarray([0 if r['hda']=='H' else (1 if r['hda']=='D' else 2) for r in rows],int)
