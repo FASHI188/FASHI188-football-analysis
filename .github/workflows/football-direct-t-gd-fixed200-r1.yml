@@ -5,11 +5,13 @@ on:
     branches: ["research/direct-t-gd-fixed200-20260816"]
     paths:
       - "football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py"
+      - "football-data/validation/diagnose_direct_t_gd_fixed200_oracle_t_r1.py"
       - ".github/workflows/football-direct-t-gd-fixed200-r1.yml"
   pull_request:
     branches: ["research/v510-context-market-prototype-r1"]
     paths:
       - "football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py"
+      - "football-data/validation/diagnose_direct_t_gd_fixed200_oracle_t_r1.py"
       - ".github/workflows/football-direct-t-gd-fixed200-r1.yml"
   workflow_dispatch:
 
@@ -39,8 +41,10 @@ jobs:
         run: >-
           python -m pip install --disable-pip-version-check
           numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
-      - name: Compile evaluator
-        run: python -m py_compile football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py
+      - name: Compile evaluators
+        run: |
+          python -m py_compile football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py
+          python -m py_compile football-data/validation/diagnose_direct_t_gd_fixed200_oracle_t_r1.py
       - name: Self-test score mapping
         env:
           PYTHONPATH: football-data/validation
@@ -51,19 +55,24 @@ jobs:
         env:
           PYTHONPATH: football-data/validation
         run: python football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py
+      - name: Run post-result oracle-T diagnostic on same fixed200
+        env:
+          PYTHONPATH: football-data/validation
+        run: python football-data/validation/diagnose_direct_t_gd_fixed200_oracle_t_r1.py
       - name: Show compact result
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p=Path('football-data/manifests/direct_t_gd_joint_fixed200_r1_status.json')
-          x=json.loads(p.read_text(encoding='utf-8'))
+          a=json.loads(Path('football-data/manifests/direct_t_gd_joint_fixed200_r1_status.json').read_text(encoding='utf-8'))
+          b=json.loads(Path('football-data/manifests/direct_t_gd_fixed200_oracle_t_diagnostic_r1.json').read_text(encoding='utf-8'))
           print(json.dumps({
-              'classification': x['classification'],
-              'sample': x['sample'],
-              'metrics': x['metrics'],
-              'draw_diagnostics': x['draw_diagnostics'],
-              'governance': x['governance'],
+              'joint_sample': a['sample'],
+              'joint_metrics': a['metrics'],
+              'joint_draw': a['draw_diagnostics'],
+              'oracle_hda': b['oracle_hda'],
+              'oracle_exact_score': b['oracle_exact_score'],
+              'oracle_draw_decomposition': b['draw_decomposition'],
           }, ensure_ascii=False, indent=2))
           PY
       - name: Upload fixed200 evidence
@@ -73,5 +82,7 @@ jobs:
           path: |
             football-data/manifests/direct_t_gd_joint_fixed200_r1_status.json
             football-data/manifests/direct_t_gd_joint_fixed200_r1_rows.csv
+            football-data/manifests/direct_t_gd_fixed200_oracle_t_diagnostic_r1.json
+            football-data/manifests/direct_t_gd_fixed200_oracle_t_diagnostic_r1_rows.csv
           if-no-files-found: error
           retention-days: 30
