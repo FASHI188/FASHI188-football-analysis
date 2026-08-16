@@ -1,0 +1,85 @@
+name: Football Fixed500 Explicit Parity Features R6
+
+on:
+  push:
+    branches: ["research/fixed500-existing-market-t-r1"]
+    paths:
+      - "football-data/validation/diagnose_fixed500_explicit_parity_features_r6.py"
+      - ".github/workflows/football-fixed500-explicit-parity-features-r6.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-fixed500-explicit-parity-features-r6-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/fixed500-existing-market-t-r1
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile
+        run: python -m py_compile football-data/validation/diagnose_fixed500_explicit_parity_features_r6.py
+      - name: Rebuild audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run same-fixed500 explicit parity information test
+        run: python football-data/validation/diagnose_fixed500_explicit_parity_features_r6.py
+      - name: Verify boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/fixed500_explicit_parity_features_r6.json').read_text(encoding='utf-8'))
+          assert x['sample']['parent_fixed500_n']==500
+          assert x['sample']['full_fixed500_n']==500
+          assert x['sample']['same_ou_cohort_n']==220
+          assert x['sample']['new_sample_consumed'] is False
+          assert x['sample']['latest_position4_confirmation_opened'] is False
+          assert x['feature_contract']['same_day_freeze_before_updates'] is True
+          assert x['feature_contract']['uses_only_prior_match_scores'] is True
+          assert x['feature_contract']['uses_future_result'] is False
+          assert x['feature_contract']['model_family_unchanged'] is True
+          assert x['feature_contract']['manual_threshold'] is False
+          assert x['interpretation_guard']['R5_oracle_parity_not_used_as_training_feature'] is True
+          assert x['interpretation_guard']['no_true_parity_at_inference'] is True
+          assert x['governance']['new_data_collection'] is False
+          assert x['governance']['post_result_threshold_search'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'sample':x['sample'],
+            'full500':x['full_fixed500'],
+            'same220':x['same_220_ou_cohort'],
+            'best_models':x['best_models'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed500-explicit-parity-features-r6
+          path: |
+            football-data/manifests/fixed500_explicit_parity_features_r6.json
+            football-data/manifests/fixed500_explicit_parity_features_r6_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
