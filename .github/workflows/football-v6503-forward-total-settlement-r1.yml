@@ -1,0 +1,92 @@
+name: Football V6503 Forward Total Settlement R1
+
+on:
+  push:
+    branches: ["research/direct-t-parity-gd-fixed500-20260816"]
+    paths:
+      - "football-data/validation/evaluate_v6503_forward_total_settlement_r1.py"
+      - ".github/workflows/football-v6503-forward-total-settlement-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6503-forward-total-settlement-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONPATH: football-data/validation
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5
+      - name: Compile evaluator
+        run: python -m py_compile football-data/validation/evaluate_v6503_forward_total_settlement_r1.py
+      - name: Rebuild historical score ledger for deterministic fallback settlement
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Settle frozen prospective V6503 events
+        run: python football-data/validation/evaluate_v6503_forward_total_settlement_r1.py
+      - name: Verify prospective and governance boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6503_forward_total_settlement_r1.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='PROSPECTIVE_FROZEN_PREDICTION_SETTLEMENT_RESEARCH_ONLY'
+          assert x['status']=='COMPLETED_RESEARCH_ONLY'
+          assert x['settlement']['strict_timestamped_n'] > 0
+          assert x['temporal_audit']['strict_all_pass'] is True
+          assert x['temporal_audit']['prediction_temporal_failures_all_settled']==0
+          f=x['frozen_decision_contract']
+          assert f['outcome_driven_sample_selection'] is False
+          assert f['post_result_parameter_search'] is False
+          assert f['post_result_feature_search'] is False
+          assert f['post_result_threshold_search'] is False
+          assert f['post_result_blend_search'] is False
+          assert f['prediction_probabilities_recomputed'] is False
+          assert f['prediction_probabilities_mutated'] is False
+          i=x['interpretation_guard']
+          assert i['strict_timestamped_subset_is_prospective_PIT_evidence'] is True
+          assert i['historical_fallback_strengthens_PIT_claim'] is False
+          assert i['can_authorize_promotion'] is False
+          assert i['formal_weight']==0
+          g=x['governance']
+          assert g['formal_weight']==0 and g['provider_requests']==0 and g['new_data_collection'] is False
+          assert g['latest_position4_confirmation_opened'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False and g['current_mutation'] is False and g['main_mutation'] is False
+          print(json.dumps({
+              'settlement':x['settlement'],
+              'temporal_audit':x['temporal_audit'],
+              'primary':x['primary_strict_timestamped'],
+              'supplementary':x['supplementary_all_deterministically_settled'],
+              'interpretation_guard':x['interpretation_guard'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload settlement evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6503-forward-total-settlement-r1-${{ github.sha }}
+          path: |
+            football-data/manifests/v6503_forward_total_settlement_r1.json
+            football-data/manifests/v6503_forward_total_settlement_r1_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"

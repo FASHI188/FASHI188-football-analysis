@@ -1,0 +1,99 @@
+name: Football V6503 Event-Type Settlement Correction R1
+
+on:
+  push:
+    branches: ["research/direct-t-parity-gd-fixed500-20260816"]
+    paths:
+      - "football-data/validation/diagnose_v6503_event_type_settlement_correction_r1.py"
+      - ".github/workflows/football-v6503-event-type-correction-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v6503-event-type-correction-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile correction diagnostic
+        run: python -m py_compile football-data/validation/diagnose_v6503_event_type_settlement_correction_r1.py
+      - name: Rebuild audited historical score ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run event-type settlement correction
+        run: python football-data/validation/diagnose_v6503_event_type_settlement_correction_r1.py
+      - name: Verify correction boundary and invariants
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6503_event_type_settlement_correction_r1.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='POST_HOC_CODE_PATH_CORRECTION_SAME_EXISTING_OUTCOMES_ONLY'
+          a=x['ledger_audit']
+          assert a['v6503_event_type_counts']['TOTAL_PREDICTION_FROZEN']==33
+          assert a['v6503_event_type_counts']['RESULT_SETTLED']==4
+          assert a['v6505_event_type_counts']['JOINT_MATRIX_PREDICTION_FROZEN']==33
+          assert a['v6505_event_type_counts']['RESULT_SETTLED']==4
+          assert a['prediction_id_set_matches_v6505'] is True
+          assert a['v6503_receipt_ids_subset_predictions'] is True
+          assert a['v6505_receipt_ids_subset_predictions'] is True
+          b=x['original_code_path_bug']
+          assert b['false_unmatched_receipt_events']==4
+          assert b['joint_prediction_rows_overwritten_by_result_receipts']==4
+          s=x['corrected_settlement']
+          assert s['prediction_event_n']==33
+          assert s['settled_total']+s['unmatched_prediction_n']==33
+          assert s['strict_timestamped_n']==4
+          i=x['interpretation']
+          assert i['strict_direct_total_scientific_sample_changed'] is False
+          assert i['strict_direct_total_outcomes_changed'] is False
+          assert i['strict_direct_total_probabilities_changed'] is False
+          assert i['unmatched_accounting_corrected'] is True
+          assert i['exact_score_code_path_corrected'] is True
+          g=x['governance']
+          assert g['formal_weight']==0 and g['provider_requests']==0
+          assert g['new_data_collection'] is False and g['new_outcome_source_opened'] is False
+          assert g['latest_confirmation_block_opened'] is False
+          assert g['model_fit_performed'] is False and g['parameter_search_performed'] is False
+          assert g['formal_asset_changes']==0
+          print(json.dumps({
+              'ledger_audit':a,
+              'original_code_path_bug':b,
+              'corrected_settlement':s,
+              'corrected_metrics':x['corrected_metrics'],
+              'interpretation':i,
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload correction evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6503-event-type-settlement-correction-r1-${{ github.sha }}
+          path: |
+            football-data/manifests/v6503_event_type_settlement_correction_r1.json
+            football-data/manifests/v6503_event_type_settlement_correction_r1_rows.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
