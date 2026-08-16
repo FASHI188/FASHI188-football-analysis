@@ -1,0 +1,75 @@
+name: Football Live Prematch Runtime R1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/live-prematch-runtime-r1
+    paths:
+      - football-data/engine/live_prematch_runtime_r1.py
+      - football-data/validation/validate_live_prematch_runtime_r1.py
+      - football-data/research/live_prematch_runtime_r1_arsenal_mancity_20260816.json
+      - .github/workflows/football-live-prematch-runtime-r1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-live-prematch-runtime-r1
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile runtime and validator
+        run: |
+          python -m py_compile football-data/engine/live_prematch_runtime_r1.py
+          python -m py_compile football-data/validation/validate_live_prematch_runtime_r1.py
+
+      - name: Run engineering acceptance suite
+        run: python football-data/validation/validate_live_prematch_runtime_r1.py
+
+      - name: Produce Community Shield operational-shadow output
+        run: |
+          python football-data/engine/live_prematch_runtime_r1.py \
+            --input football-data/research/live_prematch_runtime_r1_arsenal_mancity_20260816.json \
+            --output football-data/research/artifacts/live_prematch_runtime_r1/arsenal_mancity_20260816_output.json
+
+      - name: Show compact prediction
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/artifacts/live_prematch_runtime_r1/arsenal_mancity_20260816_output.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps({
+            'status': d['status'],
+            'classification': d['classification'],
+            'route': d['route'],
+            'one_x_two': d['probabilities']['one_x_two'],
+            'total_goals': d['probabilities']['total_goals'],
+            'top_scores': d['conclusions']['top_scores'],
+            'formal_weight': d['formal_weight'],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload acceptance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-prematch-runtime-r1
+          path: football-data/research/artifacts/live_prematch_runtime_r1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository persistence
+        if: always()
+        run: git status --short
