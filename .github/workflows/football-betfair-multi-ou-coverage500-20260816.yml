@@ -1,0 +1,79 @@
+name: Football Betfair Multi-OU Coverage500 20260816
+
+on:
+  push:
+    branches:
+      - research/betfair-multi-ou-coverage500-20260816
+    paths:
+      - '.github/workflows/football-betfair-multi-ou-coverage500-20260816.yml'
+      - 'football-data/research/betfair_multi_ou_coverage500_20260816/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-betfair-multi-ou-coverage500-20260816
+  cancel-in-progress: false
+
+jobs:
+  coverage500:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile zero-label probe
+        run: python -m py_compile football-data/research/betfair_multi_ou_coverage500_20260816/probe_betfair_multi_ou_coverage500.py
+      - name: Run public Betfair multi-OU coverage500 probe
+        run: |
+          rm -rf artifacts/research/betfair_multi_ou_coverage500_20260816
+          mkdir -p artifacts/research/betfair_multi_ou_coverage500_20260816
+          python football-data/research/betfair_multi_ou_coverage500_20260816/probe_betfair_multi_ou_coverage500.py \
+            --target 500 \
+            --max-listing-pages 80 \
+            --listing-workers 16 \
+            --event-workers 24 \
+            --max-event-fetch 900 \
+            --out-json artifacts/research/betfair_multi_ou_coverage500_20260816/status.json \
+            --out-csv artifacts/research/betfair_multi_ou_coverage500_20260816/sample500.csv
+      - name: Verify research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('artifacts/research/betfair_multi_ou_coverage500_20260816/status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='ZERO_LABEL_PUBLIC_WEB_COVERAGE_PROBE_FORMAL_WEIGHT_0'
+          assert x['source']['login_used'] is False
+          assert x['source']['credentials_used'] is False
+          assert x['source']['paid_api_used'] is False
+          assert x['sample_contract']['labels_read'] is False
+          assert x['governance']['model_fit_performed'] is False
+          assert x['governance']['settlement_labels_read'] is False
+          assert x['governance']['formal_weight']==0
+          assert x['governance']['betting_action_performed'] is False
+          print(json.dumps({
+              'status':x['status'],
+              'discovery':x['discovery'],
+              'sample_contract':x['sample_contract'],
+              'coverage':x['coverage'],
+              'gate_results':x['gate_results'],
+              'decision':x['decision'],
+          },ensure_ascii=False))
+          PY
+      - name: Confirm formal assets untouched
+        run: |
+          git status --short
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Upload coverage result
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-multi-ou-coverage500-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/research/betfair_multi_ou_coverage500_20260816/
+          if-no-files-found: error
+          retention-days: 30
