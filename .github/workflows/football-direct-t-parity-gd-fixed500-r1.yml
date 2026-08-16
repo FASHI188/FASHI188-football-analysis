@@ -7,6 +7,7 @@ on:
       - "football-data/config/direct_t_parity_gd_fixed500_r1.json"
       - "football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py"
       - "football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py"
+      - "football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py"
       - ".github/workflows/football-direct-t-parity-gd-fixed500-r1.yml"
   pull_request:
     branches: ["research/direct-t-gd-fixed200-20260816"]
@@ -14,6 +15,7 @@ on:
       - "football-data/config/direct_t_parity_gd_fixed500_r1.json"
       - "football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py"
       - "football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py"
+      - "football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py"
       - ".github/workflows/football-direct-t-parity-gd-fixed500-r1.yml"
   workflow_dispatch:
 
@@ -48,6 +50,7 @@ jobs:
         run: |
           python -m py_compile football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py
           python -m py_compile football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py
+          python -m py_compile football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py
       - name: Rebuild audited historical ledger
         run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
       - name: Run frozen fixed500 evaluation
@@ -93,7 +96,7 @@ jobs:
           PY
       - name: Run post-result oracle diagnostics on same fixed500
         run: python football-data/validation/diagnose_direct_t_parity_gd_fixed500_oracles_r1.py
-      - name: Verify diagnostic boundary
+      - name: Verify oracle diagnostic boundary
         run: |
           python - <<'PY'
           import json
@@ -112,6 +115,44 @@ jobs:
           assert x['governance']['formal_asset_changes']==0
           print(json.dumps({'metrics':x['metrics'],'draw_diagnostics':x['draw_diagnostics']},ensure_ascii=False,indent=2))
           PY
+      - name: Run retrospective OU2.5 information-ceiling diagnostic
+        run: python football-data/validation/diagnose_direct_t_ou25_fixed500_info_ceiling_r1.py
+      - name: Verify OU2.5 diagnostic boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/direct_t_ou25_fixed500_info_ceiling_r1.json').read_text(encoding='utf-8'))
+          y=json.loads(Path('football-data/manifests/direct_t_parity_gd_fixed500_r1_status.json').read_text(encoding='utf-8'))
+          assert x['classification']=='POST_RESULT_SAME_FIXED500_RETROSPECTIVE_MARKET_DIAGNOSTIC_ONLY'
+          assert x['sample']['parent_fixed500_n']==500
+          assert x['sample']['parent_fixed500_identity_sha256']==y['sample']['sample_identity_sha256']
+          assert x['sample']['new_sample_consumed'] is False
+          assert x['sample']['labels_used_for_coverage_selection'] is False
+          assert x['sample']['latest_position4_confirmation_opened'] is False
+          assert x['market_boundary']['formal_PIT_claim'] is False
+          assert x['market_boundary']['retrospective_reference_only'] is True
+          assert x['fit_contract']['fixed500_parameter_selection'] is False
+          assert x['fit_contract']['fixed500_feature_selection'] is False
+          assert x['fit_contract']['fixed500_threshold_selection'] is False
+          assert x['fit_contract']['post_result_parameter_search'] is False
+          assert x['interpretation_guard']['can_authorize_promotion'] is False
+          assert x['interpretation_guard']['frozen_PR197_verdict_changed'] is False
+          g=x['governance']
+          assert g['formal_weight']==0 and g['provider_requests']==0 and g['new_data_collection'] is False
+          assert g['latest_position4_confirmation_opened'] is False
+          assert g['formal_model_mutation'] is False and g['formal_data_mutation'] is False
+          assert g['formal_config_mutation'] is False and g['current_mutation'] is False and g['main_mutation'] is False
+          print(json.dumps({
+              'sample':x['sample'],
+              'direct_t':x['metrics']['direct_t'],
+              'parity':x['metrics']['parity'],
+              'hda':x['metrics']['hda_from_same_conditional_gd'],
+              'exact_score':x['metrics']['exact_score_from_same_conditional_gd'],
+              'draw_diagnostics':x['draw_diagnostics'],
+              'interpretation_guard':x['interpretation_guard'],
+          },ensure_ascii=False,indent=2))
+          PY
       - name: Upload fixed500 evidence
         uses: actions/upload-artifact@v4
         with:
@@ -121,6 +162,8 @@ jobs:
             football-data/manifests/direct_t_parity_gd_fixed500_r1_rows.csv
             football-data/manifests/direct_t_parity_gd_fixed500_oracles_r1.json
             football-data/manifests/direct_t_parity_gd_fixed500_oracles_r1_rows.csv
+            football-data/manifests/direct_t_ou25_fixed500_info_ceiling_r1.json
+            football-data/manifests/direct_t_ou25_fixed500_info_ceiling_r1_rows.csv
           if-no-files-found: error
           retention-days: 30
       - name: Confirm no tracked runtime mutation
