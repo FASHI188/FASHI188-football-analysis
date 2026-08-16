@@ -20,13 +20,13 @@ ROWS_OUT = ROOT / "manifests" / "fixed500_r4_oracle_t_routing_r5_rows.csv"
 
 
 def oracle_parity_total(p_total: np.ndarray, actual_total: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Parity diagnostic only for realized exact totals <=6.
+    """Parity diagnostic on realized exact totals <=6 only.
 
-    Tail class 7+ merges odd/even totals, so parity-only routing is not identifiable there.
-    We therefore report parity routing only on the T<=6 diagnostic cohort and set those
-    rows' tail mass to zero before renormalizing over exact classes of the realized parity.
+    Model class 7+ merges odd and even totals, so realized parity cannot be injected cleanly
+    for that tail. Rows with actual total >=7 are excluded from the three-way routing
+    comparison rather than guessed or manually allocated.
     """
-    p = np.asarray(p_total, float).copy()
+    p = np.asarray(p_total, float)
     actual = np.asarray(actual_total, int)
     eligible = actual <= 6
     out = np.full_like(p, np.nan)
@@ -34,21 +34,27 @@ def oracle_parity_total(p_total: np.ndarray, actual_total: np.ndarray) -> tuple[
         parity = int(actual[i] % 2)
         keep = np.asarray([(t <= 6 and t % 2 == parity) for t in range(8)], dtype=bool)
         row = np.where(keep, p[i], 0.0)
-        s = float(row.sum())
-        if s <= 1e-15:
+        mass = float(row.sum())
+        if mass <= 1e-15:
             raise ResearchError("R5 oracle parity renormalization has zero mass")
-        out[i] = row / s
+        out[i] = row / mass
     return out, eligible
 
 
-def oracle_exact_total(actual_total_class: np.ndarray) -> np.ndarray:
+def oracle_exact_total_class(actual_total_class: np.ndarray) -> np.ndarray:
     y = np.asarray(actual_total_class, int)
     out = np.zeros((len(y), 8), dtype=float)
     out[np.arange(len(y)), y] = 1.0
     return out
 
 
-def attach_joint(rows: pd.DataFrame, prefix: str, p_total: np.ndarray, cond: dict[int, tuple[list[int], np.ndarray]], mask: np.ndarray | None = None) -> None:
+def attach_joint(
+    rows: pd.DataFrame,
+    prefix: str,
+    p_total: np.ndarray,
+    cond: dict[int, tuple[list[int], np.ndarray]],
+    mask: np.ndarray | None = None,
+) -> None:
     if mask is None:
         joint = pd.DataFrame(assemble_joint(p_total, cond), index=rows.index)
         for col in joint.columns:
@@ -57,10 +63,13 @@ def attach_joint(rows: pd.DataFrame, prefix: str, p_total: np.ndarray, cond: dic
     idx = np.where(mask)[0]
     sub_total = p_total[idx]
     sub_cond = {t: (classes, probs[idx]) for t, (classes, probs) in cond.items()}
-    joint = pd.DataFrame(assemble_joint(sub_total, sub_cond), index=rows.index[idx])
+    joint = pd.DataFrame(assemble_joint(sub_total, sub_cond), index=idx)
     for col in joint.columns:
-        rows[f"{prefix}_{col}"] = np.nan
-        rows.loc[joint.index, f"{prefix}_{col}"] = joint[col]
+        if joint[col].dtype == object:
+            rows[f"{prefix}_{col}"] = pd.Series([None] * len(rows), dtype="object")
+        else:
+            rows[f"{prefix}_{col}"] = np.nan
+        rows.loc[idx, f"{prefix}_{col}"] = joint[col].to_numpy()
 
 
 def draw_ranking_summary(rows: pd.DataFrame, prefix: str, mask: np.ndarray | None = None) -> dict[str, Any]:
@@ -95,21 +104,24 @@ def run() -> dict[str, Any]:
     data_identity = audit_data_identity(raw, config)
     base = add_identity_key(build_features(raw)); core = select_core_features(base)
     seasons, excluded = complete_seasons(raw, config)
-    pos = int(exp["test_position_zero_based"]); latest = max(int(x) for x in config["split_contract"]["rolling_test_positions_zero_based"])
+    pos = int(exp["test_position_zero_based"])
+    latest = max(int(x) for x in config["split_contract"]["rolling_test_positions_zero_based"])
     if pos >= latest:
         raise ResearchError("R5 must reuse PR197 non-latest fixed500")
     base["split"] = assign_fold(base, seasons, pos)
     sample_base, sample_hash = sample_fixed_n(base[base.split == "test"].copy(), int(exp["sample_n"]))
     fold = attach_exact_total(base, raw).merge(materialize_market(raw), on="identity_key", how="left", validate="one_to_one")
     sample = fold.merge(sample_base[KEYS + ["match_identity", "identity_hash"]], on=KEYS, how="inner", validate="one_to_one")
-    raw_scores = raw[KEYS + ["home_goals_90", "away_goals_90", "total_goals"]].copy(); raw_scores["season"] = raw_scores["season"].astype(str); sample["season"] = sample["season"].astype(str)
+    raw_scores = raw[KEYS + ["home_goals_90", "away_goals_90", "total_goals"]].copy()
+    raw_scores["season"] = raw_scores["season"].astype(str); sample["season"] = sample["season"].astype(str)
     sample = sample.merge(raw_scores, on=KEYS, how="left", validate="one_to_one")
     if len(sample) != 500:
         raise ResearchError("R5 fixed500 mismatch")
 
     sync = fold[MARKET_FULL].notna().all(axis=1)
-    sample_sync = sample[sample[MARKET_FULL].notna().all(axis=1)].copy()
-    fit_sync = fold[fold.split.isin(["train", "policy"]) & sync].copy(); train_sync = fit_sync[fit_sync.split == "train"].copy(); policy_sync = fit_sync[fit_sync.split == "policy"].copy()
+    sample_sync = sample[sample[MARKET_FULL].notna().all(axis=1)].copy().reset_index(drop=True)
+    fit_sync = fold[fold.split.isin(["train", "policy"]) & sync].copy()
+    train_sync = fit_sync[fit_sync.split == "train"].copy(); policy_sync = fit_sync[fit_sync.split == "policy"].copy()
     if len(sample_sync) != 220:
         raise ResearchError(f"R5 expected 220 synchronized rows, got {len(sample_sync)}")
 
@@ -118,39 +130,43 @@ def run() -> dict[str, Any]:
     q_by_total, q_receipt = fit_near_balance_draw_models(fit_sync, sample_sync, core + SIDE_AH, config)
     cond_r4, reweight_receipt = reweight_near_balance_mass(cond_base, q_by_total)
 
-    rows = sample_sync[KEYS + ["match_identity", "identity_hash", "home_goals_90", "away_goals_90", "total_goals", "goal_difference", "exact_total", "total_class"]].copy()
-    rows = rows.rename(columns={"total_goals":"actual_total","goal_difference":"actual_gd","total_class":"actual_total_class"})
+    rows = sample_sync[KEYS + ["match_identity", "identity_hash", "home_goals_90", "away_goals_90", "total_goals", "goal_difference", "exact_total", "total_class"]].copy().reset_index(drop=True)
+    rows = rows.rename(columns={"total_goals":"actual_total", "goal_difference":"actual_gd", "total_class":"actual_total_class"})
     rows["actual_score"] = rows.home_goals_90.astype(int).astype(str) + ":" + rows.away_goals_90.astype(int).astype(str)
     rows["actual_result"] = np.where(rows.actual_gd > 0, "H", np.where(rows.actual_gd == 0, "D", "A"))
 
     attach_joint(rows, "predicted_T", p_pred, cond_r4)
-    p_parity, parity_mask = oracle_parity_total(p_pred, rows.actual_total.to_numpy(int))
-    attach_joint(rows, "oracle_parity", p_parity, cond_r4, parity_mask)
-    p_exact = oracle_exact_total(rows.actual_total_class.to_numpy(int))
-    attach_joint(rows, "oracle_exact_T", p_exact, cond_r4)
+    p_parity, eligible = oracle_parity_total(p_pred, rows.actual_total.to_numpy(int))
+    attach_joint(rows, "oracle_parity", p_parity, cond_r4, eligible)
+    p_exact = oracle_exact_total_class(rows.actual_total_class.to_numpy(int))
+    attach_joint(rows, "oracle_exact_T", p_exact, cond_r4, eligible)
 
-    pred_summary = draw_ranking_summary(rows, "predicted_T")
-    parity_summary = draw_ranking_summary(rows, "oracle_parity", parity_mask)
-    exact_summary = draw_ranking_summary(rows, "oracle_exact_T")
+    full_pred_summary = draw_ranking_summary(rows, "predicted_T")
+    pred_eligible_summary = draw_ranking_summary(rows, "predicted_T", eligible)
+    parity_summary = draw_ranking_summary(rows, "oracle_parity", eligible)
+    exact_summary = draw_ranking_summary(rows, "oracle_exact_T", eligible)
 
-    # Draws are all even exact totals <=6, so all 64 draw rows are eligible for the parity diagnostic.
-    draw_rows = rows.actual_result.eq("D")
-    if not bool(np.all(parity_mask[draw_rows.to_numpy()])):
-        raise ResearchError("R5 unexpected draw outside exact T<=6 parity cohort")
+    draw_rows = rows.actual_result.eq("D").to_numpy()
+    eligible_draws = draw_rows & eligible
+    tail_draws = draw_rows & ~eligible
+    if pred_eligible_summary["actual_draws"] != parity_summary["actual_draws"] or parity_summary["actual_draws"] != exact_summary["actual_draws"]:
+        raise ResearchError("R5 eligible-cohort draw counts disagree")
+
     transition = {
-        "actual_draws": int(draw_rows.sum()),
-        "predicted_T_draw_hits": pred_summary["top1_draw_hits"],
-        "oracle_parity_draw_hits": parity_summary["top1_draw_hits"],
-        "oracle_exact_T_draw_hits": exact_summary["top1_draw_hits"],
-        "gain_from_parity_routing": int(parity_summary["top1_draw_hits"] - pred_summary["top1_draw_hits"]),
+        "eligible_T0_6_actual_draws": int(eligible_draws.sum()),
+        "excluded_tail_actual_draws": int(tail_draws.sum()),
+        "predicted_T_draw_hits_same_cohort": pred_eligible_summary["top1_draw_hits"],
+        "oracle_parity_draw_hits_same_cohort": parity_summary["top1_draw_hits"],
+        "oracle_exact_T_draw_hits_same_cohort": exact_summary["top1_draw_hits"],
+        "gain_from_parity_routing": int(parity_summary["top1_draw_hits"] - pred_eligible_summary["top1_draw_hits"]),
         "additional_gain_from_exact_T_within_parity": int(exact_summary["top1_draw_hits"] - parity_summary["top1_draw_hits"]),
     }
-    if parity_summary["top1_draw_hits"] > pred_summary["top1_draw_hits"]:
+    if parity_summary["top1_draw_hits"] > pred_eligible_summary["top1_draw_hits"]:
         if exact_summary["top1_draw_hits"] > parity_summary["top1_draw_hits"]:
             bottleneck = "BOTH_PARITY_AND_WITHIN_PARITY_T_RESOLUTION_MATTER"
         else:
             bottleneck = "PARITY_ROUTING_DOMINANT"
-    elif exact_summary["top1_draw_hits"] > pred_summary["top1_draw_hits"]:
+    elif exact_summary["top1_draw_hits"] > pred_eligible_summary["top1_draw_hits"]:
         bottleneck = "WITHIN_PARITY_EXACT_T_RESOLUTION_DOMINANT"
     else:
         bottleneck = "CONDITIONAL_GD_STILL_DOMINANT"
@@ -159,20 +175,65 @@ def run() -> dict[str, Any]:
         "schema_version":"FIXED500_R4_ORACLE_T_ROUTING_R5",
         "status":"COMPLETED_DIAGNOSTIC_ONLY",
         "scientific_verdict":bottleneck,
-        "sample":{"parent_fixed500_n":500,"parent_fixed500_identity_sha256":sample_hash,"synchronized_cohort_n":220,"actual_draws":int(draw_rows.sum()),"parity_diagnostic_T0_6_n":int(parity_mask.sum()),"new_sample_consumed":False,"latest_position4_confirmation_opened":False},
-        "architecture":{"conditional_layer":"exact same R4 reweighted conditional GD","predicted_T_layer":"core+single OU","oracle_parity":"diagnostic only; on actual T<=6 rows renormalize predicted T probabilities over exact classes of realized parity","oracle_exact_T":"diagnostic one-hot realized Tclass","manual_threshold":False,"forced_draw":False},
-        "draw_ranking":{"predicted_T":pred_summary,"oracle_parity_T0_6":parity_summary,"oracle_exact_T":exact_summary,"transition":transition},
-        "bottleneck_interpretation":{"classification":bottleneck,"rule":"compare natural Top1 draw hits as progressively more T information is revealed; no threshold tuning"},
+        "sample":{
+            "parent_fixed500_n":500,
+            "parent_fixed500_identity_sha256":sample_hash,
+            "synchronized_cohort_n":220,
+            "actual_draws_full_220":int(draw_rows.sum()),
+            "parity_diagnostic_T0_6_n":int(eligible.sum()),
+            "parity_diagnostic_actual_draws":int(eligible_draws.sum()),
+            "excluded_T7plus_n":int((~eligible).sum()),
+            "excluded_T7plus_draws":int(tail_draws.sum()),
+            "new_sample_consumed":False,
+            "latest_position4_confirmation_opened":False,
+        },
+        "architecture":{
+            "conditional_layer":"exact same R4 reweighted conditional GD",
+            "predicted_T_layer":"core+single OU",
+            "three_way_comparison_cohort":"realized exact T<=6 only, identical rows across all three routes",
+            "oracle_parity":"diagnostic only; renormalize predicted T probabilities over exact classes 0..6 matching realized parity; tail excluded",
+            "oracle_exact_T":"diagnostic one-hot realized exact class on same T<=6 cohort",
+            "manual_threshold":False,
+            "forced_draw":False,
+        },
+        "draw_ranking":{
+            "predicted_T_full_220_context":full_pred_summary,
+            "predicted_T_same_T0_6_cohort":pred_eligible_summary,
+            "oracle_parity_same_T0_6_cohort":parity_summary,
+            "oracle_exact_T_same_T0_6_cohort":exact_summary,
+            "transition":transition,
+        },
+        "bottleneck_interpretation":{
+            "classification":bottleneck,
+            "rule":"compare natural Top1 draw hits on identical T<=6 rows as progressively more T information is revealed; no threshold tuning",
+            "tail_policy":"T7+ excluded from parity attribution because the model tail merges odd/even totals",
+        },
         "receipts":{"total":total_receipt,"conditional_gd":cond_receipt,"near_balance_draw_models":q_receipt,"reweight":reweight_receipt},
-        "data_identity":data_identity,"excluded_incomplete_latest_seasons":excluded,
-        "interpretation_guard":{"oracle_information_used":True,"formal_performance_claim":False,"retrospective_information_ceiling_only":True,"formal_PIT_claim":False,"can_authorize_promotion":False,"same_fixed500_already_viewed":True},
-        "governance":{"formal_weight":0,"provider_requests":0,"new_data_collection":False,"new_sample_consumed":False,"latest_position4_confirmation_opened":False,"post_result_threshold_search":False,"formal_model_mutation":False,"formal_data_mutation":False,"formal_config_mutation":False,"current_mutation":False,"main_mutation":False},
+        "data_identity":data_identity,
+        "excluded_incomplete_latest_seasons":excluded,
+        "interpretation_guard":{
+            "oracle_information_used":True,
+            "formal_performance_claim":False,
+            "retrospective_information_ceiling_only":True,
+            "formal_PIT_claim":False,
+            "can_authorize_promotion":False,
+            "same_fixed500_already_viewed":True,
+        },
+        "governance":{
+            "formal_weight":0,"provider_requests":0,"new_data_collection":False,"new_sample_consumed":False,
+            "latest_position4_confirmation_opened":False,"post_result_threshold_search":False,"formal_model_mutation":False,
+            "formal_data_mutation":False,"formal_config_mutation":False,"current_mutation":False,"main_mutation":False,
+        },
     }
-    OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); rows.to_csv(ROWS_OUT,index=False)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    rows.to_csv(ROWS_OUT, index=False)
     return result
 
 
 def main() -> None:
-    x=run(); print(json.dumps({"verdict":x["scientific_verdict"],"sample":x["sample"],"draw_ranking":x["draw_ranking"],"guard":x["interpretation_guard"]},ensure_ascii=False,indent=2))
+    x=run()
+    print(json.dumps({"verdict":x["scientific_verdict"],"sample":x["sample"],"draw_ranking":x["draw_ranking"],"guard":x["interpretation_guard"]},ensure_ascii=False,indent=2))
 
-if __name__=="__main__": main()
+if __name__ == "__main__":
+    main()
