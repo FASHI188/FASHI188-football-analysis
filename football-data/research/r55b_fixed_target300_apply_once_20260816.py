@@ -18,7 +18,7 @@ EXPECTED_CLASS_COUNTS={0:1522,1:3745,2:4914,3:4231,4:2714,5:1421,6:569,7:306}
 EXPECTED_TARGET_N=300
 EXPECTED_TARGET_SHA='7f874277290f3c9664425f80e5281c18feddea85ff7306ed8ae64e6f6d949ffb'
 FROZEN_ALPHA=0.27198933241466033
-MAX_ITER=5000; EPS=1e-12; BOOT_N=2000; BOOT_SEED=20260814; PORTABLE_ENDPOINT_TOL=1e-6
+MAX_ITER=5000; EPS=1e-12; BOOT_N=2000; BOOT_SEED=20260814; PORTABLE_ENDPOINT_TOL=1e-6; MAX_AUC_PAIR_FLIPS=1
 R55={'dt_base_ll':1.7969672498659899,'dt_hard_ll':1.7978930920719418,'dt_base_rps':0.1196302491961927,'dt_hard_rps':0.11957135005634344,'hda_base_ll':1.047891107276976,'hda_hard_ll':1.0485497642705877,'hda_base_brier':0.6313617681731262,'hda_hard_brier':0.6318316924246979,'draw_base_ll':0.6049476110376673,'draw_hard_ll':0.6056062680312786,'draw_base_brier':0.20737665810016812,'draw_hard_brier':0.2076447360152388,'draw_base_auc':0.5073434819897085,'draw_hard_auc':0.48986921097770153}
 
 def fodd(v):
@@ -124,6 +124,11 @@ def boot(delta):
     q=np.percentile(vals,[5,50,95]); return {'p05':float(q[0]),'median':float(q[1]),'p95':float(q[2]),'p_lt_0':float(np.mean(vals<0))}
 def assert_close(name,a,b,tol=PORTABLE_ENDPOINT_TOL):
     if abs(float(a)-float(b))>tol: raise SystemExit(f'R55_ENDPOINT_REPRO_FAIL {name}: expected={b} actual={a} delta={a-b}')
+def assert_auc_close(name,a,b,n_pos,n_neg):
+    if n_pos<=0 or n_neg<=0: raise SystemExit(f'R55_AUC_REPRO_CLASS_GATE_FAIL {name}: n_pos={n_pos} n_neg={n_neg}')
+    quantum=1.0/(n_pos*n_neg); allowed=MAX_AUC_PAIR_FLIPS*quantum+1e-12
+    if abs(float(a)-float(b))>allowed: raise SystemExit(f'R55_ENDPOINT_REPRO_FAIL {name}: expected={b} actual={a} delta={a-b} quantum={quantum} max_pair_flips={MAX_AUC_PAIR_FLIPS}')
+    return quantum
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--archive',required=True); ap.add_argument('--recovery-json',required=True); ap.add_argument('--alpha-result',required=True); args=ap.parse_args()
@@ -138,7 +143,10 @@ def main():
     assert_close('dt_base_rps',rps(yt,base),R55['dt_base_rps']); assert_close('dt_hard_rps',rps(yt,hard),R55['dt_hard_rps'])
     mb=hda_metrics(yh,hb); mh=hda_metrics(yh,hh); mp=hda_metrics(yh,hp)
     db=draw_metrics(yh,hb[:,1]); dh=draw_metrics(yh,hh[:,1]); dp=draw_metrics(yh,hp[:,1])
-    for nm,val in [('hda_base_ll',mb['ll']),('hda_hard_ll',mh['ll']),('hda_base_brier',mb['brier']),('hda_hard_brier',mh['brier']),('draw_base_ll',db['log_loss']),('draw_hard_ll',dh['log_loss']),('draw_base_brier',db['brier']),('draw_hard_brier',dh['brier']),('draw_base_auc',db['auc']),('draw_hard_auc',dh['auc'])]: assert_close(nm,val,R55[nm])
+    for nm,val in [('hda_base_ll',mb['ll']),('hda_hard_ll',mh['ll']),('hda_base_brier',mb['brier']),('hda_hard_brier',mh['brier']),('draw_base_ll',db['log_loss']),('draw_hard_ll',dh['log_loss']),('draw_base_brier',db['brier']),('draw_hard_brier',dh['brier'])]: assert_close(nm,val,R55[nm])
+    n_pos=int(np.sum(yh==1)); n_neg=int(len(yh)-n_pos)
+    auc_quantum=assert_auc_close('draw_base_auc',db['auc'],R55['draw_base_auc'],n_pos,n_neg)
+    assert_auc_close('draw_hard_auc',dh['auc'],R55['draw_hard_auc'],n_pos,n_neg)
     dtb=mc_ll(yt,base); dtp=mc_ll(yt,part); rpsb=rps(yt,base); rpsp=rps(yt,part)
     per_dt=-np.log(np.clip(part[np.arange(len(yt)),yt],EPS,1))+np.log(np.clip(base[np.arange(len(yt)),yt],EPS,1))
     per_h=-np.log(np.clip(hp[np.arange(len(yh)),yh],EPS,1))+np.log(np.clip(hb[np.arange(len(yh)),yh],EPS,1))
@@ -154,7 +162,7 @@ def main():
         'target':{'n':len(rows),'sample_id_sha256':sha,'time_window':[rows[0]['match_datetime'],rows[-1]['match_datetime']],'labels_opened_for_this_authorized_application':True,'actual_hda_counts':dict(Counter(r['hda'] for r in rows)),'actual_t_counts':{str(k):int(v) for k,v in sorted(Counter(map(int,yt)).items())},'actual_draws':int(np.sum(yh==1))},
         'frozen_alpha':a,'runtime':{'python':platform.python_version(),'numpy':np.__version__,'scipy':scipy.__version__,'sklearn':sklearn.__version__},
         'training':{'n':len(ytr),'class_counts':{str(k):int(v) for k,v in sorted(Counter(map(int,ytr)).items())},'conditional_draw_counts':{str(t):{'n':v[2],'draws':v[3]} for t,v in cond.items()},'direct_t_iterations':int(np.max(clfT.n_iter_)),'conditional_iterations':{str(t):int(np.max(v[1].n_iter_)) for t,v in cond.items()}},
-        'endpoint_reproduction':{'r55_baseline_and_hard_projection_metrics_match':True,'tolerance':PORTABLE_ENDPOINT_TOL,'basis':'r55_baseline_iteration_fingerprint_resolution_20260816.json: exact solver iterations and sub-micro metric drift are numerical-environment-sensitive; model/data/specification identity gates remain exact'},
+        'endpoint_reproduction':{'r55_baseline_and_hard_projection_metrics_match':True,'continuous_metric_tolerance':PORTABLE_ENDPOINT_TOL,'auc_max_positive_negative_pair_rank_flips':MAX_AUC_PAIR_FLIPS,'auc_pair_quantum':auc_quantum,'basis':'r55_baseline_iteration_fingerprint_resolution_20260816.json plus r55b_endpoint_reproduction_gate_resolution_20260816.json; model/data/specification identity gates remain exact and actual AUC values are reported without substitution'},
         'metrics':{
             'direct_t_baseline':{'log_loss':dtb,'rps':rpsb,'top1_accuracy':float(np.mean(np.argmax(base,1)==yt))},'direct_t_partial':{'log_loss':dtp,'rps':rpsp,'top1_accuracy':float(np.mean(np.argmax(part,1)==yt))},
             'direct_t_delta_partial_minus_baseline':{'log_loss':dtp-dtb,'rps':rpsp-rpsb,'top1_accuracy_pp':100*(float(np.mean(np.argmax(part,1)==yt))-float(np.mean(np.argmax(base,1)==yt)))},
