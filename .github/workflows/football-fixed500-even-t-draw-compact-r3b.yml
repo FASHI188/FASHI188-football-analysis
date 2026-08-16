@@ -1,0 +1,65 @@
+name: Football Fixed500 Even-T Draw Compact R3B
+
+on:
+  push:
+    branches: ["research/fixed500-existing-market-t-r1"]
+    paths:
+      - "football-data/validation/diagnose_fixed500_even_t_draw_compact_r3b.py"
+      - ".github/workflows/football-fixed500-even-t-draw-compact-r3b.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/fixed500-existing-market-t-r1
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile
+        run: python -m py_compile football-data/validation/diagnose_fixed500_even_t_draw_compact_r3b.py
+      - name: Run compact same-fixed500 even-T conditional draw test
+        run: python football-data/validation/diagnose_fixed500_even_t_draw_compact_r3b.py
+      - name: Verify boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/fixed500_even_t_draw_compact_r3b.json').read_text(encoding='utf-8'))
+          assert x['sample']['parent_fixed500_n']==500
+          assert x['sample']['new_sample_consumed'] is False
+          assert x['sample']['latest_position4_confirmation_opened'] is False
+          assert x['target_contract']['uses_oracle_exact_T'] is True
+          assert x['interpretation_guard']['formal_PIT_claim'] is False
+          assert x['governance']['new_data_collection'] is False
+          print(json.dumps({'sample':x['sample'],'target':x['target_contract'],'side':x['side_cohort'],'sync':x['synchronized_cohort']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed500-even-t-draw-compact-r3b
+          path: |
+            football-data/manifests/fixed500_even_t_draw_compact_r3b.json
+            football-data/manifests/fixed500_even_t_draw_compact_r3b_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
