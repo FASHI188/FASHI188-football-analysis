@@ -1,0 +1,178 @@
+name: Football fabul0us OU25 B03 settlement R1
+
+on:
+  push:
+    branches: [research/fabulous-ou25-b01-input-audit-r1]
+    paths:
+      - '.github/workflows/football-fabulous-ou25-b03-settlement-r1.yml'
+      - 'football-data/validation/settle_fabulous_ou25_b03_market_direct_t_r1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-fabulous-ou25-b03-settlement-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  one-shot-target-only-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install pinned deterministic dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0 pyarrow==21.0.0 rapidfuzz==3.14.0 Unidecode==1.4.0
+
+      - name: Download and verify pinned pre-match sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fab
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 900 'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' -o /tmp/fab/match_odds.csv
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' -o /tmp/fab/fixtures.parquet
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/teams.parquet?download=true' -o /tmp/fab/teams.parquet
+          test "$(sha256sum /tmp/fab/match_odds.csv | awk '{print $1}')" = 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a'
+          test "$(sha256sum /tmp/fab/fixtures.parquet | awk '{print $1}')" = '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7'
+          test "$(sha256sum /tmp/fab/teams.parquet | awk '{print $1}')" = '5529282b37ad51437142dd7c6d32fb60bbbdd56953dc432e3b9247dca17a2fa5'
+
+      - name: Reconstruct B03 zero-label packet and exact frozen predictions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('football-data/validation/audit_fabulous_ou25_b01_inputs_r1.py').read_text(encoding='utf-8')
+          out=src.replace('B01','B03').replace('b01','b03')
+          out=out.replace("EXPECTED_B03_SHA = 'fcba07147d230357925d3ee41027dfae18a27654960641c509ead5626b057baf'","EXPECTED_B03_SHA = '9c82bdc7ea139021f0bef444a2b7cf9c55d9793704ff5d0eeaa3008737295cf9'")
+          out=out.replace('b03 = reserve[:400]','b03 = reserve[800:1200]')
+          Path('/tmp/audit_b03.py').write_text(out,encoding='utf-8')
+          PY
+          python /tmp/audit_b03.py
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          d=Path('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b03_input_audit_r1')
+          s=json.loads((d/'summary.json').read_text())
+          assert s['status']=='ZERO_LABEL_COMPLETE' and s['b03_n']==400 and s['b03_hash_match'] is True
+          assert s['target_labels_accessed']==0 and s['target_outcome_columns_read']==[]
+          p=d/'B03_pre_match_inputs_all_cutoffs.json'
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='7c1437b3a20df9ecb9dc0422988558d2cda93c167113c552cd7e4c760bed0ffc'
+          PY
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('football-data/validation/freeze_fabulous_ou25_b01_market_direct_t_r1.py').read_text(encoding='utf-8')
+          out=src.replace('B01','B03').replace('b01','b03')
+          out=out.replace("B03_SHA = 'fcba07147d230357925d3ee41027dfae18a27654960641c509ead5626b057baf'","B03_SHA = '9c82bdc7ea139021f0bef444a2b7cf9c55d9793704ff5d0eeaa3008737295cf9'")
+          out=out.replace("PACKET_SHA = 'c43429684741389bd6f57011a5c906be17cbbdd5e8d3ba279b278d038110159a'","PACKET_SHA = '7c1437b3a20df9ecb9dc0422988558d2cda93c167113c552cd7e4c760bed0ffc'")
+          Path('football-data/validation/_runtime_b03_freeze.py').write_text(out,encoding='utf-8')
+          PY
+          python football-data/validation/_runtime_b03_freeze.py
+          rm -f football-data/validation/_runtime_b03_freeze.py
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          d=Path('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b03_market_direct_t_r1')
+          pred=d/'B03_frozen_predictions.csv'; lock=d/'preregistration_and_prediction_lock.json'
+          assert hashlib.sha256(pred.read_bytes()).hexdigest()=='f6dd9831ff0d70f6cd56e84a0d643f56422e67bb963fb1bb51b1d06308c50655'
+          assert hashlib.sha256(lock.read_bytes()).hexdigest()=='8bf9af77c4877a2dacc3403d413dc2723ba96183f0c33d012fb79f9916107c3a'
+          x=json.loads(lock.read_text())
+          assert x['target']['batch_id']=='FAB-OU25-PIT-B03'
+          assert x['target']['target_labels_accessed']==0 and x['model']['selected_C']==0.1
+          print('B03_FROZEN_LOCKS_REVERIFIED')
+          PY
+
+      - name: One-shot open B03 labels through target-only 10-ID filters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,time,urllib.parse,urllib.request,urllib.error
+          from pathlib import Path
+          import pandas as pd
+          import pyarrow.parquet as pq
+          pred=pd.read_csv('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b03_market_direct_t_r1/B03_frozen_predictions.csv')
+          ids=sorted(pred.fixture_id.astype(int).tolist())
+          assert len(ids)==400 and len(set(ids))==400
+          nonout=['id','date_utc','league_id','home_team_id','away_team_id','is_played']
+          local=pq.read_table('/tmp/fab/fixtures.parquet',columns=nonout).to_pandas()
+          local=local[local.id.isin(ids)].set_index('id')
+          assert len(local)==400
+          endpoint='https://datasets-server.huggingface.co/filter'; collected={}; successful_queries=0
+          for start in range(0,400,10):
+              chunk=ids[start:start+10]
+              where=' OR '.join(f'"id"={i}' for i in chunk)
+              params={'dataset':'eatpizzanot/soccer-dataset','config':'fixtures','split':'train','where':where,'offset':'0','length':'20'}
+              url=endpoint+'?'+urllib.parse.urlencode(params)
+              for attempt in range(1,7):
+                  try:
+                      req=urllib.request.Request(url,headers={'User-Agent':'football-research-target-only-settlement/1.2'})
+                      with urllib.request.urlopen(req,timeout=90) as r: x=json.load(r)
+                      break
+                  except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError) as e:
+                      print(f'B03_BATCH_RETRY start={start} attempt={attempt} error={e}',flush=True)
+                      if attempt==6: raise
+                      time.sleep(min(2**attempt,20))
+              assert x.get('partial',False) is False
+              rows=x.get('rows',[]); got={int(z['row']['id']) for z in rows}
+              assert got==set(chunk),(start,len(rows),sorted(set(chunk)-got),sorted(got-set(chunk)))
+              for z in rows:
+                  row=z['row']; fid=int(row['id']); ref=local.loc[fid]
+                  assert int(row['league_id'])==int(ref['league_id'])
+                  assert int(row['home_team_id'])==int(ref['home_team_id'])
+                  assert int(row['away_team_id'])==int(ref['away_team_id'])
+                  assert bool(row['is_played'])==bool(ref['is_played'])
+                  assert pd.to_datetime(row['date_utc'],utc=True)==pd.to_datetime(ref['date_utc'],utc=True)
+                  collected[fid]={'fixture_id':fid,'goals_home':int(row['goals_home']),'goals_away':int(row['goals_away']),'is_played':bool(row['is_played'])}
+              successful_queries+=1
+              print(f'B03_BATCH_SUCCESS start={start} n={len(chunk)} cumulative={len(collected)}',flush=True)
+              time.sleep(0.1)
+          assert set(collected)==set(ids)
+          canonical='\n'.join(map(str,ids))+'\n'
+          receipt={'schema_version':'FAB-OU25-B03-TARGET-ONLY-LABEL-RECEIPT-R1','status':'B03_TARGET_ONLY_LABELS_OPENED','dataset':'eatpizzanot/soccer-dataset','config':'fixtures','split':'train','filter_endpoint':endpoint,'filter_query_count':successful_queries,'max_requested_ids_per_query':10,'requested_fixture_count':400,'returned_fixture_count':400,'requested_fixture_set_sha256':hashlib.sha256(canonical.encode()).hexdigest(),'non_target_rows_returned':0,'B04_fixture_ids_requested':0,'identity_match_to_pinned_fixture_source':True,'pinned_fixture_source_sha256':'7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7','labels':[collected[i] for i in ids]}
+          p=Path('/tmp/fab/B03_labels_target_only.json'); p.write_text(json.dumps(receipt,ensure_ascii=False,separators=(',',':'))+'\n')
+          print('B03_TARGET_ONLY_LABEL_RECEIPT_SHA256='+hashlib.sha256(p.read_bytes()).hexdigest(),flush=True)
+          print('B03_LABELS_OPENED=400 NON_TARGET=0 B04_QUERIED=0',flush=True)
+          PY
+
+      - name: Settle unchanged B03 science gate
+        run: python football-data/validation/settle_fabulous_ou25_b03_market_direct_t_r1.py
+
+      - name: Verify and print aggregate B03 settlement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b03_market_direct_t_settlement_r1/settlement_summary.json')
+          x=json.loads(p.read_text())
+          assert x['settlement_scope']['B03_labels_opened_in_this_run']==400
+          assert x['settlement_scope']['B04_fixture_ids_requested']==0
+          assert x['settlement_scope']['label_columns_materialized_for_non_B03_rows_in_this_run']==0
+          assert x['governance']['B03_state_after_run']=='VIEWED'
+          assert x['governance']['B04_state_after_run']=='UNOPENED_BY_TARGET_ONLY_QUERY'
+          assert x['governance']['post_result_parameter_search_allowed_on_B03'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload aggregate B03 settlement only
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabulous-ou25-b03-settlement-r1-${{ github.sha }}
+          path: football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b03_market_direct_t_settlement_r1/settlement_summary.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm no tracked runtime mutation
+        shell: bash
+        run: |
+          rm -rf football-data/validation/__pycache__
+          rm -f football-data/validation/_runtime_b03_freeze.py
+          git diff --exit-code
+          git diff --cached --exit-code
