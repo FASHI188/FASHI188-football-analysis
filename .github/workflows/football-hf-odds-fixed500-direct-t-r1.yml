@@ -1,0 +1,87 @@
+name: Football HF Odds Fixed500 Direct-T R1
+
+on:
+  push:
+    branches: ["research/hf-football-odds-2023-24-r1"]
+    paths:
+      - "football-data/validation/evaluate_hf_odds_fixed500_direct_t_r1.py"
+      - ".github/workflows/football-hf-odds-fixed500-direct-t-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/hf-football-odds-2023-24-r1
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Restore downloaded HF dataset
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-football-odds-2023-24
+          key: hf-football-odds-2023-24-match-odds-v1
+          fail-on-cache-miss: true
+      - name: Compile evaluators
+        run: |
+          python -m py_compile football-data/validation/audit_hf_odds_pit_matchability_r2.py
+          python -m py_compile football-data/validation/evaluate_hf_odds_fixed500_direct_t_r1.py
+      - name: Rebuild repository score-market ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Rebuild deterministic strict-PIT fixed500 artifacts
+        run: python football-data/validation/audit_hf_odds_pit_matchability_r2.py
+      - name: Evaluate Direct-T core versus core plus timestamped OU
+        run: python football-data/validation/evaluate_hf_odds_fixed500_direct_t_r1.py
+      - name: Verify scientific and governance guards
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/hf_odds_fixed500_direct_t_r1.json').read_text(encoding='utf-8'))
+          assert x['sample']['primary_t90_n']==500
+          assert x['sample']['sensitivity_t5_n']==500
+          assert x['sample']['selection_used_result_labels'] is False
+          assert x['interpretation_guard']['strict_pit_test_quotes'] is True
+          assert x['interpretation_guard']['all_test_quotes_at_or_before_freeze'] is True
+          assert x['interpretation_guard']['test_result_labels_not_used_for_selection_or_tuning'] is True
+          assert x['interpretation_guard']['fully_strict_pit_training_to_test_claim'] is False
+          assert x['governance']['formal_weight']==0
+          assert x['governance']['main_mutation'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'sample':x['sample'],
+            'historical_fit':x['historical_fit'],
+            'primary_t90':x['primary_t90'],
+            'sensitivity_t5':x['sensitivity_t5'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: hf-odds-fixed500-direct-t-r1
+          path: |
+            football-data/manifests/hf_odds_pit_matchability_r2.json
+            football-data/manifests/hf_odds_pit_fixed500_t90_r2.csv
+            football-data/manifests/hf_odds_pit_fixed500_t5_r2.csv
+            football-data/manifests/hf_odds_fixed500_direct_t_r1.json
+            football-data/manifests/hf_odds_fixed500_direct_t_r1_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm research-only boundaries
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
