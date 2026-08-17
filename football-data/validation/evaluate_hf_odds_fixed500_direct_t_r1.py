@@ -42,16 +42,11 @@ T5 = ROOT / "manifests" / "hf_odds_pit_fixed500_t5_r2.csv"
 TOTAL_CLASSES = list(range(8))
 OU_FEATURE = "mkt_ou_over_logit"
 TOP5 = {"ENG_PremierLeague", "ESP_LaLiga", "ITA_SerieA", "GER_Bundesliga", "FRA_Ligue1"}
+IDENTITY_COLS = ["competition_id", "season", "date_key", "home_team", "away_team"]
 
 
 def digest_ids(frame: pd.DataFrame) -> str:
-    ids = (
-        frame[["competition_id", "season", "home_team", "away_team"]]
-        .astype(str)
-        .agg("|".join, axis=1)
-        .sort_values()
-        .tolist()
-    )
+    ids = frame[IDENTITY_COLS].astype(str).agg("|".join, axis=1).sort_values().tolist()
     return hashlib.sha256(("\n".join(ids) + "\n").encode("utf-8")).hexdigest()
 
 
@@ -70,8 +65,15 @@ def load_fixed(path: Path, freeze_minutes: int) -> pd.DataFrame:
         raise ResearchError(f"{path.name}: quote-age gate violation")
     x = x.rename(columns={"league_id": "competition_id"})
     x["season"] = "2023-24"
+    # football-data.co.uk Date/Time and the HF source are matched on the Europe/London clock.
+    # date_key in the repository ledger is ISO YYYY-MM-DD, so derive it from the frozen kickoff.
+    x["date_key"] = (
+        pd.to_datetime(x["kickoff_utc"], utc=True)
+        .dt.tz_convert("Europe/London")
+        .dt.strftime("%Y-%m-%d")
+    )
     x[OU_FEATURE] = x["fair_over_2.5"].map(logit)
-    if x[["competition_id", "season", "home_team", "away_team"]].duplicated().any():
+    if x[IDENTITY_COLS].duplicated().any():
         raise ResearchError(f"{path.name}: duplicate fixture identity")
     return x
 
@@ -101,16 +103,20 @@ def evaluate_one(
     config: dict[str, Any],
     freeze_minutes: int,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
-    identity_cols = ["competition_id", "season", "home_team", "away_team"]
-    test_cols = identity_cols + ["date_key", "total_class"] + core
-    sample = fixed.merge(fold[test_cols], on=identity_cols, how="left", validate="one_to_one")
-    if len(sample) != 500 or sample.total_class.isna().any():
-        missing = sample[sample.total_class.isna()][identity_cols].head(20).to_dict("records")
-        raise ResearchError(f"T-{freeze_minutes}: fixed500 reconstruction failure; missing={missing}")
+    test_cols = IDENTITY_COLS + ["total_class", "split"] + core
+    right = fold[
+        fold.competition_id.isin(TOP5)
+        & fold.season.astype(str).eq("2023-24")
+        & fold.split.eq("test")
+    ][test_cols].copy()
+    if right[IDENTITY_COLS].duplicated().any():
+        examples = right[right[IDENTITY_COLS].duplicated(False)][IDENTITY_COLS].head(20).to_dict("records")
+        raise ResearchError(f"T-{freeze_minutes}: exact ledger identities duplicated: {examples}")
 
-    # Every selected row must be the chronological test fold. No label is used to fit/tune.
-    split_lookup = fold[identity_cols + ["split"]].drop_duplicates(identity_cols)
-    sample = sample.merge(split_lookup, on=identity_cols, how="left", validate="one_to_one")
+    sample = fixed.merge(right, on=IDENTITY_COLS, how="left", validate="one_to_one")
+    if len(sample) != 500 or sample.total_class.isna().any():
+        missing = sample[sample.total_class.isna()][IDENTITY_COLS].head(20).to_dict("records")
+        raise ResearchError(f"T-{freeze_minutes}: fixed500 reconstruction failure; missing={missing}")
     if set(sample.split.astype(str)) != {"test"}:
         counts = sample.split.value_counts(dropna=False).to_dict()
         raise ResearchError(f"T-{freeze_minutes}: sample not wholly in test fold: {counts}")
@@ -154,7 +160,7 @@ def evaluate_one(
         "fit_receipt": {"core": rec_core, "core_plus_timestamped_ou": rec_ou},
     }
 
-    rows = sample[identity_cols + ["date_key", "kickoff_utc", "quote_utc", "quote_age_to_cutoff_min", "fair_over_2.5", "total_class"]].copy()
+    rows = sample[IDENTITY_COLS + ["kickoff_utc", "quote_utc", "quote_age_to_cutoff_min", "fair_over_2.5", "total_class"]].copy()
     rows["freeze_minutes"] = freeze_minutes
     rows["core_pred_T"] = np.argmax(p_core, axis=1)
     rows["ou_pred_T"] = np.argmax(p_ou, axis=1)
@@ -174,8 +180,6 @@ def run() -> dict[str, Any]:
     core = select_core_features(base)
     seasons, excluded = complete_seasons(raw, config)
 
-    # Position 2 is the first configured rolling test position and corresponds to 2023-24
-    # for the five complete European league histories used by this external dataset.
     test_position = 2
     if test_position not in [int(x) for x in config["split_contract"]["rolling_test_positions_zero_based"]]:
         raise ResearchError("test position 2 not allowed by rolling contract")
@@ -199,9 +203,8 @@ def run() -> dict[str, Any]:
     e90, r90 = evaluate_one(fold, history, train, policy, core, fixed90, config, 90)
     e5, r5 = evaluate_one(fold, history, train, policy, core, fixed5, config, 5)
 
-    idcols = ["competition_id", "season", "home_team", "away_team"]
-    ids90 = set(map(tuple, fixed90[idcols].astype(str).to_numpy()))
-    ids5 = set(map(tuple, fixed5[idcols].astype(str).to_numpy()))
+    ids90 = set(map(tuple, fixed90[IDENTITY_COLS].astype(str).to_numpy()))
+    ids5 = set(map(tuple, fixed5[IDENTITY_COLS].astype(str).to_numpy()))
     overlap = len(ids90 & ids5)
 
     primary = e90["paired_bootstrap_delta"]["logloss"]
