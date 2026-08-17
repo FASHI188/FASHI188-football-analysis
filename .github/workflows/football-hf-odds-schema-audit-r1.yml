@@ -1,0 +1,44 @@
+name: Football HF Odds Schema Audit R1
+
+on:
+  push:
+    branches: ["research/hf-football-odds-2023-24-r1"]
+    paths:
+      - ".github/workflows/football-hf-odds-schema-audit-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/hf-football-odds-2023-24-r1
+          fetch-depth: 1
+      - name: Restore dataset cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-football-odds-2023-24
+          key: hf-football-odds-2023-24-match-odds-v1
+          fail-on-cache-miss: true
+      - name: Inspect schema and sample rows
+        run: |
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+          p=Path('/tmp/hf-football-odds-2023-24/match_odds.csv')
+          with p.open('r',encoding='utf-8-sig',newline='',errors='replace') as f:
+              r=csv.DictReader(f)
+              fields=r.fieldnames or []
+              rows=[]
+              for i,row in enumerate(r):
+                  if i>=3: break
+                  rows.append(row)
+          cand=[x for x in fields if any(k in x.lower() for k in ['time','date','kick','start','match','fixture','event','id'])]
+          print(json.dumps({'field_count':len(fields),'fields':fields,'time_identity_candidates':cand,'sample_rows':rows},ensure_ascii=False,indent=2))
+          PY
