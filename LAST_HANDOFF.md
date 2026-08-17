@@ -5,59 +5,91 @@
 ## 接力身份
 
 - project_id: `football-project`
-- handoff_version: **31**
-- state_version: **60**
-- checkpoint_version: **126**
-- updated_at_local: `2026-08-17 15:52 +08:00`
+- handoff_version: **32**
+- state_version: **61**
+- checkpoint_version: **128**
+- updated_at_local: `2026-08-17 16:08 +08:00`
 - status: `WAITING`
-- state_log_record_id: `recIuJT7e3EN4oxC2`
+- state_log_record_id: `rec8DSgydfzYix35I`
 
-## 最新完成：金标准 reserve 永久退役
+## 最新完成：B01-B03 底座解剖
 
-用户明确指令：**“把这个治理了 金标准不用了废掉”**。
+研究结论：**`POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`**。
 
-state60 治理裁决：
+真实研究锚点：
 
-**`RETIRED_PERMANENTLY_GOLD_STANDARD_RESERVE`**
+- branch: `research/b01-b03-base-anatomy-r1-20260817`
+- HEAD: `cb0b9057bdb7c7cb7ec73b1aa14076231d58ff0f`
+- PR: `#199` Draft / Open / Unmerged
+- report: `football-data/research/base_anatomy_20260817/B01_B03_OU25_DIRECT_T_BASE_ANATOMY_R1.md`
+- scope: B01/B02/B03 = 1200 场；B04 analyzed rows = 0
 
-以后不得：
+## 核心事实
 
-- 新建或恢复 gold-standard / 金标准 reserve；
-- 把 B04 或其他既有包改名包装成金标准；
-- 把旧日志里的“新gold-standard reserve”建议恢复为 ACTIVE_NEXT；
-- 用“target-only 未请求标签”单独替代完整的盲测/PIT/标签隔离证明。
+### 1. 日期簇不是 400 场不稳定的原因
 
-永久治理文件：`governance/GOLD_STANDARD_RESERVE_RETIRED.md`。
+B01/B02/B03 date-cluster design effect 约 `0.934 / 0.944 / 0.983`，effective N 没有坍塌。
 
-## 保留的现有事实
+真正瓶颈是净 effect 很小，标准化 `|effect|≈0.050 / 0.095 / 0.058`。
 
-- B01：VIEWED，点估计改善，严格 date-block CI 跨 0；
-- B02：VIEWED，严格单包门 PASS；
-- B03：VIEWED，点估计改善，严格 date-block CI 跨 0；
-- B01-B03 的 LogLoss 点估计均同向改善，但禁止事后发明组合确认门；
-- B04 不再承担“金标准”角色，旧结果字段物化/可见性注记继续保留。
+### 2. OU2.5 的收益来自上尾修正
+
+B01-B03 合并：
+
+- 0-3 球：799 场，mean ΔLL=`+0.013766`，candidate 更差；
+- 4+ 球：401 场，mean ΔLL=`-0.053242`，candidate 明显更好；
+- 三个 batch 方向一致。
+
+因此单一 OU2.5 更像 high-total / upper-tail correction；整体小收益是 0-3 损失与 4+ 收益相消后的残差。
+
+### 3. pooled 1200 仅作描述
+
+- pooled ΔLL=`-0.008626`
+- date-block bootstrap90=`[-0.014553,-0.002656]`
+
+全部样本已 VIEWED，禁止把该结果事后升级为 confirmatory PASS。
+
+### 4. 400 场功效太低
+
+按当前观察 effect/variance：
+
+- 400 场 power≈40%
+- 80% power≈1257 场
+- 90%≈1741 场
+- 95%≈2200 场
+
+所以 B02 PASS 而 B01/B03 CI 跨0与低功效设计相容。
+
+### 5. 异步与联赛只留作假设
+
+- `<=1min` 时间差：ΔLL≈`+0.00176`
+- `>6h`：ΔLL≈`-0.01750`
+- 但 quote age 与收益近零相关，控制 realized 4+ 后异步项不再显著；不能写成“旧报价更好”。
+- PL/Liga 描述性较好，Ligue 1 三包较差；competition joint robust test `p≈0.402`，不授权 selector。
+
+## 永久治理继续有效
+
+`gold-standard / 金标准 reserve` 已永久退役：不新建、不恢复、不改名复活；B04 不承担金标准角色。
 
 ## 当前唯一下一步
 
-恢复治理前用户已指定的主线：**底座解剖 / 功效分析**。
+冻结本轮 post-view 解剖，**不在 B01-B03 上继续调参**。
 
-只把 B01-B03 当已 VIEWED 诊断样本：
+如果用户继续推进 OU/total-shape 主线，只允许先做新的非金标准预注册 OOS/forward **数据合同与可行性设计**，目标是验证更丰富 total-shape 信息能否减少“0-3 变差 vs 4+ 变好”的相消。
 
-1. 日期簇方差 / 有效样本量；
-2. effect size 对应的功效与所需样本规模；
-3. 报价陈旧、时间异步影响；
-4. 联赛/日期簇异质性；
-5. 输出诊断结论，不把 post-view 分段变成 selector 或 confirmatory gate。
+但旧的公开免密钥 multi-OU 批量 PIT 路线已经 `STOP_DATA/COVERAGE`，禁止原路重复。必须有 genuinely new 的合规同步/PIT 数据条件才能继续；否则保持 WAITING。
 
 ## 禁止重复/越界
 
-- 不再讨论是否要“新建金标准 reserve”；
-- 不把 B04 当金标准；
-- 不对已 VIEWED B01-B03 后验调参后重测；
-- 不事后发明确认门；
+- 不把 pooled 1200 写成 confirmatory PASS；
+- 不按联赛、时间差、4+真实标签后验造 selector；
+- 不重新把 B01-B03 当 holdout；
+- 不用 B04 作为本次分析证据；
+- 不恢复 gold-standard reserve；
+- 不重复已 STOP 的公开 multi-OU 路线；
 - 不修改 formal model/data/config/CURRENT；
-- 不把治理 PASS 写成科学 PASS。
+- 不恢复 Direct-T / Parity 外壳搜索。
 
 ## 新聊天收到“继续”时
 
-恢复：上一工作对话末尾小段（若可得）→ Airtable 当前状态 → checkpoint `recIRxK7EIMjJdG4A` → 当前会话接力 → GitHub main。若任何旧层建议 gold-standard reserve，直接以 state60 永久退役裁决覆盖，然后从底座解剖继续。
+恢复：上一工作对话末尾小段（若可得）→ Airtable 当前状态 state61 → checkpoint `recIRxK7EIMjJdG4A` v128 → 会话接力 → 核验 GitHub main。然后只从上面的唯一下一步继续。
