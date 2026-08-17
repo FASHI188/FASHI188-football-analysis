@@ -3,138 +3,84 @@
 ## 身份
 
 - project_id: `football-project`
-- state_version: **59**
-- updated_at_utc: `2026-08-16T13:49:39Z`
+- state_version: **60**
+- updated_at_local: `2026-08-17 15:52 +08:00`
 - updated_by: `GPT-5.6 Sol`
-- status_source: `STATE59_PUBLIC_AVAILABILITY_ZERO_LABEL_COVERAGE_PASS`
+- status_source: `USER_GOVERNANCE_DECISION_GOLD_STANDARD_RESERVE_RETIRED`
 - status: `WAITING`
-- state_log_record_id: `recl9Fysw4nGZioWn`
-- predecessor_state: 58
+- state_log_record_id: `recIuJT7e3EN4oxC2`
+- predecessor_state: 59
 
 ## 正式规则与正式资产
 
 - sole_CURRENT: `足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx`
 - CURRENT_version: V5.2.0
-- formal model/data/config/CURRENT changes in state59: **0**
-- formal_weight changes in state59: **0**
+- formal model/data/config/CURRENT changes in state60: **0**
+- formal_weight changes in state60: **0**
 
-state59 只发布新的零标签数据覆盖结论和研究断点；不读取赛果、不训练、不评分、不修改正式资产。
+state60 仅发布研究治理路线变更，不改变既有实验数值、历史裁决或正式资产。
 
-## 上游研究主线
+## 当前研究事实
 
-500场 T / Parity / GD 诊断主方向保持：
+OU2.5 → Direct-T 的现有复制状态保持：
 
-1. 知道真实 Parity 时性能明显恢复；
-2. 知道完整真实 T 时进一步恢复；
-3. 现有 X 连 Parity 都预测不好；
-4. 第一优先是寻找真正能提升 T 的赛前信息；
-5. 第二优先是偶数 T 下解决 `GD=0` vs `GD=±2`；
-6. 不恢复 Direct-T 外壳搜索或独立 Parity 分类器作为主路线。
+- B01：VIEWED，点估计改善，但严格 date-block bootstrap CI 跨 0；
+- B02：VIEWED，严格单包门 PASS；
+- B03：VIEWED，点估计改善，但严格 date-block bootstrap CI 跨 0；
+- 三包 `delta LogLoss` 点估计均为负向改善，但不能据此事后发明新的组合确认门；
+- B04：不再作为“金标准”候选。其旧流程结果字段物化/可见性问题继续保留为治理注记，不得因改名获得更高证据等级。
 
-## state58 结果仍有效
+既有 post-view diagnostics、availability、multi-OU 等历史研究事实继续按原证据保留；state60 不重新判定其科学结论。
 
-multi-OU 单赛事技术可行性保留，但公开免密钥批量 PIT coverage/synchronization gate 为：
+## state60 永久治理裁决：废止“金标准 reserve”
 
-**`STOP_DATA/COVERAGE`**
+状态：**`RETIRED_PERMANENTLY`**
 
-它不是科学 FAIL。市场路线在当前无密钥/无新增付费 Provider 边界下停止。
+治理文件：`governance/GOLD_STANDARD_RESERVE_RETIRED.md`
 
-## state59 新结果：availability 零标签覆盖门 PASS
+自 state60 起：
 
-研究分支：
+1. 不再新建 `gold-standard reserve` / `金标准 reserve` / `gold-standard holdout` 或同义路线；
+2. 不再把 B04 或任何既有 reserve 重新包装、重命名为“金标准”；
+3. 不再把“建立新金标准包”作为用户需要选择的研究分叉或默认 ACTIVE_NEXT；
+4. 不再把“target-only query 没请求标签”单独视为最高等级盲测的充分条件；
+5. 旧聊天、旧日志、旧检查点、旧文档中出现的“新建金标准 reserve”建议全部降为历史废弃方案，不得恢复；
+6. 后续独立验证必须逐项写清 PIT、标签隔离、样本选择、冻结时点、功效/样本量、预注册、OOS/forward 属性，不再用“金标准”一词替代这些条件。
 
-- branch: `research/xi-availability-public-coverage-r1`
-- branch HEAD: `2ffaa97334b139d0bbff9085fec047e3862a5d55`
-- GitHub Actions run: `31950837713`
-- job: `95173928727`
-- run conclusion: `completed/success`
-- Artifact: `9264588803`
-- Artifact digest: `sha256:53ab1ed11982af43bafd4721055ee4a72e12fbc3b17990290c27678bf093030f`
+## 当前唯一下一步
 
-冻结样本：英超 2026/27 Matchweek 1 共 10 场未来未开赛赛事、20 支球队。
+回到用户在本次治理前已指定的研究主线：**底座解剖 / 功效分析**。
 
-公开官方源：
+优先只使用已经 VIEWED 的 B01-B03 做诊断性分析，不把结果重新包装成 confirmatory：
 
-1. Fantasy Premier League `bootstrap-static` 官方公开 JSON；
-2. PremierLeague.com 官方 20 队伤停页；
-3. PremierLeague.com 官方停赛页。
-
-实时 runner 结果：
-
-- expected teams: 20
-- bound teams: **20**
-- expected fixtures: 10
-- bound fixtures: **10**
-- all sources fetched: **true**
-- hard violations: **0**
-- source errors: **0**
-- verdict: **`PASS_ZERO_LABEL_PUBLIC_AVAILABILITY_COVERAGE`**
-
-FPL 原始 JSON：
-
-- observed/retrieved at: `2026-08-16T13:47:54Z`
-- raw SHA-256: `3884edab1ce1b0691910a769c380fe8c0032b60126d2e246f3ca28e00ae86c93`
-- current-season team codes 与冻结的 20 队集合完全一致；
-- 抓取 587 个球员记录；
-- 当前 `status != available` 的球员共 93 人：`i=46 / u=19 / d=25 / s=3`。
-
-另外保存：
-
-- PL injuries raw HTML SHA-256: `bc6c7af5113a68885d540322115dd2f6a2e2c3848fe9e0b9ec173958d273f4f6`
-- PL suspensions raw HTML SHA-256: `6de09ebeba3f754fa5ac4d566a1cca0cda6a5b3105b4e8657d122bbe57331d77`
-
-### 结论边界
-
-这个 PASS 只回答：**官方公开 availability 数据能否在赛前以可时间戳、可哈希、无密钥方式覆盖冻结样本。答案是能。**
-
-它绝不等于：
-
-- availability 已证明能提升 T；
-- 平局问题已解决；
-- 模型效果 PASS；
-- confirmed XI 已通过覆盖门。
-
-本轮没有读取任何对应比赛赛果标签。
-
-## 工程发现
-
-仓库已有 `v6_match_context_pit_ledger_v6310.py` 和 `v6_fotmob_match_context_acquire_v6485.py`，其时序、来源、预测 XI 门控逻辑可复用，但都把球队上下文强绑定到已有 market fixture / market-first ledger。
-
-由于市场路线在 state58 已 STOP，这个耦合不能继续作为 availability 的前置条件。state59 的新 collector 因此直接以冻结 fixture manifest 为主键，不依赖市场存在。
-
-## 唯一下一步
-
-进入**多时点赛前上下文冻结门**，仍然保持零标签：
-
-1. availability 层按独立时间点重复冻结，优先 `T-24h` 与 `T-6h`；
-2. confirmed XI 单独放在名单公布后的约 `T-75min` 层；
-3. confirmed XI 不得回填或覆盖更早 availability freeze；
-4. 每次保存 `source_url / observed_at / retrieved_at / raw SHA-256`；
-5. 先验证多时点稳定性、增量变化和 confirmed-XI 可采性；
-6. 这些 PIT 门完成前继续禁止读取对应赛果标签；
-7. 完成后才进入 availability / XI 对 T 的 OOS 增量价值验证。
+1. 分解 date-cluster 方差与有效样本量；
+2. 基于已观察 effect size 估计不同样本规模下的统计功效；
+3. 检查报价陈旧/时间异步是否解释方差或效应；
+4. 检查跨联赛/日期簇异质性；
+5. 不因诊断结果对已 VIEWED 包后验调参后重新宣称独立确认。
 
 ## 当前禁止事项
 
-- 禁止把 state59 coverage PASS 写成科学 PASS；
-- 禁止读取这 10 场未来赛事的赛果标签；
-- 禁止 confirmed XI 倒灌到 T-24h/T-6h；
-- 禁止重复 multi-OU 探测；
-- 禁止合并 research 分支或修改 formal model/data/config/CURRENT；
-- 禁止恢复 Direct-T / Parity 算法壳搜索。
+- 禁止恢复、新建或重命名任何 gold-standard / 金标准 reserve；
+- 禁止把 B04 包装为金标准或最高等级确认包；
+- 禁止把旧“B04或新gold-standard二选一”恢复为当前下一步；
+- 禁止对 B01/B02/B03 事后调参后重新作为 holdout；
+- 禁止事后发明 B01-B03 组合确认门并宣称 confirmatory；
+- 禁止修改 formal model/data/config/CURRENT；
+- 禁止把治理裁决写成新的科学 PASS。
 
 ## 轻量接续
 
-恢复时只看上一工作对话末尾一小段作为最近语境；权威断点为 Airtable《当前状态》+唯一《执行检查点》+ GitHub main。更早历史只按具体 Rxx/PR/run/Artifact/关键词定向查询。
+新聊天恢复时：上一工作对话末尾小段（若可得）→ Airtable《当前状态》→唯一《执行检查点》→《会话接力》→核验 GitHub main。任何旧摘要或旧日志若仍建议“新建金标准 reserve”，以 state60 永久退役裁决覆盖。
 
 ## Airtable 锚点
 
 - base: `足球项目接续` (`appLXF9IBvSCEUjJV`)
 - current_state_record: `recs1pQ1rhuwJQAzE`
-- state59 creation log: `recl9Fysw4nGZioWn`
+- state60 creation log: `recIuJT7e3EN4oxC2`
 - execution_checkpoint_record: `recIRxK7EIMjJdG4A`
-- checkpoint_version: **87**
+- checkpoint_version: **126**
 
 ## 权威优先级
 
-当前用户明确指令 > 唯一正式 CURRENT > 最新 Airtable state/checkpoint > GitHub 当前状态文件 > 历史聊天/旧文件/记忆。
+当前用户明确指令 > 唯一正式 CURRENT > 最新 Airtable state/checkpoint/handoff > GitHub 当前状态文件 > 历史聊天/旧文件/记忆。
