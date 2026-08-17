@@ -1,0 +1,75 @@
+name: Football Base Anatomy Multi-OU Coverage R1
+
+on:
+  push:
+    branches:
+      - research/base-anatomy-20260817
+    paths:
+      - 'scripts/run_base_anatomy_multi_ou_coverage_r1.py'
+      - 'scripts/football_data_import_shim.py'
+      - '.github/workflows/football-base-anatomy-multi-ou-coverage-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-base-anatomy-multi-ou-coverage-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stage4-coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile zero-label coverage runner
+        run: python -m py_compile scripts/run_base_anatomy_multi_ou_coverage_r1.py scripts/football_data_import_shim.py
+      - name: Download hash-locked Brazil multi-OU source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stage4
+          curl -sS -L --fail --retry 3 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/felipebandeiraramos/brazilian-soccer-odds-data' \
+            -o /tmp/stage4/source.zip
+          unzip -q /tmp/stage4/source.zip -d /tmp/stage4/x
+          test "$(sha256sum /tmp/stage4/x/final_df_kaggle.csv | awk '{print $1}')" = '4fd20bcf9636c755ddb8181b8d56870c20730564f138d1e01fb9f13a46351223'
+      - name: Run exact identity coverage gate without outcome access
+        run: |
+          python scripts/run_base_anatomy_multi_ou_coverage_r1.py \
+            --source /tmp/stage4/x/final_df_kaggle.csv \
+            --benchmark football-data/benchmarks/v6_1x2_fixed1000_v6130.json
+      - name: Assert zero-label contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/base_anatomy_20260817/multi_ou_coverage_r1.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['classification']=='ZERO_LABEL_IDENTITY_AND_MARKET_COVERAGE_ONLY'
+          assert d['formal_weight']==0
+          assert d['outcome_columns_read']==0
+          assert d['selection_uses_outcomes'] is False
+          print(json.dumps(d,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-anatomy-multi-ou-coverage-r1
+          path: football-data/research/base_anatomy_20260817/multi_ou_coverage_r1.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Confirm no tracked runtime mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f football-data/research/base_anatomy_20260817/multi_ou_coverage_r1.json
+          git diff --exit-code
+          git diff --cached --exit-code
