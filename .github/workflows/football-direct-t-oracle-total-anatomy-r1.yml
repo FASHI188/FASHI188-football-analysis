@@ -1,0 +1,76 @@
+name: Football Direct-T Oracle Total Anatomy R1
+
+on:
+  pull_request:
+    paths:
+      - "football-data/validation/evaluate_direct_t_oracle_total_anatomy_r1.py"
+      - ".github/workflows/football-direct-t-oracle-total-anatomy-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-direct-t-oracle-total-anatomy-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile diagnostic path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py \
+            football-data/validation/evaluate_direct_t_oracle_learnability_r1.py \
+            football-data/validation/evaluate_direct_t_oracle_total_anatomy_r1.py
+      - name: Rebuild exact audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Reproduce frozen parent diagnostic identities
+        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py
+      - name: Run total-state oracle anatomy
+        run: python football-data/validation/evaluate_direct_t_oracle_total_anatomy_r1.py
+      - name: Verify frozen reproduction and research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/direct_t_oracle_total_anatomy_r1/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_DIRECT_T_ORACLE_TOTAL_ANATOMY_COMPLETE_NO_PROMOTION'
+          assert x['source_contract']['primary_rows']==1584
+          assert x['source_contract']['primary_identity_sha256']=='0e7c57c5168280cd8b3264fe3c04d46d5caa51b6b6f4218aee84826bf7d7908c'
+          assert abs(x['reproduction']['static_logloss']-1.852486746078988)<1e-12
+          assert abs(x['reproduction']['full_row_oracle_logloss']-1.817277840385054)<1e-12
+          b=x['boundary']
+          assert b['selector_fit'] is False and b['threshold_search'] is False
+          assert b['new_data_collection']==0 and b['provider_requests']==0 and b['paid_api_requests']==0
+          assert b['formal_weight']==0 and b['promotion_allowed'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload anatomy evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-oracle-total-anatomy-r1
+          path: football-data/manifests/direct_t_oracle_total_anatomy_r1/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
