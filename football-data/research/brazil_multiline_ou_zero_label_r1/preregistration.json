@@ -1,0 +1,68 @@
+{
+  "schema_version": "BRAZIL-MULTILINE-OU-T-PREREG-R1",
+  "status": "PREREGISTERED_BEFORE_OUTCOME_ACCESS",
+  "source": {
+    "kaggle_slug": "felipebandeiraramos/brazilian-soccer-odds-data",
+    "required_csv_sha256": "4fd20bcf9636c755ddb8181b8d56870c20730564f138d1e01fb9f13a46351223",
+    "license_reported_by_dataset_card": "MIT",
+    "anonymous_download_required": true
+  },
+  "sample_rule": {
+    "selection_uses_outcomes": false,
+    "required_half_lines": [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5],
+    "valid_pair_rule": "AvgOverL and AvgUnderL both finite decimal odds > 1",
+    "expected_selected_rows_from_zero_label_audit": 1063,
+    "outcome_definition_after_gate_opens": "T = HG + AG; evaluation bins 0,1,2,3,4,5,6,7+",
+    "no_row_exclusion_after_outcome_access_except_missing_or_invalid_HG_AG": true
+  },
+  "baseline_single_ou": {
+    "inputs": ["AvgOver2.5", "AvgUnder2.5"],
+    "devig": "multiplicative normalization of reciprocal Over/Under prices",
+    "interpretation": "q2 = P(T<=2)",
+    "distribution": "solve Poisson lambda by deterministic bisection so PoissonCDF(2;lambda)=q2; emit P(T=0..6) and tail P(T>=7)",
+    "lambda_search_interval": [0.000001, 20.0],
+    "iterations": 100
+  },
+  "challenger_multiline_ou": {
+    "inputs": ["AvgOver0.5", "AvgUnder0.5", "AvgOver1.5", "AvgUnder1.5", "AvgOver2.5", "AvgUnder2.5", "AvgOver3.5", "AvgUnder3.5", "AvgOver4.5", "AvgUnder4.5", "AvgOver5.5", "AvgUnder5.5", "AvgOver6.5", "AvgUnder6.5"],
+    "devig": "multiplicative normalization independently within each Over/Under pair",
+    "cdf_points": "Under(k+0.5) normalized probability is P(T<=k), k=0..6",
+    "monotonic_repair": "unweighted pool-adjacent-violators isotonic projection, nondecreasing; deterministic; expected to affect only zero-label-audit violations",
+    "distribution": "successive CDF differences for T=0..6 plus 1-CDF6 for T>=7",
+    "fit_parameters": 0,
+    "label_based_tuning": 0
+  },
+  "common_scoring": {
+    "probability_floor": 1e-8,
+    "floor_then_renormalize": true,
+    "primary_metric": "multiclass_log_loss",
+    "secondary_metrics": ["ranked_probability_score", "multiclass_brier"],
+    "paired_delta_direction": "challenger_minus_baseline; negative is better",
+    "uncertainty": {
+      "method": "paired bootstrap over selected matches",
+      "replicates": 10000,
+      "seed": 20260817,
+      "interval": 0.90
+    }
+  },
+  "gate": {
+    "pass_if_all": [
+      "selected_rows == 1063 before outcome filtering",
+      "primary_delta_log_loss < 0",
+      "90pct_bootstrap_CI_upper_for_delta_log_loss < 0",
+      "challenger_ranked_probability_score <= baseline_ranked_probability_score"
+    ],
+    "otherwise": "FAIL_OR_INCONCLUSIVE_NO_PROMOTION"
+  },
+  "hard_limits": {
+    "fixed500_access": false,
+    "old_1000_sample_access": false,
+    "threshold_tuning": false,
+    "post_hoc_weight_tuning": false,
+    "model_family_search": false,
+    "formal_weight": 0,
+    "CURRENT_mutation": false,
+    "formal_asset_mutation": false,
+    "draw_claim_allowed": false
+  }
+}
