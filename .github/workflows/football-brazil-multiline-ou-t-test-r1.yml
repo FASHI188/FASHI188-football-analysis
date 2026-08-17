@@ -1,0 +1,316 @@
+name: Football Brazil multiline OU T test R1
+
+on:
+  push:
+    branches:
+      - research/brazil-multiline-ou-zero-label-r1
+    paths:
+      - '.github/workflows/football-brazil-multiline-ou-t-test-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify frozen preregistration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='football-data/research/brazil_multiline_ou_zero_label_r1/preregistration.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['schema_version']=='BRAZIL-MULTILINE-OU-T-PREREG-R1'
+          assert d['status']=='PREREGISTERED_BEFORE_OUTCOME_ACCESS'
+          assert d['sample_rule']['expected_selected_rows_from_zero_label_audit']==1063
+          assert d['common_scoring']['uncertainty']['replicates']==10000
+          assert d['common_scoring']['uncertainty']['seed']==20260817
+          assert d['hard_limits']['fixed500_access'] is False
+          assert d['hard_limits']['old_1000_sample_access'] is False
+          assert d['hard_limits']['threshold_tuning'] is False
+          assert d['hard_limits']['post_hoc_weight_tuning'] is False
+          assert d['hard_limits']['formal_weight']==0
+          PY
+
+      - name: Download and hash-lock anonymous source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/brazil-ou
+          curl -sS -L --fail --retry 2 --retry-delay 2 --max-time 180 \
+            'https://www.kaggle.com/api/v1/datasets/download/felipebandeiraramos/brazilian-soccer-odds-data' \
+            -o /tmp/brazil-ou/source.zip
+          unzip -q /tmp/brazil-ou/source.zip -d /tmp/brazil-ou/extracted
+          test -f /tmp/brazil-ou/extracted/final_df_kaggle.csv
+          test "$(sha256sum /tmp/brazil-ou/extracted/final_df_kaggle.csv | awk '{print $1}')" = '4fd20bcf9636c755ddb8181b8d56870c20730564f138d1e01fb9f13a46351223'
+
+      - name: Execute frozen T comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/brazil_multiline_ou_t_test_r1
+          python - <<'PY'
+          import csv, json, math, random, statistics, hashlib
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          prereg_path=Path('football-data/research/brazil_multiline_ou_zero_label_r1/preregistration.json')
+          prereg=json.loads(prereg_path.read_text(encoding='utf-8'))
+          src=Path('/tmp/brazil-ou/extracted/final_df_kaggle.csv')
+          required_sha=prereg['source']['required_csv_sha256']
+          actual_sha=hashlib.sha256(src.read_bytes()).hexdigest()
+          assert actual_sha==required_sha
+
+          lines=[float(x) for x in prereg['sample_rule']['required_half_lines']]
+          floor=float(prereg['common_scoring']['probability_floor'])
+          expected_n=int(prereg['sample_rule']['expected_selected_rows_from_zero_label_audit'])
+          seed=int(prereg['common_scoring']['uncertainty']['seed'])
+          reps=int(prereg['common_scoring']['uncertainty']['replicates'])
+
+          with src.open('r',encoding='utf-8-sig',newline='') as f:
+              reader=csv.reader(f)
+              header=next(reader)
+              rows=list(reader)
+          idx={c:i for i,c in enumerate(header)}
+          for col in ['HG','AG','Res']:
+              assert col in idx
+
+          def line_text(x):
+              return str(int(x)) if float(x).is_integer() else str(x).rstrip('0').rstrip('.')
+
+          def dec(row,col):
+              s=row[idx[col]].strip()
+              if not s or s.lower() in {'nan','none','null'}:
+                  return None
+              try: v=float(s)
+              except Exception: return None
+              return v if math.isfinite(v) else None
+
+          def valid_pair(row,L):
+              t=line_text(L)
+              o=dec(row,'AvgOver'+t); u=dec(row,'AvgUnder'+t)
+              return o is not None and u is not None and o>1.0 and u>1.0
+
+          # Freeze the selected set using odds columns only. No HG/AG/Res value is
+          # dereferenced until after this assertion succeeds.
+          selected=[r for r in rows if all(valid_pair(r,L) for L in lines)]
+          selected_before_outcome_access=len(selected)
+          assert selected_before_outcome_access==expected_n, (selected_before_outcome_access,expected_n)
+
+          def devig_under(row,L):
+              t=line_text(L)
+              o=dec(row,'AvgOver'+t); u=dec(row,'AvgUnder'+t)
+              po=1.0/o; pu=1.0/u
+              return pu/(po+pu)
+
+          def poisson_cdf2(lam):
+              return math.exp(-lam)*(1.0+lam+lam*lam/2.0)
+
+          def baseline_distribution(row):
+              q2=devig_under(row,2.5)
+              lo,hi=[float(x) for x in prereg['baseline_single_ou']['lambda_search_interval']]
+              for _ in range(int(prereg['baseline_single_ou']['iterations'])):
+                  mid=(lo+hi)/2.0
+                  if poisson_cdf2(mid)>q2:
+                      lo=mid
+                  else:
+                      hi=mid
+              lam=(lo+hi)/2.0
+              p=[]
+              e=math.exp(-lam)
+              term=e
+              p.append(term)
+              for k in range(1,7):
+                  term=term*lam/k
+                  p.append(term)
+              p.append(max(0.0,1.0-sum(p)))
+              return normalize_floor(p)
+
+          def pav_nondec(values):
+              blocks=[]
+              for v in values:
+                  blocks.append([float(v),1,1])  # sum, weight, count
+                  while len(blocks)>=2 and blocks[-2][0]/blocks[-2][1] > blocks[-1][0]/blocks[-1][1]:
+                      b=blocks.pop(); a=blocks.pop()
+                      blocks.append([a[0]+b[0],a[1]+b[1],a[2]+b[2]])
+              out=[]
+              for s,w,c in blocks:
+                  out.extend([s/w]*c)
+              assert len(out)==len(values)
+              return out
+
+          def normalize_floor(p):
+              p=[max(float(x),floor) for x in p]
+              s=sum(p)
+              return [x/s for x in p]
+
+          def challenger_distribution(row):
+              q=[devig_under(row,L) for L in lines]
+              q=pav_nondec(q)
+              p=[q[0]]
+              for i in range(1,len(q)):
+                  p.append(max(0.0,q[i]-q[i-1]))
+              p.append(max(0.0,1.0-q[-1]))
+              return normalize_floor(p)
+
+          # Outcome gate opens here, only after odds-only sample identity is fixed.
+          true=[]
+          invalid_outcomes=0
+          for row in selected:
+              try:
+                  hg=float(row[idx['HG']]); ag=float(row[idx['AG']])
+                  if not (math.isfinite(hg) and math.isfinite(ag) and hg>=0 and ag>=0 and hg.is_integer() and ag.is_integer()):
+                      raise ValueError('invalid goal count')
+                  true.append(min(int(hg+ag),7))
+              except Exception:
+                  invalid_outcomes+=1
+                  true.append(None)
+          if invalid_outcomes:
+              result={
+                'schema_version':'BRAZIL-MULTILINE-OU-T-TEST-R1-RESULT',
+                'status':'INCONCLUSIVE_MISSING_OR_INVALID_OUTCOMES',
+                'selected_rows_before_outcome_access':selected_before_outcome_access,
+                'invalid_outcomes':invalid_outcomes,
+                'formal_weight':0
+              }
+              Path('football-data/research/brazil_multiline_ou_t_test_r1/result.json').write_text(json.dumps(result,indent=2)+'\n')
+              print(json.dumps(result,indent=2))
+              raise SystemExit(0)
+
+          pb=[baseline_distribution(r) for r in selected]
+          pc=[challenger_distribution(r) for r in selected]
+
+          def logloss_each(probs,ys):
+              return [-math.log(probs[i][ys[i]]) for i in range(len(ys))]
+
+          def brier_each(probs,ys):
+              out=[]
+              for p,y in zip(probs,ys):
+                  out.append(sum((p[k]-(1.0 if k==y else 0.0))**2 for k in range(8)))
+              return out
+
+          def rps_each(probs,ys):
+              out=[]
+              for p,y in zip(probs,ys):
+                  c=0.0; s=0.0
+                  for k in range(7):
+                      c+=p[k]
+                      truth=1.0 if y<=k else 0.0
+                      s+=(c-truth)**2
+                  out.append(s/7.0)
+              return out
+
+          llb=logloss_each(pb,true); llc=logloss_each(pc,true)
+          brb=brier_each(pb,true); brc=brier_each(pc,true)
+          rpb=rps_each(pb,true); rpc=rps_each(pc,true)
+          d_ll=[c-b for b,c in zip(llb,llc)]
+
+          rng=random.Random(seed)
+          n=len(d_ll)
+          boots=[]
+          for _ in range(reps):
+              s=0.0
+              for _j in range(n):
+                  s+=d_ll[rng.randrange(n)]
+              boots.append(s/n)
+          boots.sort()
+          def quantile_sorted(a,q):
+              pos=(len(a)-1)*q
+              lo=int(math.floor(pos)); hi=int(math.ceil(pos))
+              if lo==hi: return a[lo]
+              w=pos-lo
+              return a[lo]*(1-w)+a[hi]*w
+          ci_lo=quantile_sorted(boots,0.05)
+          ci_hi=quantile_sorted(boots,0.95)
+
+          metrics={
+            'baseline_single_ou':{
+              'log_loss':statistics.fmean(llb),
+              'ranked_probability_score':statistics.fmean(rpb),
+              'multiclass_brier':statistics.fmean(brb)
+            },
+            'challenger_multiline_ou':{
+              'log_loss':statistics.fmean(llc),
+              'ranked_probability_score':statistics.fmean(rpc),
+              'multiclass_brier':statistics.fmean(brc)
+            }
+          }
+          delta={
+            'log_loss':metrics['challenger_multiline_ou']['log_loss']-metrics['baseline_single_ou']['log_loss'],
+            'ranked_probability_score':metrics['challenger_multiline_ou']['ranked_probability_score']-metrics['baseline_single_ou']['ranked_probability_score'],
+            'multiclass_brier':metrics['challenger_multiline_ou']['multiclass_brier']-metrics['baseline_single_ou']['multiclass_brier'],
+            'log_loss_bootstrap_90pct_ci':[ci_lo,ci_hi],
+            'bootstrap_fraction_delta_log_loss_below_zero':sum(x<0 for x in boots)/len(boots)
+          }
+          checks={
+            'selected_rows_eq_1063': selected_before_outcome_access==expected_n,
+            'delta_log_loss_lt_0': delta['log_loss']<0,
+            'bootstrap_90pct_ci_upper_lt_0': ci_hi<0,
+            'challenger_rps_le_baseline': metrics['challenger_multiline_ou']['ranked_probability_score']<=metrics['baseline_single_ou']['ranked_probability_score']
+          }
+          passed=all(checks.values())
+          result={
+            'schema_version':'BRAZIL-MULTILINE-OU-T-TEST-R1-RESULT',
+            'observed_at_utc':datetime.now(timezone.utc).isoformat(),
+            'status':'PASS_MULTILINE_OU_IMPROVES_T' if passed else 'FAIL_OR_INCONCLUSIVE_NO_PROMOTION',
+            'source_csv_sha256':actual_sha,
+            'preregistration_schema':prereg['schema_version'],
+            'selected_rows_before_outcome_access':selected_before_outcome_access,
+            'scored_rows':len(true),
+            'invalid_outcomes':invalid_outcomes,
+            'outcome_access_started_only_after_sample_count_assertion':True,
+            'bins':['0','1','2','3','4','5','6','7+'],
+            'metrics':metrics,
+            'delta_challenger_minus_baseline':delta,
+            'gate_checks':checks,
+            'bootstrap':{'replicates':reps,'seed':seed,'interval':0.90,'paired_over_matches':True},
+            'ruling':{
+              'multiline_T_effect_tested':True,
+              'draw_effect_tested':False,
+              'fixed500_accessed':False,
+              'old_1000_accessed':False,
+              'threshold_tuning':False,
+              'post_hoc_weight_tuning':False,
+              'formal_weight':0,
+              'CURRENT_mutation':False
+            }
+          }
+          out=Path('football-data/research/brazil_multiline_ou_t_test_r1/result.json')
+          out.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(result,ensure_ascii=False,indent=2))
+          PY
+          rm -rf /tmp/brazil-ou
+
+      - name: Assert scientific boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='football-data/research/brazil_multiline_ou_t_test_r1/result.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['selected_rows_before_outcome_access']==1063
+          assert d.get('invalid_outcomes',0)==0
+          r=d['ruling']
+          assert r['draw_effect_tested'] is False
+          assert r['fixed500_accessed'] is False and r['old_1000_accessed'] is False
+          assert r['threshold_tuning'] is False and r['post_hoc_weight_tuning'] is False
+          assert r['formal_weight']==0 and r['CURRENT_mutation'] is False
+          PY
+
+      - name: Upload result only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-brazil-multiline-ou-t-test-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/brazil_multiline_ou_t_test_r1/result.json
+          if-no-files-found: error
+          retention-days: 30
