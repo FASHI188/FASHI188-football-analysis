@@ -1,0 +1,284 @@
+name: Football Betfair public multimarket zero-label audit R1
+
+on:
+  push:
+    branches:
+      - research/betfair-public-multimarket-zero-label-r1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-betfair-public-multimarket-zero-label-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned public Betfair source transiently
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/bet-public
+          git init -q /tmp/bet-public
+          git -C /tmp/bet-public remote add origin https://github.com/marcosf63/bet.git
+          git -C /tmp/bet-public config core.sparseCheckout true
+          mkdir -p /tmp/bet-public/.git/info
+          printf '%s\n' 'data/dados_historicos/por_evento_id/' > /tmp/bet-public/.git/info/sparse-checkout
+          git -C /tmp/bet-public fetch --depth=1 origin 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          git -C /tmp/bet-public checkout -q FETCH_HEAD
+          test "$(git -C /tmp/bet-public rev-parse HEAD)" = '90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff'
+
+      - name: Scan football marketType metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/betfair_public_multimarket_zero_label_r1
+          python - <<'PY'
+          import json, re, statistics
+          from collections import Counter, defaultdict
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          ROOT = Path('/tmp/bet-public/data/dados_historicos/por_evento_id')
+          OUT = Path('football-data/research/betfair_public_multimarket_zero_label_r1')
+          if not ROOT.is_dir():
+              raise SystemExit(f'missing source root: {ROOT}')
+
+          # Deliberately metadata-only. We never search for, parse, retain, or emit
+          # WINNER/LOSER/result/score/settlement fields.
+          re_event_type = re.compile(rb'"eventTypeId"\s*:\s*"?([0-9]+)"?')
+          re_event_id = re.compile(rb'"eventId"\s*:\s*"?([0-9]+)"?')
+          re_market_type = re.compile(rb'"marketType"\s*:\s*"([^"]+)"')
+          re_market_time = re.compile(rb'"marketTime"\s*:\s*"([^"]+)"')
+          re_pt = re.compile(rb'"pt"\s*:\s*([0-9]{10,16})')
+
+          files = sorted(p for p in ROOT.rglob('*') if p.is_file())
+          file_type_counts = Counter()
+          football_files = 0
+          metadata_failures = 0
+          event_types = defaultdict(set)
+          event_market_files = defaultdict(int)
+          event_first_pt = {}
+          event_last_pt = {}
+          event_market_time = {}
+          fallback_event_keys = 0
+          files_with_event_id = 0
+          files_with_market_time = 0
+
+          for path in files:
+              event_type = None
+              event_id = None
+              market_types = set()
+              market_time = None
+              first_pt = None
+              last_pt = None
+              try:
+                  with path.open('rb') as f:
+                      for line in f:
+                          if event_type is None:
+                              m = re_event_type.search(line)
+                              if m:
+                                  event_type = m.group(1).decode('ascii', 'strict')
+                          if event_id is None:
+                              m = re_event_id.search(line)
+                              if m:
+                                  event_id = m.group(1).decode('ascii', 'strict')
+                          for m in re_market_type.finditer(line):
+                              market_types.add(m.group(1).decode('utf-8', 'replace'))
+                          if market_time is None:
+                              m = re_market_time.search(line)
+                              if m:
+                                  market_time = m.group(1).decode('utf-8', 'replace')
+                          for m in re_pt.finditer(line):
+                              try:
+                                  pt = int(m.group(1))
+                              except Exception:
+                                  continue
+                              first_pt = pt if first_pt is None else min(first_pt, pt)
+                              last_pt = pt if last_pt is None else max(last_pt, pt)
+              except Exception:
+                  metadata_failures += 1
+                  continue
+
+              if event_type != '1' or not market_types:
+                  continue
+              football_files += 1
+              for mt in market_types:
+                  file_type_counts[mt] += 1
+              if event_id:
+                  key = event_id
+                  files_with_event_id += 1
+              else:
+                  # Root is documented as por_evento_id. If source rows omit eventId,
+                  # use the first relative directory component only as an explicit fallback.
+                  rel = path.relative_to(ROOT)
+                  key = f'PATH::{rel.parts[0] if len(rel.parts) > 1 else rel.stem}'
+                  fallback_event_keys += 1
+              event_types[key].update(market_types)
+              event_market_files[key] += 1
+              if market_time:
+                  files_with_market_time += 1
+                  event_market_time.setdefault(key, market_time)
+              if first_pt is not None:
+                  event_first_pt[key] = min(event_first_pt.get(key, first_pt), first_pt)
+              if last_pt is not None:
+                  event_last_pt[key] = max(event_last_pt.get(key, last_pt), last_pt)
+
+          def is_ou(mt):
+              u = mt.upper()
+              return u.startswith('OVER_UNDER_') or u.startswith('TOTAL_GOALS_')
+
+          def is_ah(mt):
+              u = mt.upper()
+              return u == 'ASIAN_HANDICAP' or u.startswith('ASIAN_HANDICAP_')
+
+          def has_ou25(types):
+              normalized = {x.upper().replace('.', '').replace('-', '_') for x in types}
+              return any(x in normalized for x in {'OVER_UNDER_25','OVER_UNDER_2_5','TOTAL_GOALS_25','TOTAL_GOALS_2_5'})
+
+          event_summaries = []
+          for key, types in event_types.items():
+              ou_types = sorted(t for t in types if is_ou(t))
+              has_mo = 'MATCH_ODDS' in {t.upper() for t in types}
+              has_ah = any(is_ah(t) for t in types)
+              event_summaries.append({
+                  'event_key': key,
+                  'market_type_count': len(types),
+                  'ou_line_count': len(ou_types),
+                  'has_match_odds': has_mo,
+                  'has_asian_handicap': has_ah,
+                  'has_ou25': has_ou25(types),
+                  'qualifies_structure_r43a': has_mo and has_ah and len(ou_types) >= 4 and has_ou25(types),
+              })
+
+          events = len(event_summaries)
+          with_mo = sum(x['has_match_odds'] for x in event_summaries)
+          with_ah = sum(x['has_asian_handicap'] for x in event_summaries)
+          with_ou1 = sum(x['ou_line_count'] >= 1 for x in event_summaries)
+          with_ou4 = sum(x['ou_line_count'] >= 4 for x in event_summaries)
+          with_ou25 = sum(x['has_ou25'] for x in event_summaries)
+          with_mo_ah = sum(x['has_match_odds'] and x['has_asian_handicap'] for x in event_summaries)
+          with_mo_ou4 = sum(x['has_match_odds'] and x['ou_line_count'] >= 4 for x in event_summaries)
+          qualified = sum(x['qualifies_structure_r43a'] for x in event_summaries)
+          max_ou = max((x['ou_line_count'] for x in event_summaries), default=0)
+
+          all_ou_types = sorted(mt for mt in file_type_counts if is_ou(mt))
+          all_ah_types = sorted(mt for mt in file_type_counts if is_ah(mt))
+          structure_possible = qualified > 0
+          bulk_gate_candidate = qualified >= 200
+          verdict = (
+              'PASS_PUBLIC_BETFAIR_MULTIMARKET_STRUCTURE_GE200_READY_FOR_TIME_COVERAGE_AUDIT'
+              if bulk_gate_candidate else
+              'PASS_PUBLIC_BETFAIR_MULTIMARKET_STRUCTURE_PRESENT_UNDER200'
+              if structure_possible else
+              'STOP_PUBLIC_BETFAIR_SOURCE_HAS_NO_R43A_MULTIMARKET_STRUCTURE'
+          )
+
+          result = {
+              'schema_version': 'BETFAIR-PUBLIC-MULTIMARKET-ZERO-LABEL-R1',
+              'observed_at_utc': datetime.now(timezone.utc).isoformat(),
+              'source': {
+                  'repository': 'marcosf63/bet',
+                  'commit': '90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff',
+                  'root': 'data/dados_historicos/por_evento_id',
+                  'classification': 'PUBLICLY_ACCESSIBLE_NO_EXPLICIT_LICENSE_TRANSIENT_AUDIT_ONLY',
+                  'raw_persisted_or_uploaded': False,
+              },
+              'zero_label_contract': {
+                  'scan_method': 'regex metadata keys eventTypeId/eventId/marketType/marketTime/pt only',
+                  'target_label_fields_accessed': 0,
+                  'winner_status_accessed': 0,
+                  'score_result_fields_accessed': 0,
+                  'model_fits': 0,
+                  'scoring': 0,
+                  'threshold_tuning': 0,
+              },
+              'inventory': {
+                  'files_scanned': len(files),
+                  'football_market_files': football_files,
+                  'metadata_failures': metadata_failures,
+                  'football_events': events,
+                  'files_with_event_id': files_with_event_id,
+                  'fallback_event_keys': fallback_event_keys,
+                  'files_with_market_time': files_with_market_time,
+                  'market_type_file_counts': dict(sorted(file_type_counts.items())),
+                  'ou_market_types': all_ou_types,
+                  'asian_handicap_market_types': all_ah_types,
+              },
+              'event_structure': {
+                  'events_with_match_odds': with_mo,
+                  'events_with_asian_handicap': with_ah,
+                  'events_with_any_ou': with_ou1,
+                  'events_with_ge4_ou_lines': with_ou4,
+                  'events_with_ou25': with_ou25,
+                  'events_with_match_odds_and_asian_handicap': with_mo_ah,
+                  'events_with_match_odds_and_ge4_ou_lines': with_mo_ou4,
+                  'events_with_match_odds_asian_handicap_ge4_ou_including_25': qualified,
+                  'maximum_ou_lines_on_one_event': max_ou,
+              },
+              'readiness': {
+                  'multimarket_structure_present': structure_possible,
+                  'ge200_structure_candidates': bulk_gate_candidate,
+                  'time_cutoff_coverage_tested': False,
+                  'scientific_effect_test_authorized': False,
+              },
+              'verdict': verdict,
+              'next_step': (
+                  'Run a second zero-label audit only on structurally qualified events to verify same-event marketTime and T-24/T-6/T-1 synchronized quote coverage without reading settlement/result fields.'
+                  if structure_possible else
+                  'Close this public source for multi-line OU and continue searching another source.'
+              ),
+          }
+
+          (OUT/'betfair_public_multimarket_zero_label_r1.json').write_text(
+              json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          (OUT/'betfair_public_multimarket_zero_label_r1.md').write_text(
+              '# Betfair public multimarket zero-label audit R1\n\n'
+              f"- verdict: `{verdict}`\n"
+              f"- files scanned: {len(files):,}\n"
+              f"- football market files: {football_files:,}\n"
+              f"- football events: {events:,}\n"
+              f"- OU market types: {', '.join(all_ou_types) if all_ou_types else 'NONE'}\n"
+              f"- Asian handicap types: {', '.join(all_ah_types) if all_ah_types else 'NONE'}\n"
+              f"- events with MATCH_ODDS + AH + >=4 OU incl 2.5: {qualified:,}\n"
+              f"- max OU lines on one event: {max_ou}\n"
+              '- target/winner/score-result access: 0/0/0\n'
+              '- time-cutoff coverage: NOT TESTED IN THIS STEP\n',
+              encoding='utf-8')
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          PY
+          rm -rf /tmp/bet-public
+
+      - name: Assert zero-label metadata boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='football-data/research/betfair_public_multimarket_zero_label_r1/betfair_public_multimarket_zero_label_r1.json'
+          d=json.load(open(p, encoding='utf-8'))
+          z=d['zero_label_contract']
+          assert z['target_label_fields_accessed'] == 0
+          assert z['winner_status_accessed'] == 0
+          assert z['score_result_fields_accessed'] == 0
+          assert z['model_fits'] == 0 and z['scoring'] == 0 and z['threshold_tuning'] == 0
+          assert d['readiness']['scientific_effect_test_authorized'] is False
+          assert d['readiness']['time_cutoff_coverage_tested'] is False
+          PY
+
+      - name: Upload aggregate metadata audit only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-betfair-public-multimarket-zero-label-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/betfair_public_multimarket_zero_label_r1/
+          if-no-files-found: error
+          retention-days: 30
