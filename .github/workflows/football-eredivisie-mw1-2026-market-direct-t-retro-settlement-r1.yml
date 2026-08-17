@@ -1,0 +1,82 @@
+name: Football Eredivisie MW1 2026 market Direct-T retro settlement R1
+
+on:
+  push:
+    branches: [research/eredivisie-mw1-retro-market-direct-t-r1]
+    paths:
+      - 'football-data/research/eredivisie_mw1_2026_settlement_labels_r1.json'
+      - 'football-data/validation/settle_eredivisie_mw1_2026_market_direct_t_retro_r1.py'
+      - '.github/workflows/football-eredivisie-mw1-2026-market-direct-t-retro-settlement-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football-eredivisie-mw1-2026-market-direct-t-retro-settlement-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore exact immutable prediction artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ered-freeze
+          curl -sS -L --fail --retry 3 --retry-delay 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            'https://api.github.com/repos/FASHI188/FASHI188-football-analysis/actions/artifacts/9278817453/zip' \
+            -o /tmp/ered-freeze.zip
+          test "$(sha256sum /tmp/ered-freeze.zip | awk '{print $1}')" = 'cf34b188661144fd0bdac9ea8572886a0a46f458dd77c7a239a4e002a538fc51'
+          unzip -q /tmp/ered-freeze.zip -d /tmp/ered-freeze
+          P='/tmp/ered-freeze/eredivisie_mw1_2026_market_direct_t_retro_r1/frozen_predictions.csv'
+          test -f "$P"
+          test "$(sha256sum "$P" | awk '{print $1}')" = '11f3c4d07fcfd8953eb1c5002109a1061a90469093b9ebc77cea110ae1625b18'
+
+      - name: Settle from frozen predictions and opened labels
+        run: |
+          python football-data/validation/settle_eredivisie_mw1_2026_market_direct_t_retro_r1.py \
+            /tmp/ered-freeze/eredivisie_mw1_2026_market_direct_t_retro_r1/frozen_predictions.csv \
+            football-data/research/eredivisie_mw1_2026_settlement_labels_r1.json
+
+      - name: Assert descriptive-only governance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('settlement_summary.json').read_text(encoding='utf-8'))
+          assert x['status']=='SETTLED_DESCRIPTIVE_NO_PROMOTION'
+          assert x['n']==9
+          assert x['interpretation']['confirmatory_claim'] is False
+          assert x['interpretation']['promotion_allowed'] is False
+          assert x['interpretation']['post_result_parameter_search_allowed'] is False
+          assert x['governance']['formal_weight']==0
+          assert x['governance']['CURRENT_mutation'] is False
+          assert x['governance']['main_mutation'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload settlement artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eredivisie-mw1-2026-market-direct-t-retro-settlement-r1-${{ github.sha }}
+          path: settlement_summary.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? settlement_summary.json$' || true)"
