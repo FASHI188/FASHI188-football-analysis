@@ -1,0 +1,73 @@
+name: Football Brazil multiline OU R2 zero-label holdout
+
+on:
+  push:
+    branches:
+      - research/brazil-multiline-ou-r2-unopened-holdout
+    paths:
+      - '.github/workflows/football-brazil-multiline-ou-r2-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download hash-locked source and count unopened holdout using odds only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r2 football-data/research/brazil_multiline_ou_r2
+          curl -sS -L --fail --retry 2 --max-time 180 'https://www.kaggle.com/api/v1/datasets/download/felipebandeiraramos/brazilian-soccer-odds-data' -o /tmp/r2/source.zip
+          unzip -q /tmp/r2/source.zip -d /tmp/r2/x
+          test "$(sha256sum /tmp/r2/x/final_df_kaggle.csv | awk '{print $1}')" = '4fd20bcf9636c755ddb8181b8d56870c20730564f138d1e01fb9f13a46351223'
+          python - <<'PY'
+          import csv,json,math
+          from pathlib import Path
+          p=Path('/tmp/r2/x/final_df_kaggle.csv')
+          with p.open(encoding='utf-8-sig',newline='') as f:
+              r=csv.reader(f); h=next(r); rows=list(r)
+          ix={c:i for i,c in enumerate(h)}
+          assert all(x in ix for x in ['HG','AG','Res'])
+          def v(row,c):
+              s=row[ix[c]].strip()
+              try: x=float(s)
+              except: return None
+              return x if math.isfinite(x) else None
+          def ok(row,L):
+              o=v(row,f'AvgOver{L}'); u=v(row,f'AvgUnder{L}')
+              return o is not None and u is not None and o>1 and u>1
+          central=['0.5','1.5','2.5','3.5','4.5']
+          r1=['0.5','1.5','2.5','3.5','4.5','5.5','6.5']
+          eligible=[]; r1_count=0
+          for row in rows:
+              in_r1=all(ok(row,L) for L in r1)
+              if in_r1: r1_count+=1
+              if all(ok(row,L) for L in central) and not in_r1:
+                  eligible.append(row)
+          out={
+            'schema_version':'BRAZIL-MULTILINE-OU-R2-ZERO-LABEL-HOLDOUT',
+            'source_sha256':'4fd20bcf9636c755ddb8181b8d56870c20730564f138d1e01fb9f13a46351223',
+            'total_rows':len(rows),
+            'r1_complete_7line_rows_excluded':r1_count,
+            'r2_rule':'valid 0.5/1.5/2.5/3.5/4.5 AND NOT complete R1 0.5..6.5 seven-line sample',
+            'r2_unopened_rows':len(eligible),
+            'outcome_columns_values_dereferenced':0,
+            'model_fit':0,'scoring':0,'formal_weight':0
+          }
+          assert r1_count==1063
+          Path('football-data/research/brazil_multiline_ou_r2/zero_label_holdout.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+          rm -rf /tmp/r2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-brazil-multiline-ou-r2-zero-label-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/brazil_multiline_ou_r2/zero_label_holdout.json
+          retention-days: 30
