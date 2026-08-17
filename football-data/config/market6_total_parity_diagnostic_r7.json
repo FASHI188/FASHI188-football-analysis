@@ -1,0 +1,91 @@
+{
+  "schema_version": "MARKET6_TOTAL_PARITY_DIAGNOSTIC_R7.0",
+  "purpose": "Retrospective rolling-OOS component diagnostic: test whether fixed current-match market6 balance predicts exact total-goal even-vs-odd parity better than the existing historical core47 state. No Direct-T, HDA, score, draw threshold, or package label is modified.",
+  "source_contract": {
+    "base_head": "bc443ed9792d81e63c9c79e340429beec8a3ec3d",
+    "rolling_test_positions_zero_based": [2, 3, 4],
+    "expected_historical_rows": 26873,
+    "expected_competitions": 16,
+    "target": "even_total",
+    "target_definition": "1 iff exact 90-minute total_goals % 2 == 0",
+    "new_target_label_access": 0,
+    "b05_b07_labels_opened": false
+  },
+  "market_contract": {
+    "evidence_class": "RETROSPECTIVE_CLOSING_OR_REFERENCE_MARKET_NOT_STRICT_PIT",
+    "original_quote_timestamp_available": false,
+    "selection_uses_outcomes": false,
+    "feature_names": [
+      "market_p_draw_devig",
+      "market_hda_home_away_abs_gap",
+      "market_abs_ah_line",
+      "market_ah_home_abs_from_half",
+      "market_ou_line",
+      "market_p_over_devig"
+    ],
+    "feature_count": 6,
+    "one_x_two_alias_priority": [["PSCH","PSCD","PSCA"],["AvgCH","AvgCD","AvgCA"],["MaxCH","MaxCD","MaxCA"],["B365CH","B365CD","B365CA"],["PSH","PSD","PSA"],["AvgH","AvgD","AvgA"],["MaxH","MaxD","MaxA"],["B365H","B365D","B365A"],["home_odds","draw_odds","away_odds"]],
+    "asian_line_alias_priority": ["AHCh","AHh","asian_handicap_line","handicap_line","spread_line"],
+    "asian_price_alias_priority": [["PCAHH","PCAHA"],["AvgCAHH","AvgCAHA"],["MaxCAHH","MaxCAHA"],["B365CAHH","B365CAHA"],["PAHH","PAHA"],["AvgAHH","AvgAHA"],["asian_home_odds","asian_away_odds"]],
+    "ou_price_alias_priority": [["PC>2.5","PC<2.5",2.5],["AvgC>2.5","AvgC<2.5",2.5],["MaxC>2.5","MaxC<2.5",2.5],["B365C>2.5","B365C<2.5",2.5],["P>2.5","P<2.5",2.5],["Avg>2.5","Avg<2.5",2.5],["over_odds","under_odds",null]],
+    "ou_line_alias_priority": ["total_line","over_under_line","OUCh","closing_total_line"],
+    "devig_method": "normalize inverse decimal odds",
+    "missing_rule": "market families train/evaluate only complete market6 rows; no market imputation"
+  },
+  "model_contract": {
+    "core_feature_count": 47,
+    "binary_estimator": "SimpleImputer(median,keep_empty_features=True)+StandardScaler+LogisticRegression",
+    "fixed_C": 0.1,
+    "hyperparameter_search": false,
+    "class_weight": null,
+    "threshold_search": false,
+    "families": {
+      "core47_binary_full": "historical core47 parity head fit on all chronological pre-test rows",
+      "core47_binary_marketmatched": "same core47 parity head fit only on market6-complete pre-test rows",
+      "market6_binary": "parity head using fixed market6 only",
+      "core47_market6_binary": "parity head using core47+market6"
+    },
+    "primary_comparison": "market6_binary minus core47_binary_marketmatched",
+    "secondary_comparison": "core47_market6_binary minus core47_binary_marketmatched"
+  },
+  "coverage_gate": {
+    "minimum_pooled_market_complete_test_rows": 7000,
+    "minimum_market_complete_test_rows_each_fold": 2000,
+    "minimum_market_complete_fit_rows_each_fold": 4000
+  },
+  "reporting_contract": {
+    "cluster_columns": ["fold","competition_id","season"],
+    "bootstrap_resamples": 5000,
+    "bootstrap_seed": 5202077,
+    "metrics": ["binary_logloss","brier","auc","observed_rate","mean_probability"],
+    "development_signal_gate": {
+      "minimum_logloss_gain_market6_vs_core_marketmatched": 0.002,
+      "cluster_bootstrap_logloss_p95_lt_zero": true,
+      "minimum_auc_gain_market6_vs_core_marketmatched": 0.01,
+      "brier_nonworse": true,
+      "minimum_fold_logloss_wins": 2
+    }
+  },
+  "boundary": {
+    "retrospective_viewed_historical_labels": true,
+    "market_evidence_not_strict_pit": true,
+    "component_diagnostic_only": true,
+    "direct_t_mutation": false,
+    "hda_probability_mutation": false,
+    "score_probability_mutation": false,
+    "forced_draw": false,
+    "threshold_search": false,
+    "new_target_label_access": 0,
+    "b05_b07_labels_opened": false,
+    "future_oos_label_open_authorized": false,
+    "formal_weight": 0,
+    "provider_requests": 0,
+    "paid_api_requests": 0,
+    "new_data_collection": false,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "formal_config_mutation": false,
+    "current_mutation": false,
+    "main_mutation": false
+  }
+}
