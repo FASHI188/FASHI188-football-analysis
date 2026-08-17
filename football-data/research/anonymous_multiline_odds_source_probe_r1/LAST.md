@@ -1,0 +1,1 @@
+Anonymous probe candidates frozen.
