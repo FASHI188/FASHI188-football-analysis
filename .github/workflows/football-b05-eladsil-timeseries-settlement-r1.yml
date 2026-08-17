@@ -1,0 +1,131 @@
+name: Football B05 eladsil trajectory settlement R1
+
+on:
+  push:
+    branches: [research/b05-eladsil-timeseries-direct-t-r1]
+    paths:
+      - '.github/workflows/football-b05-eladsil-timeseries-settlement-r1.yml'
+      - 'football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1.py'
+      - 'football-data/research/b05_eladsil_timeseries_direct_t_r1/FREEZE_RECEIPT.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football-b05-eladsil-timeseries-settlement-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  settle-b05-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install frozen research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 scipy==1.17.0 scikit-learn==1.8.0
+
+      - name: Pre-label verify preregistration and freeze receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('football-data/research/b05_eladsil_timeseries_direct_t_r1')
+          prereg=hashlib.sha256((p/'PREREG.md').read_bytes()).hexdigest()
+          r=json.loads((p/'FREEZE_RECEIPT.json').read_text())
+          assert prereg=='2772973cc64ebd4ee8ed1bb90b8ff47ca7e52e811a318c2015df45a6a8ab1f86'
+          assert r['status']=='B05_ZERO_LABEL_PACKET_IMMUTABLY_PINNED_BEFORE_SETTLEMENT'
+          assert r['freeze_artifact_id']==9286252440
+          assert r['freeze_artifact_zip_sha256']=='4e7f4f7b2ba95c20476c1769ef0b54e9bd7db13d98066eb822768ccd12cae66a'
+          assert r['feature_packet_sha256']=='338ed1d427820562eb92547b9dc9b5c0ca72ca87a5f19194433589d2ea8275c0'
+          assert r['result_data_rows_read_at_freeze']==0 and r['outcome_values_dereferenced_at_freeze']==0
+          assert r['b06_plus_must_remain_unopened'] is True
+          print('PRELABEL_LOCKS_PASS')
+          PY
+
+      - name: Download exact immutable zero-label freeze artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b05-freeze
+          curl -sS -L --fail --retry 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9286252440/zip" \
+            -o /tmp/b05-freeze.zip
+          test "$(sha256sum /tmp/b05-freeze.zip | awk '{print $1}')" = '4e7f4f7b2ba95c20476c1769ef0b54e9bd7db13d98066eb822768ccd12cae66a'
+          unzip -q /tmp/b05-freeze.zip -d /tmp/b05-freeze
+          test "$(sha256sum /tmp/b05-freeze/B05_features.csv | awk '{print $1}')" = '338ed1d427820562eb92547b9dc9b5c0ca72ca87a5f19194433589d2ea8275c0'
+          test "$(sha256sum /tmp/b05-freeze/B05_manifest.json | awk '{print $1}')" = '094edba4ae1e4955ef174f790011a4f49dc7013d3c51a842f64f70a7590f2f4e'
+          test "$(sha256sum /tmp/b05-freeze/freeze.json | awk '{print $1}')" = '3e01703784b6e81df24ff42474b858f1b259c3460b51812e72c2270773c1620c'
+          test "$(sha256sum /tmp/b05-freeze/source_headers.json | awk '{print $1}')" = 'b3ab3c6228354d3662610e926109da6fb6612ec73904430a29512d1a65de9cdb'
+          echo IMMUTABLE_FREEZE_ARTIFACT_PASS
+
+      - name: Download exact anonymous source package after all pre-label locks pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/elad
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o /tmp/elad/source.zip
+          test "$(sha256sum /tmp/elad/source.zip | awk '{print $1}')" = '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9'
+          echo EXACT_SOURCE_PACKAGE_PASS
+
+      - name: Settle target-only B05 and score frozen test
+        env:
+          B05_FREEZE_DIR: /tmp/b05-freeze
+          B05_SOURCE_ZIP: /tmp/elad/source.zip
+        run: python football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1.py
+
+      - name: Verify one-package research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/b05_eladsil_timeseries_direct_t_r1/summary.json')
+          x=json.loads(p.read_text())
+          assert x['status']=='B05_SETTLED_ONCE_NO_PROMOTION'
+          assert x['source_contract']['global_alias']=='B05'
+          assert x['source_contract']['package_rows_opened']==400
+          assert x['source_contract']['oos_rows_scored']==300
+          assert x['source_contract']['b01_b04_reused'] is False
+          assert x['source_contract']['b06_plus_opened'] is False
+          a=x['label_isolation_audit']
+          assert a['approved_target_rows_parsed']==400
+          assert a['non_target_score_values_semantically_dereferenced']==0
+          assert a['non_target_final_result_values_semantically_dereferenced']==0
+          assert a['b06_plus_outcome_values_semantically_dereferenced']==0
+          b=x['boundary']
+          assert b['formal_weight']==0 and b['formal_promotion_allowed'] is False
+          assert b['b06_auto_open_allowed'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload B05 settlement evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b05-eladsil-timeseries-settlement-r1
+          path: football-data/manifests/b05_eladsil_timeseries_direct_t_r1/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm runtime-only outputs
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/b05_eladsil_timeseries_direct_t_r1/' || true)"
