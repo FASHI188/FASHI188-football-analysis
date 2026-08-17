@@ -1,0 +1,92 @@
+name: Football HF Odds Fixed500 Batch2 R1
+
+on:
+  push:
+    branches: ["research/hf-football-odds-2023-24-batch2-r1"]
+    paths:
+      - "football-data/validation/audit_hf_odds_pit_fixed500_batch2_r1.py"
+      - "football-data/validation/evaluate_hf_odds_fixed500_batch2_r1.py"
+      - ".github/workflows/football-hf-odds-fixed500-batch2-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      PYTHONPATH: football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/hf-football-odds-2023-24-batch2-r1
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Restore downloaded HF dataset
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-football-odds-2023-24
+          key: hf-football-odds-2023-24-match-odds-v1
+          fail-on-cache-miss: true
+      - name: Compile batch2 evaluators
+        run: |
+          python -m py_compile football-data/validation/audit_hf_odds_pit_fixed500_batch2_r1.py
+          python -m py_compile football-data/validation/evaluate_hf_odds_fixed500_batch2_r1.py
+      - name: Rebuild repository score-market ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Build disjoint second fixed500
+        run: python football-data/validation/audit_hf_odds_pit_fixed500_batch2_r1.py
+      - name: Evaluate Direct-T on second fixed500
+        run: python football-data/validation/evaluate_hf_odds_fixed500_batch2_r1.py
+      - name: Verify disjointness scientific and governance guards
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('football-data/manifests/hf_odds_pit_matchability_batch2_r1.json').read_text(encoding='utf-8'))
+          x=json.loads(Path('football-data/manifests/hf_odds_fixed500_batch2_r1.json').read_text(encoding='utf-8'))
+          assert a['status']=='PASS_DISJOINT_SECOND_FIXED500_READY'
+          assert a['rank_slice_one_based']==[501,1000]
+          assert a['overlap_with_first_fixed500']['t90']==0
+          assert a['overlap_with_first_fixed500']['t5']==0
+          assert a['selection_guard']['result_labels_used_for_selection'] is False
+          assert x['sample']['primary_t90_n']==500
+          assert x['sample']['overlap_with_first_fixed500_t90']==0
+          assert x['sample']['independent_of_first_batch_by_fixture_identity'] is True
+          assert x['interpretation_guard']['second_batch_not_used_for_tuning'] is True
+          assert x['interpretation_guard']['fully_strict_pit_training_to_test_claim'] is False
+          assert x['governance']['formal_weight']==0
+          assert x['governance']['main_mutation'] is False
+          print(json.dumps({
+            'audit':a,
+            'verdict':x['scientific_verdict'],
+            'sample':x['sample'],
+            'primary_t90':x['primary_t90'],
+            'sensitivity_t5':x['sensitivity_t5'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload batch2 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: hf-odds-fixed500-batch2-r1
+          path: |
+            football-data/manifests/hf_odds_pit_matchability_batch2_r1.json
+            football-data/manifests/hf_odds_pit_fixed500_t90_batch2_r1.csv
+            football-data/manifests/hf_odds_pit_fixed500_t5_batch2_r1.csv
+            football-data/manifests/hf_odds_fixed500_batch2_r1.json
+            football-data/manifests/hf_odds_fixed500_batch2_r1_rows.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm research-only boundaries
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
