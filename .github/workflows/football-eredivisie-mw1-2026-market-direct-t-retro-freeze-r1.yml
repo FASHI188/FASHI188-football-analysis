@@ -1,0 +1,75 @@
+name: Football Eredivisie MW1 2026 market Direct-T retro freeze R1
+
+on:
+  push:
+    branches: [research/eredivisie-mw1-retro-market-direct-t-r1]
+    paths:
+      - 'football-data/research/eredivisie_mw1_2026_market_direct_t_retro_contract_r1.json'
+      - 'football-data/research/eredivisie_mw1_2026_prematch_market_inputs_r1.json'
+      - 'football-data/validation/freeze_eredivisie_mw1_2026_market_direct_t_retro_r1.py'
+      - '.github/workflows/football-eredivisie-mw1-2026-market-direct-t-retro-freeze-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-eredivisie-mw1-2026-market-direct-t-retro-freeze-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  freeze-predictions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install pinned deterministic dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen predictor
+        run: python -m py_compile football-data/validation/freeze_eredivisie_mw1_2026_market_direct_t_retro_r1.py
+      - name: Freeze all nine predictions without target outcomes
+        run: python football-data/validation/freeze_eredivisie_mw1_2026_market_direct_t_retro_r1.py
+      - name: Assert prediction lock
+        run: |
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+          root=Path('football-data/research/eredivisie_mw1_2026_market_direct_t_retro_r1')
+          lock=json.loads((root/'prediction_lock.json').read_text(encoding='utf-8'))
+          assert lock['status']=='PREDICTIONS_FROZEN_BEFORE_TARGET_RESULT_SETTLEMENT'
+          assert lock['target']['n']==9
+          assert lock['target']['target_labels_accessed_by_prediction_script']==0
+          assert lock['target']['strict_T60_PIT_claim'] is False
+          assert lock['model']['selected_C']==0.1
+          assert lock['model']['baseline_features']==['logit_pH','logit_pD','logit_pA']
+          assert lock['model']['candidate_features']==['logit_pH','logit_pD','logit_pA','ou25_logit_over']
+          assert lock['interpretation_guard']['post_result_parameter_search_allowed'] is False
+          assert lock['governance']['formal_weight']==0
+          rows=list(csv.DictReader((root/'frozen_predictions.csv').open('r',encoding='utf-8',newline='')))
+          assert len(rows)==9 and len({r['fixture_no'] for r in rows})==9
+          print(json.dumps({'lock':lock,'predictions':rows},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload immutable prediction freeze artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eredivisie-mw1-2026-market-direct-t-retro-freeze-r1-${{ github.sha }}
+          path: |
+            football-data/research/eredivisie_mw1_2026_market_direct_t_retro_r1/frozen_predictions.csv
+            football-data/research/eredivisie_mw1_2026_market_direct_t_retro_r1/prediction_lock.json
+            football-data/research/eredivisie_mw1_2026_prematch_market_inputs_r1.json
+            football-data/research/eredivisie_mw1_2026_market_direct_t_retro_contract_r1.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Confirm no tracked runtime mutation
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/research/eredivisie_mw1_2026_market_direct_t_retro_r1/' || true)"
