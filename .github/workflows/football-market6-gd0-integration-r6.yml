@@ -1,0 +1,111 @@
+name: Football Market6 GD0 Integration R6
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/market6_gd0_integration_r6.json"
+      - "football-data/validation/evaluate_market6_gd0_integration_r6.py"
+      - "football-data/validation/run_market6_gd0_integration_r6.py"
+      - "football-data/research/market6_gd0_integration_r6/**"
+      - ".github/workflows/football-market6-gd0-integration-r6.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-market6-gd0-integration-r6-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R6 path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py \
+            football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py \
+            football-data/validation/evaluate_even_t_gd0_market_diagnostic_r5.py \
+            football-data/validation/evaluate_market6_gd0_integration_r6.py \
+            football-data/validation/run_market6_gd0_integration_r6.py
+      - name: Rebuild exact audited runtime ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen market6 GD0 integration R6
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/market6-gd0-integration-r6
+          python football-data/validation/run_market6_gd0_integration_r6.py \
+            2>&1 | tee /tmp/market6-gd0-integration-r6/traceback.log
+      - name: Upload R6 failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market6-gd0-integration-r6-failure-log
+          path: /tmp/market6-gd0-integration-r6/traceback.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify frozen integration and research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/market6_gd0_integration_r6/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_MARKET6_GD0_INTEGRATION_R6_COMPLETE_NO_PROMOTION'
+          assert x['data_identity']['rows']==26873
+          assert x['source_contract']['parent_pr']==207
+          assert x['source_contract']['parent_artifact']==9287113621
+          b=x['boundary']
+          assert b['direct_total_changed'] is False
+          assert b['parent_nonzero_gd_relative_shape_changed'] is False
+          assert b['adjusted_total_classes']==[2,4,6]
+          assert b['calibration_layer'] is False
+          assert b['blend_weight']==1.0
+          assert b['forced_draw'] is False
+          assert b['manual_hda_threshold'] is False
+          assert b['post_result_parameter_search'] is False
+          assert b['new_target_label_access']==0
+          assert b['b05_b07_labels_opened'] is False
+          assert b['future_oos_label_open_authorized'] is False
+          assert b['formal_weight']==0
+          assert b['main_mutation'] is False
+          d=x['development_signal']
+          assert d['scientific_pass'] is False
+          assert d['future_oos_label_open_authorized'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'coverage':x['coverage'],
+            'primary':x['primary_market_complete'],
+            'secondary':x['secondary_all_row_parent_fallback'],
+            'bootstrap':x['cluster_bootstrap'],
+            'development_signal':x['development_signal'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R6 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: market6-gd0-integration-r6
+          path: football-data/manifests/market6_gd0_integration_r6/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
