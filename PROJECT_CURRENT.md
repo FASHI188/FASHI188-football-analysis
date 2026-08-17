@@ -3,146 +3,148 @@
 ## 身份
 
 - project_id: `football-project`
-- state_version: **61**
-- updated_at_local: `2026-08-17 16:08 +08:00`
+- state_version: **62**
+- updated_at_local: `2026-08-17 16:28 +08:00`
 - updated_by: `GPT-5.6 Sol`
-- status_source: `POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`
+- status_source: `B04_VIEWED_STATE_DRIFT_CLOSED`
 - status: `WAITING`
-- state_log_record_id: `rec8DSgydfzYix35I`
-- predecessor_state: 60
+- state_log_record_id: `reciwMYK9dJCYZB60`
+- predecessor_state: 61
 
 ## 正式规则与正式资产
 
 - sole_CURRENT: `足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx`
 - CURRENT_version: V5.2.0
-- formal model/data/config/CURRENT changes in state61: **0**
-- formal_weight changes in state61: **0**
+- formal model/data/config/CURRENT changes in state62: **0**
+- formal_weight changes in state62: **0**
 
-state61 只发布 B01-B03 已 VIEWED 样本的 post-view 底座解剖结论，不新增确认门、不训练、不调参、不晋级模型。
+state62 只闭合 B04 历史 VIEWED 状态漂移和恢复语义，不改任何科学结果、模型、数据、配置或正式 CURRENT。
 
-## state60 永久治理仍有效
+## state62 治理结论：B04 历史状态漂移已闭环
 
-`gold-standard / 金标准 reserve` 路线继续为 **永久退役**：
+治理文件：`governance/B04_VIEWED_STATE_DRIFT_CLOSURE.md`
 
-- 不得新建、恢复或改名复活；
-- B04 不得包装成金标准或最高等级确认包；
-- 旧日志/旧聊天里的“B04或新gold-standard二选一”不得恢复为 ACTIVE_NEXT。
+最终裁决：
 
-永久治理文件：`governance/GOLD_STANDARD_RESERVE_RETIRED.md`。
+**`B04 = VIEWED since settlement run 31998704387; all four batches closed; no unopened reserve remains.`**
 
-## state61 新研究结论：B01-B03 底座解剖完成
+### 旧 Airtable checkpoint125 为什么写 B04 未开封
 
-研究锚点：
+旧 state59 / checkpoint125 更新时间约 `2026-08-17 13:24 +08:00`。该时点 B03 已结算，但 B04 自身 freeze/settlement 尚未发生，所以当时“B04 未被 target-only query 请求”的记录在历史时点上成立。
 
-- branch: `research/b01-b03-base-anatomy-r1-20260817`
-- HEAD: `cb0b9057bdb7c7cb7ec73b1aa14076231d58ff0f`
-- PR: **#199 Draft / Open / Unmerged**
-- report: `football-data/research/base_anatomy_20260817/B01_B03_OU25_DIRECT_T_BASE_ANATOMY_R1.md`
-- scope: B01/B02/B03 共 **1200** 场；B04 analyzed rows = **0**
-- verdict: **`POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`**
+之后 GitHub 研究分支继续执行，但没有及时回写 Airtable，形成状态漂移。
 
-### 1. 日期簇不是 400 场不稳定的主因
+因此旧 checkpoint125 不是删除或改写，而是从 B04 settlement 完成以后统一标记：
 
-B01/B02/B03 的 calendar-date cluster design effect 分别约：
+**`STALE_AFTER_B04_SETTLEMENT`**
 
-- B01: `0.934`
-- B02: `0.944`
-- B03: `0.983`
+只可用于历史还原，不得作为当前 ACTIVE_NEXT、盲态证据或恢复真值。
 
-对应 effective N 约 `428 / 424 / 407`，没有因日期簇相关性发生样本量坍塌。
+## B04 精确状态转移
 
-真正瓶颈是净效应相对逐场波动太小：三个 batch 的标准化 `|effect|` 仅约 `0.050 / 0.095 / 0.058`。
+### 1. B04 零标签冻结
 
-### 2. 核心机制：0-3 球损失与 4+ 球收益相消
+- freeze commit: `23291a89d874446a3306a5e37b2a1ee83fe84b8c`
+- local time: `2026-08-17 13:37:33 +08:00`
+- freeze run: `31998560168`
+- freeze Artifact: `9277646065`
+- Artifact ZIP SHA-256: `6ea9db8397e07087731a02c11c084196ab8b2e5356d43e7be0b593405e3ea221`
+- rows: `359`
+- lock state: `PREDICTIONS_FROZEN_LABELS_UNOPENED`
+- target labels accessed: `0`
+- target outcome columns read: `[]`
 
-B01-B03 合计：
+### 2. B04 正式 settlement：UNOPENED → VIEWED
 
-- 实际总进球 0-3：`n=799`，mean ΔLogLoss=`+0.013766`，candidate 更差；
-- 实际总进球 4+：`n=401`，mean ΔLogLoss=`-0.053242`，candidate 明显更好；
-- 三个 batch 均保持这个方向。
+- settlement commit: `93cde4380d8b8d4705c04d811b0bdf2ef978092d`
+- local time: `2026-08-17 13:40:04 +08:00`
+- settlement run: `31998704387`
+- settlement Artifact: `9277727825`
+- Artifact ZIP SHA-256: `3e012815386508a4b0e363fcc10099b3af7550128e737533eae18b7fffeb9d4b`
+- target-only label receipt SHA-256: `45d3df41d516da08a1f571a937d4bbf7f6770136094f6962e762bb9e7d458116`
+- settlement summary SHA-256: `1977f7b78be0023c4b29637392e2becbeea73fbf9b8b251b47e08f784cc837e1`
 
-因此单一 OU2.5 cut point 更像 **high-total / upper-tail correction**，并非对整个 Direct-T 分布均匀改善。整体小幅净收益是两股更大的反向分量相互抵消后的残差。
+该 run 明确：
 
-### 3. 1200 场 pooled 只允许描述，不是确认门
+- `B04_labels_opened_in_this_run=359`
+- `non_B04_fixture_ids_requested=0`
+- `label_columns_materialized_for_non_B04_rows_in_this_run=0`
+- B01/B02/B03 labels read in this run = `0`
 
-B01-B03 post-view pooled：
+从该 run 完成起，B04 永久为 `VIEWED`。
 
-- ΔLogLoss=`-0.008626`
-- date-block bootstrap90=`[-0.014553, -0.002656]`
+B04 原锁定合同结果：
 
-因为三包均已 VIEWED，**禁止**把 pooled CI 低于 0 事后改写成 confirmatory PASS，也不得据此发明新的组合门。
+- status: `FAIL_B04_OU25_NO_CONFIRMED_DIRECT_T_INCREMENT`
+- ΔLogLoss: `-0.009181875234092318`
+- ΔBrier: `-0.003064149231567755`
+- ΔRPS: `-0.001680583952775756`
+- bootstrap90: `[-0.020674795951751247, +0.002643013130652647]`
+- primary gate: FAIL
+- formal_weight: `0`
 
-### 4. 400 场设计本身功效不足
+### 3. 四包 reserve 完全关闭
 
-以当前观察到的 pooled effect / cluster variance 作为纯描述性假设：
+- closure commit: `54e1c05262f42c731975710c77eb0a0e4dd47a30`
+- local time: `2026-08-17 13:46:08 +08:00`
+- status: `CLOSED_NO_CONFIRMATORY_PROMOTION`
+- `all_batches_viewed=true`
+- `unopened_batches_remaining=0`
 
-- 400 场：power 约 `40%`
-- 800 场：约 `63%`
-- 1200 场：约 `78%`
-- 80% power：约 `1257` 场
-- 90% power：约 `1741` 场
-- 95% power：约 `2200` 场
+B01/B02/B03/B04 单包结果：FAIL / PASS / FAIL / FAIL。四包 ΔLogLoss 点估计均为负，但只有 B02 通过原锁定单包确认门。
 
-所以 B02 PASS、B01/B03 CI 跨 0 并不要求假设底层效应互相矛盾；400 场对于这种小净效应本身就是低功效设计。
+后续 post-view closure `2813b16d2e17f87f4f8e7618e6589dfe85a1a7d8` 再次明确 `all_target_labels_already_viewed=true`，scope=1559。
 
-### 5. 异步报价不是“旧报价更好”的证据
+## 与 state60 / state61 的关系
 
-B01-B03 描述性分组：
+### state60 继续有效
 
-- HDA/OU 时间差 `<=1min`：n=566，ΔLL≈`+0.00176`
-- 时间差 `>6h`：n=586，ΔLL≈`-0.01750`
+`gold-standard / 金标准 reserve` 永久退役，不得新建、恢复、改名复活；B04 尤其不得重新包装成任何 blind/gold-standard reserve。
 
-但 quote age 与 ΔLL 的 Pearson/Spearman 相关几乎为 0；控制 batch、competition、baseline/shift 后异步项仍偏负，但再控制 realized 4+ outcome 后不再显著。
+### state61 继续有效
 
-裁决：这是 **timing/source/data-generating-process regime association**，不能解释为 stale quote 具有因果优势。
+B01-B03 底座解剖结论保持不变：
 
-### 6. 联赛差异只保留为假设
+- research HEAD: `cb0b9057bdb7c7cb7ec73b1aa14076231d58ff0f`
+- PR #199: Draft / Open / Unmerged
+- verdict: `POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`
+- B04 analyzed rows in that analysis: `0`
 
-描述上：Premier League、Liga 较好；Ligue 1 三包均为正向 ΔLL（即 candidate 更差）。但 cluster-robust competition joint test `p≈0.402`，不足以授权联赛 selector。
+这里的 `B04 analyzed rows=0` 是分析 scope 主动排除 B04，不代表当时 B04 未 VIEWED。
 
-禁止按联赛、时间差或实际 4+ 标签在已 VIEWED 数据上后验切段造规则。
+## 当前唯一下一步
 
-## 数据锚点
+保持 state61 的科学断点，不重新消费已 VIEWED reserve：
 
-- post-view source run: `32000375197`
-- post-view Artifact: `9278178012`
-- source ZIP SHA-256: `4af1f68c4d7769ffc957fbd93d1d9c0102a4e4275ab41842e027686d601d6f73`
-- B01 freeze: run `31993949268`, Artifact `9276244641`
-- B02 freeze: run `31995652017`, Artifact `9276762428`
-- B03 freeze: run `31997077090`, Artifact `9277190607`
+若用户继续 OU/total-shape 主线，只允许先设计新的非金标准预注册 OOS/forward 数据合同，并先核验是否存在 genuinely new、合规、同步/PIT 的 total-shape 数据条件。
 
-## 唯一下一步
-
-**冻结本轮底座解剖，不在 B01-B03 上继续调参。**
-
-若继续研究 OU / total-shape 信息，只允许先设计一个新的、明确的 **非金标准** 预注册 OOS/forward 数据合同，核心问题是：
-
-> 更丰富的赛前 total-shape 信息能否减少“0-3 球变差 vs 4+ 球变好”的相消，而不是只用 OU2.5 单一 cut point 移动总进球强度？
-
-但当前公开免密钥 multi-OU 批量 PIT coverage 路线此前已裁决 `STOP_DATA/COVERAGE`，因此**不得原路重复探测**。下一步若要推进，先找 genuinely new、合规、可同步/PIT 的 total-shape 数据可行性；没有新数据条件就保持 WAITING，而不是继续模型搜索。
+旧公开免密钥 multi-OU 路线已 `STOP_DATA/COVERAGE`，不得原路重复；若没有新数据条件，保持 `WAITING`。
 
 ## 当前禁止事项
 
-- 禁止把 pooled 1200 结果写成 confirmatory PASS；
-- 禁止基于 B01-B03 的联赛、时间差、实际 4+ 标签后验造 selector；
-- 禁止重新把 B01/B02/B03 当独立 holdout；
-- 禁止消费/分析 B04 作为本结论证据；
-- 禁止恢复 gold-standard / 金标准 reserve；
-- 禁止重复已 STOP 的公开免密钥 multi-OU 路线；
-- 禁止修改 formal model/data/config/CURRENT；
-- 禁止恢复 Direct-T / Parity 外壳搜索。
+- 禁止把任何旧“B04 未开封”文本作为当前恢复真值；
+- 禁止再次把 B04 当 holdout / blind reserve / gold-standard reserve；
+- 禁止把 B04 合规 target-only settlement 曲解为它仍可重新用于确认；
+- 禁止把四包 post-view 聚合结果改写成新的 confirmatory PASS；
+- 禁止恢复 gold-standard reserve；
+- 禁止把 B01-B03/B04 重新当未看标签样本；
+- 禁止重复已 STOP 的公开 multi-OU 数据路线；
+- 禁止修改 formal model/data/config/CURRENT。
 
 ## 轻量接续
 
-新聊天恢复：上一工作对话末尾小段（若可得）→ Airtable《当前状态》→唯一《执行检查点》→《会话接力》→核验 GitHub main。旧层若与 state61 冲突，以 state61 为准。
+新聊天恢复：上一工作对话末尾小段（若可得）→ Airtable《当前状态》→唯一《执行检查点》→《会话接力》→核验 GitHub main。
+
+只要旧层出现“B04 still unopened / 可作为下一独立包”，直接应用 `STALE_AFTER_B04_SETTLEMENT`，不得继续该旧分叉。
 
 ## Airtable 锚点
 
 - base: `足球项目接续` (`appLXF9IBvSCEUjJV`)
 - current_state_record: `recs1pQ1rhuwJQAzE`
-- state61 creation log: `rec8DSgydfzYix35I`
+- state62 creation log: `reciwMYK9dJCYZB60`
 - execution_checkpoint_record: `recIRxK7EIMjJdG4A`
-- checkpoint_version: **128**
+- checkpoint_version: **129**
+- session_handoff_version: **12**
 
 ## 权威优先级
 
