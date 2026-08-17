@@ -1,0 +1,95 @@
+name: Football HF Odds Download R1
+
+on:
+  push:
+    branches: ["research/hf-football-odds-2023-24-r1"]
+    paths:
+      - ".github/workflows/football-hf-odds-download-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/hf-football-odds-2023-24-r1
+          fetch-depth: 1
+
+      - name: Restore cached dataset
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-football-odds-2023-24
+          key: hf-football-odds-2023-24-match-odds-v1
+
+      - name: Download match_odds.csv from Hugging Face
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hf-football-odds-2023-24
+          curl -L --fail --retry 5 --retry-delay 5 \
+            --output /tmp/hf-football-odds-2023-24/match_odds.csv \
+            'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/main/match_odds.csv?download=true'
+
+      - name: Audit downloaded file
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=/tmp/hf-football-odds-2023-24/match_odds.csv
+          test -s "$FILE"
+          BYTES=$(stat -c%s "$FILE")
+          test "$BYTES" -gt 100000000
+          SHA=$(sha256sum "$FILE" | awk '{print $1}')
+          ROWS=$(($(wc -l < "$FILE") - 1))
+          mkdir -p football-data/manifests
+          python - <<'PY'
+          import csv, hashlib, json, os
+          from pathlib import Path
+          p=Path('/tmp/hf-football-odds-2023-24/match_odds.csv')
+          with p.open('r',encoding='utf-8-sig',newline='',errors='replace') as f:
+              header=next(csv.reader(f))
+          lower={x.strip().lower():x for x in header}
+          expected=[
+              'home_team','away_team','competition','refreshed_at',
+              'odds_over_2.5','odds_under_2.5','u/o 2.5 timestamp',
+              'odds_1','odds_x','odds_2','1x2 timestamp'
+          ]
+          missing=[x for x in expected if x not in lower]
+          out={
+              'schema_version':'hf-football-odds-download-r1',
+              'status':'PASS_DOWNLOAD_AUDIT' if not missing else 'PASS_DOWNLOAD_BUT_EXPECTED_COLUMNS_MISSING',
+              'source_url':'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/main/match_odds.csv?download=true',
+              'file_name':'match_odds.csv',
+              'size_bytes':p.stat().st_size,
+              'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
+              'header':header,
+              'expected_columns':expected,
+              'missing_expected_columns':missing,
+              'cache_path':'/tmp/hf-football-odds-2023-24',
+              'formal_weight':0,
+              'main_mutation':False,
+              'formal_model_mutation':False
+          }
+          Path('football-data/manifests/hf_football_odds_download_r1.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps({k:out[k] for k in ['status','size_bytes','sha256','missing_expected_columns']},ensure_ascii=False,indent=2))
+          PY
+          echo "rows_approx=$ROWS"
+
+      - name: Upload audit manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: hf-football-odds-download-r1
+          path: football-data/manifests/hf_football_odds_download_r1.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm research-only boundaries
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
