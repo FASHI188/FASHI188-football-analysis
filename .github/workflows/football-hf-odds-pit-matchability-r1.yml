@@ -1,0 +1,47 @@
+name: Football HF Odds PIT Matchability R1
+
+on:
+  push:
+    branches: ["research/hf-football-odds-2023-24-r1"]
+    paths:
+      - "football-data/validation/audit_hf_odds_pit_matchability_r1.py"
+      - ".github/workflows/football-hf-odds-pit-matchability-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matchability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: research/hf-football-odds-2023-24-r1
+          fetch-depth: 1
+      - name: Restore dataset cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hf-football-odds-2023-24
+          key: hf-football-odds-2023-24-match-odds-v1
+          fail-on-cache-miss: true
+      - name: Compile
+        run: python -m py_compile football-data/validation/audit_hf_odds_pit_matchability_r1.py
+      - name: Build strict PIT fixed500 candidate set
+        run: python football-data/validation/audit_hf_odds_pit_matchability_r1.py
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hf-odds-pit-matchability-r1
+          path: |
+            football-data/manifests/hf_odds_pit_matchability_r1.json
+            football-data/manifests/hf_odds_pit_fixed500_r1.csv
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Confirm research-only boundaries
+        if: always()
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
