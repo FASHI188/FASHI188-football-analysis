@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/football-b05-eladsil-timeseries-settlement-r1.yml'
       - 'football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1.py'
+      - 'football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1_dedupe_fix.py'
       - 'football-data/research/b05_eladsil_timeseries_direct_t_r1/FREEZE_RECEIPT.json'
   workflow_dispatch:
 
@@ -25,6 +26,7 @@ jobs:
       OMP_NUM_THREADS: '1'
       OPENBLAS_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
+      PYTHONPATH: football-data/validation
     steps:
       - uses: actions/checkout@v6
         with:
@@ -87,11 +89,11 @@ jobs:
           test "$(sha256sum /tmp/elad/source.zip | awk '{print $1}')" = '20baff7a0d65fc667225187430af7b13eab4b27e56695a8bc4f907e8c498f6f9'
           echo EXACT_SOURCE_PACKAGE_PASS
 
-      - name: Settle target-only B05 and score frozen test
+      - name: Settle already-consumed B05 with identical-duplicate collapse
         env:
           B05_FREEZE_DIR: /tmp/b05-freeze
           B05_SOURCE_ZIP: /tmp/elad/source.zip
-        run: python football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1.py
+        run: python football-data/validation/settle_b05_eladsil_timeseries_direct_t_r1_dedupe_fix.py
 
       - name: Verify one-package research boundary
         run: |
@@ -108,6 +110,8 @@ jobs:
           assert x['source_contract']['b06_plus_opened'] is False
           a=x['label_isolation_audit']
           assert a['approved_target_rows_parsed']==400
+          assert a['identical_duplicate_target_rows_collapsed']>=1
+          assert a['conflicting_duplicate_target_rows']==0
           assert a['non_target_score_values_semantically_dereferenced']==0
           assert a['non_target_final_result_values_semantically_dereferenced']==0
           assert a['b06_plus_outcome_values_semantically_dereferenced']==0
