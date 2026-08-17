@@ -1,0 +1,236 @@
+name: Football Brazil multiline OU zero-label audit R1
+
+on:
+  push:
+    branches:
+      - research/brazil-multiline-ou-zero-label-r1
+    paths:
+      - '.github/workflows/football-brazil-multiline-ou-zero-label-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download fixed public dataset anonymously
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/brazil-ou
+          curl -sS -L --fail --retry 2 --retry-delay 2 --max-time 180 \
+            'https://www.kaggle.com/api/v1/datasets/download/felipebandeiraramos/brazilian-soccer-odds-data' \
+            -o /tmp/brazil-ou/source.zip
+          unzip -t /tmp/brazil-ou/source.zip >/dev/null
+          unzip -q /tmp/brazil-ou/source.zip -d /tmp/brazil-ou/extracted
+          test -f /tmp/brazil-ou/extracted/final_df_kaggle.csv
+          sha256sum /tmp/brazil-ou/source.zip /tmp/brazil-ou/extracted/final_df_kaggle.csv
+
+      - name: Zero-label coverage and curve-coherence audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/brazil_multiline_ou_zero_label_r1
+          python - <<'PY'
+          import csv, json, math, statistics, hashlib
+          from collections import Counter, defaultdict
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          src=Path('/tmp/brazil-ou/extracted/final_df_kaggle.csv')
+          out=Path('football-data/research/brazil_multiline_ou_zero_label_r1')
+          raw=src.read_bytes()
+          file_sha=hashlib.sha256(raw).hexdigest()
+
+          # Read header once. Outcome columns exist in the source but are explicitly excluded
+          # from all retained/projected analysis values below.
+          with src.open('r',encoding='utf-8-sig',newline='') as f:
+              reader=csv.reader(f)
+              header=next(reader)
+          idx={name:i for i,name in enumerate(header)}
+          forbidden={'HG','AG','Res'}
+          assert forbidden.issubset(idx)
+
+          line_labels=[]
+          for name in header:
+              if name.startswith('AvgOver'):
+                  line=name[len('AvgOver'):]
+                  if f'AvgUnder{line}' in idx and f'NumBookmakers{line}' in idx:
+                      line_labels.append(line)
+          def numkey(s): return float(s)
+          line_labels=sorted(set(line_labels),key=numkey)
+          half_labels=[x for x in line_labels if abs((float(x)-0.5)-round(float(x)-0.5))<1e-9]
+          core_half=['0.5','1.5','2.5','3.5','4.5','5.5','6.5']
+          quarter_core=[str(x/4).rstrip('0').rstrip('.') for x in range(2,27)]  # 0.5..6.5 by .25
+          quarter_core=[x for x in quarter_core if x in line_labels]
+
+          allowed_meta=['Country','League','Season','Date','Time','Home','Away','PSCH','PSCD','PSCA']
+          allowed_cols=set(allowed_meta)
+          for line in line_labels:
+              allowed_cols.update([f'AvgOver{line}',f'AvgUnder{line}',f'NumBookmakers{line}',f'HighOver{line}',f'HighUnder{line}'])
+          allowed_indices={idx[c] for c in allowed_cols if c in idx}
+          forbidden_indices={idx[c] for c in forbidden}
+          assert not (allowed_indices & forbidden_indices)
+
+          row_count=0
+          seasons=Counter(); countries=Counter(); leagues=Counter()
+          min_date=None; max_date=None
+          pair_cov=Counter(); avg_book_counts=defaultdict(list)
+          complete_half=0; complete_core_half=0; complete_quarter_core=0
+          monotonic_checked=0; monotonic_clean=0; negative_mass_rows=0
+          min_mass_values=[]; max_sum_error=[]
+          missing_pattern=Counter()
+
+          def fval(row,col):
+              i=idx[col]
+              text=row[i].strip()
+              if text=='' or text.lower() in {'nan','none','null'}: return None
+              try:
+                  v=float(text)
+                  return v if math.isfinite(v) else None
+              except Exception:
+                  return None
+
+          with src.open('r',encoding='utf-8-sig',newline='') as f:
+              reader=csv.reader(f); next(reader)
+              for row in reader:
+                  row_count+=1
+                  # Never dereference forbidden indices HG/AG/Res.
+                  season=row[idx['Season']].strip(); seasons[season]+=1
+                  countries[row[idx['Country']].strip()]+=1
+                  leagues[row[idx['League']].strip()]+=1
+                  d=row[idx['Date']].strip()
+                  if d:
+                      min_date=d if min_date is None or d<min_date else min_date
+                      max_date=d if max_date is None or d>max_date else max_date
+
+                  valid={}
+                  for line in line_labels:
+                      o=fval(row,f'AvgOver{line}'); u=fval(row,f'AvgUnder{line}'); n=fval(row,f'NumBookmakers{line}')
+                      ok=(o is not None and u is not None and o>1 and u>1)
+                      valid[line]=ok
+                      if ok:
+                          pair_cov[line]+=1
+                          if n is not None: avg_book_counts[line].append(n)
+                  if all(valid.get(x,False) for x in half_labels): complete_half+=1
+                  if all(valid.get(x,False) for x in core_half): complete_core_half+=1
+                  if all(valid.get(x,False) for x in quarter_core): complete_quarter_core+=1
+                  missing=tuple(x for x in core_half if not valid.get(x,False))
+                  missing_pattern[missing]+=1
+
+                  # Pure market-internal coherence; no match outcomes.
+                  if all(valid.get(x,False) for x in core_half):
+                      cdf=[]
+                      for line in core_half:
+                          o=fval(row,f'AvgOver{line}'); u=fval(row,f'AvgUnder{line}')
+                          po=1/o; pu=1/u
+                          cdf.append(pu/(po+pu))
+                      monotonic_checked+=1
+                      clean=all(cdf[i] <= cdf[i+1] + 1e-12 for i in range(len(cdf)-1))
+                      if clean: monotonic_clean+=1
+                      masses=[cdf[0]]+[cdf[i]-cdf[i-1] for i in range(1,len(cdf))]+[1-cdf[-1]]
+                      mn=min(masses); min_mass_values.append(mn)
+                      if mn < -1e-9: negative_mass_rows+=1
+                      max_sum_error.append(abs(sum(masses)-1.0))
+
+          coverage={}
+          for line in line_labels:
+              vals=avg_book_counts[line]
+              coverage[line]={
+                  'rows':pair_cov[line],
+                  'rate':pair_cov[line]/row_count if row_count else None,
+                  'bookmakers_median':statistics.median(vals) if vals else None,
+                  'bookmakers_p25':statistics.quantiles(vals,n=4,method='inclusive')[0] if vals else None,
+                  'bookmakers_p75':statistics.quantiles(vals,n=4,method='inclusive')[2] if vals else None,
+              }
+
+          result={
+            'schema_version':'BRAZIL-MULTILINE-OU-ZERO-LABEL-R1',
+            'observed_at_utc':datetime.now(timezone.utc).isoformat(),
+            'source':{
+              'kaggle_slug':'felipebandeiraramos/brazilian-soccer-odds-data',
+              'anonymous_download':True,
+              'license_reported_by_dataset_card':'MIT',
+              'csv_sha256':file_sha,
+              'raw_persisted_or_redistributed':False,
+            },
+            'zero_label_contract':{
+              'forbidden_columns':['HG','AG','Res'],
+              'forbidden_values_dereferenced':0,
+              'model_fit':0,'scoring':0,'threshold_tuning':0,
+            },
+            'inventory':{
+              'rows':row_count,
+              'countries':dict(countries),
+              'leagues':dict(leagues),
+              'seasons':dict(sorted(seasons.items())),
+              'min_date_text':min_date,'max_date_text':max_date,
+              'ou_lines':line_labels,
+              'half_lines':half_labels,
+              'core_half_lines':core_half,
+              'quarter_core_lines_present':quarter_core,
+            },
+            'coverage_by_line':coverage,
+            'complete_curve_coverage':{
+              'all_available_half_lines_rows':complete_half,
+              'all_available_half_lines_rate':complete_half/row_count if row_count else None,
+              'core_0.5_to_6.5_half_lines_rows':complete_core_half,
+              'core_0.5_to_6.5_half_lines_rate':complete_core_half/row_count if row_count else None,
+              'quarter_grid_0.5_to_6.5_rows':complete_quarter_core,
+              'quarter_grid_0.5_to_6.5_rate':complete_quarter_core/row_count if row_count else None,
+              'core_half_missing_patterns_top10':[
+                 {'missing':list(k),'rows':v} for k,v in missing_pattern.most_common(10)
+              ]
+            },
+            'market_internal_coherence':{
+              'rows_checked_core_half':monotonic_checked,
+              'raw_devig_cdf_monotonic_rows':monotonic_clean,
+              'raw_devig_cdf_monotonic_rate':monotonic_clean/monotonic_checked if monotonic_checked else None,
+              'rows_with_negative_exact_goal_mass_before_repair':negative_mass_rows,
+              'negative_mass_rate':negative_mass_rows/monotonic_checked if monotonic_checked else None,
+              'minimum_exact_goal_mass_observed':min(min_mass_values) if min_mass_values else None,
+              'maximum_mass_sum_error':max(max_sum_error) if max_sum_error else None,
+              'note':'Internal consistency only; no results/labels used. Half-line normalized O/U pairs imply CDF points P(T<=k).'
+            },
+            'ruling':{
+              'anonymous_source_usable_for_multiline_T_reconstruction': complete_core_half >= 1000,
+              'timestamped_odds_trajectory_available':False,
+              'static_multiline_market_snapshot_only':True,
+              'predictive_effect_tested':False,
+              'formal_weight':0,
+            }
+          }
+          out.joinpath('audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(result,ensure_ascii=False,indent=2))
+          PY
+          rm -rf /tmp/brazil-ou
+
+      - name: Assert zero-label and no-formal-effect boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/brazil_multiline_ou_zero_label_r1/audit.json'
+          d=json.load(open(p,encoding='utf-8'))
+          z=d['zero_label_contract']; r=d['ruling']
+          assert z['forbidden_values_dereferenced']==0
+          assert z['model_fit']==0 and z['scoring']==0 and z['threshold_tuning']==0
+          assert r['predictive_effect_tested'] is False and r['formal_weight']==0
+          assert d['source']['raw_persisted_or_redistributed'] is False
+          PY
+
+      - name: Upload aggregate audit only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-brazil-multiline-ou-zero-label-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/brazil_multiline_ou_zero_label_r1/audit.json
+          if-no-files-found: error
+          retention-days: 30
