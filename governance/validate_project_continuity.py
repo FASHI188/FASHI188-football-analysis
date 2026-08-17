@@ -1,45 +1,51 @@
 #!/usr/bin/env python3
-"""Fail-closed validator for football-project conversation continuity.
+"""Static integrity guard for the football project's continuity router.
 
-Governance-only: no GitHub/Airtable/provider calls, no football labels, no model
-execution, and no mutations. Production callers provide PROJECT_CURRENT.md bytes
-plus a normalized snapshot of the single active Airtable current-state record.
+This validator deliberately does NOT mirror or validate dynamic project state.
+The single live dynamic state source is Airtable《当前状态》. GitHub only keeps
+stable routing rules plus historical tombstones.
+
+The guard fails closed if:
+- live routing files stop declaring AIRTABLE_CURRENT_STATE_ONLY;
+- formal-task routing stops declaring FORMAL_CURRENT_WHEN_REQUIRED;
+- retired GitHub state files lose their HISTORY_ONLY_NO_AUTHORITY marker;
+- EXECUTION_LITE stops declaring the same single-state-source boundary; or
+- the history-only index stops covering the named legacy planning/audit docs.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryDirectory
 
-SYNC_OK = "STATE_SYNC_VERIFIED"
-BLOCKED_MISMATCH = "BLOCKED_STATE_MISMATCH"
-BLOCKED_AIRTABLE = "BLOCKED_AIRTABLE_UNAVAILABLE"
-BLOCKED_CURRENT_COUNT = "BLOCKED_CURRENT_RULE_COUNT_MISMATCH"
-BLOCKED_CURRENT_UNAVAILABLE = "BLOCKED_CURRENT_RULE_UNAVAILABLE"
+PASS = "CONTINUITY_ROUTER_INTEGRITY_PASS"
+FAIL = "BLOCKED_CONTINUITY_ROUTER_INTEGRITY"
 
-REQUIRED_MATCH_FIELDS = (
-    "project_id",
-    "state_version",
-    "updated_at_utc",
-    "status",
-    "current_phase",
-    "current_objective",
-    "exact_head",
-    "branch",
-    "pull_request",
-    "pull_request_state",
-    "allowed_items",
-    "prohibited_items",
-    "next_step",
-    "stop_conditions",
-    "state_log_record_id",
+AIRTABLE_MARKER = "CONTROL_MARKER: AIRTABLE_CURRENT_STATE_ONLY"
+FORMAL_MARKER = "FORMAL_MARKER: FORMAL_CURRENT_WHEN_REQUIRED"
+HISTORY_MARKER = "HISTORY_ONLY_NO_AUTHORITY"
+CURRENT_STATE_TEXT = "Airtable《当前状态》"
+
+LIVE_ROUTER_FILES = (
+    "AGENTS.md",
+    "CHATGPT_PROJECT_START_HERE.txt",
 )
+RETIRED_STATE_FILES = (
+    "ACTIVE_CHECKPOINT.md",
+    "PROJECT_CURRENT.md",
+    "LAST_HANDOFF.md",
+)
+LEGACY_HISTORY_DOCS = (
+    "CORRECTION_PLAN.md",
+    "DRAW_AUDIT_HANDOFF.md",
+    "REPOSITORY_GOVERNANCE_PLAN.md",
+)
+EXECUTION_FILE = "EXECUTION_LITE.md"
+HISTORY_INDEX = "HISTORY_ONLY_INDEX.md"
 
 
 @dataclass(frozen=True)
@@ -48,285 +54,133 @@ class Decision:
     reasons: tuple[str, ...] = ()
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _extract_scalar(text: str, key: str) -> str | None:
-    m = re.search(rf"(?m)^-\s*{re.escape(key)}:\s*(.*?)\s*$", text)
-    return m.group(1).strip() if m else None
-
-
-def _extract_section(text: str, heading: str) -> str | None:
-    pattern = rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)"
-    m = re.search(pattern, text)
-    return m.group(1).strip() if m else None
-
-
-def normalize_project_current(data: bytes) -> dict[str, Any]:
-    text = data.decode("utf-8")
-    state_version_raw = _extract_scalar(text, "state_version")
-    if state_version_raw is None or not state_version_raw.isdigit() or int(state_version_raw) <= 0:
-        raise ValueError("state_version must be a positive integer")
-
-    allowed = _extract_section(text, "允许事项")
-    prohibited = _extract_section(text, "禁止事项")
-    next_step = _extract_section(text, "唯一下一步")
-    stop_conditions = _extract_section(text, "停止条件")
-    if not allowed or not prohibited or not next_step or not stop_conditions:
-        raise ValueError("required governance sections missing")
-
-    normalized = {
-        "project_id": _extract_scalar(text, "project_id"),
-        "state_version": int(state_version_raw),
-        "updated_at_utc": _extract_scalar(text, "updated_at_utc"),
-        "status": _extract_scalar(text, "status"),
-        "current_phase": _extract_scalar(text, "current_phase"),
-        "current_objective": _extract_scalar(text, "current_objective"),
-        "exact_head": _extract_scalar(text, "exact_head"),
-        "branch": _extract_scalar(text, "branch"),
-        "pull_request": _extract_scalar(text, "pull_request"),
-        "pull_request_state": _extract_scalar(text, "pull_request_state"),
-        "allowed_items": allowed,
-        "prohibited_items": prohibited,
-        "next_step": next_step,
-        "stop_conditions": stop_conditions,
-        "state_log_record_id": _extract_scalar(text, "state_log_record_id"),
-        "recorded_hash_marker": _extract_scalar(text, "project_current_sha256"),
-        "computed_sha256": sha256_bytes(data),
-    }
-    missing = [
-        field for field in REQUIRED_MATCH_FIELDS
-        if normalized.get(field) is None or normalized.get(field) == ""
-    ]
-    if missing:
-        raise ValueError("required fields missing: " + ",".join(missing))
-    return normalized
-
-
-def validate(
-    project_current_bytes: bytes | None,
-    airtable_snapshot: dict[str, Any] | None,
-    *,
-    airtable_available: bool = True,
-    active_record_count: int = 1,
-    model_or_formal_task: bool = False,
-    current_rule_count: int | None = None,
-    current_rule_readable: bool | None = None,
-) -> Decision:
-    if not airtable_available:
-        return Decision(BLOCKED_AIRTABLE, ("Airtable unavailable; read-only only",))
-    if project_current_bytes is None or airtable_snapshot is None:
-        return Decision(BLOCKED_MISMATCH, ("PROJECT_CURRENT.md or Airtable current state missing",))
-    if active_record_count != 1:
-        return Decision(BLOCKED_MISMATCH, (f"active_record_count={active_record_count}",))
-
-    if model_or_formal_task:
-        if current_rule_count != 1:
-            return Decision(BLOCKED_CURRENT_COUNT, (f"current_rule_count={current_rule_count}",))
-        if current_rule_readable is not True:
-            return Decision(BLOCKED_CURRENT_UNAVAILABLE, ("formal CURRENT is not confirmed fully readable",))
-
+def _read_required(root: Path, rel: str) -> tuple[str | None, str | None]:
+    path = root / rel
+    if not path.is_file():
+        return None, f"missing file: {rel}"
     try:
-        local = normalize_project_current(project_current_bytes)
+        text = path.read_text(encoding="utf-8")
     except Exception as exc:
-        return Decision(BLOCKED_MISMATCH, (f"PROJECT_CURRENT parse error: {exc}",))
+        return None, f"unreadable file {rel}: {exc}"
+    if not text.strip():
+        return None, f"empty file: {rel}"
+    return text, None
 
+
+def validate_root(root: Path) -> Decision:
     reasons: list[str] = []
-    if local["recorded_hash_marker"] != "RECORDED_IN_AIRTABLE":
-        reasons.append("project_current_sha256 marker is not RECORDED_IN_AIRTABLE")
 
-    for field in REQUIRED_MATCH_FIELDS:
-        if local.get(field) != airtable_snapshot.get(field):
-            reasons.append(f"{field} mismatch")
+    for rel in LIVE_ROUTER_FILES:
+        text, error = _read_required(root, rel)
+        if error:
+            reasons.append(error)
+            continue
+        assert text is not None
+        if AIRTABLE_MARKER not in text:
+            reasons.append(f"{rel}: missing {AIRTABLE_MARKER}")
+        if FORMAL_MARKER not in text:
+            reasons.append(f"{rel}: missing {FORMAL_MARKER}")
+        if CURRENT_STATE_TEXT not in text:
+            reasons.append(f"{rel}: missing single live Airtable current-state declaration")
 
-    if local["computed_sha256"] != airtable_snapshot.get("project_current_sha256"):
-        reasons.append("PROJECT_CURRENT.md SHA-256 mismatch")
+    for rel in RETIRED_STATE_FILES:
+        text, error = _read_required(root, rel)
+        if error:
+            reasons.append(error)
+            continue
+        assert text is not None
+        if HISTORY_MARKER not in text:
+            reasons.append(f"{rel}: missing {HISTORY_MARKER}")
+        if "RETIRED" not in text:
+            reasons.append(f"{rel}: missing RETIRED marker")
 
-    if reasons:
-        return Decision(BLOCKED_MISMATCH, tuple(reasons))
-    return Decision(SYNC_OK)
+    execution, error = _read_required(root, EXECUTION_FILE)
+    if error:
+        reasons.append(error)
+    else:
+        assert execution is not None
+        if CURRENT_STATE_TEXT not in execution:
+            reasons.append(f"{EXECUTION_FILE}: missing Airtable current-state boundary")
+        if "旧 checkpoint / handoff / pointer 不参与执行恢复" not in execution:
+            reasons.append(f"{EXECUTION_FILE}: legacy recovery chain not explicitly retired")
 
+    index, error = _read_required(root, HISTORY_INDEX)
+    if error:
+        reasons.append(error)
+    else:
+        assert index is not None
+        if HISTORY_MARKER not in index:
+            reasons.append(f"{HISTORY_INDEX}: missing {HISTORY_MARKER}")
+        for rel in LEGACY_HISTORY_DOCS:
+            if rel not in index:
+                reasons.append(f"{HISTORY_INDEX}: missing legacy doc {rel}")
 
-def workflow_success_implies_model_pass(_: str) -> bool:
-    return False
-
-
-def queued_implies_in_progress(_: str) -> bool:
-    return False
-
-
-def _fixture_bytes(
-    *,
-    state_version: int = 2,
-    head: str = "abc",
-    branch: str = "research/test",
-    pr: str = "#1",
-    phase: str = "WAITING_USER_ACCEPTANCE",
-    pr_state: str = "VERIFIED_OPEN_DRAFT_UNMERGED",
-    updated_at: str = "2026-08-12T04:03:00Z",
-) -> bytes:
-    return f"""# 足球项目当前状态
-
-## 身份
-- project_id: football-project
-- state_version: {state_version}
-- updated_at_utc: {updated_at}
-- project_current_sha256: RECORDED_IN_AIRTABLE
-
-## 当前状态
-- status: WAITING
-- current_phase: {phase}
-- current_objective: continuity governance
-- exact_head: {head}
-- branch: {branch}
-- pull_request: {pr}
-- pull_request_state: {pr_state}
-
-## 允许事项
-- governance-only
-
-## 禁止事项
-- research
-
-## 唯一下一步
-- user acceptance
-
-## 停止条件
-- mismatch blocks
-
-## Airtable同步
-- state_log_record_id: recSTATELOG0000001
-""".encode("utf-8")
+    return Decision(FAIL, tuple(reasons)) if reasons else Decision(PASS)
 
 
-def _snapshot_for(data: bytes) -> dict[str, Any]:
-    local = normalize_project_current(data)
-    return {
-        field: local[field] for field in REQUIRED_MATCH_FIELDS
-    } | {"project_current_sha256": local["computed_sha256"]}
+def _write_fixture(root: Path) -> None:
+    (root / "AGENTS.md").write_text(
+        f"{AIRTABLE_MARKER}\n{FORMAL_MARKER}\n{CURRENT_STATE_TEXT}\n", encoding="utf-8"
+    )
+    (root / "CHATGPT_PROJECT_START_HERE.txt").write_text(
+        f"{AIRTABLE_MARKER}\n{FORMAL_MARKER}\n{CURRENT_STATE_TEXT}\n", encoding="utf-8"
+    )
+    for rel in RETIRED_STATE_FILES:
+        (root / rel).write_text(
+            f"# {rel} — RETIRED\n{HISTORY_MARKER}\n", encoding="utf-8"
+        )
+    (root / EXECUTION_FILE).write_text(
+        f"{CURRENT_STATE_TEXT}\n旧 checkpoint / handoff / pointer 不参与执行恢复\n",
+        encoding="utf-8",
+    )
+    (root / HISTORY_INDEX).write_text(
+        HISTORY_MARKER + "\n" + "\n".join(LEGACY_HISTORY_DOCS) + "\n",
+        encoding="utf-8",
+    )
+    for rel in LEGACY_HISTORY_DOCS:
+        (root / rel).write_text("historical evidence\n", encoding="utf-8")
 
 
 def run_self_test() -> int:
-    base = _fixture_bytes()
-    snapshot = _snapshot_for(base)
     checks: list[tuple[str, bool]] = []
 
-    checks.append(("positive_sync", validate(base, snapshot).status == SYNC_OK))
-    checks.append((
-        "tampered_file_hash",
-        validate(base.replace(b"abc", b"abd"), snapshot).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "airtable_version_mismatch",
-        validate(base, dict(snapshot, state_version=3)).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "phase_mismatch",
-        validate(base, dict(snapshot, current_phase="OTHER")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "branch_mismatch",
-        validate(base, dict(snapshot, branch="other/branch")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "pr_state_mismatch",
-        validate(base, dict(snapshot, pull_request_state="READY")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "updated_at_mismatch",
-        validate(base, dict(snapshot, updated_at_utc="2026-08-12T00:00:00Z")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "permission_mismatch",
-        validate(base, dict(snapshot, allowed_items="- broaden research")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "stop_condition_mismatch",
-        validate(base, dict(snapshot, stop_conditions="- no block")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append((
-        "state_log_mismatch",
-        validate(base, dict(snapshot, state_log_record_id="recOTHER000000000")).status == BLOCKED_MISMATCH,
-    ))
-    checks.append(("two_active_records", validate(base, snapshot, active_record_count=2).status == BLOCKED_MISMATCH))
-    checks.append(("airtable_unavailable", validate(base, snapshot, airtable_available=False).status == BLOCKED_AIRTABLE))
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_fixture(root)
+        checks.append(("positive", validate_root(root).status == PASS))
 
-    old_file_conflicting_head = "deadbeef"
-    checks.append((
-        "old_file_head_cannot_override",
-        old_file_conflicting_head != normalize_project_current(base)["exact_head"]
-        and validate(base, snapshot).status == SYNC_OK,
-    ))
-    checks.append((
-        "current_count_model_gate",
-        validate(
-            base, snapshot, model_or_formal_task=True,
-            current_rule_count=2, current_rule_readable=True,
-        ).status == BLOCKED_CURRENT_COUNT,
-    ))
-    checks.append((
-        "current_unreadable_model_gate",
-        validate(
-            base, snapshot, model_or_formal_task=True,
-            current_rule_count=1, current_rule_readable=False,
-        ).status == BLOCKED_CURRENT_UNAVAILABLE,
-    ))
-    checks.append(("workflow_success_not_model_pass", workflow_success_implies_model_pass("success") is False))
-    checks.append(("queued_not_in_progress", queued_implies_in_progress("queued") is False))
+        (root / "PROJECT_CURRENT.md").write_text("old live state\n", encoding="utf-8")
+        checks.append(("retired_marker_required", validate_root(root).status == FAIL))
+        _write_fixture(root)
+
+        (root / "AGENTS.md").write_text(
+            f"{FORMAL_MARKER}\n{CURRENT_STATE_TEXT}\n", encoding="utf-8"
+        )
+        checks.append(("airtable_marker_required", validate_root(root).status == FAIL))
+        _write_fixture(root)
+
+        (root / HISTORY_INDEX).write_text(HISTORY_MARKER + "\n", encoding="utf-8")
+        checks.append(("legacy_index_complete", validate_root(root).status == FAIL))
 
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print(f"{'PASS' if ok else 'FAIL'} {name}")
-    terminal = {"terminal": "PASS" if not failed else "FAIL", "checks": len(checks)}
-    if failed:
-        terminal["failed"] = failed
-    print(json.dumps(terminal, ensure_ascii=False))
+    print(json.dumps({"terminal": "PASS" if not failed else "FAIL", "checks": len(checks), "failed": failed}))
     return 1 if failed else 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--project-current", type=Path)
-    parser.add_argument("--airtable-snapshot", type=Path)
-    parser.add_argument("--active-record-count", type=int, default=1)
-    parser.add_argument("--airtable-unavailable", action="store_true")
-    parser.add_argument("--model-or-formal-task", action="store_true")
-    parser.add_argument("--current-rule-count", type=int)
-    parser.add_argument("--current-rule-unavailable", action="store_true")
     args = parser.parse_args()
 
     if args.self_test:
         return run_self_test()
-    if not args.project_current:
-        parser.error("--project-current is required unless --self-test is used")
-    if args.airtable_unavailable:
-        decision = validate(
-            args.project_current.read_bytes(),
-            None,
-            airtable_available=False,
-            active_record_count=args.active_record_count,
-        )
-    else:
-        if not args.airtable_snapshot:
-            parser.error("--airtable-snapshot is required unless --airtable-unavailable is used")
-        snapshot = json.loads(args.airtable_snapshot.read_text(encoding="utf-8"))
-        decision = validate(
-            args.project_current.read_bytes(),
-            snapshot,
-            active_record_count=args.active_record_count,
-            model_or_formal_task=args.model_or_formal_task,
-            current_rule_count=args.current_rule_count,
-            current_rule_readable=(
-                False if args.current_rule_unavailable
-                else True if args.model_or_formal_task
-                else None
-            ),
-        )
 
+    decision = validate_root(args.root)
     print(json.dumps({"status": decision.status, "reasons": decision.reasons}, ensure_ascii=False))
-    return 0 if decision.status == SYNC_OK else 2
+    return 0 if decision.status == PASS else 2
 
 
 if __name__ == "__main__":
