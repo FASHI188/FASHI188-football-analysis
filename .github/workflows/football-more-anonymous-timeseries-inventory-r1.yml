@@ -1,0 +1,89 @@
+name: Football more anonymous timestamped odds inventory R1
+
+on:
+  push:
+    branches: [research/anonymous-data-reserve-r1]
+    paths:
+      - '.github/workflows/football-more-anonymous-timeseries-inventory-r1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  football-games-odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Anonymous download and inspect odds files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fgo football-data/research/anonymous_data_reserve_r1/football_games_odds
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o /tmp/fgo/source.zip
+          unzip -q /tmp/fgo/source.zip -d /tmp/fgo/x
+          python - <<'PY'
+          import csv,json,hashlib,re
+          from pathlib import Path
+          root=Path('/tmp/fgo/x'); out={'source':'kaggle:eladsil/football-games-odds','anonymous_download':True,'zip_sha256':hashlib.sha256(Path('/tmp/fgo/source.zip').read_bytes()).hexdigest(),'all_files':[],'odds_files':[],'forbidden_result_files_read':0,'outcome_values_dereferenced':0}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=str(p.relative_to(root)); out['all_files'].append({'path':rel,'bytes':p.stat().st_size})
+              # Only inspect files whose names clearly denote odds/changes; never open result/score files.
+              low=rel.lower()
+              if ('odd' not in low and 'line' not in low) or any(z in low for z in ['result','score','outcome']):
+                  continue
+              rec={'path':rel,'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+              if p.suffix.lower() in {'.csv','.txt'}:
+                  with p.open('r',encoding='utf-8-sig',errors='replace',newline='') as f:
+                      r=csv.reader(f); h=next(r,[]); n=sum(1 for _ in r)
+                  rec.update({'rows_excluding_header':n,'columns':h})
+              out['odds_files'].append(rec)
+          Path('football-data/research/anonymous_data_reserve_r1/football_games_odds/inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football-games-odds-zero-label-inventory
+          path: football-data/research/anonymous_data_reserve_r1/football_games_odds/inventory.json
+          retention-days: 30
+
+  beat-the-bookie:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Anonymous Kaggle download probe and zero-label archive inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/btb football-data/research/anonymous_data_reserve_r1/beat_the_bookie
+          status=0
+          curl -sS -L --retry 2 --max-time 300 \
+            -w '%{http_code}' \
+            'https://www.kaggle.com/api/v1/datasets/download/austro/beat-the-bookie-worldwide-football-dataset' \
+            -o /tmp/btb/source.bin > /tmp/btb/status.txt || status=$?
+          python - <<'PY'
+          import json,hashlib,zipfile,csv,os
+          from pathlib import Path
+          p=Path('/tmp/btb/source.bin'); code=Path('/tmp/btb/status.txt').read_text().strip()
+          out={'source':'kaggle:austro/beat-the-bookie-worldwide-football-dataset','http_code':code,'bytes':p.stat().st_size if p.exists() else 0,'anonymous_download_zip':False,'files':[],'outcome_values_dereferenced':0}
+          if p.exists(): out['sha256']=hashlib.sha256(p.read_bytes()).hexdigest()
+          if p.exists() and zipfile.is_zipfile(p):
+              out['anonymous_download_zip']=True
+              with zipfile.ZipFile(p) as z:
+                  for zi in z.infolist():
+                      if zi.is_dir():continue
+                      out['files'].append({'path':zi.filename,'bytes':zi.file_size})
+              # No archive member is opened in this probe: zero chance of reading score/result columns.
+          Path('football-data/research/anonymous_data_reserve_r1/beat_the_bookie/inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beat-the-bookie-anonymous-probe
+          path: football-data/research/anonymous_data_reserve_r1/beat_the_bookie/inventory.json
+          retention-days: 30
