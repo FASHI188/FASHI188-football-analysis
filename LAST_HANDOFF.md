@@ -1,95 +1,101 @@
 # 足球项目最后接力点
 
-> 最近语境只看上一工作对话末尾；真正恢复点以 Airtable《当前状态》+唯一《执行检查点》+《会话接力》为准。禁止扫描整个旧项目聊天。
+> 恢复只看上一工作对话末尾 + Airtable 当前状态/检查点/会话接力 + GitHub main。旧层若写 B04 未开封，必须先应用 state62 stale 规则。
 
 ## 接力身份
 
 - project_id: `football-project`
-- handoff_version: **32**
-- state_version: **61**
-- checkpoint_version: **128**
-- updated_at_local: `2026-08-17 16:08 +08:00`
+- handoff_version: **33**
+- state_version: **62**
+- checkpoint_version: **129**
+- updated_at_local: `2026-08-17 16:28 +08:00`
 - status: `WAITING`
-- state_log_record_id: `rec8DSgydfzYix35I`
+- state_log_record_id: `reciwMYK9dJCYZB60`
 
-## 最新完成：B01-B03 底座解剖
+## 最新完成：B04 VIEWED 状态漂移治理闭环
 
-研究结论：**`POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`**。
+裁决：**`B04_VIEWED_STATE_DRIFT_CLOSED`**
 
-真实研究锚点：
+永久恢复真值：
 
-- branch: `research/b01-b03-base-anatomy-r1-20260817`
-- HEAD: `cb0b9057bdb7c7cb7ec73b1aa14076231d58ff0f`
-- PR: `#199` Draft / Open / Unmerged
-- report: `football-data/research/base_anatomy_20260817/B01_B03_OU25_DIRECT_T_BASE_ANATOMY_R1.md`
-- scope: B01/B02/B03 = 1200 场；B04 analyzed rows = 0
+**`B04 = VIEWED since settlement run 31998704387; all four batches closed; no unopened reserve remains.`**
 
-## 核心事实
+治理文件：`governance/B04_VIEWED_STATE_DRIFT_CLOSURE.md`
 
-### 1. 日期簇不是 400 场不稳定的原因
+## 精确历史
 
-B01/B02/B03 date-cluster design effect 约 `0.934 / 0.944 / 0.983`，effective N 没有坍塌。
+### 旧 checkpoint125
 
-真正瓶颈是净 effect 很小，标准化 `|effect|≈0.050 / 0.095 / 0.058`。
+- 约 `2026-08-17 13:24 +08:00`
+- 当时 B03 已结算，B04 自身 settlement 尚未发生
+- 所以当时“B04 未被 target-only query 请求”是历史时点事实
+- 但后续 GitHub 分支继续执行而未回写 Airtable
 
-### 2. OU2.5 的收益来自上尾修正
+### B04 freeze
 
-B01-B03 合并：
+- commit `23291a89d874446a3306a5e37b2a1ee83fe84b8c`
+- `2026-08-17 13:37:33 +08:00`
+- run `31998560168`
+- Artifact `9277646065`
+- ZIP SHA-256 `6ea9db8397e07087731a02c11c084196ab8b2e5356d43e7be0b593405e3ea221`
+- 359 rows
+- `PREDICTIONS_FROZEN_LABELS_UNOPENED`
 
-- 0-3 球：799 场，mean ΔLL=`+0.013766`，candidate 更差；
-- 4+ 球：401 场，mean ΔLL=`-0.053242`，candidate 明显更好；
-- 三个 batch 方向一致。
+### B04 settlement：正式变成 VIEWED
 
-因此单一 OU2.5 更像 high-total / upper-tail correction；整体小收益是 0-3 损失与 4+ 收益相消后的残差。
+- commit `93cde4380d8b8d4705c04d811b0bdf2ef978092d`
+- `2026-08-17 13:40:04 +08:00`
+- run `31998704387`
+- Artifact `9277727825`
+- ZIP SHA-256 `3e012815386508a4b0e363fcc10099b3af7550128e737533eae18b7fffeb9d4b`
+- target-only receipt SHA-256 `45d3df41d516da08a1f571a937d4bbf7f6770136094f6962e762bb9e7d458116`
+- `B04_labels_opened_in_this_run=359`
+- `non_B04_fixture_ids_requested=0`
+- B01/B02/B03 labels read in this run = 0
+- result `FAIL_B04_OU25_NO_CONFIRMED_DIRECT_T_INCREMENT`
+- ΔLL `-0.009181875234092318`
+- bootstrap90 `[-0.020674795951751247,+0.002643013130652647]`
 
-### 3. pooled 1200 仅作描述
+### 四包 closure
 
-- pooled ΔLL=`-0.008626`
-- date-block bootstrap90=`[-0.014553,-0.002656]`
+- commit `54e1c05262f42c731975710c77eb0a0e4dd47a30`
+- `2026-08-17 13:46:08 +08:00`
+- `all_batches_viewed=true`
+- `unopened_batches_remaining=0`
+- B01/B02/B03/B04 = FAIL / PASS / FAIL / FAIL
 
-全部样本已 VIEWED，禁止把该结果事后升级为 confirmatory PASS。
+后续 `2813b16d2e17f87f4f8e7618e6589dfe85a1a7d8` 再次确认全部 1559 labels 已 VIEWED。
 
-### 4. 400 场功效太低
+## stale 规则
 
-按当前观察 effect/variance：
+自 B04 settlement run `31998704387` 完成以后：
 
-- 400 场 power≈40%
-- 80% power≈1257 场
-- 90%≈1741 场
-- 95%≈2200 场
+- 任何“B04 未开封 / 可作为下一独立包 / 仍是 blind reserve”的旧文本 = **`STALE_AFTER_B04_SETTLEMENT`**；
+- 旧文本可保留为历史，但不得恢复为 ACTIVE_NEXT；
+- B04 永久不得再当 holdout / blind reserve / gold-standard reserve；
+- B04 target-only settlement 合规不意味着 VIEWED 后还能再次确认。
 
-所以 B02 PASS 而 B01/B03 CI 跨0与低功效设计相容。
+## state60 / state61 继续有效
 
-### 5. 异步与联赛只留作假设
-
-- `<=1min` 时间差：ΔLL≈`+0.00176`
-- `>6h`：ΔLL≈`-0.01750`
-- 但 quote age 与收益近零相关，控制 realized 4+ 后异步项不再显著；不能写成“旧报价更好”。
-- PL/Liga 描述性较好，Ligue 1 三包较差；competition joint robust test `p≈0.402`，不授权 selector。
-
-## 永久治理继续有效
-
-`gold-standard / 金标准 reserve` 已永久退役：不新建、不恢复、不改名复活；B04 不承担金标准角色。
+- gold-standard reserve 永久退役；
+- state61 B01-B03 底座解剖仍为 `POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION`；
+- research HEAD `cb0b9057bdb7c7cb7ec73b1aa14076231d58ff0f`；PR #199 Draft/Open/Unmerged；
+- state61 的 `B04 analyzed rows=0` 只表示该分析没有使用 B04，不表示 B04 未 VIEWED。
 
 ## 当前唯一下一步
 
-冻结本轮 post-view 解剖，**不在 B01-B03 上继续调参**。
+保持 WAITING，不重新消费已 VIEWED B01-B04。
 
-如果用户继续推进 OU/total-shape 主线，只允许先做新的非金标准预注册 OOS/forward **数据合同与可行性设计**，目标是验证更丰富 total-shape 信息能否减少“0-3 变差 vs 4+ 变好”的相消。
-
-但旧的公开免密钥 multi-OU 批量 PIT 路线已经 `STOP_DATA/COVERAGE`，禁止原路重复。必须有 genuinely new 的合规同步/PIT 数据条件才能继续；否则保持 WAITING。
+若用户继续 OU/total-shape 主线，只先设计新的非金标准预注册 OOS/forward 数据合同，并核验 genuinely new、合规、同步/PIT total-shape 数据可行性。旧公开免密钥 multi-OU 路线已 STOP_DATA/COVERAGE，不得原路重复。
 
 ## 禁止重复/越界
 
-- 不把 pooled 1200 写成 confirmatory PASS；
-- 不按联赛、时间差、4+真实标签后验造 selector；
-- 不重新把 B01-B03 当 holdout；
-- 不用 B04 作为本次分析证据；
-- 不恢复 gold-standard reserve；
-- 不重复已 STOP 的公开 multi-OU 路线；
-- 不修改 formal model/data/config/CURRENT；
-- 不恢复 Direct-T / Parity 外壳搜索。
+- 不把任何旧 B04 未开封表述作为当前真值；
+- 不再消费 B04 作为独立 holdout；
+- 不恢复 gold-standard；
+- 不将四包 post-view 聚合改写为 confirmatory PASS；
+- 不修改 formal model/data/config/CURRENT。
 
 ## 新聊天收到“继续”时
 
-恢复：上一工作对话末尾小段（若可得）→ Airtable 当前状态 state61 → checkpoint `recIRxK7EIMjJdG4A` v128 → 会话接力 → 核验 GitHub main。然后只从上面的唯一下一步继续。
+恢复：上一工作对话末尾小段 → Airtable state62 → checkpoint `recIRxK7EIMjJdG4A` v129 → handoff v33 → 核验 GitHub main。若旧信息声称 B04 未开封，直接标记 `STALE_AFTER_B04_SETTLEMENT`，不要再沿旧分叉执行。
