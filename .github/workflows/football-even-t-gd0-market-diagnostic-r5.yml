@@ -1,0 +1,105 @@
+name: Football Even-T GD0 Market Diagnostic R5
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/even_t_gd0_market_diagnostic_r5.json"
+      - "football-data/validation/evaluate_even_t_gd0_market_diagnostic_r5.py"
+      - "football-data/research/even_t_gd0_market_diagnostic_r5/**"
+      - ".github/workflows/football-even-t-gd0-market-diagnostic-r5.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-even-t-gd0-market-diagnostic-r5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R5 path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py \
+            football-data/validation/evaluate_even_t_gd0_market_diagnostic_r5.py
+      - name: Rebuild exact audited runtime ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run frozen even-T GD0 market diagnostic R5
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/even-t-gd0-market-diagnostic-r5
+          python football-data/validation/evaluate_even_t_gd0_market_diagnostic_r5.py \
+            2>&1 | tee /tmp/even-t-gd0-market-diagnostic-r5/traceback.log
+      - name: Upload R5 failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: even-t-gd0-market-diagnostic-r5-failure-log
+          path: /tmp/even-t-gd0-market-diagnostic-r5/traceback.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify frozen research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/even_t_gd0_market_diagnostic_r5/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_EVEN_T_GD0_MARKET_DIAGNOSTIC_R5_COMPLETE_NO_PROMOTION'
+          assert x['data_identity']['rows']==26873
+          assert x['data_identity']['competitions']==16
+          b=x['boundary']
+          assert b['realized_total_conditioning_is_not_deployable_input'] is True
+          assert b['market_evidence_not_strict_pit'] is True
+          assert b['hda_probability_mutation'] is False
+          assert b['score_probability_mutation'] is False
+          assert b['forced_draw'] is False
+          assert b['threshold_search'] is False
+          assert b['new_target_label_access']==0
+          assert b['b05_b07_labels_opened'] is False
+          assert b['future_oos_label_open_authorized'] is False
+          assert b['formal_weight']==0
+          assert b['main_mutation'] is False
+          d=x['development_signal']
+          assert d['scientific_pass'] is False
+          assert d['future_oos_label_open_authorized'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'coverage':x['coverage'],
+            'pooled':x['metrics']['pooled'],
+            'diagnosis':x['diagnosis'],
+            'bootstrap':x['bootstrap'],
+            'development_signal':x['development_signal'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R5 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: even-t-gd0-market-diagnostic-r5
+          path: football-data/manifests/even_t_gd0_market_diagnostic_r5/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
