@@ -1,0 +1,128 @@
+name: Football anonymous data reserve inventory R1
+
+on:
+  push:
+    branches: [research/anonymous-data-reserve-r1]
+    paths:
+      - '.github/workflows/football-anonymous-data-reserve-inventory-r1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  world-soccer-db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download and inventory World Soccer DB anonymously
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/wsdb football-data/research/anonymous_data_reserve_r1/world_soccer_db
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/sashchernuh/european-football' \
+            -o /tmp/wsdb/source.zip
+          sha256sum /tmp/wsdb/source.zip > /tmp/wsdb/zip.sha256
+          unzip -q /tmp/wsdb/source.zip -d /tmp/wsdb/x
+          python - <<'PY'
+          import os,json,hashlib,csv,sqlite3
+          from pathlib import Path
+          root=Path('/tmp/wsdb/x')
+          out={'source':'kaggle:sashchernuh/european-football','anonymous_download':True,'files':[],'outcome_values_dereferenced':0}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=str(p.relative_to(root)); rec={'path':rel,'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+              suf=p.suffix.lower()
+              if suf in {'.csv','.txt'}:
+                  try:
+                      with p.open('r',encoding='utf-8-sig',errors='replace',newline='') as f:
+                          r=csv.reader(f); header=next(r,[])
+                          n=sum(1 for _ in r)
+                      rec['format']='csv'; rec['rows_excluding_header']=n; rec['columns']=header
+                  except Exception as e: rec['inspect_error']=repr(e)
+              elif suf in {'.sqlite','.sqlite3','.db'}:
+                  try:
+                      con=sqlite3.connect(f'file:{p}?mode=ro',uri=True)
+                      tables=[x[0] for x in con.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")]
+                      rec['format']='sqlite'; rec['tables']=[]
+                      for t in tables:
+                          cols=[x[1] for x in con.execute(f'pragma table_info("{t}")')]
+                          n=con.execute(f'select count(*) from "{t}"').fetchone()[0]
+                          rec['tables'].append({'name':t,'rows':n,'columns':cols})
+                      con.close()
+                  except Exception as e: rec['inspect_error']=repr(e)
+              out['files'].append(rec)
+          Path('football-data/research/anonymous_data_reserve_r1/world_soccer_db/inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-soccer-db-zero-label-inventory
+          path: football-data/research/anonymous_data_reserve_r1/world_soccer_db/inventory.json
+          retention-days: 30
+
+  ah-timeseries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download and inventory AH time-series anonymously
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ahts football-data/research/anonymous_data_reserve_r1/ah_timeseries
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/realsingwong/european-football-asian-handicap-odds-time-series' \
+            -o /tmp/ahts/source.zip
+          unzip -q /tmp/ahts/source.zip -d /tmp/ahts/x
+          python - <<'PY'
+          import json,hashlib,csv,sqlite3
+          from pathlib import Path
+          root=Path('/tmp/ahts/x'); out={'source':'kaggle:realsingwong/european-football-asian-handicap-odds-time-series','anonymous_download':True,'files':[],'outcome_values_dereferenced':0}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rec={'path':str(p.relative_to(root)),'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+              if p.suffix.lower()=='.csv':
+                  with p.open('r',encoding='utf-8-sig',errors='replace',newline='') as f:
+                      r=csv.reader(f); h=next(r,[]); n=sum(1 for _ in r)
+                  rec.update({'format':'csv','rows_excluding_header':n,'columns':h})
+              out['files'].append(rec)
+          Path('football-data/research/anonymous_data_reserve_r1/ah_timeseries/inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ah-timeseries-zero-label-inventory
+          path: football-data/research/anonymous_data_reserve_r1/ah_timeseries/inventory.json
+          retention-days: 30
+
+  hf-soccer-odds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download HF odds parquet and inspect metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hf football-data/research/anonymous_data_reserve_r1/hf_soccer_odds
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/odds.parquet?download=true' \
+            -o /tmp/hf/odds.parquet
+          python -m pip -q install pyarrow
+          python - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          import pyarrow.parquet as pq
+          p=Path('/tmp/hf/odds.parquet'); pf=pq.ParquetFile(p)
+          out={'source':'huggingface:eatpizzanot/soccer-dataset/odds.parquet','anonymous_download':True,'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'rows':pf.metadata.num_rows,'row_groups':pf.metadata.num_row_groups,'columns':pf.schema.names,'outcome_values_dereferenced':0}
+          Path('football-data/research/anonymous_data_reserve_r1/hf_soccer_odds/inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hf-soccer-odds-zero-label-inventory
+          path: football-data/research/anonymous_data_reserve_r1/hf_soccer_odds/inventory.json
+          retention-days: 30
