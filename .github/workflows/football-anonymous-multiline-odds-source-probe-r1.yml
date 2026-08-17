@@ -1,0 +1,136 @@
+name: Football anonymous multiline odds source probe R1
+
+on:
+  push:
+    branches:
+      - research/anonymous-multiline-odds-source-probe-r1
+    paths:
+      - '.github/workflows/football-anonymous-multiline-odds-source-probe-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Probe anonymous dataset downloads and schema only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/anonymous_multiline_odds_source_probe_r1 /tmp/anon-odds
+          python - <<'PY'
+          import csv, io, json, os, sqlite3, subprocess, zipfile
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          candidates = [
+            {
+              'name':'brazilian_soccer_odds_data',
+              'url':'https://www.kaggle.com/api/v1/datasets/download/felipebandeiraramos/brazilian-soccer-odds-data',
+              'expected':'multi-line totals, static pre-match snapshot'
+            },
+            {
+              'name':'world_soccer_db',
+              'url':'https://www.kaggle.com/api/v1/datasets/download/sashchernuh/european-football',
+              'expected':'under/over + asian handicap, structure unknown'
+            },
+            {
+              'name':'european_ah_timeseries_sample',
+              'url':'https://www.kaggle.com/api/v1/datasets/download/realsingwong/european-football-asian-handicap-odds-time-series',
+              'expected':'asian handicap time-series sample'
+            },
+          ]
+          root = Path('/tmp/anon-odds')
+          rows=[]
+          for c in candidates:
+              target=root/(c['name']+'.bin')
+              hdr=root/(c['name']+'.headers')
+              cp=subprocess.run([
+                  'curl','-sS','-L','--fail','--max-time','180','--retry','2','--retry-delay','2',
+                  '-D',str(hdr),'-o',str(target),'-w','%{http_code}|%{url_effective}|%{content_type}|%{size_download}',c['url']
+              ],text=True,capture_output=True)
+              item={
+                'name':c['name'],'expected':c['expected'],'returncode':cp.returncode,
+                'curl_summary':(cp.stdout or '').strip(),'stderr_tail':(cp.stderr or '')[-1000:],
+                'bytes':target.stat().st_size if target.exists() else 0,
+                'zip':False,'archive_members':[],'text_headers':[],'sqlite_schema':[]
+              }
+              if target.exists():
+                  try:
+                      with target.open('rb') as f: magic=f.read(16)
+                      item['magic_hex']=magic.hex()
+                  except Exception: pass
+                  if zipfile.is_zipfile(target):
+                      item['zip']=True
+                      with zipfile.ZipFile(target) as z:
+                          infos=[x for x in z.infolist() if not x.is_dir()]
+                          item['archive_members']=[{'name':x.filename,'bytes':x.file_size} for x in infos[:500]]
+                          # Header/schema only. Do not read any data rows or result values.
+                          for info in infos[:500]:
+                              low=info.filename.lower()
+                              if low.endswith(('.csv','.tsv','.txt')):
+                                  try:
+                                      with z.open(info) as f:
+                                          line=f.readline(32768).decode('utf-8','replace').strip()
+                                      item['text_headers'].append({'name':info.filename,'header':line[:12000]})
+                                  except Exception as e:
+                                      item['text_headers'].append({'name':info.filename,'error':type(e).__name__})
+                              elif low.endswith(('.sqlite','.sqlite3','.db')) and info.file_size < 2_000_000_000:
+                                  try:
+                                      tmp=root/(c['name']+'-'+Path(info.filename).name)
+                                      with z.open(info) as src, tmp.open('wb') as dst:
+                                          while True:
+                                              b=src.read(1024*1024)
+                                              if not b: break
+                                              dst.write(b)
+                                      con=sqlite3.connect(f'file:{tmp}?mode=ro',uri=True)
+                                      schema=[r[0] for r in con.execute("select sql from sqlite_master where sql is not null order by name")]
+                                      con.close(); tmp.unlink(missing_ok=True)
+                                      item['sqlite_schema'].append({'name':info.filename,'schema':schema[:200]})
+                                  except Exception as e:
+                                      item['sqlite_schema'].append({'name':info.filename,'error':f'{type(e).__name__}: {e}'})
+                  target.unlink(missing_ok=True)
+              rows.append(item)
+
+          out={
+            'schema_version':'ANONYMOUS-MULTILINE-ODDS-SOURCE-PROBE-R1',
+            'observed_at_utc':datetime.now(timezone.utc).isoformat(),
+            'account_credentials_used':False,
+            'target_label_values_read':0,
+            'result_score_values_read':0,
+            'model_fit':0,'scoring':0,'threshold_tuning':0,
+            'rows':rows
+          }
+          p=Path('football-data/research/anonymous_multiline_odds_source_probe_r1/probe.json')
+          p.write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Assert zero-label boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/anonymous_multiline_odds_source_probe_r1/probe.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['account_credentials_used'] is False
+          assert d['target_label_values_read']==0 and d['result_score_values_read']==0
+          assert d['model_fit']==0 and d['scoring']==0 and d['threshold_tuning']==0
+          assert len(d['rows'])==3
+          PY
+
+      - name: Upload aggregate probe only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-anonymous-multiline-odds-source-probe-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/anonymous_multiline_odds_source_probe_r1/probe.json
+          if-no-files-found: error
+          retention-days: 30
