@@ -1,0 +1,92 @@
+name: Football fabul0us OU25 B01 market Direct-T settlement R1
+
+on:
+  push:
+    branches: [research/fabulous-ou25-b01-input-audit-r1]
+    paths:
+      - 'football-data/validation/settle_fabulous_ou25_b01_market_direct_t_r1.py'
+      - '.github/workflows/football-fabulous-ou25-b01-market-direct-t-settlement-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-fabulous-ou25-b01-market-direct-t-settlement-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  one-shot-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned deterministic dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0 pyarrow==21.0.0 rapidfuzz==3.14.0 Unidecode==1.4.0
+
+      - name: Download pinned pre-match and settlement sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fab
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 900 \
+            'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' \
+            -o /tmp/fab/match_odds.csv
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' \
+            -o /tmp/fab/fixtures.parquet
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/teams.parquet?download=true' \
+            -o /tmp/fab/teams.parquet
+          test "$(sha256sum /tmp/fab/fixtures.parquet | awk '{print $1}')" = '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7'
+
+      - name: Deterministically reconstruct B01 pre-match packet
+        run: python football-data/validation/audit_fabulous_ou25_b01_inputs_r1.py
+
+      - name: Deterministically regenerate and verify frozen predictions
+        run: python football-data/validation/freeze_fabulous_ou25_b01_market_direct_t_r1.py
+
+      - name: One-shot open B01 labels and settle locked science gate
+        run: python football-data/validation/settle_fabulous_ou25_b01_market_direct_t_r1.py
+
+      - name: Assert B01 viewed and B02-B04 unopened receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b01_market_direct_t_settlement_r1/settlement_summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['settlement_scope']['rows']==400
+          assert x['settlement_scope']['B01_labels_accessed']==400
+          assert x['settlement_scope']['B02_B03_B04_labels_accessed']==0
+          assert x['lock_verification']['all_verified_before_label_read'] is True
+          assert x['governance']['B01_state_after_run']=='VIEWED'
+          assert x['governance']['B02_B03_B04_state_after_run']=='UNOPENED'
+          assert x['governance']['post_result_parameter_search_allowed_on_B01'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload aggregate settlement receipt only
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabulous-ou25-b01-market-direct-t-settlement-r1-${{ github.sha }}
+          path: football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b01_market_direct_t_settlement_r1/settlement_summary.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm no tracked runtime mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf football-data/validation/__pycache__
+          git diff --exit-code
+          git diff --cached --exit-code
