@@ -1,0 +1,98 @@
+name: Football HF reserve batch inventory R1
+
+on:
+  push:
+    branches: [research/anonymous-data-reserve-r1]
+    paths:
+      - '.github/workflows/football-hf-reserve-batch-inventory-r1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  reserve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download public parquet files and create zero-label batch manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hfreserve football-data/research/anonymous_data_reserve_r1/hf_reserve
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/odds.parquet?download=true' \
+            -o /tmp/hfreserve/odds.parquet
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' \
+            -o /tmp/hfreserve/fixtures.parquet
+          python -m pip -q install pyarrow
+          python - <<'PY'
+          import json,hashlib,math
+          from pathlib import Path
+          import pyarrow.parquet as pq
+          import pyarrow.compute as pc
+
+          outdir=Path('football-data/research/anonymous_data_reserve_r1/hf_reserve')
+          odds=Path('/tmp/hfreserve/odds.parquet'); fixtures=Path('/tmp/hfreserve/fixtures.parquet')
+          opf=pq.ParquetFile(odds); fpf=pq.ParquetFile(fixtures)
+          oschema=opf.schema.names; fschema=fpf.schema.names
+
+          # Only pre-match/identity fields are dereferenced. No result/goal/outcome columns.
+          ot=pq.read_table(odds,columns=['fixture_id','known_at','bookmaker','source','home_win','draw','away_win'])
+          fids=[int(x) for x in ot['fixture_id'].to_pylist() if x is not None]
+          known=ot['known_at'].to_pylist()
+          bookmakers=ot['bookmaker'].to_pylist()
+          unique_ids=sorted(set(fids))
+          per={}
+          for fid,ka,bm in zip(fids,known,bookmakers):
+              d=per.setdefault(fid,{'rows':0,'known_at_nonnull':0,'bookmakers':set()})
+              d['rows']+=1
+              if ka is not None: d['known_at_nonnull']+=1
+              if bm is not None: d['bookmakers'].add(str(bm))
+
+          # Deterministic order independent of outcomes; used to pre-seal 400-match batches.
+          seed='HF-RESERVE-20260817-R1'
+          ordered=sorted(unique_ids,key=lambda x:hashlib.sha256(f'{seed}|{x}'.encode()).hexdigest())
+          batch_size=400
+          batches=[]
+          for i in range(0,len(ordered),batch_size):
+              ids=ordered[i:i+batch_size]
+              if len(ids)<300: # retain small tail as reserve-tail, not an experiment batch
+                  break
+              bid=f'HF-R1-B{len(batches)+1:03d}'
+              payload={'schema_version':'HF-RESERVE-BATCH-R1','batch_id':bid,'batch_size':len(ids),'selection_uses_outcomes':False,'fixture_ids':ids,'status':'SEALED_UNOPENED','outcome_values_dereferenced':0}
+              p=outdir/f'{bid}.json'; p.write_text(json.dumps(payload,indent=2)+'\n')
+              batches.append({'batch_id':bid,'n':len(ids),'manifest_sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+
+          inv={
+            'schema_version':'HF-ANON-RESERVE-INVENTORY-R1',
+            'source':'huggingface:eatpizzanot/soccer-dataset',
+            'license':'CC-BY-4.0',
+            'anonymous_download':True,
+            'odds_sha256':hashlib.sha256(odds.read_bytes()).hexdigest(),
+            'fixtures_sha256':hashlib.sha256(fixtures.read_bytes()).hexdigest(),
+            'odds_rows':opf.metadata.num_rows,
+            'odds_unique_fixture_ids':len(unique_ids),
+            'odds_fixture_ids_all_known_at_nonnull':sum(1 for fid,d in per.items() if d['known_at_nonnull']==d['rows']),
+            'odds_fixture_ids_ge2_bookmakers':sum(1 for fid,d in per.items() if len(d['bookmakers'])>=2),
+            'fixtures_rows':fpf.metadata.num_rows,
+            'fixtures_columns':fschema,
+            'odds_columns':oschema,
+            'sealed_batch_size':batch_size,
+            'sealed_full_batches':len(batches),
+            'sealed_matches':sum(x['n'] for x in batches),
+            'unbatched_tail_matches':len(unique_ids)-sum(x['n'] for x in batches),
+            'batches':batches,
+            'outcome_values_dereferenced':0,
+            'hard_rule':'Only one sealed 300-500 match batch may have outcome labels opened per preregistered experiment.'
+          }
+          (outdir/'inventory.json').write_text(json.dumps(inv,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(inv,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hf-anonymous-reserve-batches-r1
+          path: football-data/research/anonymous_data_reserve_r1/hf_reserve/*.json
+          retention-days: 30
