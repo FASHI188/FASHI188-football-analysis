@@ -1,0 +1,111 @@
+name: Football post-view OU25 Direct-T base anatomy 20260817 R1
+
+on:
+  push:
+    branches: [research/base-anatomy-20260817]
+    paths:
+      - '.github/workflows/football-postview-base-anatomy-20260817-r1.yml'
+      - 'football-data/validation/postview_base_anatomy_ou25_direct_t_r1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football-postview-base-anatomy-20260817-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  base-anatomy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned analysis dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 pyarrow==21.0.0
+
+      - name: Download and verify four immutable frozen prediction artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/baseanatomy/{B01,B02,B03,B04}
+          declare -A ids=([B01]=9276244641 [B02]=9276762428 [B03]=9277190607 [B04]=9277646065)
+          declare -A digests=(
+            [B01]=c0d2c7738bd0ce693db7ed8a8946c0591495b4835c17bf53b61c9e53f671c04e
+            [B02]=988f30120b753334e763977cbe55ffef320974e4c55ff39993fcfcf1806f107c
+            [B03]=a330959d178802c3d9f9fdd405d90af13ab4e5bba41dcbfa3e2b3428d3c37436
+            [B04]=6ea9db8397e07087731a02c11c084196ab8b2e5356d43e7be0b593405e3ea221
+          )
+          for b in B01 B02 B03 B04; do
+            curl -sS -L --fail --retry 3 \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ids[$b]}/zip" \
+              -o "/tmp/baseanatomy/${b}.zip"
+            test "$(sha256sum "/tmp/baseanatomy/${b}.zip" | awk '{print $1}')" = "${digests[$b]}"
+            unzip -q "/tmp/baseanatomy/${b}.zip" -d "/tmp/baseanatomy/${b}"
+          done
+
+      - name: Download pinned already-viewed fixture labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 600 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/878f23289108d40518350ed6ae6e513f39b77062/fixtures.parquet?download=true' \
+            -o /tmp/baseanatomy/fixtures.parquet
+          test "$(sha256sum /tmp/baseanatomy/fixtures.parquet | awk '{print $1}')" = '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7'
+
+      - name: Run post-view base anatomy
+        run: python football-data/validation/postview_base_anatomy_ou25_direct_t_r1.py
+
+      - name: Assert research-only output contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=Path('football-data/research/anonymous_data_reserve_r1/base_anatomy_20260817_r1')
+          s=json.loads((d/'summary.json').read_text(encoding='utf-8'))
+          assert s['status']=='POSTVIEW_BASE_ANATOMY_COMPLETE_NO_PROMOTION'
+          assert s['scope']['rows']==1559
+          assert s['scope']['all_target_labels_already_viewed_before_this_experiment'] is True
+          assert s['scope']['confirmatory_claim'] is False
+          assert s['scope']['formal_weight']==0
+          assert s['scope']['parameter_tuning'] is False
+          assert s['scope']['threshold_search'] is False
+          assert s['scope']['selector_created'] is False
+          assert s['scope']['main_mutation'] is False
+          assert s['scope']['CURRENT_mutation'] is False
+          for f in ['per_date_anatomy.csv','sync_timing_anatomy.csv','league_anatomy.csv','leave_one_league_out.csv','batch_anatomy.csv','baseline_calibration_anatomy.csv','row_anatomy_viewed_only.csv']:
+              assert (d/f).is_file() and (d/f).stat().st_size > 0, f
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload base anatomy artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: postview-base-anatomy-20260817-r1-${{ github.sha }}
+          path: football-data/research/anonymous_data_reserve_r1/base_anatomy_20260817_r1/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm no tracked runtime mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf football-data/research/anonymous_data_reserve_r1/base_anatomy_20260817_r1
+          rm -rf football-data/validation/__pycache__
+          git diff --exit-code
+          git diff --cached --exit-code
