@@ -31,12 +31,23 @@ jobs:
           python-version: "3.12"
       - name: Install research dependencies
         run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
-      - name: Restore downloaded HF dataset
+      - name: Restore branch-local HF dataset cache
         uses: actions/cache@v4
         with:
           path: /tmp/hf-football-odds-2023-24
           key: hf-football-odds-2023-24-match-odds-v1
-          fail-on-cache-miss: true
+      - name: Download and verify HF dataset if cache is unavailable
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hf-football-odds-2023-24
+          FILE=/tmp/hf-football-odds-2023-24/match_odds.csv
+          if [ ! -f "$FILE" ]; then
+            curl -L --fail --retry 5 --retry-delay 3 \
+              'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' \
+              -o "$FILE"
+          fi
+          test "$(stat -c%s "$FILE")" = "499076006"
+          echo 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a  /tmp/hf-football-odds-2023-24/match_odds.csv' | sha256sum -c -
       - name: Compile batch2 evaluators
         run: |
           python -m py_compile football-data/validation/audit_hf_odds_pit_fixed500_batch2_r1.py
