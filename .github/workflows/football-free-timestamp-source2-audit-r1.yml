@@ -1,0 +1,257 @@
+name: Football free timestamp source2 zero-label audit R1
+
+on:
+  push:
+    branches:
+      - research/free-timestamp-odds-source2-audit-r1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-free-timestamp-source2-audit-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download pinned public source and audit without labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/source2_audit_r1
+          SRC='https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true'
+          OUT='/tmp/fabul0us_match_odds.csv'
+          curl --fail --location --retry 3 --retry-delay 2 --max-time 900 "$SRC" -o "$OUT"
+          ACTUAL_SHA="$(sha256sum "$OUT" | awk '{print $1}')"
+          test "$ACTUAL_SHA" = 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a'
+          SOURCE_SHA="$ACTUAL_SHA" python - <<'PY'
+          import csv, hashlib, json, os, statistics
+          from collections import defaultdict
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          src = Path('/tmp/fabul0us_match_odds.csv')
+          outdir = Path('football-data/research/source2_audit_r1')
+          expected_sha = os.environ['SOURCE_SHA']
+
+          def parse_ts(x):
+              x = (x or '').strip()
+              if not x:
+                  return None
+              try:
+                  return datetime.fromisoformat(x.replace('Z', '+00:00'))
+              except Exception:
+                  return None
+
+          forbidden_label_tokens = {
+              'score','result','fthg','ftag','winner','home_goals','away_goals',
+              'full_time_score','final_score','settlement','win_flag'
+          }
+          required = {
+              'home_team','away_team','competition','refreshed_at',
+              'odds_1','odds_X','odds_2','1X2 timestamp',
+              'odds_under_2.5','odds_over_2.5','U/O 2.5 timestamp'
+          }
+          timestamp_cols = ['refreshed_at','1X2 timestamp','DC timestamp','G/NG timestamp','U/O 2.5 timestamp']
+          kickoff_candidates = {
+              'kickoff','kickoff_time','commence_time','start_time','match_time','match_datetime',
+              'event_start_time','scheduled_at','date','match_date'
+          }
+
+          row_count = 0
+          bad_width = 0
+          ts_nonempty = defaultdict(int)
+          ts_parsed = defaultdict(int)
+          uo_valid = 0
+          hda_valid = 0
+          identities = defaultdict(lambda: {'rows':0, 'uo_ts':set(), 'first':None, 'last':None})
+
+          with src.open('r', encoding='utf-8-sig', newline='') as f:
+              reader = csv.DictReader(f)
+              header = reader.fieldnames or []
+              header_set = set(header)
+              missing_required = sorted(required - header_set)
+              forbidden_present = sorted(c for c in header if c.strip().lower() in forbidden_label_tokens)
+              kickoff_present = sorted(c for c in header if c.strip().lower() in kickoff_candidates)
+              if missing_required:
+                  raise SystemExit('missing required columns: ' + repr(missing_required))
+              if forbidden_present:
+                  raise SystemExit('forbidden target-label columns present: ' + repr(forbidden_present))
+              for row in reader:
+                  row_count += 1
+                  if None in row:
+                      bad_width += 1
+                  home = (row.get('home_team') or '').strip()
+                  away = (row.get('away_team') or '').strip()
+                  comp = (row.get('competition') or '').strip()
+                  if home and away and comp:
+                      key = (comp, home, away)
+                      rec = identities[key]
+                      rec['rows'] += 1
+                  else:
+                      key = None
+                  for c in timestamp_cols:
+                      v = row.get(c)
+                      if v and v.strip():
+                          ts_nonempty[c] += 1
+                          dt = parse_ts(v)
+                          if dt is not None:
+                              ts_parsed[c] += 1
+                              if key and c == 'U/O 2.5 timestamp':
+                                  rec = identities[key]
+                                  rec['uo_ts'].add(v.strip())
+                                  if rec['first'] is None or dt < rec['first']:
+                                      rec['first'] = dt
+                                  if rec['last'] is None or dt > rec['last']:
+                                      rec['last'] = dt
+                  try:
+                      if float(row['odds_under_2.5']) > 1 and float(row['odds_over_2.5']) > 1 and parse_ts(row['U/O 2.5 timestamp']):
+                          uo_valid += 1
+                  except Exception:
+                      pass
+                  try:
+                      if all(float(row[k]) > 1 for k in ('odds_1','odds_X','odds_2')) and parse_ts(row['1X2 timestamp']):
+                          hda_valid += 1
+                  except Exception:
+                      pass
+
+          obs_counts = [v['rows'] for v in identities.values()]
+          uo_obs_counts = [len(v['uo_ts']) for v in identities.values()]
+          repeated_uo = sum(1 for n in uo_obs_counts if n >= 2)
+          ge3_uo = sum(1 for n in uo_obs_counts if n >= 3)
+          ge5_uo = sum(1 for n in uo_obs_counts if n >= 5)
+          spans_hours = []
+          for v in identities.values():
+              if v['first'] is not None and v['last'] is not None and v['last'] >= v['first']:
+                  spans_hours.append((v['last'] - v['first']).total_seconds()/3600.0)
+
+          parse_rates = {
+              c: (ts_parsed[c] / ts_nonempty[c] if ts_nonempty[c] else 0.0)
+              for c in timestamp_cols
+          }
+          identity_count = len(identities)
+          source_feasible = (
+              row_count > 0 and identity_count > 0 and uo_valid > 0 and
+              parse_rates['U/O 2.5 timestamp'] >= 0.99 and repeated_uo > 0
+          )
+          strict_pit_ready = bool(kickoff_present) and source_feasible
+          full_multi_ou_ready = False
+          verdict = (
+              'PASS_SOURCE2_TIMESTAMPED_OU25_FEASIBLE_NEEDS_KICKOFF_JOIN'
+              if source_feasible and not strict_pit_ready
+              else 'PASS_SOURCE2_STRICT_PIT_OU25_FEASIBLE'
+              if strict_pit_ready
+              else 'STOP_SOURCE2_ZERO_LABEL_FEASIBILITY_FAIL'
+          )
+
+          result = {
+              'schema_version':'source2-zero-label-audit-r1',
+              'observed_at_utc': datetime.now(timezone.utc).isoformat(),
+              'source': {
+                  'dataset':'fabul0us/football_odds_2023-24',
+                  'revision':'211feb35f9dcd270bd7a1b27b39a8b1f45f239aa',
+                  'file':'match_odds.csv',
+                  'sha256':expected_sha,
+                  'declared_license_on_hub':'cc'
+              },
+              'zero_label_contract': {
+                  'target_labels_accessed':0,
+                  'model_fits':0,
+                  'scoring':0,
+                  'threshold_tuning':0,
+                  'raw_rows_persisted':False,
+                  'forbidden_label_columns_present':forbidden_present
+              },
+              'schema': {
+                  'column_count':len(header),
+                  'columns':header,
+                  'kickoff_identity_columns_present':kickoff_present,
+                  'full_multi_ou_columns_present':False,
+                  'ou_lines_present':['2.5']
+              },
+              'coverage': {
+                  'rows':row_count,
+                  'bad_width_rows':bad_width,
+                  'unique_match_identity_triples':identity_count,
+                  'valid_hda_timestamped_rows':hda_valid,
+                  'valid_ou25_timestamped_rows':uo_valid,
+                  'matches_with_ge2_distinct_ou25_timestamps':repeated_uo,
+                  'matches_with_ge3_distinct_ou25_timestamps':ge3_uo,
+                  'matches_with_ge5_distinct_ou25_timestamps':ge5_uo,
+                  'median_rows_per_identity':statistics.median(obs_counts) if obs_counts else 0,
+                  'median_distinct_ou25_timestamps_per_identity':statistics.median(uo_obs_counts) if uo_obs_counts else 0,
+                  'median_ou25_observation_span_hours':statistics.median(spans_hours) if spans_hours else 0,
+                  'timestamp_parse_rates':parse_rates
+              },
+              'readiness': {
+                  'source_feasible':source_feasible,
+                  'strict_pit_ready_without_external_kickoff_join':strict_pit_ready,
+                  'full_multi_line_ou_curve_ready':full_multi_ou_ready,
+                  'scientific_effect_test_authorized':False
+              },
+              'verdict':verdict,
+              'next_step': (
+                  'Build a zero-label identity/kickoff join against an independent schedule source before any label/effect test; source2 can test timestamped OU2.5 transport but cannot test a full OU curve.'
+                  if source_feasible else
+                  'Stop source2 and do not use it for model research.'
+              )
+          }
+          p = outdir/'source2_zero_label_audit_r1.json'
+          p.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str)+'\n', encoding='utf-8')
+          md = outdir/'source2_zero_label_audit_r1.md'
+          md.write_text(
+              '# Source2 zero-label audit R1\n\n'
+              f"- verdict: `{verdict}`\n"
+              f"- rows: {row_count:,}\n"
+              f"- unique match identity triples: {identity_count:,}\n"
+              f"- valid timestamped OU2.5 rows: {uo_valid:,}\n"
+              f"- matches with >=2 distinct OU2.5 timestamps: {repeated_uo:,}\n"
+              f"- matches with >=3: {ge3_uo:,}\n"
+              f"- matches with >=5: {ge5_uo:,}\n"
+              f"- median distinct OU2.5 timestamps/match: {result['coverage']['median_distinct_ou25_timestamps_per_identity']}\n"
+              f"- median OU2.5 observation span (hours): {result['coverage']['median_ou25_observation_span_hours']:.3f}\n"
+              f"- source-native kickoff field present: {bool(kickoff_present)}\n"
+              '- full multi-line OU curve: false (only OU2.5)\n'
+              '- target labels/model fits/scoring/tuning: 0/0/0/0\n',
+              encoding='utf-8'
+          )
+          print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+          PY
+          rm -f "$OUT"
+
+      - name: Assert zero-label boundary and source verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='football-data/research/source2_audit_r1/source2_zero_label_audit_r1.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['zero_label_contract']['target_labels_accessed'] == 0
+          assert d['zero_label_contract']['model_fits'] == 0
+          assert d['zero_label_contract']['scoring'] == 0
+          assert d['readiness']['scientific_effect_test_authorized'] is False
+          assert d['readiness']['full_multi_line_ou_curve_ready'] is False
+          assert d['verdict'] in {
+              'PASS_SOURCE2_TIMESTAMPED_OU25_FEASIBLE_NEEDS_KICKOFF_JOIN',
+              'PASS_SOURCE2_STRICT_PIT_OU25_FEASIBLE',
+              'STOP_SOURCE2_ZERO_LABEL_FEASIBILITY_FAIL'
+          }
+          PY
+
+      - name: Upload aggregate audit only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-source2-zero-label-audit-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/source2_audit_r1/
+          if-no-files-found: error
+          retention-days: 30
