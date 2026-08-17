@@ -41,6 +41,8 @@ GitHub 保存代码、研究资产、审计证据和历史治理文件，但不�
 
 需要核验具体仓库事实时，按当前任务精确读取 branch / HEAD / PR / run / Artifact；GitHub 事实可以证明“发生了什么”，但不能单独决定“现在该执行什么”。
 
+根目录仍保留的旧审计/治理文档统一受 `HISTORY_ONLY_INDEX.md` 约束；被列入该索引的计划、建议、handoff 和 next step 全部只作历史证据，不具当前执行权。
+
 ## 5. 历史检索
 
 用户问某个 Rxx、PR、run、Artifact 或旧结论时：
