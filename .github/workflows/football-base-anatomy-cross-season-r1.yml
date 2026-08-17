@@ -1,0 +1,40 @@
+name: Football Base Anatomy Cross-Season R1
+
+on:
+  push:
+    branches:
+      - research/base-anatomy-20260817
+    paths:
+      - "scripts/run_base_anatomy_cross_season_r1.py"
+      - ".github/workflows/football-base-anatomy-cross-season-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-base-anatomy-cross-season-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stage2-cross-season:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile research runner
+        run: python -m py_compile scripts/run_base_anatomy_cross_season_r1.py
+      - name: Stage-2 cross-season team-state ablation
+        run: python scripts/run_base_anatomy_cross_season_r1.py --bootstrap-resamples 5000
+      - name: Upload research artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-anatomy-cross-season-r1
+          path: |
+            football-data/research/base_anatomy_20260817/cross_season_state_r1.json
+            football-data/research/base_anatomy_20260817/cross_season_state_r1.md
+          if-no-files-found: error
