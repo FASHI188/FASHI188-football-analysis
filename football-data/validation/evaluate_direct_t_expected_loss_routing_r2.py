@@ -6,7 +6,9 @@ used by PR #179/#202. It does not consume B05+ labels and cannot claim scientifi
 confirmation, or formal promotion PASS.
 
 The test keeps the selector shell intentionally simple and fixed (StandardScaler+Ridge,
-alpha=10). It separates four questions:
+alpha=10). For router families that add the existing nullable Direct-T input state, it
+reuses the established Direct-T preprocessing contract: policy-fit median imputation
+before scaling. It separates four questions:
 1) exact R1 absolute-loss routing from geometry39;
 2) relative-loss target from geometry39;
 3) relative-loss target + the existing 47 pre-match core features;
@@ -24,6 +26,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -62,9 +65,11 @@ def _raw_block(df: pd.DataFrame, cols: list[str], name: str) -> np.ndarray:
     x = df[cols].to_numpy(dtype=float)
     if x.shape != (len(df), len(cols)):
         raise ResearchError(f"{name}_SHAPE_MISMATCH:{x.shape}")
-    if not np.isfinite(x).all():
-        bad = int(np.size(x) - np.isfinite(x).sum())
-        raise ResearchError(f"{name}_NONFINITE:{bad}")
+    # NaN is an expected part of the established Direct-T feature contract and is
+    # handled by policy-fit median imputation. Infinite values remain invalid.
+    if np.isinf(x).any():
+        bad = int(np.isinf(x).sum())
+        raise ResearchError(f"{name}_INFINITE:{bad}")
     return x
 
 
@@ -99,7 +104,7 @@ def _compose_features(
         "relative_geometry_core86": 86,
         "relative_geometry_all122": 122,
     }[family]
-    if x.shape != (len(df), expected) or not np.isfinite(x).all():
+    if x.shape != (len(df), expected) or np.isinf(x).any():
         raise ResearchError(f"INVALID_ROUTER_MATRIX:{family}:{x.shape}")
     return x
 
@@ -126,12 +131,20 @@ def _fit_relative(
     policy_losses: dict[str, np.ndarray],
     x_eval: np.ndarray,
     alpha: float,
+    impute_missing: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     common = policy_losses["common_baseline"]
     preds = [np.zeros(len(x_eval), dtype=float)]
     for n in ("R42F", "R42J"):
         target = policy_losses[n] - common
-        model = make_pipeline(StandardScaler(), Ridge(alpha=alpha))
+        if impute_missing:
+            model = make_pipeline(
+                SimpleImputer(strategy="median", keep_empty_features=True),
+                StandardScaler(),
+                Ridge(alpha=alpha),
+            )
+        else:
+            model = make_pipeline(StandardScaler(), Ridge(alpha=alpha))
         model.fit(x_policy, target)
         preds.append(model.predict(x_eval))
     predicted_delta = np.column_stack(preds)
@@ -268,12 +281,15 @@ def run(cfg: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     for k, family in enumerate(families):
         x_policy = _compose_features(policy, p_policy, family, core, fnames, jnames)
         x_eval = _compose_features(evaluation, p_eval, family, core, fnames, jnames)
+        impute_missing = family in {"relative_geometry_core86", "relative_geometry_all122"}
 
         if family == "r1_absolute_geometry39":
             choices, predicted = _fit_absolute(x_policy, policy_losses, x_eval, alpha)
             relative_diag = None
         else:
-            choices, predicted = _fit_relative(x_policy, policy_losses, x_eval, alpha)
+            choices, predicted = _fit_relative(
+                x_policy, policy_losses, x_eval, alpha, impute_missing=impute_missing
+            )
             relative_diag = _relative_diagnostics(predicted, eval_losses)
 
         p_sel = _selected_probabilities(p_eval, choices)
@@ -294,6 +310,10 @@ def run(cfg: dict[str, Any], out_dir: Path) -> dict[str, Any]:
         )
         family_results[family] = {
             "feature_count": int(x_eval.shape[1]),
+            "missing_value_preprocessing": (
+                "policy_fit_median_simpleimputer_keep_empty_features"
+                if impute_missing else "none_required"
+            ),
             "metrics": m,
             "choice_counts": counts,
             "selected_expert_count": selected_n,
