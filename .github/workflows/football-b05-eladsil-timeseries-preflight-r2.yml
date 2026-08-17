@@ -1,0 +1,61 @@
+name: Football B05 eladsil trajectory preflight R2
+
+on:
+  push:
+    branches: [research/b05-eladsil-timeseries-direct-t-r1]
+    paths:
+      - '.github/workflows/football-b05-eladsil-timeseries-preflight-r2.yml'
+      - 'football-data/validation/freeze_b05_eladsil_timeseries_r1.py'
+      - 'football-data/research/b05_eladsil_timeseries_direct_t_r1/PREREG.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze-zero-label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install source-native date parser
+        run: python -m pip install --disable-pip-version-check python-dateutil==2.9.0.post0
+      - name: Download anonymous source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/elad
+          curl -sS -L --fail --retry 2 --max-time 300 \
+            'https://www.kaggle.com/api/v1/datasets/download/eladsil/football-games-odds' \
+            -o /tmp/elad/source.zip
+      - name: Freeze B05 zero-label trajectory packet
+        run: python football-data/validation/freeze_b05_eladsil_timeseries_r1.py
+      - name: Verify zero-label boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=Path('football-data/research/b05_eladsil_timeseries_direct_t_r1/freeze')
+          x=json.loads((d/'freeze.json').read_text())
+          h=json.loads((d/'source_headers.json').read_text())
+          assert x['global_alias']=='B05' and x['rows']==400
+          assert x['source_batch_id']=='ELAD-PIT6H-B001'
+          assert x['source_batch_manifest_sha256']=='094edba4ae1e4955ef174f790011a4f49dc7013d3c51a842f64f70a7590f2f4e'
+          assert x['selection_uses_outcomes'] is False
+          assert x['result_data_rows_read']==0 and x['outcome_values_dereferenced']==0
+          assert h['non_odds_data_rows_read']==0 and h['outcome_values_dereferenced']==0
+          print(json.dumps(x,indent=2))
+          PY
+      - name: Upload immutable zero-label B05 packet
+        uses: actions/upload-artifact@v4
+        with:
+          name: b05-eladsil-timeseries-freeze-r1
+          path: football-data/research/b05_eladsil_timeseries_direct_t_r1/freeze/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only outputs
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/research/b05_eladsil_timeseries_direct_t_r1/freeze/' || true)"
