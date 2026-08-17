@@ -1,0 +1,107 @@
+name: Football Direct-T Subtype GD0 R4
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/direct_t_subtype_gd0_r4.json"
+      - "football-data/validation/evaluate_direct_t_subtype_gd0_r4.py"
+      - "football-data/research/direct_t_subtype_gd0_r4/**"
+      - ".github/workflows/football-direct-t-subtype-gd0-r4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-direct-t-subtype-gd0-r4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0 lightgbm==4.6.0
+      - name: Compile frozen R4 path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py \
+            football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py \
+            football-data/validation/evaluate_direct_t_subtype_gd0_r4.py
+      - name: Run frozen subtype-to-GD0 R4
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/direct-t-subtype-gd0-r4
+          python football-data/validation/evaluate_direct_t_subtype_gd0_r4.py \
+            2>&1 | tee /tmp/direct-t-subtype-gd0-r4/traceback.log
+      - name: Upload R4 failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-subtype-gd0-r4-failure-log
+          path: /tmp/direct-t-subtype-gd0-r4/traceback.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify parent reproduction and research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/direct_t_subtype_gd0_r4/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_DIRECT_T_SUBTYPE_GD0_R4_COMPLETE_NO_PROMOTION'
+          r=x['parent_reproduction']
+          assert r['sample_n']==500
+          assert r['sample_identity_sha256']=='6e76c2580b03043ef0a6ae003013c70fa328176bd6d3b21c2908c2e5fdf2f375'
+          assert abs(r['flat_direct_total_logloss']-1.8638447565310998)<1e-12
+          assert abs(r['flat_hda']['log_loss']-1.0556508959286397)<1e-12
+          assert abs(r['flat_hda']['accuracy']-0.452)<1e-12
+          assert r['flat_hda']['actual_counts']['D']==145
+          assert r['flat_hda']['predicted_counts']['D']==0
+          b=x['boundary']
+          assert b['direct_t_changed'] is False
+          assert b['adjusted_conditional_total_classes']==[2,4,6]
+          assert b['forced_draw'] is False
+          assert b['manual_hda_threshold'] is False
+          assert b['post_fixed500_parameter_search'] is False
+          assert b['new_target_label_access']==0
+          assert b['b05_b07_labels_opened'] is False
+          assert b['future_oos_label_open_authorized'] is False
+          assert b['formal_weight']==0
+          assert b['main_mutation'] is False
+          assert x['development_signal']['scientific_pass'] is False
+          assert x['development_signal']['future_oos_label_open_authorized'] is False
+          print(json.dumps({
+            'verdict':x['scientific_verdict'],
+            'baseline':x['models']['baseline']['hda'],
+            'intercept':x['models']['intercept_only']['hda'],
+            'subtype':x['models']['subtype_residual']['hda'],
+            'residual_fit':x['policy_residual_fit'],
+            'development_signal':x['development_signal'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R4 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-t-subtype-gd0-r4
+          path: football-data/manifests/direct_t_subtype_gd0_r4/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
