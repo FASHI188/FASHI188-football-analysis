@@ -1,83 +1,63 @@
 # 足球项目最后接力点
 
-> 最近语境只看上一工作对话末尾；真正恢复点以 Airtable《当前状态》+唯一《执行检查点》为准。禁止扫描整个旧项目聊天。
+> 最近语境只看上一工作对话末尾；真正恢复点以 Airtable《当前状态》+唯一《执行检查点》+《会话接力》为准。禁止扫描整个旧项目聊天。
 
 ## 接力身份
 
 - project_id: `football-project`
-- handoff_version: **30**
-- state_version: **59**
-- checkpoint_version: **87**
-- updated_at_utc: `2026-08-16T13:49:39Z`
+- handoff_version: **31**
+- state_version: **60**
+- checkpoint_version: **126**
+- updated_at_local: `2026-08-17 15:52 +08:00`
 - status: `WAITING`
-- state_log_record_id: `recl9Fysw4nGZioWn`
+- state_log_record_id: `recIuJT7e3EN4oxC2`
 
-## 最新完成
+## 最新完成：金标准 reserve 永久退役
 
-### 1. multi-OU
+用户明确指令：**“把这个治理了 金标准不用了废掉”**。
 
-公开免密钥批量 PIT coverage/synchronization gate：
+state60 治理裁决：
 
-**`STOP_DATA/COVERAGE`**
+**`RETIRED_PERMANENTLY_GOLD_STANDARD_RESERVE`**
 
-不是科学 FAIL，不再重复该路线。
+以后不得：
 
-### 2. availability
+- 新建或恢复 gold-standard / 金标准 reserve；
+- 把 B04 或其他既有包改名包装成金标准；
+- 把旧日志里的“新gold-standard reserve”建议恢复为 ACTIVE_NEXT；
+- 用“target-only 未请求标签”单独替代完整的盲测/PIT/标签隔离证明。
 
-官方公开 availability 零标签 coverage gate：
+永久治理文件：`governance/GOLD_STANDARD_RESERVE_RETIRED.md`。
 
-**`PASS_ZERO_LABEL_PUBLIC_AVAILABILITY_COVERAGE`**
+## 保留的现有事实
 
-真实锚点：
+- B01：VIEWED，点估计改善，严格 date-block CI 跨 0；
+- B02：VIEWED，严格单包门 PASS；
+- B03：VIEWED，点估计改善，严格 date-block CI 跨 0；
+- B01-B03 的 LogLoss 点估计均同向改善，但禁止事后发明组合确认门；
+- B04 不再承担“金标准”角色，旧结果字段物化/可见性注记继续保留。
 
-- branch: `research/xi-availability-public-coverage-r1`
-- HEAD: `2ffaa97334b139d0bbff9085fec047e3862a5d55`
-- run: `31950837713` completed/success
-- job: `95173928727`
-- Artifact: `9264588803`
-- Artifact SHA-256: `53ab1ed11982af43bafd4721055ee4a72e12fbc3b17990290c27678bf093030f`
-- FPL raw SHA-256: `3884edab1ce1b0691910a769c380fe8c0032b60126d2e246f3ca28e00ae86c93`
-- 20/20 teams bound
-- 10/10 future MW1 fixtures bound
-- 3/3 official sources fetched
-- hard violations 0
-- source errors 0
-- 587 player rows; 93 non-available statuses (`i=46/u=19/d=25/s=3`)
+## 当前唯一下一步
 
-本轮没有读取赛果标签，没有训练或评分。
+恢复治理前用户已指定的主线：**底座解剖 / 功效分析**。
 
-## 结论边界
+只把 B01-B03 当已 VIEWED 诊断样本：
 
-availability 的 PASS 只证明：官方公开源可以赛前无密钥、带时间戳和 raw hash 覆盖冻结样本。
-
-它不证明 availability 能提升 T，也不证明 confirmed XI 已可用，更不代表平局问题已解决。
-
-## 工程结论
-
-旧 PIT 阵容/availability 代码的语义门控可复用，但强绑定 market-first fixture。市场路线已停止，因此新的 availability collector 直接使用冻结 fixture manifest，不再依赖市场存在。
-
-## 唯一下一步
-
-**多时点赛前上下文冻结门：**
-
-1. availability：T-24h / T-6h 重复冻结；
-2. confirmed XI：名单公布后约 T-75min 独立冻结；
-3. 每次保存 source URL、observed_at、retrieved_at、raw SHA-256；
-4. confirmed XI 禁止倒灌更早 freeze；
-5. 先验证时序稳定性和 confirmed-XI 可采性；
-6. PIT 门完成前继续不读赛果；
-7. 然后才做 availability / XI 对 T 的 OOS 增量价值验证。
+1. 日期簇方差 / 有效样本量；
+2. effect size 对应的功效与所需样本规模；
+3. 报价陈旧、时间异步影响；
+4. 联赛/日期簇异质性；
+5. 输出诊断结论，不把 post-view 分段变成 selector 或 confirmatory gate。
 
 ## 禁止重复/越界
 
-- 不把 coverage PASS 写成科学 PASS；
-- 不读未来首轮比赛结果；
-- 不回到 multi-OU；
-- 不让 confirmed XI 回填早期 availability；
-- 不合并 research 分支；
+- 不再讨论是否要“新建金标准 reserve”；
+- 不把 B04 当金标准；
+- 不对已 VIEWED B01-B03 后验调参后重测；
+- 不事后发明确认门；
 - 不修改 formal model/data/config/CURRENT；
-- 不恢复 Direct-T / Parity 外壳搜索。
+- 不把治理 PASS 写成科学 PASS。
 
 ## 新聊天收到“继续”时
 
-恢复顺序：上一工作对话末尾小段（若可得）→ Airtable 当前状态 → 精确检查点 → GitHub main。然后从多时点 availability / confirmed XI 零标签冻结门继续。
+恢复：上一工作对话末尾小段（若可得）→ Airtable 当前状态 → checkpoint `recIRxK7EIMjJdG4A` → 当前会话接力 → GitHub main。若任何旧层建议 gold-standard reserve，直接以 state60 永久退役裁决覆盖，然后从底座解剖继续。
