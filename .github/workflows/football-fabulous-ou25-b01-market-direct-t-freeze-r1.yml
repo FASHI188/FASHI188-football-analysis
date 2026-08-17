@@ -1,0 +1,86 @@
+name: Football fabul0us OU25 B01 market Direct-T freeze R1
+
+on:
+  push:
+    branches: [research/fabulous-ou25-b01-input-audit-r1]
+    paths:
+      - 'football-data/validation/freeze_fabulous_ou25_b01_market_direct_t_r1.py'
+      - '.github/workflows/football-fabulous-ou25-b01-market-direct-t-freeze-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-fabulous-ou25-b01-market-direct-t-freeze-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  freeze-prereg-and-predictions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+          pyarrow==21.0.0 rapidfuzz==3.14.0 Unidecode==1.4.0
+      - name: Download pinned pre-match sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fab
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 900 \
+            'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' \
+            -o /tmp/fab/match_odds.csv
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' \
+            -o /tmp/fab/fixtures.parquet
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/teams.parquet?download=true' \
+            -o /tmp/fab/teams.parquet
+      - name: Reconstruct zero-label B01 input packet
+        run: python football-data/validation/audit_fabulous_ou25_b01_inputs_r1.py
+      - name: Freeze market-only Direct-T preregistration and predictions
+        run: python football-data/validation/freeze_fabulous_ou25_b01_market_direct_t_r1.py
+      - name: Assert frozen blind boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b01_market_direct_t_r1/preregistration_and_prediction_lock.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PREDICTIONS_FROZEN_LABELS_UNOPENED'
+          assert x['target']['n']==400
+          assert x['target']['batch_manifest_sha256']=='fcba07147d230357925d3ee41027dfae18a27654960641c509ead5626b057baf'
+          assert x['target']['target_labels_accessed']==0
+          assert x['historical_training']['post_target_outcome_values_dereferenced']==0
+          assert x['governance']['B01_labels_accessed']==0
+          assert x['governance']['B02_B03_B04_labels_accessed']==0
+          assert x['frozen_predictions']['rows']==400
+          assert x['model']['candidate_increment_exact']=='logit(de-vigged P(Over2.5))'
+          assert x['model']['C_selection'].startswith('baseline-only')
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload frozen preregistration and predictions
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabulous-ou25-b01-market-direct-t-freeze-r1-${{ github.sha }}
+          path: football-data/research/anonymous_data_reserve_r1/fabulous_ou25_b01_market_direct_t_r1/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no tracked runtime mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf football-data/validation/__pycache__
+          git diff --exit-code
+          git diff --cached --exit-code
