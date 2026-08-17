@@ -43,6 +43,7 @@ TOTAL_CLASSES = list(range(8))
 OU_FEATURE = "mkt_ou_over_logit"
 TOP5 = {"ENG_PremierLeague", "ESP_LaLiga", "ITA_SerieA", "GER_Bundesliga", "FRA_Ligue1"}
 IDENTITY_COLS = ["competition_id", "season", "date_key", "home_team", "away_team"]
+TARGET_SEASON = "2023/24"
 
 
 def digest_ids(frame: pd.DataFrame) -> str:
@@ -64,7 +65,7 @@ def load_fixed(path: Path, freeze_minutes: int) -> pd.DataFrame:
     if (x.quote_age_to_cutoff_min.astype(float) < -1e-9).any() or (x.quote_age_to_cutoff_min.astype(float) > 1440.0001).any():
         raise ResearchError(f"{path.name}: quote-age gate violation")
     x = x.rename(columns={"league_id": "competition_id"})
-    x["season"] = "2023-24"
+    x["season"] = TARGET_SEASON
     # football-data.co.uk Date/Time and the HF source are matched on the Europe/London clock.
     # date_key in the repository ledger is ISO YYYY-MM-DD, so derive it from the frozen kickoff.
     x["date_key"] = (
@@ -106,7 +107,7 @@ def evaluate_one(
     test_cols = IDENTITY_COLS + ["total_class", "split"] + core
     right = fold[
         fold.competition_id.isin(TOP5)
-        & fold.season.astype(str).eq("2023-24")
+        & fold.season.astype(str).eq(TARGET_SEASON)
         & fold.split.eq("test")
     ][test_cols].copy()
     if right[IDENTITY_COLS].duplicated().any():
@@ -221,7 +222,7 @@ def run() -> dict[str, Any]:
         "scientific_verdict": verdict,
         "scientific_question": "Does a timestamped pre-match O/U 2.5 snapshot add Direct-T information beyond the existing historical core on a new fixed500?",
         "sample": {
-            "season": "2023-24",
+            "season": TARGET_SEASON,
             "competitions": sorted(TOP5),
             "primary_t90_n": 500,
             "sensitivity_t5_n": 500,
