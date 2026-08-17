@@ -1,0 +1,113 @@
+name: Football BeatTheBookie public time-series probe R1
+
+on:
+  push:
+    branches:
+      - research/beatthebookie-public-timeseries-zero-label-r1
+    paths:
+      - '.github/workflows/football-beatthebookie-public-timeseries-probe-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download public archives directly without account
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/btb
+          curl -L --fail --retry 3 --retry-delay 2 \
+            'https://www.dropbox.com/s/gqp3m6o5zsd8v63/odds_series.zip?dl=1' \
+            -o /tmp/btb/odds_series.zip
+          curl -L --fail --retry 3 --retry-delay 2 \
+            'https://www.dropbox.com/s/t26rwzvlwtt6xnb/odds_series_b.zip?dl=1' \
+            -o /tmp/btb/odds_series_b.zip
+          unzip -t /tmp/btb/odds_series.zip >/dev/null
+          unzip -t /tmp/btb/odds_series_b.zip >/dev/null
+
+      - name: Zero-label archive/schema inventory only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/research/beatthebookie_public_timeseries_probe_r1
+          python - <<'PY'
+          import json, zipfile, re
+          from pathlib import Path
+
+          out = Path('football-data/research/beatthebookie_public_timeseries_probe_r1')
+          archives = [Path('/tmp/btb/odds_series.zip'), Path('/tmp/btb/odds_series_b.zip')]
+          result = {
+              'schema_version': 'BEATTHEBOOKIE-PUBLIC-TIMESERIES-PROBE-R1',
+              'zero_label_contract': {
+                  'result_values_read': 0,
+                  'score_values_read': 0,
+                  'model_fit': 0,
+                  'scoring': 0,
+                  'threshold_tuning': 0,
+                  'inspection_scope': 'archive metadata + first logical line/header of text-like members only'
+              },
+              'archives': []
+          }
+          market_tokens = re.compile(r'(1x2|over|under|total|goal|handicap|asian|ah\b)', re.I)
+          for ap in archives:
+              with zipfile.ZipFile(ap) as z:
+                  members = [i for i in z.infolist() if not i.is_dir()]
+                  names = [i.filename for i in members]
+                  text_members = [i for i in members if i.filename.lower().endswith(('.csv','.txt','.tsv','.dat'))]
+                  headers = []
+                  token_hits = []
+                  for info in text_members[:250]:
+                      try:
+                          with z.open(info) as f:
+                              line = f.readline(16384).decode('utf-8', 'replace').strip()
+                      except Exception:
+                          continue
+                      headers.append({'member': info.filename, 'header': line[:2000]})
+                      hits = sorted(set(m.group(0).lower() for m in market_tokens.finditer(line)))
+                      if hits:
+                          token_hits.append({'member': info.filename, 'tokens': hits})
+                  result['archives'].append({
+                      'name': ap.name,
+                      'bytes': ap.stat().st_size,
+                      'member_count': len(members),
+                      'text_member_count': len(text_members),
+                      'top_level_examples': names[:30],
+                      'header_examples': headers[:30],
+                      'market_token_header_hits': token_hits[:100]
+                  })
+          out.joinpath('probe.json').write_text(json.dumps(result, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Assert zero-label boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/beatthebookie_public_timeseries_probe_r1/probe.json'
+          d=json.load(open(p,encoding='utf-8'))
+          z=d['zero_label_contract']
+          assert z['result_values_read']==0
+          assert z['score_values_read']==0
+          assert z['model_fit']==0 and z['scoring']==0 and z['threshold_tuning']==0
+          assert len(d['archives'])==2
+          assert all(a['member_count']>0 for a in d['archives'])
+          PY
+
+      - name: Upload aggregate schema probe only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-beatthebookie-public-timeseries-probe-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/beatthebookie_public_timeseries_probe_r1/probe.json
+          if-no-files-found: error
+          retention-days: 30
