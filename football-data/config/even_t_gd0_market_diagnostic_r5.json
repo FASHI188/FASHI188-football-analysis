@@ -1,0 +1,138 @@
+{
+  "schema_version": "EVEN_T_GD0_MARKET_DIAGNOSTIC_R5.0",
+  "purpose": "Retrospective rolling-OOS mechanism diagnostic: conditional on realized exact even total T in {2,4,6}, test whether current-match retrospective market balance contains GD=0 discrimination beyond the historical conditional-GD state. No HDA or score probabilities are modified.",
+  "source_contract": {
+    "base_head": "974bcdc1ff8f5b567aaa9ad83b1a8f0c07d02c91",
+    "rolling_test_positions_zero_based": [2, 3, 4],
+    "expected_historical_rows": 26873,
+    "expected_competitions": 16,
+    "conditioned_total_classes": [2, 4, 6],
+    "condition_on_realized_total": true,
+    "mechanism_diagnostic_only": true,
+    "new_target_label_access": 0,
+    "b05_b07_labels_opened": false
+  },
+  "market_contract": {
+    "evidence_class": "RETROSPECTIVE_CLOSING_OR_REFERENCE_MARKET_NOT_STRICT_PIT",
+    "original_quote_timestamp_available": false,
+    "selection_uses_outcomes": false,
+    "feature_names": [
+      "market_p_draw_devig",
+      "market_hda_home_away_abs_gap",
+      "market_abs_ah_line",
+      "market_ah_home_abs_from_half",
+      "market_ou_line",
+      "market_p_over_devig"
+    ],
+    "feature_count": 6,
+    "one_x_two_alias_priority": [
+      ["PSCH", "PSCD", "PSCA"],
+      ["AvgCH", "AvgCD", "AvgCA"],
+      ["MaxCH", "MaxCD", "MaxCA"],
+      ["B365CH", "B365CD", "B365CA"],
+      ["PSH", "PSD", "PSA"],
+      ["AvgH", "AvgD", "AvgA"],
+      ["MaxH", "MaxD", "MaxA"],
+      ["B365H", "B365D", "B365A"],
+      ["home_odds", "draw_odds", "away_odds"]
+    ],
+    "asian_line_alias_priority": ["AHCh", "AHh", "asian_handicap_line", "handicap_line", "spread_line"],
+    "asian_price_alias_priority": [
+      ["PCAHH", "PCAHA"],
+      ["AvgCAHH", "AvgCAHA"],
+      ["MaxCAHH", "MaxCAHA"],
+      ["B365CAHH", "B365CAHA"],
+      ["PAHH", "PAHA"],
+      ["AvgAHH", "AvgAHA"],
+      ["asian_home_odds", "asian_away_odds"]
+    ],
+    "ou_price_alias_priority": [
+      ["PC>2.5", "PC<2.5", 2.5],
+      ["AvgC>2.5", "AvgC<2.5", 2.5],
+      ["MaxC>2.5", "MaxC<2.5", 2.5],
+      ["B365C>2.5", "B365C<2.5", 2.5],
+      ["P>2.5", "P<2.5", 2.5],
+      ["Avg>2.5", "Avg<2.5", 2.5],
+      ["over_odds", "under_odds", null]
+    ],
+    "ou_line_alias_priority": ["total_line", "over_under_line", "OUCh", "closing_total_line"],
+    "devig_method": "normalize inverse decimal odds",
+    "missing_rule": "market models train/evaluate only complete market6 rows; no market imputation"
+  },
+  "model_contract": {
+    "core_feature_count": 47,
+    "binary_estimator": "SimpleImputer(median,keep_empty_features=True)+StandardScaler+LogisticRegression",
+    "fixed_C": 0.1,
+    "solver": "lbfgs",
+    "max_iter": 350,
+    "tolerance": 0.0001,
+    "class_weight": null,
+    "hyperparameter_search": false,
+    "threshold_search": false,
+    "families": {
+      "parent_multinomial_p0": "exact existing conditional P(GD=0|T,X), fitted by parent train/policy contract",
+      "core47_binary_full": "binary GD0 head fitted on all chronological pre-test rows for the same T",
+      "core47_binary_marketmatched": "same binary core47 head fitted only on market6-complete pre-test rows",
+      "market6_binary": "binary GD0 head from fixed market6 only on market6-complete pre-test rows",
+      "core47_market6_binary": "binary GD0 head from core47+market6 on the same market6-complete pre-test rows"
+    },
+    "primary_incremental_comparison": "core47_market6_binary minus core47_binary_marketmatched",
+    "parent_objective_mismatch_comparison": "core47_binary_full minus parent_multinomial_p0"
+  },
+  "coverage_gate": {
+    "minimum_pooled_market_complete_even_t_test_rows": 2000,
+    "minimum_market_complete_test_rows_each_total": 150,
+    "minimum_market_complete_fit_rows_each_fold_total": 100,
+    "fit_row_threshold_rationale": "pre-run source-count feasibility guard: T=6 has only 1,027 rows in the full 26,873-row ledger, so 300 per early fold would mechanically preclude the diagnostic before observing any R5 outcome metric",
+    "stop_primary_increment_claim_if_failed": true
+  },
+  "reporting_contract": {
+    "cluster_columns": ["fold", "competition_id", "season"],
+    "bootstrap_resamples": 5000,
+    "bootstrap_seed": 5202055,
+    "metrics": ["binary_logloss", "brier", "auc", "observed_rate", "mean_probability"],
+    "report_per_fold": true,
+    "report_per_total": true,
+    "report_market_coverage": true,
+    "report_raw_market_signal_auc": [
+      "market_p_draw_devig",
+      "negative_market_hda_home_away_abs_gap",
+      "negative_market_abs_ah_line",
+      "negative_market_ah_home_abs_from_half",
+      "market_ou_line",
+      "market_p_over_devig"
+    ],
+    "development_signal_gate": {
+      "minimum_logloss_gain_combined_vs_core_marketmatched": 0.003,
+      "cluster_bootstrap_logloss_p95_lt_zero": true,
+      "minimum_auc_gain_combined_vs_core_marketmatched": 0.01,
+      "brier_nonworse_combined_vs_core_marketmatched": true,
+      "minimum_per_total_logloss_wins": 2
+    },
+    "development_signal_is_scientific_pass": false
+  },
+  "governance": {
+    "research_only": true,
+    "retrospective_viewed_historical_labels": true,
+    "realized_total_conditioning_is_not_deployable_input": true,
+    "market_evidence_not_strict_pit": true,
+    "hda_probability_mutation": false,
+    "score_probability_mutation": false,
+    "forced_draw": false,
+    "scientific_pass_claim_allowed": false,
+    "confirmation_pass_claim_allowed": false,
+    "formal_promotion_allowed": false,
+    "formal_weight": 0,
+    "b01_b04_reused_as_confirmatory": false,
+    "b05_b07_labels_opened": false,
+    "future_oos_label_open_authorized": false,
+    "provider_requests": 0,
+    "paid_api_requests": 0,
+    "new_data_collection": false,
+    "formal_model_mutation": false,
+    "formal_data_mutation": false,
+    "formal_config_mutation": false,
+    "current_mutation": false,
+    "main_mutation": false
+  }
+}
