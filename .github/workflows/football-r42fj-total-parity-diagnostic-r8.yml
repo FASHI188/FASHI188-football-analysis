@@ -1,0 +1,94 @@
+name: Football R42F/J Total Parity Diagnostic R8
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/r42fj_total_parity_diagnostic_r8.json"
+      - "football-data/validation/evaluate_r42fj_total_parity_diagnostic_r8.py"
+      - "football-data/research/r42fj_total_parity_diagnostic_r8/**"
+      - ".github/workflows/football-r42fj-total-parity-diagnostic-r8.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-r42fj-total-parity-diagnostic-r8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile frozen R8 path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py \
+            football-data/validation/evaluate_direct_t_oracle_learnability_r1.py \
+            football-data/validation/evaluate_r42fj_total_parity_diagnostic_r8.py
+      - name: Rebuild exact audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Reproduce frozen 1,000-row exclusion cohort
+        run: python football-data/validation/evaluate_viewed_common_cohort_oracle_r1.py
+      - name: Run frozen R8 parity diagnostic
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/r42fj-total-parity-r8
+          python football-data/validation/evaluate_r42fj_total_parity_diagnostic_r8.py \
+            2>&1 | tee /tmp/r42fj-total-parity-r8/traceback.log
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42fj-total-parity-diagnostic-r8-failure-log
+          path: /tmp/r42fj-total-parity-r8/traceback.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify frozen R8 contract and boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/r42fj_total_parity_diagnostic_r8/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_R42FJ_TOTAL_PARITY_R8_COMPLETE_NO_PROMOTION'
+          assert x['source_contract']['observed_primary_rows']==1584
+          assert x['source_contract']['observed_primary_identity_sha256']=='0e7c57c5168280cd8b3264fe3c04d46d5caa51b6b6f4218aee84826bf7d7908c'
+          assert x['source_contract']['new_target_label_access']==0
+          assert x['source_contract']['b05_b07_labels_opened'] is False
+          assert x['feature_counts']=={'core47':47,'core_r42f65':65,'core_r42j65':65,'all83':83}
+          b=x['boundary']
+          assert b['scientific_pass_claim_allowed'] is False
+          assert b['confirmation_pass_claim_allowed'] is False
+          assert b['future_oos_label_open_authorized'] is False
+          assert b['b05_b07_labels_opened'] is False
+          assert b['formal_weight']==0 and b['main_mutation'] is False
+          print(json.dumps(x,ensure_ascii=False,indent=2))
+          PY
+      - name: Upload frozen R8 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r42fj-total-parity-diagnostic-r8
+          path: football-data/manifests/r42fj_total_parity_diagnostic_r8/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
