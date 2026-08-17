@@ -1,0 +1,43 @@
+name: Football fixture label schema audit R1
+
+on:
+  push:
+    branches: [research/fabulous-ou25-b01-input-audit-r1]
+    paths: ['.github/workflows/football-fixture-label-schema-audit-r1.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pyarrow==21.0.0
+      - name: Download pinned fixture source
+        run: |
+          mkdir -p /tmp/fab
+          curl -sS -L --fail --retry 3 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' \
+            -o /tmp/fab/fixtures.parquet
+          test "$(sha256sum /tmp/fab/fixtures.parquet | awk '{print $1}')" = '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7'
+      - name: Print schema only, no column values
+        run: |
+          python - <<'PY'
+          import json, pyarrow.parquet as pq
+          p=pq.ParquetFile('/tmp/fab/fixtures.parquet')
+          s=p.schema_arrow
+          out={'rows':p.metadata.num_rows,'row_groups':p.metadata.num_row_groups,'fields':[{'name':f.name,'type':str(f.type)} for f in s]}
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - name: Confirm no tracked mutation
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
