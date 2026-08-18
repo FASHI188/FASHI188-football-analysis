@@ -1,0 +1,53 @@
+name: Football C071-B Baseline Technical Audit
+on:
+  push:
+    branches: [research/c071b-opportunity-pt-development-20260818]
+    paths:
+      - football-data/research/audit_c071b_baseline_degeneracy.py
+      - .github/workflows/football-c071b-baseline-tech-audit.yml
+  pull_request:
+    paths:
+      - football-data/research/audit_c071b_baseline_degeneracy.py
+      - .github/workflows/football-c071b-baseline-tech-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+      - name: Download pinned source
+        run: |
+          mkdir -p "$RUNNER_TEMP/src"
+          REV=f0cbe86bee3f28cc4b803f735a5287968741c471
+          curl -L --fail --retry 5 -o "$RUNNER_TEMP/src/fixtures.parquet" "https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 -o "$RUNNER_TEMP/src/match_stats.parquet" "https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/src/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/src/match_stats.parquet" | sha256sum -c -
+      - name: Run post-view technical audit
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          PYTHONPATH=football-data/research python football-data/research/audit_c071b_baseline_degeneracy.py --fixtures "$RUNNER_TEMP/src/fixtures.parquet" --stats "$RUNNER_TEMP/src/match_stats.parquet" --out "$RUNNER_TEMP/out/summary.json"
+      - name: Enforce no confirmation read
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['status']=='C071B_BASELINE_TECH_AUDIT_COMPLETE'
+          assert s['confirmation_goal_rows_read']==0 and s['confirmation_scored'] is False
+          assert s['formal_weight']==0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c071b-baseline-tech-audit
+          retention-days: 30
+          path: ${{ runner.temp }}/out/summary.json
