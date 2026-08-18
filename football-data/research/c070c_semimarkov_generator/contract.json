@@ -1,0 +1,116 @@
+{
+  "schema_version": "C070C_SEMIMARKOV_GENERATOR_CONTRACT_V1",
+  "frozen_at": "2026-08-18T19:08:00+08:00",
+  "research_stage": "post_view_development_structural",
+  "authorization": "user_explicit_start_for_multi-method_C070_program",
+  "design_lineage": "Semi-Markov competing score-state generator was specified as the structural backbone before C070-A/B results. C070-C changes the learning task from direct Draw-label feature search to next-minute competing score-transition likelihood; failed C070-A/B features are not used.",
+  "formal_weight": 0,
+  "protected_samples_used": false,
+  "new_A_packages_opened": [],
+  "source_boundary": {
+    "packages": ["A01", "A02", "A03"],
+    "source_match_count": 1200,
+    "no_A04": true,
+    "no_protected": true
+  },
+  "changed_learning_task": {
+    "structural_target": "next_one_minute_score_transition_class",
+    "classes": ["NO_GOAL", "HOME_GOAL", "AWAY_GOAL"],
+    "training_population": "all regular matches inside each chronological train window",
+    "primary_structural_metric": "multinomial_log_loss_on_chronological_test_minute_rows",
+    "bootstrap_unit": "match",
+    "final_draw_metric_role": "secondary derived diagnostic from frozen transition engine; no calibration/tuning in C070-C"
+  },
+  "score_stream": {
+    "canonical_parser": "C069_R3_final_raw_event_lookback_2",
+    "required_full_audit": {"source_matches":1200,"regular_matches":1192,"mismatch_count":0,"only_fallback_match":2499781},
+    "minute_binning": {
+      "bins": 90,
+      "bin_width_minutes": 1.0,
+      "stoppage_mapping": "all canonical score events with event minute >=90 are mapped to bin 89 so 90-minute settlement includes second-half stoppage without using realized stoppage duration as prematch input",
+      "multi_score_bin_policy": "bins containing 2+ canonical score events are excluded from structural log-loss fitting/evaluation but all score events still update the following score state; count and rate must be reported"
+    }
+  },
+  "prematch_inputs": {
+    "PIT": "same C069 competition/team goal-rate construction; all matches on a UTC date are predicted before same-date update",
+    "static_per_match": ["lambda_home", "lambda_away"],
+    "no_current_match_events_at_kickoff": true
+  },
+  "state": {
+    "score_diff_definition": "home_goals_minus_away_goals at start of minute bin",
+    "score_diff_feature_clip": [-3, 3],
+    "simulation_score_diff_cap": [-10, 10],
+    "state_duration": "number of consecutive completed one-minute bins since the latest canonical score event; reset to 0 after any score event",
+    "simulation_horizon_bins": 90
+  },
+  "models": {
+    "family": "standardized_multinomial_logistic_regression",
+    "C": 0.1,
+    "class_weight": null,
+    "hyperparameter_search": false,
+    "threshold_tuning": false,
+    "markov_baseline_features": [
+      "log_lambda_home",
+      "log_lambda_away",
+      "minute_frac",
+      "minute_frac_sq",
+      "score_diff_clip",
+      "is_tied",
+      "home_ahead",
+      "away_ahead"
+    ],
+    "semimarkov_candidate_additions": [
+      "duration_frac",
+      "duration_frac_sq",
+      "duration_if_tied",
+      "duration_if_home_ahead",
+      "duration_if_away_ahead"
+    ]
+  },
+  "folds": {
+    "fold_1": {"train_end_exclusive":"2018-01-13","test_start_inclusive":"2018-01-13","test_end_exclusive":"2018-02-23"},
+    "fold_2": {"train_end_exclusive":"2018-02-23","test_start_inclusive":"2018-02-23","test_end_exclusive":"2018-04-08"},
+    "fold_3": {"train_end_exclusive":"2018-04-08","test_start_inclusive":"2018-04-08","test_end_exclusive":null}
+  },
+  "derived_draw_evaluation": {
+    "target": "draw_vs_one_goal_win_conditional",
+    "matched_test_rows": "exact C069-R3 maximum-cardinality matched pairs only",
+    "expected_pair_counts": {
+      "fold_1":{"train":75,"test":25},
+      "fold_2":{"train":127,"test":23},
+      "fold_3":{"train":169,"test":33}
+    },
+    "matching_calipers": {"q_draw_cond":0.05,"abs_ha_gap":0.08,"lambda_total":0.45},
+    "generator_probability": "dynamic-programming probability mass at final score_diff=0 divided by mass at score_diff in {0,-1,+1}",
+    "incumbent_C069_baseline": "standardized logistic C=0.1 on baseline_logit; reported as external diagnostic, not structural gate",
+    "no_posthoc_calibration": true
+  },
+  "metrics": {
+    "structural_primary": "candidate_minus_markov multinomial log loss",
+    "structural_secondary": ["home_goal_class_log_loss","away_goal_class_log_loss","no_goal_class_log_loss"],
+    "structural_bootstrap": {"unit":"match","reps":2000,"seed":7103,"ci":0.90},
+    "derived_draw_secondary": ["log_loss","brier","auc","within_pair_accuracy"],
+    "derived_draw_bootstrap": {"unit":"matched_pair","reps":2000,"seed":7003,"ci":0.90}
+  },
+  "development_signal_gate": {
+    "pooled_structural_delta_log_loss_lt_0": true,
+    "structural_match_bootstrap_90pct_upper_lt_0": true,
+    "structural_fold_wins_min": 2,
+    "derived_candidate_vs_markov_delta_log_loss_le_0": true,
+    "derived_candidate_vs_markov_pair_accuracy_delta_ge_0": true
+  },
+  "stop_lines": {
+    "technical_failure": "STOP_TECHNICAL_NO_EFFECT_CLAIM",
+    "gate_failure": "DEVELOPMENT_NEGATIVE_CLOSE_C070C_DURATION_REPRESENTATION",
+    "gate_pass": "STRUCTURAL_DEVELOPMENT_SIGNAL_ONLY; freeze separate C070-D calibration/integration contract before any probability calibration or stacking",
+    "forbidden_after_result": [
+      "change_1min_bins_on_same_results",
+      "change_duration_terms_on_same_results",
+      "change_C_or_class_weights",
+      "add_C070A_or_C070B_failed_features_posthoc",
+      "posthoc_probability_calibration_in_C070C",
+      "open_A04_without_separate_frozen_contract",
+      "use_protected_sample"
+    ]
+  }
+}
