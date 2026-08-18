@@ -1,0 +1,69 @@
+name: A Series SoccerNet Labels Download and Package
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/a_series/build_soccernet_a_series.py"
+      - ".github/workflows/a-series-soccernet.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install frozen SoccerNet SDK
+        run: pip install SoccerNet==0.1.62
+
+      - name: Download public SoccerNet-v2 labels only
+        run: |
+          mkdir -p /tmp/soccernet
+          python - <<'PY'
+          from SoccerNet.Downloader import SoccerNetDownloader
+          d = SoccerNetDownloader(LocalDirectory='/tmp/soccernet')
+          d.downloadGames(files=['Labels-v2.json'], split=['train','valid','test'])
+          PY
+
+      - name: Package as A06 onward
+        run: |
+          mkdir -p /tmp/a-series-soccernet
+          python football-data/research/a_series/build_soccernet_a_series.py \
+            --source /tmp/soccernet \
+            --output /tmp/a-series-soccernet \
+            | tee /tmp/a-series-soccernet/stdout.log
+
+      - name: Verify A-series research boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/a-series-soccernet/A_SERIES_SOCCERNET_INDEX.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['series']=='A'
+          assert x['semantics']=='RESEARCH_DEVELOPMENT_ONLY_NOT_PROTECTED'
+          assert x['package_size_standard']==400
+          assert x['total_games']>=400
+          assert x['packages'][0]['id']=='A06'
+          assert x['packages'][0]['matches']==400
+          print(json.dumps({'total_games':x['total_games'],'packages':[(r['id'],r['matches']) for r in x['packages']]},ensure_ascii=False))
+          PY
+
+      - name: Upload A-series SoccerNet packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-series-soccernet-${{ github.sha }}
+          path: /tmp/a-series-soccernet/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
