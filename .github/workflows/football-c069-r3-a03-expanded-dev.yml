@@ -48,6 +48,8 @@ jobs:
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/contract.json >/dev/null
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json >/dev/null
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json >/dev/null
+          python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_03.json >/dev/null
+          python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_04.json >/dev/null
 
       - name: Download exact public Wyscout source archives
         run: |
@@ -106,10 +108,10 @@ jobs:
         run: |
           cp football-data/research/c069_r3_a03_expanded_dev/contract.json \
             football-data/manifests/c069_r3_a03_expanded_dev/contract.json
-          cp football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json \
-            football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json
-          cp football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json \
-            football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json
+          for n in 01 02 03 04; do
+            cp "football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_${n}.json" \
+              "football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_${n}.json"
+          done
           python football-data/validation/run_c069_r3_a03_expanded_dev.py \
             --a01 /tmp/c069r3/A01.zip \
             --a02 /tmp/c069r3/A02.zip \
@@ -117,67 +119,110 @@ jobs:
             --matches-zip /tmp/c069r3/matches.zip \
             --out football-data/manifests/c069_r3_a03_expanded_dev/summary.json
 
-      - name: Verify frozen boundaries and result schema
+      - name: Verify frozen boundaries and final evidence closure
         run: |
           python - <<'PY'
-          import json
+          import json, math
           from pathlib import Path
           root=Path('football-data/manifests/c069_r3_a03_expanded_dev')
           c=json.loads((root/'contract.json').read_text())
-          i1=json.loads((root/'IMPLEMENTATION_CORRECTION_01.json').read_text())
-          i2=json.loads((root/'IMPLEMENTATION_CORRECTION_02.json').read_text())
+          i=[json.loads((root/f'IMPLEMENTATION_CORRECTION_{n:02d}.json').read_text()) for n in range(1,5)]
           b=json.loads((root/'a03_build.json').read_text())
           audit=json.loads((root/'goal_parser_audit.json').read_text())
           x=json.loads((root/'summary.json').read_text())
+
           assert c['schema_version']=='C069_R3_A03_EXPANDED_DEV_CONTRACT_V1'
           assert c['source_boundary']['A03']['one_based_ranks']==[801,1200]
           assert c['matching']['calipers']=={'q_draw_cond':0.05,'abs_ha_gap':0.08,'lambda_total':0.45}
           assert c['coverage_gates']['minimum_train_pairs_each_fold']==30
           assert c['coverage_gates']['minimum_test_pairs_each_fold']==15
-          assert i1['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
-          assert i2['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
-          assert i2['research_recipe_changed'] is False
-          assert i2['sample_identity_changed'] is False
-          assert i2['correction']['dedup_window_seconds']==10
+          for correction in i:
+              assert correction['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
+              assert correction['research_recipe_changed'] is False
+              assert correction['sample_identity_changed'] is False
+              assert correction['formal_weight']==0
+          final_correction=i[3]
+          assert final_correction['correction']['raw_event_lookback']==2
+          assert final_correction['correction']['time_window_used_for_dedup'] is False
+
+          assert audit['schema_version']=='C069_R3_GOAL_PARSER_AUDIT_V3'
           assert audit['status']=='PASS'
           assert audit['source_matches']==1200
+          assert audit['regular_matches']==1192
+          assert audit['skipped_nonregular_matches']==8
           assert audit['mismatch_count']==0
+          assert audit['fallback_matches']==[{'match_id':2499781,'package':'A03','markers':1}]
+
           assert b['status']=='A03_RUNTIME_REBUILT'
           assert b['matches']==400
           assert b['global_rank_one_based']==[801,1200]
+          assert b['ids_sha256']=='cb6d8f7e2c6292e46733fe1feff28945f4b2d9baa962f79c729ea7207aa0f51c'
+
           assert x['schema_version']=='C069_MATCHED_PAIR_DRAW_STATE_R3_A03'
+          assert x['status']=='POSTVIEW_A03_DEVELOPMENT_COMPLETE'
+          assert x['verdict']=='A03_MATCHED_PAIR_STATE_DYNAMICS_STABLE_INCREMENT_NOT_ESTABLISHED'
+          assert x['coverage_failures']==[]
           assert x['source']['packages']==['A01','A02','A03']
           assert x['source']['source_matches']==1200
+          assert x['source']['regular_matches']==1192
+          assert x['source']['eligible_rows']==567
+          assert x['source']['eligible_draws']==230
+          assert x['source']['eligible_onegoal_wins']==337
           assert x['source']['a03_ids_sha256_ordered']==b['ids_sha256']
+
+          expected_dates={
+            'fold_1':('2018-01-13','2018-01-13','2018-02-23'),
+            'fold_2':('2018-02-23','2018-02-23','2018-04-08'),
+            'fold_3':('2018-04-08','2018-04-08',None),
+          }
+          expected_pairs={
+            'fold_1':(75,25),
+            'fold_2':(127,23),
+            'fold_3':(169,33),
+          }
+          for name,fold in x['folds'].items():
+              assert (fold['train_date_max_exclusive'],fold['test_date_min_inclusive'],fold['test_date_max_exclusive'])==expected_dates[name]
+              assert (fold['train_pairs'],fold['test_pairs'])==expected_pairs[name]
+              assert fold['train_pairs']==fold['train_maximum_cardinality_certificate']
+              assert fold['test_pairs']==fold['test_maximum_cardinality_certificate']
+              assert fold['frozen_gate']['fold_pass'] is True
+              assert fold['status']=='EVALUATED'
+
           assert x['boundary']['protected_samples_used'] is False
           assert x['boundary']['new_A_packages_opened']==['A03']
           assert x['boundary']['formal_weight']==0
           assert x['boundary']['scientific_pass'] is False
           assert x['boundary']['confirmation_pass'] is False
           assert x['boundary']['formal_promotion_allowed'] is False
-          expected_dates={
-            'fold_1':('2018-01-13','2018-01-13','2018-02-23'),
-            'fold_2':('2018-02-23','2018-02-23','2018-04-08'),
-            'fold_3':('2018-04-08','2018-04-08',None),
-          }
-          for name,fold in x['folds'].items():
-              assert (fold['train_date_max_exclusive'],fold['test_date_min_inclusive'],fold['test_date_max_exclusive'])==expected_dates[name]
-              assert fold['train_pairs']==fold['train_maximum_cardinality_certificate']
-              assert fold['test_pairs']==fold['test_maximum_cardinality_certificate']
-          if x['status']=='STOP_COVERAGE':
-              assert x['coverage_failures']
-              assert x['boundary']['model_fitting_performed'] is False
-              assert x['boundary']['model_scoring_performed'] is False
-              assert 'pooled' not in x
-          else:
-              assert x['status']=='POSTVIEW_A03_DEVELOPMENT_COMPLETE'
-              assert x['coverage_failures']==[]
-              assert x['boundary']['model_fitting_performed'] is True
-              assert x['boundary']['model_scoring_performed'] is True
-              assert x['pooled']['test_pairs']>=45
-              assert x['pooled']['bootstrap_logloss_delta']['reps']==2000
-              assert x['pooled']['bootstrap_logloss_delta']['seed']==6901
-          print(json.dumps({'audit':{'fallback_match_count':audit['fallback_match_count'],'mismatch_count':audit['mismatch_count']},'status':x['status'],'verdict':x['verdict'],'source':x['source'],'folds':{k:{'train_pairs':v['train_pairs'],'test_pairs':v['test_pairs']} for k,v in x['folds'].items()},'pooled':x.get('pooled')},indent=2))
+          assert x['boundary']['model_fitting_performed'] is True
+          assert x['boundary']['model_scoring_performed'] is True
+
+          p=x['pooled']
+          assert p['test_pairs']==81
+          assert p['test_rows']==162
+          assert p['fold_logloss_wins']==1
+          assert p['development_signal'] is False
+          assert p['bootstrap_logloss_delta']['reps']==2000
+          assert p['bootstrap_logloss_delta']['seed']==6901
+          assert math.isclose(p['delta_candidate_minus_baseline']['log_loss'],0.002416931707100445,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(p['delta_candidate_minus_baseline']['brier'],0.0011928465616311557,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(p['bootstrap_logloss_delta']['ci90_low'],-0.004716131839714146,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(p['bootstrap_logloss_delta']['ci90_high'],0.00965855162609248,rel_tol=0,abs_tol=1e-12)
+
+          print(json.dumps({
+            'audit':{'fallback_matches':audit['fallback_matches'],'mismatch_count':audit['mismatch_count']},
+            'status':x['status'],'verdict':x['verdict'],
+            'folds':{k:{'train_pairs':v['train_pairs'],'test_pairs':v['test_pairs'],'dlogloss':v['delta_candidate_minus_baseline']['log_loss']} for k,v in x['folds'].items()},
+            'pooled':{
+              'test_pairs':p['test_pairs'],
+              'dlogloss':p['delta_candidate_minus_baseline']['log_loss'],
+              'dbrier':p['delta_candidate_minus_baseline']['brier'],
+              'pair_accuracy_delta':p['delta_candidate_minus_baseline']['pair_accuracy'],
+              'fold_logloss_wins':p['fold_logloss_wins'],
+              'bootstrap_ci90':[p['bootstrap_logloss_delta']['ci90_low'],p['bootstrap_logloss_delta']['ci90_high']],
+              'development_signal':p['development_signal']
+            }
+          },indent=2))
           PY
 
       - name: Upload C069 R3 A03 evidence
