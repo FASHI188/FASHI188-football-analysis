@@ -29,6 +29,69 @@ def _score_event(event: dict) -> bool:
     return 101 in tags and event.get("eventName") in {"Shot", "Free Kick"}
 
 
+def _greedy_pairs(frame, prefix: str, calipers: dict[str, float]):
+    """Exact copy of the frozen pairing rule with safe Series field access."""
+    draws = frame[frame["target"] == "D"].sort_values(["dt", "match_id"])
+    wins = frame[frame["target"] == "OW"].copy()
+    available = set(wins.index.tolist())
+    out = []
+    for draw_index, draw in draws.iterrows():
+        candidates = []
+        for win_index in list(available):
+            win = wins.loc[win_index]
+            if int(win["cid"]) != int(draw["cid"]):
+                continue
+            diffs = {key: abs(float(draw[key]) - float(win[key])) for key in calipers}
+            if any(diffs[key] > calipers[key] for key in calipers):
+                continue
+            distance = sum((diffs[key] / calipers[key]) ** 2 for key in calipers)
+            candidates.append(
+                (
+                    distance,
+                    abs((draw["dt"] - win["dt"]).total_seconds()),
+                    int(win["match_id"]),
+                    win_index,
+                )
+            )
+        if not candidates:
+            continue
+        _, _, _, win_index = min(candidates)
+        available.remove(win_index)
+        pair_id = f"{prefix}-{len(out)+1:04d}"
+        out.append((pair_id, draw_index, win_index))
+    if not out:
+        return frame.iloc[0:0].copy(), []
+
+    rows = []
+    pair_meta = []
+    for pair_id, draw_index, win_index in out:
+        draw = frame.loc[draw_index]
+        win = frame.loc[win_index]
+        for role, row in (("D", draw), ("OW", win)):
+            item = row.to_dict()
+            item["pair_id"] = pair_id
+            item["pair_role"] = role
+            rows.append(item)
+        pair_meta.append(
+            {
+                "pair_id": pair_id,
+                "draw_match_id": int(draw["match_id"]),
+                "onegoal_match_id": int(win["match_id"]),
+                "competition_id": int(draw["cid"]),
+                "distance": float(
+                    sum(
+                        ((float(draw[key]) - float(win[key])) / calipers[key]) ** 2
+                        for key in calipers
+                    )
+                ),
+                "abs_q_draw_cond_diff": abs(float(draw["q_draw_cond"]) - float(win["q_draw_cond"])),
+                "abs_ha_gap_diff": abs(float(draw["abs_ha_gap"]) - float(win["abs_ha_gap"])),
+                "abs_lambda_total_diff": abs(float(draw["lambda_total"]) - float(win["lambda_total"])),
+            }
+        )
+    return frame.__class__(rows), pair_meta
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--a01", required=True)
@@ -38,6 +101,8 @@ def main() -> None:
 
     evaluator = _load_evaluator()
     evaluator._is_goal = _score_event
+    frozen_calipers = dict(evaluator.MATCH_CALIPERS)
+    evaluator._greedy_pairs = lambda frame, prefix: _greedy_pairs(frame, prefix, frozen_calipers)
     evaluator.run(Path(args.a01), Path(args.a02), Path(args.out))
 
 
