@@ -1,70 +1,79 @@
-# 足球项目稳定接续规则
+# 足球项目稳定治理规则
 
 > CONTROL_MARKER: AIRTABLE_CURRENT_STATE_ONLY
 > FORMAL_MARKER: FORMAL_CURRENT_WHEN_REQUIRED
+> AUTH_MARKER: CURRENT_USER_COMMAND_REQUIRED
+> MIRROR_MARKER: NO_DYNAMIC_STATE_MIRRORS
 
-本文件只定义长期稳定的接续边界，不保存任何动态 Rxx、PR、HEAD、run、Artifact、state_version 或“唯一下一步”。
+本文件只定义长期稳定的治理边界，不保存任何动态 Rxx、PR、HEAD、run、Artifact、state_version 或“唯一下一步”。
 
-## 1. 唯一实时状态入口
+## 1. 权威链
 
-新对话、刷新、断线恢复时，动态施工状态只读取 Airtable《当前状态》唯一激活记录。
+项目运行时按以下顺序判定：
 
-- 《当前状态》决定当前阶段、是否正在执行、阻塞、允许事项、禁止事项和下一步。
-- Airtable《维护日志》只用于历史取证，不得恢复任务或授予执行权限。
-- 旧《执行检查点》《会话接力》《唯一接续指针》《治理规则注册表》以及 GitHub 的旧状态镜像全部是 HISTORY ONLY。
-- `PROJECT_CURRENT.md`、`LAST_HANDOFF.md`、`ACTIVE_CHECKPOINT.md` 不再参与启动、恢复、授权或任务选择。
+1. 用户当前明确指令：决定本回合是否允许产生副作用以及允许范围。
+2. Airtable《当前状态》唯一激活记录：唯一动态施工状态源。
+3. GitHub 实际 branch / HEAD / PR / run / Artifact：只用于核验已经发生的仓库事实。
+4. 唯一正式 `CURRENT_唯一正式规则`：只在正式模型、训练、评分、预测、晋级、正式概率/比分/EV、formal_weight 或科学硬规则判断时读取。
+5. Airtable《维护日志》、Git 历史、历史 PR/文档/聊天：只作历史证据，不决定当前任务或授权。
 
-若《当前状态》不可读或不存在唯一激活记录：只能做不依赖项目动态状态的一般解释；不得猜当前施工位置，不得产生项目副作用。
+任一层发生冲突时，停止猜测并核验更高权威层。
 
-## 2. 用户授权边界
+## 2. 唯一动态状态源
 
-恢复上下文不等于执行授权。
+动态施工状态只读 Airtable《当前状态》唯一激活记录。
 
-- 用户明确说“开始/执行/去做/处理”等，才按当前指令范围产生对应副作用。
-- “到哪了/下面干啥/能不能/怎么看”只允许回答、分析或只读核验。
-- 当《当前状态》为 STOPPED / WAITING_USER / IDLE 时，普通“继续”不得发明新 Rxx、重启旧实验、打开新标签、创建新研究任务或恢复历史日志中的下一步。
-- 历史日志、旧 PR、旧聊天、旧 handoff、旧 checkpoint 中的授权均不能跨时点继承为当前授权。
+- 不在 GitHub、聊天、Issue、文件或其他 Airtable 表创建第二份动态 current state。
+- 不创建或恢复 checkpoint / handoff / pointer / mirror / state registry 作为实时接续链。
+- 根目录禁止重新引入旧 `ACTIVE_CHECKPOINT.md`、`PROJECT_CURRENT.md`、`LAST_HANDOFF.md`、`CHATGPT_PROJECT_START_HERE.txt` 或 `HISTORY_ONLY_INDEX.md`。
+- 旧《执行检查点》《会话接力》《唯一接续指针》《治理规则注册表》仅为历史证据。
 
-## 3. 正式 CURRENT 门
+若 Airtable《当前状态》不可读或不存在唯一激活记录，不得猜当前施工位置，也不得产生依赖项目动态状态的副作用。
 
-涉及正式预测、模型研究、训练、评分、晋级、正式概率/比分/EV、正式模型/权重/config 或 CURRENT 修改时，除《当前状态》外，还必须完整读取 File Library / 项目来源中唯一名称含 `CURRENT_唯一正式规则` 的正式规则。
+## 3. 授权边界
+
+讨论不等于执行。
+
+- “看看 / 怎么办 / 能不能 / 下面干啥 / 怎么整 / 到哪了”只允许分析、回答和只读核验。
+- 只有用户当前明确说“开始 / 执行 / 去做 / 处理 / 修好 / 合并 / 删除”等对应动作，才在该指令范围内产生副作用。
+- 历史聊天、日志、旧 PR、旧任务中的授权不得自动跨时点继承。
+- 新研究、打开新标签/数据包、修改正式资产、PR Ready/merge 等仍需当前明确授权。
+
+## 4. 正式 CURRENT 门
+
+普通治理、仓库维护、状态查询和历史取证不需要读取正式 CURRENT。
+
+涉及正式模型、训练、评分、预测、晋级、正式概率/比分/EV、formal_weight、正式 config 或科学硬规则时，必须读取项目作用域内唯一 `CURRENT_唯一正式规则`。
 
 - 数量不等于 1：停止。
 - 无法完整读取：停止。
-- GitHub 历史文档、研究 PR、Airtable 日志和聊天记忆都不能替代正式 CURRENT。
+- 不得用 GitHub 历史文件、Airtable 日志或聊天记忆替代正式 CURRENT。
+- 不得为了找 CURRENT 扩大到不相关项目或全局旧文件范围。
 
-普通状态查询、历史证据查询和纯治理工作不需要读取 CURRENT。
+## 5. GitHub 的职责
 
-## 4. GitHub 的角色
+GitHub 只承担：代码、数据/研究资产、CI/workflow、审计证据和可复现事实。
 
-GitHub 保存代码、研究资产、审计证据和历史治理文件，但不再保存第二份动态“当前状态”。
+GitHub 不承担：动态任务选择、实时接续状态、用户授权镜像或第二份 CURRENT。
 
-需要核验具体仓库事实时，按当前任务精确读取 branch / HEAD / PR / run / Artifact；GitHub 事实可以证明“发生了什么”，但不能单独决定“现在该执行什么”。
+核验仓库事实时优先精确读取 branch / HEAD / PR / run / Artifact / path；不要为窄问题默认扫描整仓库、全部 PR 或全部 Actions 历史。
 
-根目录仍保留的旧审计/治理文档统一受 `HISTORY_ONLY_INDEX.md` 约束；被列入该索引的计划、建议、handoff 和 next step 全部只作历史证据，不具当前执行权。
-
-## 5. 历史检索
-
-用户问某个 Rxx、PR、run、Artifact 或旧结论时：
-
-1. 优先按 Rxx/关键词精确查 Airtable《维护日志》；
-2. 再按日志中的精确 GitHub 锚点核验证据；
-3. 不为回答单个历史问题默认扫描全部聊天、全部日志、全部 PR 或整个仓库。
-
-找不到就明确说找不到，不得补猜编号或进度。
+历史治理计划如果已从工作树删除，需要追溯时使用 Git 历史或 Airtable《维护日志》，不要恢复成根目录活动文件。
 
 ## 6. 写操作安全
 
-产生 GitHub/Airtable 等副作用前：
+产生 GitHub/Airtable/Provider 等副作用前：
 
-- 确认用户当前指令明确覆盖该动作；
-- 精确核验目标对象当前状态；
-- 优先使用可幂等、可核验的最小写入；
-- 写后立即回读真实结果；
-- 调用超时或结果不明时先查副作用是否已发生，禁止盲目重复。
+1. 确认用户当前指令明确覆盖该动作；
+2. 精确核验目标对象当前状态；
+3. 使用尽可能小、可幂等、可核验的写入；
+4. 写后立即回读真实结果；
+5. 调用超时或结果不明时先核验副作用是否已发生，禁止盲目重复。
 
-重要项目状态真正改变时，更新 Airtable《当前状态》并追加一条《维护日志》。不再创建或维护 checkpoint / handoff / pointer 镜像链。
+只有重要项目状态真实变化时，才更新 Airtable《当前状态》并追加一条《维护日志》。不得为“防忘记”制造新的动态镜像层。
 
-## 7. 事实表述
+## 7. 科学与工程隔离
 
-PR/HEAD、Actions/run/job、Artifact/SHA、训练/评分、标签访问、Provider/Secret、Ready/merge、模型效果等必须区分真实核验、转述和推断。Workflow success 不等于科学 PASS，历史事实不等于当前授权。
+纯治理 PR 不得顺手修改模型概率、formal_weight、训练样本、标签、Provider 预算、正式 config、CURRENT 或科学结论。
+
+Actions success 只代表工程执行成功，不等于科学 PASS。科学状态必须按正式 CURRENT 的门槛单独裁决。
