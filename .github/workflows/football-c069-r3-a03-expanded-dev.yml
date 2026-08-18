@@ -6,6 +6,7 @@ on:
       - 'football-data/research/c069_r3_a03_expanded_dev/**'
       - 'football-data/validation/build_c069_a03_runtime.py'
       - 'football-data/validation/diagnose_c069_r3_goal_encoding.py'
+      - 'football-data/validation/audit_c069_r3_goal_parser.py'
       - 'football-data/validation/evaluate_c069_r3_a03_expanded_dev.py'
       - 'football-data/validation/run_c069_r3_a03_expanded_dev.py'
       - '.github/workflows/football-c069-r3-a03-expanded-dev.yml'
@@ -38,6 +39,7 @@ jobs:
             football-data/validation/build_c068_a02_runtime.py \
             football-data/validation/build_c069_a03_runtime.py \
             football-data/validation/diagnose_c069_r3_goal_encoding.py \
+            football-data/validation/audit_c069_r3_goal_parser.py \
             football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
             football-data/validation/run_c069_matched_pair_draw_state_r1.py \
             football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
@@ -45,6 +47,7 @@ jobs:
             football-data/validation/run_c069_r3_a03_expanded_dev.py
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/contract.json >/dev/null
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json >/dev/null
+          python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json >/dev/null
 
       - name: Download exact public Wyscout source archives
         run: |
@@ -91,23 +94,22 @@ jobs:
             --events-zip /tmp/c069r3/events.zip \
             --out /tmp/c069r3/A03.zip | tee football-data/manifests/c069_r3_a03_expanded_dev/a03_build.json
 
-      - name: Diagnose score-tag encodings for known technical failures
+      - name: Audit canonical score parser across all 1200 selected matches
         run: |
-          for mid in 2499781 1694414; do
-            echo "===== C069 GOAL DIAGNOSTIC match=$mid ====="
-            python football-data/validation/diagnose_c069_r3_goal_encoding.py \
-              --package /tmp/c069r3/A01.zip \
-              --package /tmp/c069r3/A02.zip \
-              --package /tmp/c069r3/A03.zip \
-              --match-id "$mid"
-          done
+          python football-data/validation/audit_c069_r3_goal_parser.py \
+            --package /tmp/c069r3/A01.zip \
+            --package /tmp/c069r3/A02.zip \
+            --package /tmp/c069r3/A03.zip \
+            --out football-data/manifests/c069_r3_a03_expanded_dev/goal_parser_audit.json
 
-      - name: Run frozen C069 R3 A03 evaluation with technical parser correction
+      - name: Run frozen C069 R3 A03 evaluation with technical parser corrections
         run: |
           cp football-data/research/c069_r3_a03_expanded_dev/contract.json \
             football-data/manifests/c069_r3_a03_expanded_dev/contract.json
           cp football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json \
             football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json
+          cp football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json \
+            football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_02.json
           python football-data/validation/run_c069_r3_a03_expanded_dev.py \
             --a01 /tmp/c069r3/A01.zip \
             --a02 /tmp/c069r3/A02.zip \
@@ -120,19 +122,26 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          c=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/contract.json').read_text())
-          i=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json').read_text())
-          b=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/a03_build.json').read_text())
-          x=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/summary.json').read_text())
+          root=Path('football-data/manifests/c069_r3_a03_expanded_dev')
+          c=json.loads((root/'contract.json').read_text())
+          i1=json.loads((root/'IMPLEMENTATION_CORRECTION_01.json').read_text())
+          i2=json.loads((root/'IMPLEMENTATION_CORRECTION_02.json').read_text())
+          b=json.loads((root/'a03_build.json').read_text())
+          audit=json.loads((root/'goal_parser_audit.json').read_text())
+          x=json.loads((root/'summary.json').read_text())
           assert c['schema_version']=='C069_R3_A03_EXPANDED_DEV_CONTRACT_V1'
           assert c['source_boundary']['A03']['one_based_ranks']==[801,1200]
           assert c['matching']['calipers']=={'q_draw_cond':0.05,'abs_ha_gap':0.08,'lambda_total':0.45}
           assert c['coverage_gates']['minimum_train_pairs_each_fold']==30
           assert c['coverage_gates']['minimum_test_pairs_each_fold']==15
-          assert i['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
-          assert i['research_recipe_changed'] is False
-          assert i['sample_identity_changed'] is False
-          assert i['correction']['dedup_window_seconds']==10
+          assert i1['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
+          assert i2['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
+          assert i2['research_recipe_changed'] is False
+          assert i2['sample_identity_changed'] is False
+          assert i2['correction']['dedup_window_seconds']==10
+          assert audit['status']=='PASS'
+          assert audit['source_matches']==1200
+          assert audit['mismatch_count']==0
           assert b['status']=='A03_RUNTIME_REBUILT'
           assert b['matches']==400
           assert b['global_rank_one_based']==[801,1200]
@@ -168,7 +177,7 @@ jobs:
               assert x['pooled']['test_pairs']>=45
               assert x['pooled']['bootstrap_logloss_delta']['reps']==2000
               assert x['pooled']['bootstrap_logloss_delta']['seed']==6901
-          print(json.dumps({'status':x['status'],'verdict':x['verdict'],'source':x['source'],'folds':{k:{'train_pairs':v['train_pairs'],'test_pairs':v['test_pairs']} for k,v in x['folds'].items()},'pooled':x.get('pooled')},indent=2))
+          print(json.dumps({'audit':{'fallback_match_count':audit['fallback_match_count'],'mismatch_count':audit['mismatch_count']},'status':x['status'],'verdict':x['verdict'],'source':x['source'],'folds':{k:{'train_pairs':v['train_pairs'],'test_pairs':v['test_pairs']} for k,v in x['folds'].items()},'pooled':x.get('pooled')},indent=2))
           PY
 
       - name: Upload C069 R3 A03 evidence
