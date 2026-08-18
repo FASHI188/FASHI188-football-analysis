@@ -1,0 +1,87 @@
+{
+  "schema_version": "C072B_SHOTQUALITY_PT_DEVELOPMENT_V1",
+  "frozen_before_execution": true,
+  "authorization": "2026-08-18 user: continue; STATE96 permits retrospective new-information development without opening sealed confirmations",
+  "scientific_status": "RETROSPECTIVE_CHRONOLOGICAL_OOS_DEVELOPMENT_ONLY",
+  "source": {
+    "repository": "hudl/open-data",
+    "commit_sha": "b0bc9f22dd77c206ddedc1d742893b3bbe64baec",
+    "source_parent_gate": "C072_STATSBOMB_SHOTQUALITY_SOURCE_GATE_PASS",
+    "source_parent_artifact": 9331600325
+  },
+  "estimand": "full-time total goals T in classes [0,1,2,3,4,5,6,7+]",
+  "population": {
+    "competition_gender": "male",
+    "event_file_required": true,
+    "minimum_prior_event_matches_each_team": 8,
+    "same_calendar_date_update": false,
+    "development_target_window": ["2015-12-01", "2016-06-01"],
+    "historical_feature_window": "all pinned male event-covered matches strictly before target date"
+  },
+  "oos_folds": {
+    "fold_1": ["2015-12-01", "2016-02-01"],
+    "fold_2": ["2016-02-01", "2016-03-15"],
+    "fold_3": ["2016-03-15", "2016-06-01"]
+  },
+  "minimum_rows": {"train_each_fold": 350, "test_each_fold": 250},
+  "baseline_score_history_features": [
+    "competition_total_mean", "competition_total_sd",
+    "home_goals_for_mean", "home_goals_for_sd", "home_goals_against_mean", "home_goals_against_sd",
+    "away_goals_for_mean", "away_goals_for_sd", "away_goals_against_mean", "away_goals_against_sd",
+    "log1p_home_result_history_n", "log1p_away_result_history_n"
+  ],
+  "xg_volume_features_per_team": [
+    "shots_for_per_match_mean", "shots_against_per_match_mean",
+    "xg_for_per_match_mean", "xg_for_per_match_sd",
+    "xg_against_per_match_mean", "xg_against_per_match_sd"
+  ],
+  "shot_quality_distribution_features_per_team": [
+    "xg_per_shot_for_mean", "xg_per_shot_for_sd", "xg_per_shot_for_q25", "xg_per_shot_for_q50", "xg_per_shot_for_q75",
+    "xg_per_shot_against_mean", "xg_per_shot_against_sd", "xg_per_shot_against_q25", "xg_per_shot_against_q50", "xg_per_shot_against_q75",
+    "big_chance_for_share", "big_chance_against_share", "low_quality_for_share", "low_quality_against_share",
+    "open_play_xg_for_share", "open_play_xg_against_share", "set_piece_xg_for_share", "set_piece_xg_against_share"
+  ],
+  "definitions": {
+    "big_chance": "shot.statsbomb_xg >= 0.30",
+    "low_quality_shot": "shot.statsbomb_xg <= 0.05",
+    "open_play": "shot.type.name == Open Play",
+    "set_piece": "shot.type.name in [Free Kick, Corner]",
+    "penalties": "retained in overall xG distributions; not counted as set_piece",
+    "against_features": "opponent shot/xG values from historical matches",
+    "quantiles": "quantiles over all strictly prior team shots, not target-match shots"
+  },
+  "models": {
+    "family": "SimpleImputer(median) + StandardScaler + multinomial LogisticRegression",
+    "C": 0.1,
+    "max_iter": 3000,
+    "class_weight": null,
+    "random_state": 0,
+    "baseline": "score history only",
+    "xg_volume_diagnostic": "baseline + xG volume features",
+    "shot_quality_primary": "baseline + xG volume + shot-quality distribution features",
+    "hyperparameter_search": false,
+    "feature_search": false
+  },
+  "metrics": {
+    "primary": "multinomial LogLoss shot_quality_primary minus baseline",
+    "secondary": ["RPS", "multiclass Brier", "AUC(T>=4)", "AUC(T>=5)"],
+    "quality_increment_diagnostic": "shot_quality_primary minus xg_volume_diagnostic LogLoss"
+  },
+  "bootstrap": {"unit":"match", "reps":5000, "seed":72002, "ci":0.90},
+  "development_signal_gate": [
+    "pooled shot_quality_minus_baseline LogLoss < 0",
+    "bootstrap90 upper bound < 0",
+    "at least 2 of 3 folds improve LogLoss",
+    "pooled RPS delta <= 0"
+  ],
+  "boundaries": {
+    "retrospective_only": true,
+    "fresh_confirmation_claim_allowed": false,
+    "formal_weight": 0,
+    "C071_confirmation72180_opened": false,
+    "C070F_confirmation1597_opened": false,
+    "A05_opened": false,
+    "protected_opened": false,
+    "no_existing_sealed_confirmation_may_be_used_for_C072B": true
+  }
+}
