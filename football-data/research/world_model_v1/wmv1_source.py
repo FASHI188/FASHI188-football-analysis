@@ -5,12 +5,17 @@ from concurrent.futures import ThreadPoolExecutor,as_completed
 from dataclasses import dataclass
 from typing import Any
 import numpy as np
-MATCHES_URL="https://raw.githubusercontent.com/hudl/open-data/master/data/matches/9/27.json"
+MATCH_URLS=(
+    "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/37/4.json",
+    "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/37/42.json",
+    "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/37/90.json",
+    "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/37/281.json",
+)
 EVENT_URL="https://raw.githubusercontent.com/hudl/open-data/master/data/events/{match_id}.json"
 LINEUP_URL="https://raw.githubusercontent.com/hudl/open-data/master/data/lineups/{match_id}.json"
 USER_AGENT="FASHI188-football-analysis/world-model-v1"
-EXPECTED_MATCHES=306
-MIN_USABLE_MATCHES=290
+EXPECTED_MATCHES=320
+MIN_USABLE_MATCHES=320
 MIN_EVENT_SUCCESS_RATE=0.98
 MIN_LINEUP_SUCCESS_RATE=0.98
 BASE_WINDOW=12
@@ -127,14 +132,22 @@ def _head_ok(url: str) -> bool:
         return False
 
 def load_matches() -> tuple[list[MatchMeta], str]:
-    payload, sha = _download_json(MATCHES_URL)
-    if not isinstance(payload, list):
-        raise RuntimeError('match payload is not a list')
-    matches: list[MatchMeta] = []
-    for item in payload:
-        matches.append(MatchMeta(match_id=int(item['match_id']), match_date=str(item['match_date']), kick_off=str(item.get('kick_off') or ''), home=str(item['home_team']['home_team_name']), away=str(item['away_team']['away_team_name'])))
+    matches_by_id: dict[int, MatchMeta] = {}
+    source_shas: list[str] = []
+    for url in MATCH_URLS:
+        payload, sha = _download_json(url)
+        if not isinstance(payload, list):
+            raise RuntimeError(f'match payload is not a list: {url}')
+        source_shas.append(f'{url}:{sha}')
+        for item in payload:
+            meta = MatchMeta(match_id=int(item['match_id']), match_date=str(item['match_date']), kick_off=str(item.get('kick_off') or ''), home=str(item['home_team']['home_team_name']), away=str(item['away_team']['away_team_name']))
+            if meta.match_id in matches_by_id:
+                raise RuntimeError(f'duplicate match_id across recovery panel: {meta.match_id}')
+            matches_by_id[meta.match_id] = meta
+    matches = list(matches_by_id.values())
     matches.sort(key=lambda m: (m.match_date, m.kick_off, m.match_id))
-    return (matches, sha)
+    ledger_sha = hashlib.sha256('\n'.join(source_shas).encode('utf-8')).hexdigest()
+    return (matches, ledger_sha)
 
 def _role(position: str) -> str:
     p = position.lower()
