@@ -1,0 +1,123 @@
+{
+  "schema_version": "WORLD_MODEL_V0_PREREG_1",
+  "status": "ZERO_LABEL_PREREGISTERED_RESEARCH_ONLY",
+  "created_at_local": "2026-08-18T09:49:00+08:00",
+  "authority": {
+    "project_state_authority": false,
+    "formal_rule_authority": false,
+    "formal_weight": 0,
+    "automatic_promotion": false,
+    "main_mutation": false
+  },
+  "estimand": "Can a sequential generative match-state simulator improve the full 90-minute score distribution over an independent static Poisson baseline when both use the same chronologically available pre-match team information?",
+  "information_family": {
+    "source": "Hudl/StatsBomb Open Data",
+    "competition": "England Premier League 2015/2016",
+    "competition_source_id": 2,
+    "season_id": 27,
+    "data_class": "RETROSPECTIVE_OPEN_EVENT_DATA_NOT_FORMAL_PIT",
+    "allowed_inputs": [
+      "match identity and scheduled kickoff ordering",
+      "prior-match event summaries only",
+      "prior-match StatsBomb xG and shots",
+      "prior-match goal timing for state-transition estimation"
+    ],
+    "forbidden_inputs": [
+      "current-match events before prediction",
+      "current-match starting XI or substitutions",
+      "current-match result or score path",
+      "future-match events",
+      "closing odds or any market data",
+      "B05 or any protected future labels"
+    ]
+  },
+  "sample_identity_policy": {
+    "match_list_url": "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/2/27.json",
+    "event_url_template": "https://raw.githubusercontent.com/hudl/open-data/master/data/events/{match_id}.json",
+    "expected_match_count": 380,
+    "chronological_grouping": "match_date; all fixtures on the same date are predicted before any same-date outcomes are added to history",
+    "burn_in_fraction": 0.5,
+    "test_fold_count": 3,
+    "fold_construction": "remaining chronological match dates after burn-in are split into three contiguous folds by match count, without using labels"
+  },
+  "baseline": {
+    "name": "STATIC_INDEPENDENT_POISSON",
+    "team_history_window_matches": 12,
+    "empirical_bayes_prior_match_equivalent": 6,
+    "pre_match_goal_intensity_source": "rolling prior-match xG-for/xG-against with league home/away xG base rates",
+    "joint_distribution": "independent Poisson home and away goals"
+  },
+  "candidate_catalog": [
+    {
+      "name": "WORLD_MODEL_V0_STATE_PATH",
+      "pre_match_goal_intensity": "identical to baseline",
+      "simulation_steps": 18,
+      "step_minutes": 5,
+      "shared_latent_pace": "one lognormal pace draw per simulated match; dispersion estimated only from prior-match total xG and clipped to a fixed range",
+      "state_feedback": "home/away scoring hazards are multiplied by empirical-Bayes lead/draw/trail state multipliers estimated only from prior match goal timing",
+      "monte_carlo_paths": 10000,
+      "random_seed": 20260818
+    }
+  ],
+  "hyperparameter_policy": {
+    "search": false,
+    "team_history_window_matches": 12,
+    "prior_match_equivalent": 6,
+    "state_prior_exposure_bins": 180,
+    "pace_sigma_min": 0.05,
+    "pace_sigma_max": 0.35,
+    "state_multiplier_min": 0.65,
+    "state_multiplier_max": 1.50,
+    "lambda_min": 0.15,
+    "lambda_max": 4.00,
+    "score_bucket": "0..7 plus 8+ independently for home and away",
+    "total_bucket": "0..6 plus 7+",
+    "probability_floor": 1e-12
+  },
+  "train_policy_test_split": {
+    "method": "rolling chronological expanding history",
+    "same_day_leakage": "forbidden",
+    "test_folds": 3,
+    "retuning_after_test": "forbidden"
+  },
+  "primary_metric": {
+    "name": "bucketed exact-score Log Score",
+    "delta_definition": "candidate minus baseline; negative is better"
+  },
+  "secondary_metrics": [
+    "HDA Log Loss",
+    "HDA Brier",
+    "total-goal RPS over 0..6/7+",
+    "Draw binary Log Loss",
+    "Draw calibration bins",
+    "natural Top-1 Draw calls and hits"
+  ],
+  "bootstrap_unit": "match_date cluster",
+  "bootstrap": {
+    "replicates": 5000,
+    "interval": "90%",
+    "seed": 20260818
+  },
+  "coverage_gate": {
+    "minimum_total_matches": 360,
+    "minimum_test_matches": 150,
+    "minimum_test_matches_each_fold": 40,
+    "minimum_prior_matches_before_any_prediction": 150,
+    "event_download_success_rate_min": 0.98
+  },
+  "scientific_development_gate": {
+    "primary_logscore_gain_min": 0.005,
+    "bootstrap_p95_candidate_minus_baseline_lt_zero": true,
+    "fold_primary_wins_min": 2,
+    "hda_logloss_nonworse_tolerance": 0.002,
+    "total_rps_nonworse_tolerance": 0.002
+  },
+  "stopping_rule": "One frozen run. If the development gate fails, do not tune on these test labels; diagnose only and design a separately preregistered successor.",
+  "post_result_authorization": {
+    "scientific_pass_does_not_authorize_formal_promotion": true,
+    "scientific_pass_does_not_authorize_b05": true,
+    "opening_new_protected_labels_requires_new_explicit_user_authorization": true,
+    "formal_weight_change_requires_separate_formal_process": true
+  },
+  "known_limitation": "The open event feed is retrospective and its historical pre-match availability is not proven. Any positive result is research evidence only and cannot be a formal PIT claim."
+}
