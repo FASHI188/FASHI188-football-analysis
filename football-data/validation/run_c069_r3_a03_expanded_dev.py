@@ -22,6 +22,68 @@ def _period_sec(event: dict):
     return period, float(event.get("eventSec", 0.0))
 
 
+def _opponent(team_id: int, home: int, away: int) -> int:
+    if team_id == home:
+        return away
+    if team_id == away:
+        return home
+    raise RuntimeError(f"event team {team_id} not in match teams {home}/{away}")
+
+
+def _canonicalize_events(match_row: dict, raw_events: list[dict]) -> tuple[list[dict], int]:
+    home = int(match_row["home"])
+    away = int(match_row["away"])
+    recognized_goals: list[tuple[str, float, int]] = []
+    save101: list[tuple[dict, str, float, int]] = []
+
+    for event in raw_events:
+        ps = _period_sec(event)
+        if ps is None:
+            continue
+        tags = _tags(event)
+        period, sec = ps
+        name = event.get("eventName")
+        team_id = int(event.get("teamId", 0) or 0)
+        if team_id not in {home, away}:
+            continue
+
+        # Tag 102 is authoritative own-goal semantics in the frozen R1 scorer:
+        # the score is credited to the event team's opponent.
+        if 102 in tags:
+            recognized_goals.append((period, sec, _opponent(team_id, home, away)))
+            continue
+
+        if 101 in tags and name in {"Shot", "Free Kick"}:
+            recognized_goals.append((period, sec, team_id))
+        elif 101 in tags and name == "Save attempt":
+            save101.append((event, period, sec, team_id))
+
+    canonical = list(raw_events)
+    fallback_count = 0
+    for event, period, sec, goalkeeper_team in save101:
+        scorer = _opponent(goalkeeper_team, home, away)
+        duplicate = any(
+            p == period
+            and existing_scorer == scorer
+            and abs(goal_sec - sec) <= DEDUP_WINDOW_SECONDS
+            for p, goal_sec, existing_scorer in recognized_goals
+        )
+        if duplicate:
+            continue
+
+        marker = copy.deepcopy(event)
+        marker["eventName"] = MARKER_EVENT_NAME
+        marker["subEventName"] = "Save-attempt-only goal marker"
+        marker["teamId"] = scorer
+        # Keep this outside Shot so Late-Tied Aggression cannot change as a side
+        # effect of score-stream repair. Timestamp and original tag101 evidence stay.
+        canonical.append(marker)
+        fallback_count += 1
+        recognized_goals.append((period, sec, scorer))
+
+    return canonical, fallback_count
+
+
 def _install_canonical_goal_parser() -> None:
     original_load = r3.r1run._load_evaluator
     original_score_event = r3.r1run._score_event
@@ -36,52 +98,7 @@ def _install_canonical_goal_parser() -> None:
         original_match_state_stats = evaluator._match_state_stats
 
         def match_state_stats(match_row: dict, raw_events: list[dict]):
-            home = int(match_row["home"])
-            away = int(match_row["away"])
-            ordinary_goals = []
-            save101 = []
-            for event in raw_events:
-                ps = _period_sec(event)
-                if ps is None:
-                    continue
-                tags = _tags(event)
-                if 101 not in tags:
-                    continue
-                period, sec = ps
-                name = event.get("eventName")
-                team_id = int(event.get("teamId", 0) or 0)
-                if name in {"Shot", "Free Kick"}:
-                    ordinary_goals.append((period, sec, team_id))
-                elif name == "Save attempt":
-                    save101.append((event, period, sec, team_id))
-
-            canonical = list(raw_events)
-            fallback_count = 0
-            for event, period, sec, goalkeeper_team in save101:
-                opponent = away if goalkeeper_team == home else home if goalkeeper_team == away else None
-                if opponent is None:
-                    raise RuntimeError(
-                        f"tag101 Save attempt has non-match team match={match_row['match_id']} "
-                        f"event={event.get('id')} team={goalkeeper_team}"
-                    )
-                duplicate = any(
-                    p == period
-                    and scorer_team == opponent
-                    and abs(goal_sec - sec) <= DEDUP_WINDOW_SECONDS
-                    for p, goal_sec, scorer_team in ordinary_goals
-                )
-                if duplicate:
-                    continue
-
-                marker = copy.deepcopy(event)
-                marker["eventName"] = MARKER_EVENT_NAME
-                marker["subEventName"] = "Save-attempt-only goal marker"
-                marker["teamId"] = opponent
-                # Preserve the original timestamp and tag-101 evidence, while keeping
-                # this marker outside Shot so Late-Tied Aggression is not post-hoc altered.
-                canonical.append(marker)
-                fallback_count += 1
-
+            canonical, fallback_count = _canonicalize_events(match_row, raw_events)
             if fallback_count:
                 print(
                     f"C069_GOAL_FALLBACK match={int(match_row['match_id'])} "
