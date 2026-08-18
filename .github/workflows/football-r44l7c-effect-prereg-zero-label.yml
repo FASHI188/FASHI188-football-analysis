@@ -1,0 +1,72 @@
+name: Football R44L7C Effect Prereg Zero Label
+
+on:
+  push:
+    branches:
+      - research/r44l7c-setpiece-role-effect-prereg
+    paths:
+      - 'football-data/research/r44l7c_setpiece_role_effect_prereg/**'
+      - '.github/workflows/football-r44l7c-effect-prereg-zero-label.yml'
+  pull_request:
+    paths:
+      - 'football-data/research/r44l7c_setpiece_role_effect_prereg/**'
+      - '.github/workflows/football-r44l7c-effect-prereg-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prereg-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Validate frozen prereg and no-run boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p=Path('football-data/research/r44l7c_setpiece_role_effect_prereg/contract_r44l7c.json')
+          raw=p.read_bytes(); c=json.loads(raw)
+          assert c['schema_version']=='V520-R44L7C-SETPIECE-EFFECT-PREREG-1.0'
+          assert c['status']=='PRE_REGISTERED_NOT_AUTHORIZED_NOT_RUN'
+          assert c['current_rule_family']=='V5.2.0'
+          assert c['research_only'] is True and c['formal_weight']==0
+          assert c['parent_evidence']['r44l7b_head']=='5dd07c66634779609b4691520bc6904a56cd155a'
+          assert c['parent_evidence']['r44l7b_run_id']==31659501770
+          assert c['parent_evidence']['r44l7b_artifact_id']==9165673664
+          assert c['parent_evidence']['r44l7b_artifact_sha256']=='f5c5bcb2250129efd19cf629149199d9c9c1a6f9faec792e5e7e046c3c97d4a6'
+          assert [d['competition_id'] for d in c['domains']]==[2,12,7]
+          assert c['permanent_exclusions'][0]['competition_id']==11
+          assert c['estimator']['regularization_C']==1.0
+          assert c['chronological_evaluation']['formal_post_warmup_match_capacity']==837
+          g=c['pre_fit_sample_gate_after_label_open']
+          assert g['total_primary_binary_min']==450 and g['draw_count_min']==120
+          assert g['each_domain_primary_binary_min']==120 and g['each_domain_draw_min']==30
+          assert g['each_oos_fold_primary_binary_min']==120
+          s=c['scientific_pass_gate']
+          assert s['chronological_folds_with_delta_logloss_lt_0_min']==2
+          assert s['domains_with_delta_logloss_lt_0_min']==2
+          a=c['authorization']
+          assert a['explicit_new_user_authorization_required_before_target_label_access'] is True
+          assert a['authorized'] is False and a['execution_workflow_present'] is False
+          assert a['target_labels_accessed']==a['model_fits']==a['candidate_probabilities']==0
+          assert all(v==0 or v is False for v in c['formal_boundaries'].values())
+          print('PASS_R44L7C_PREREG_ZERO_LABEL_NO_EXECUTION')
+          print('contract_sha256='+hashlib.sha256(raw).hexdigest())
+          PY
+      - name: Verify no R44L7C label execution implementation exists
+        run: |
+          set -euo pipefail
+          test ! -f football-data/research/r44l7c_setpiece_role_effect_prereg/run_effect_r44l7c.py
+          test ! -f .github/workflows/football-r44l7c-effect-execution.yml
+          echo PASS_R44L7C_NO_LABEL_EXECUTION_IMPLEMENTATION
