@@ -1,0 +1,160 @@
+name: Football C070-A Shock Volatility
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/c070a_shock_volatility/**'
+      - 'football-data/validation/evaluate_c070a_shock_volatility.py'
+      - '.github/workflows/football-c070a-shock-volatility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.18.0 scikit-learn==1.8.0
+
+      - name: Compile frozen C070-A implementation
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/build_c068_a02_runtime.py \
+            football-data/validation/build_c069_a03_runtime.py \
+            football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/run_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
+            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+            football-data/validation/run_c069_r3_a03_expanded_dev.py \
+            football-data/validation/audit_c069_r3_goal_parser.py \
+            football-data/validation/evaluate_c070a_shock_volatility.py
+          python -m json.tool football-data/research/c070a_shock_volatility/contract.json >/dev/null
+
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c070a
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070a/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070a/events.zip https://ndownloader.figshare.com/files/14464685
+          echo "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9  /tmp/c070a/matches.zip" | sha256sum -c -
+          echo "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45  /tmp/c070a/events.zip" | sha256sum -c -
+
+      - name: Rebuild frozen A01 A02 A03 development packages
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c070a/matches.zip --events-zip /tmp/c070a/events.zip --out /tmp/c070a/A01.zip
+          python football-data/validation/build_c068_a02_runtime.py \
+            --matches-zip /tmp/c070a/matches.zip --events-zip /tmp/c070a/events.zip --out /tmp/c070a/A02.zip
+          python football-data/validation/build_c069_a03_runtime.py \
+            --matches-zip /tmp/c070a/matches.zip --events-zip /tmp/c070a/events.zip --out /tmp/c070a/A03.zip \
+            | tee /tmp/c070a/a03_build.json
+
+      - name: Re-audit final C069 score parser before C070-A
+        run: |
+          mkdir -p football-data/manifests/c070a_shock_volatility
+          python football-data/validation/audit_c069_r3_goal_parser.py \
+            --package /tmp/c070a/A01.zip \
+            --package /tmp/c070a/A02.zip \
+            --package /tmp/c070a/A03.zip \
+            --out football-data/manifests/c070a_shock_volatility/goal_parser_audit.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c070a_shock_volatility/goal_parser_audit.json').read_text())
+          assert x['status']=='PASS'
+          assert x['source_matches']==1200
+          assert x['regular_matches']==1192
+          assert x['mismatch_count']==0
+          assert [z['match_id'] for z in x['fallback_matches']]==[2499781]
+          PY
+
+      - name: Execute frozen C070-A development evaluation
+        run: |
+          cp football-data/research/c070a_shock_volatility/contract.json \
+            football-data/manifests/c070a_shock_volatility/contract.json
+          cp /tmp/c070a/a03_build.json football-data/manifests/c070a_shock_volatility/a03_build.json
+          python football-data/validation/evaluate_c070a_shock_volatility.py \
+            --a01 /tmp/c070a/A01.zip \
+            --a02 /tmp/c070a/A02.zip \
+            --a03 /tmp/c070a/A03.zip \
+            --matches-zip /tmp/c070a/matches.zip \
+            --out football-data/manifests/c070a_shock_volatility/summary.json
+
+      - name: Verify frozen boundaries and evidence closure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('football-data/manifests/c070a_shock_volatility')
+          c=json.loads((root/'contract.json').read_text())
+          x=json.loads((root/'summary.json').read_text())
+          assert c['schema_version']=='C070A_SHOCK_VOLATILITY_CONTRACT_V1'
+          assert c['source_boundary']['packages']==['A01','A02','A03']
+          assert c['source_boundary']['no_A04'] is True
+          assert c['source_boundary']['no_protected'] is True
+          assert c['features']['shock_window_minutes']==10.0
+          assert c['features']['burst_window_seconds']==180.0
+          assert c['model']['C']==0.1
+          assert c['model']['hyperparameter_search'] is False
+          assert c['matching']['calipers']=={'q_draw_cond':0.05,'abs_ha_gap':0.08,'lambda_total':0.45}
+          assert c['matching']['minimum_train_pairs_each_fold']==30
+          assert c['matching']['minimum_test_pairs_each_fold']==15
+          assert x['schema_version']=='C070A_SHOCK_VOLATILITY_V1'
+          assert x['source']['source_matches']==1200
+          assert x['source']['regular_matches']==1192
+          assert x['source']['score_fallback_matches']==[2499781]
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['new_A_packages_opened']==[]
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['scientific_pass'] is False
+          assert x['boundary']['confirmation_pass'] is False
+          if x['status']=='POSTVIEW_C070A_DEVELOPMENT_COMPLETE':
+              expected={'fold_1':(75,25),'fold_2':(127,23),'fold_3':(169,33)}
+              for name,(tr,te) in expected.items():
+                  assert x['folds'][name]['train_pairs']==tr
+                  assert x['folds'][name]['test_pairs']==te
+                  assert x['folds'][name]['train_maximum_cardinality_certificate']==tr
+                  assert x['folds'][name]['test_maximum_cardinality_certificate']==te
+              assert x['pooled']['test_pairs']==81
+              assert x['pooled']['test_rows']==162
+              assert x['pooled']['bootstrap_logloss_delta']['reps']==2000
+              assert x['pooled']['bootstrap_logloss_delta']['seed']==7001
+              assert x['boundary']['model_fitting_performed'] is True
+              assert x['boundary']['model_scoring_performed'] is True
+          else:
+              assert x['status'] in {'STOP_DATA_BEFORE_MODEL','STOP_COVERAGE_BEFORE_MODEL'}
+              assert x['boundary']['model_fitting_performed'] is False
+              assert x['boundary']['model_scoring_performed'] is False
+          print(json.dumps({
+              'status':x['status'],
+              'verdict':x['verdict'],
+              'feature_coverage':x.get('feature_coverage'),
+              'folds':{k:{'train':v.get('train_pairs'),'test':v.get('test_pairs')} for k,v in x.get('folds',{}).items()},
+              'pooled':x.get('pooled')
+          },indent=2))
+          PY
+
+      - name: Upload C070-A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c070a-shock-volatility
+          path: football-data/manifests/c070a_shock_volatility/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
