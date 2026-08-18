@@ -1,0 +1,73 @@
+name: Football C072 StatsBomb Shot-Quality Source Audit
+
+on:
+  push:
+    branches:
+      - research/c072-statsbomb-shotquality-audit-20260818
+    paths:
+      - football-data/research/c072_statsbomb_shotquality_audit_contract.json
+      - football-data/research/audit_c072_statsbomb_shotquality_source.py
+      - .github/workflows/football-c072-statsbomb-shotquality-audit.yml
+  pull_request:
+    paths:
+      - football-data/research/c072_statsbomb_shotquality_audit_contract.json
+      - football-data/research/audit_c072_statsbomb_shotquality_source.py
+      - .github/workflows/football-c072-statsbomb-shotquality-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c072-shotquality-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  retrospective-source-audit-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install frozen audit runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.2
+      - name: Run pinned StatsBomb source audit
+        run: |
+          mkdir -p "$RUNNER_TEMP/c072_out"
+          python football-data/research/audit_c072_statsbomb_shotquality_source.py --out-dir "$RUNNER_TEMP/c072_out"
+      - name: Enforce research boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c072_out'/'summary.json').read_text())
+          assert s['status']=='C072_SOURCE_AUDIT_COMPLETE'
+          assert s['sample_field_audit']['shot_outcome_field_accessed'] is False
+          assert s['boundary']['target_result_model_fit'] is False
+          assert s['boundary']['pt_scoring'] is False
+          assert s['boundary']['hyperparameter_search'] is False
+          assert s['boundary']['fresh_confirmation_claim_allowed'] is False
+          assert s['boundary']['C071_confirmation72180_opened'] is False
+          assert s['boundary']['C070F_confirmation1597_opened'] is False
+          assert s['boundary']['A05_opened'] is False and s['boundary']['protected_opened'] is False
+          assert s['boundary']['formal_weight']==0
+          print(json.dumps(s,indent=2))
+          PY
+      - name: Upload C072 audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c072-statsbomb-shotquality-audit
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c072_out/summary.json
+            ${{ runner.temp }}/c072_out/competition_season_coverage.csv
+            ${{ runner.temp }}/c072_out/event_field_sample.csv
+            ${{ runner.temp }}/c072_out/threshold8_identity_manifest.csv
+            football-data/research/c072_statsbomb_shotquality_audit_contract.json
