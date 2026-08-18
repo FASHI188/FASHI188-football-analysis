@@ -1,0 +1,120 @@
+name: Football C067 Draw Residual Activator R1
+
+on:
+  pull_request:
+    paths:
+      - "football-data/config/c067_draw_residual_activator_r1.json"
+      - "football-data/validation/evaluate_c067_draw_residual_activator_r1.py"
+      - "football-data/validation/run_c067_draw_residual_activator_r1.py"
+      - "football-data/research/c067_draw_residual_activator_r1/**"
+      - ".github/workflows/football-c067-draw-residual-activator-r1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c067-draw-residual-activator-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile C067 and inherited R6 path
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_direct_t_gd_joint_fixed200_r1.py \
+            football-data/validation/evaluate_direct_t_parity_gd_fixed500_r1.py \
+            football-data/validation/evaluate_even_t_gd0_market_diagnostic_r5.py \
+            football-data/validation/evaluate_market6_gd0_integration_r6.py \
+            football-data/validation/evaluate_c067_draw_residual_activator_r1.py \
+            football-data/validation/run_c067_draw_residual_activator_r1.py
+      - name: Rebuild exact audited runtime ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run C067 post-view development reproduction
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/c067-draw-residual-activator-r1
+          python football-data/validation/run_c067_draw_residual_activator_r1.py \
+            2>&1 | tee /tmp/c067-draw-residual-activator-r1/traceback.log
+      - name: Upload C067 failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c067-draw-residual-activator-r1-failure-log
+          path: /tmp/c067-draw-residual-activator-r1/traceback.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify C067 research boundary and result identity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/c067_draw_residual_activator_r1/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_C067_DRAW_RESIDUAL_ACTIVATOR_COMPLETE_NO_PROMOTION'
+          assert x['development_origin']['post_view_parameter_search'] is True
+          assert x['development_origin']['scientific_pass_claim_allowed'] is False
+          assert x['development_origin']['confirmation_pass_claim_allowed'] is False
+          a=x['activation_model']
+          assert a['C']==0.3
+          assert a['blend_weight']==0.4
+          assert a['eligibility']['minimum_r6_pdraw']==0.20
+          assert a['eligibility']['maximum_abs_home_away_probability_gap']==0.20
+          assert a['eligibility']['minimum_residual_qdraw_minus_r6_pdraw']==0.02
+          assert a['preserve_home_away_odds_ratio'] is True
+          assert a['forced_draw'] is False
+          assert a['manual_top1_override'] is False
+          assert a['manual_pdraw_bonus'] is False
+          b=x['boundary']
+          assert b['new_unseen_label_rows']==0
+          assert b['post_view_parameter_search'] is True
+          assert b['natural_argmax_draw_only'] is True
+          assert b['forced_draw'] is False
+          assert b['manual_top1_override'] is False
+          assert b['manual_pdraw_bonus'] is False
+          assert b['home_away_odds_ratio_preserved'] is True
+          assert b['b05_b07_labels_opened'] is False
+          assert b['future_oos_label_open_authorized'] is False
+          assert b['formal_weight']==0
+          assert b['main_mutation'] is False
+          d=x['descriptive_development_signal']
+          assert d['scientific_pass'] is False
+          assert d['confirmation_pass'] is False
+          assert d['formal_promotion'] is False
+          print(json.dumps({
+            'verdict':x['descriptive_verdict'],
+            'evaluations':x['evaluations'],
+            'pooled':x['pooled_position_3_4'],
+            'development_signal':x['descriptive_development_signal'],
+            'boundary':x['boundary'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload C067 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c067-draw-residual-activator-r1
+          path: football-data/manifests/c067_draw_residual_activator_r1/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifests
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
