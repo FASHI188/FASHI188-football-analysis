@@ -130,7 +130,7 @@ def main(packages: list[Path], out: Path) -> None:
             })
 
     result = {
-        "schema_version": "C069_R3_GOAL_PARSER_AUDIT_V2",
+        "schema_version": "C069_R3_GOAL_PARSER_AUDIT_V3",
         "packages": package_ids,
         "source_matches": len(all_matches),
         "regular_matches": regular,
@@ -143,7 +143,19 @@ def main(packages: list[Path], out: Path) -> None:
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    compact = {
+        "schema_version": result["schema_version"],
+        "status": result["status"],
+        "source_matches": result["source_matches"],
+        "regular_matches": result["regular_matches"],
+        "skipped_nonregular_matches": result["skipped_nonregular_matches"],
+        "fallback_matches": result["fallback_matches"],
+        "mismatch_count": result["mismatch_count"],
+    }
+    print("C069_AUDIT_SUMMARY", json.dumps(compact, ensure_ascii=False, separators=(",", ":")))
+    for mismatch in mismatches:
+        print("C069_MISMATCH_DIAG", json.dumps(mismatch, ensure_ascii=False, separators=(",", ":")))
     if mismatches:
         raise RuntimeError(f"goal parser audit mismatches={len(mismatches)}")
 
