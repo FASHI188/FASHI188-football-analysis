@@ -47,8 +47,7 @@ def build_payload() -> dict:
     runner_text = PATHS["actionable_runner"].read_text(encoding="utf-8")
     checks = {
         # Legacy receipt key retained for hash-bound compatibility. It verifies the
-        # historical V5.0.1 binding at activation freeze time; it does NOT claim
-        # that V5.0.1 is the project's current formal rule today.
+        # historical V5.0.1 binding at activation-freeze time only.
         "v501_unique_current_verified": (
             str(v501.get("status") or "").startswith("FORMALLY_ACTIVATED")
             and v501.get("formal_rule_version") == "V5.0.1"
@@ -64,6 +63,20 @@ def build_payload() -> dict:
         "runner_final_call_wired": "return apply_selective_direction_gate(context, governed)" in runner_text,
     }
     active = all(checks.values())
+    legacy_binding = {
+        "version": "V5.0.1",
+        "filename": v501.get("formal_rule_file"),
+        "sha256": v501.get("formal_rule_sha256"),
+        "current_authority": False,
+        "role": "HISTORICAL_ACTIVATION_COMPATIBILITY_ONLY",
+    }
+    historical_binding = {
+        "version_at_activation_freeze": "V5.0.1",
+        "filename": v501.get("formal_rule_file"),
+        "sha256": v501.get("formal_rule_sha256"),
+        "current_authority": False,
+        "role": "HISTORICAL_ACTIVATION_COMPATIBILITY_ONLY",
+    }
     return {
         "schema_version": "V5.0.1-selective-direction-runtime-activation-r3",
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -78,14 +91,12 @@ def build_payload() -> dict:
         "direction_semantics": "ALLOW_FINAL_1X2_TOP1_IF_TOP1_MINUS_TOP2_GAP_GTE_0.30_ELSE_ABSTAIN",
         "bound_git_blob_sha": {key: git_blob_sha(path) for key, path in PATHS.items()},
         "bound_paths": {key: path.relative_to(REPO_ROOT).as_posix() for key, path in PATHS.items()},
-        "historical_formal_rule_binding": {
-            "version_at_activation_freeze": "V5.0.1",
-            "filename": v501.get("formal_rule_file"),
-            "sha256": v501.get("formal_rule_sha256"),
-            "current_authority": False
-        },
+        # Keep the old field for existing receipt/gate readers, but strip it of any
+        # present-day CURRENT authority. New readers should prefer the historical field.
+        "formal_rule_binding": legacy_binding,
+        "historical_formal_rule_binding": historical_binding,
         "checks": checks,
-        "policy": "Fail closed on any bound artifact mismatch. Historical formal-rule binding is provenance only; this script never identifies the project's current CURRENT.",
+        "policy": "Fail closed on any bound artifact mismatch. V5.0.1 binding is historical activation provenance only; this script never identifies the project's present-day CURRENT.",
     }
 
 
@@ -113,6 +124,7 @@ def main() -> int:
             "status": "PASS" if passed else "FAIL_STALE_ACTIVATION",
             "expected_status": expected["status"],
             "bound_git_blob_sha": expected["bound_git_blob_sha"],
+            "current_project_rule_authority": False,
         }, ensure_ascii=False, indent=2))
         return 0 if passed and expected["status"] == "ACTIVE_HASH_BOUND" else 2
     OUT.write_text(json.dumps(expected, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
