@@ -1,0 +1,168 @@
+{
+  "schema_version": "C070A_SHOCK_VOLATILITY_CONTRACT_V1",
+  "frozen_at": "2026-08-18T18:45:00+08:00",
+  "research_stage": "post_view_development_only",
+  "authorization": "user_explicit_continue_after_STATE90",
+  "formal_weight": 0,
+  "protected_samples_used": false,
+  "new_A_packages_opened": [],
+  "source_boundary": {
+    "packages": ["A01", "A02", "A03"],
+    "source_match_count": 1200,
+    "A01_ids_sha256": "12ccdea126c4b92c2ea82ce4fbcbea54c8525885423371883f71339c1204adcf",
+    "A02_ids_sha256": "a91e6274a25c096ff3a70309feab4df245f705001bfc38b8689df4873346b752",
+    "A03_ids_sha256_ordered": "cb6d8f7e2c6292e46733fe1feff28945f4b2d9baa962f79c729ea7207aa0f51c",
+    "A03_global_rank_one_based": [801, 1200],
+    "no_A04": true,
+    "no_protected": true
+  },
+  "estimand": {
+    "target": "draw_vs_one_goal_win_conditional",
+    "settlement": "90_minutes_including_stoppage_no_extra_time_or_penalties",
+    "matching": "exact_competition_and_frozen_prematch_environment",
+    "same_day_policy": "predict_all_same_utc_date_before_any_same_date_update"
+  },
+  "orthogonality_audit": {
+    "closed_family": "C069_four_long_horizon_state_means",
+    "c069_retained_information": [
+      "draw_persistence_at_60_70_80",
+      "equalizer_count_per_trailing_one_goal_minutes",
+      "rebreak_count_per_post_equalizer_tied_minutes",
+      "late_tied_shots_per_tied_minutes_after_60"
+    ],
+    "c070a_new_information_dimensions": [
+      "raw_event_time_relative_to_score_shock",
+      "shot_arrival_spacing_within_tied_state",
+      "short_horizon_post_concession_response",
+      "short_horizon_post_lead_opponent_pressure",
+      "tied_state_shot_pace_and_clustering"
+    ],
+    "not_derivable_from_c069_four_means": true,
+    "forbidden_as_new_information": [
+      "retuning_C",
+      "changing_C069_smoothers",
+      "changing_matching_calipers",
+      "changing_pair_gates",
+      "changing_fold_boundaries",
+      "class_weight_or_threshold_changes",
+      "same_information_model_shopping"
+    ]
+  },
+  "score_stream": {
+    "canonical_parser": "C069_R3_final_raw_event_lookback_2",
+    "required_full_audit": {
+      "source_matches": 1200,
+      "regular_matches": 1192,
+      "mismatch_count": 0,
+      "only_genuine_save101_fallback_match": 2499781
+    }
+  },
+  "features": {
+    "team_history_cutoff": "strictly_prior_utc_dates_only",
+    "minimum_prior_team_matches": 4,
+    "shock_window_minutes": 10.0,
+    "burst_window_seconds": 180.0,
+    "definitions": {
+      "trail_shot_response_logrr_10": {
+        "event": "team transitions into exactly one-goal-behind state",
+        "numerator": "own Shot events in [shock_time, shock_time+10min], capped at match end",
+        "exposure": "available minutes in those windows",
+        "reference": "own Shot rate while score tied in prior matches",
+        "smoothing": "post=(shots+1)/(minutes+20); tied=(shots+2)/(minutes+30); feature=log(post/tied)"
+      },
+      "lead_pressure_logrr_10": {
+        "event": "team transitions from tied to exactly one-goal-ahead state",
+        "numerator": "opponent Shot events in [lead_time, lead_time+10min], capped at match end",
+        "exposure": "available minutes in those windows",
+        "reference": "opponent Shot rate while score tied in prior matches",
+        "smoothing": "post=(shots+1)/(minutes+20); tied=(shots+2)/(minutes+30); feature=log(post/tied)"
+      },
+      "tied_shot_pace": {
+        "numerator": "all Shot events by either team while score tied",
+        "exposure": "minutes while score tied",
+        "smoothing": "(shots+4)/(minutes+30)*90"
+      },
+      "tied_shot_burst_share_180": {
+        "denominator": "all Shot events by either team while score tied",
+        "burst": "current tied-state Shot occurs within 180 seconds of previous Shot in the same tied episode",
+        "smoothing": "(burst_shots+1)/(tied_shots+3)"
+      }
+    },
+    "match_level_aggregation": "arithmetic_mean_of_home_and_away_team_prior_profiles",
+    "primary_candidate_features": [
+      "baseline_logit",
+      "trail_shot_response_logrr_10",
+      "lead_pressure_logrr_10",
+      "tied_shot_pace",
+      "tied_shot_burst_share_180"
+    ],
+    "primary_baseline_features": ["baseline_logit"],
+    "c069_audit_candidate_features": [
+      "baseline_logit",
+      "draw_persistence",
+      "equalizer_hazard",
+      "rebreak_hazard",
+      "late_tied_aggression"
+    ]
+  },
+  "folds": {
+    "fold_1": {"train_end_exclusive": "2018-01-13", "test_start_inclusive": "2018-01-13", "test_end_exclusive": "2018-02-23"},
+    "fold_2": {"train_end_exclusive": "2018-02-23", "test_start_inclusive": "2018-02-23", "test_end_exclusive": "2018-04-08"},
+    "fold_3": {"train_end_exclusive": "2018-04-08", "test_start_inclusive": "2018-04-08", "test_end_exclusive": null}
+  },
+  "matching": {
+    "exact_competition": true,
+    "calipers": {"q_draw_cond": 0.05, "abs_ha_gap": 0.08, "lambda_total": 0.45},
+    "without_replacement": true,
+    "objective": "lexicographic_maximum_cardinality_then_minimum_total_distance",
+    "minimum_train_pairs_each_fold": 30,
+    "minimum_test_pairs_each_fold": 15,
+    "expected_reference_pair_counts_from_C069_R3": {
+      "fold_1": {"train": 75, "test": 25},
+      "fold_2": {"train": 127, "test": 23},
+      "fold_3": {"train": 169, "test": 33}
+    }
+  },
+  "model": {
+    "family": "standardized_logistic_regression",
+    "C": 0.1,
+    "penalty": "l2_default_sklearn",
+    "class_weight": null,
+    "hyperparameter_search": false,
+    "threshold_tuning": false
+  },
+  "metrics": {
+    "primary": "test_log_loss_candidate_minus_incumbent_baseline",
+    "secondary": [
+      "brier",
+      "auc",
+      "accuracy",
+      "within_pair_accuracy",
+      "pooled_calibration_intercept",
+      "pooled_calibration_slope",
+      "pooled_ece_equal_width_5"
+    ],
+    "bootstrap": {"unit": "matched_pair", "reps": 2000, "seed": 7001, "ci": 0.90}
+  },
+  "development_signal_gate": {
+    "pooled_delta_log_loss_lt_0": true,
+    "bootstrap_90pct_upper_delta_log_loss_lt_0": true,
+    "fold_log_loss_wins_min": 2,
+    "pooled_delta_brier_le_0": true,
+    "pooled_pair_accuracy_delta_ge_0": true
+  },
+  "stop_lines": {
+    "feature_coverage_failure": "STOP_DATA_BEFORE_MODEL",
+    "pair_coverage_failure": "STOP_COVERAGE_BEFORE_MODEL",
+    "gate_failure": "DEVELOPMENT_NEGATIVE_CLOSE_C070A_FROZEN_REPRESENTATION",
+    "gate_pass": "DEVELOPMENT_SIGNAL_ONLY_NO_SCIENTIFIC_OR_CONFIRMATION_CLAIM",
+    "after_result_forbidden": [
+      "retune_10min_shock_window_on_same_labels",
+      "retune_180sec_burst_window_on_same_labels",
+      "retune_smoothing_on_same_labels",
+      "retune_C_or_class_weights_on_same_labels",
+      "open_A04_without_new_frozen_contract",
+      "use_protected_sample_without_explicit_separate_confirmation_contract"
+    ]
+  }
+}
