@@ -8,11 +8,12 @@ import evaluate_c069_matched_pair_state_dynamics as base
 
 
 def load_reduced_events_nested(events_zip, wanted):
-    """Technical-only parser fix: accept events_*.json at any ZIP directory depth."""
+    """Technical-only parser fix: robust ZIP paths and ignore goalkeeper mirror events when reconstructing goals."""
     z = zipfile.ZipFile(events_zip)
     red = defaultdict(list); endm = defaultdict(lambda: 90.0); n_ev = 0
     selected = []
     goal_tag_events = 0; own_goal_tag_events = 0
+    goal_tag_types = Counter(); own_goal_tag_types = Counter(); scoring_events = 0
     for n in z.namelist():
         bn = Path(n).name
         if not bn.startswith('events_') or not bn.endswith('.json'):
@@ -25,8 +26,10 @@ def load_reduced_events_nested(events_zip, wanted):
         for i, e in enumerate(rr):
             mid = int(e.get('matchId', -1))
             tags = {int(t['id']) for t in e.get('tags', []) if 'id' in t}
-            if 101 in tags: goal_tag_events += 1
-            if 102 in tags: own_goal_tag_events += 1
+            if 101 in tags:
+                goal_tag_events += 1; goal_tag_types[(e.get('eventName'), e.get('subEventName'))] += 1
+            if 102 in tags:
+                own_goal_tag_events += 1; own_goal_tag_types[(e.get('eventName'), e.get('subEventName'))] += 1
             if mid not in wanted:
                 continue
             m = base.minute_of(e)
@@ -34,8 +37,13 @@ def load_reduced_events_nested(events_zip, wanted):
                 continue
             endm[mid] = max(endm[mid], min(m, 105.0))
             goal = 101 in tags; own = 102 in tags; shot = (e.get('eventName') == 'Shot')
-            if goal or own or shot:
-                red[mid].append((float(m), i, int(e.get('teamId') or -1), bool(shot), bool(goal), bool(own)))
+            # Wyscout contains a goalkeeper-side Save attempt/Reflexes mirror for shots.
+            # It can carry the same 101/102 outcome tag; only the non-goalkeeper event changes score.
+            score_event = (goal or own) and e.get('eventName') != 'Save attempt'
+            if score_event:
+                scoring_events += 1
+            if score_event or shot:
+                red[mid].append((float(m), i, int(e.get('teamId') or -1), bool(shot), bool(goal and score_event), bool(own and score_event)))
     for mid in red:
         red[mid].sort(key=lambda x: (x[0], x[1]))
     print('C069_EVENT_ARCHIVE_DIAGNOSTIC=' + json.dumps({
@@ -44,6 +52,9 @@ def load_reduced_events_nested(events_zip, wanted):
         'events_seen': n_ev,
         'goal_tag_events': goal_tag_events,
         'own_goal_tag_events': own_goal_tag_events,
+        'goal_tag_types': [[list(k), v] for k, v in goal_tag_types.most_common()],
+        'own_goal_tag_types': [[list(k), v] for k, v in own_goal_tag_types.most_common()],
+        'non_goalkeeper_scoring_events': scoring_events,
         'wanted_matches_with_reduced_events': len(red),
     }, sort_keys=True))
     return red, endm, n_ev
