@@ -7,6 +7,7 @@ on:
       - 'football-data/validation/build_c069_a03_runtime.py'
       - 'football-data/validation/diagnose_c069_r3_goal_encoding.py'
       - 'football-data/validation/evaluate_c069_r3_a03_expanded_dev.py'
+      - 'football-data/validation/run_c069_r3_a03_expanded_dev.py'
       - '.github/workflows/football-c069-r3-a03-expanded-dev.yml'
   workflow_dispatch:
 
@@ -40,8 +41,10 @@ jobs:
             football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
             football-data/validation/run_c069_matched_pair_draw_state_r1.py \
             football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
-            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py
+            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+            football-data/validation/run_c069_r3_a03_expanded_dev.py
           python -m json.tool football-data/research/c069_r3_a03_expanded_dev/contract.json >/dev/null
+          python -m json.tool football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json >/dev/null
 
       - name: Download exact public Wyscout source archives
         run: |
@@ -93,11 +96,13 @@ jobs:
           python football-data/validation/diagnose_c069_r3_goal_encoding.py \
             --a03 /tmp/c069r3/A03.zip --match-id 2499781
 
-      - name: Run frozen C069 R3 A03 evaluation
+      - name: Run frozen C069 R3 A03 evaluation with technical parser correction
         run: |
           cp football-data/research/c069_r3_a03_expanded_dev/contract.json \
             football-data/manifests/c069_r3_a03_expanded_dev/contract.json
-          python football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+          cp football-data/research/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json \
+            football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json
+          python football-data/validation/run_c069_r3_a03_expanded_dev.py \
             --a01 /tmp/c069r3/A01.zip \
             --a02 /tmp/c069r3/A02.zip \
             --a03 /tmp/c069r3/A03.zip \
@@ -110,6 +115,7 @@ jobs:
           import json
           from pathlib import Path
           c=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/contract.json').read_text())
+          i=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/IMPLEMENTATION_CORRECTION_01.json').read_text())
           b=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/a03_build.json').read_text())
           x=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/summary.json').read_text())
           assert c['schema_version']=='C069_R3_A03_EXPANDED_DEV_CONTRACT_V1'
@@ -117,6 +123,10 @@ jobs:
           assert c['matching']['calipers']=={'q_draw_cond':0.05,'abs_ha_gap':0.08,'lambda_total':0.45}
           assert c['coverage_gates']['minimum_train_pairs_each_fold']==30
           assert c['coverage_gates']['minimum_test_pairs_each_fold']==15
+          assert i['type']=='POST_FREEZE_TECHNICAL_IMPLEMENTATION_CORRECTION'
+          assert i['research_recipe_changed'] is False
+          assert i['sample_identity_changed'] is False
+          assert i['correction']['dedup_window_seconds']==10
           assert b['status']=='A03_RUNTIME_REBUILT'
           assert b['matches']==400
           assert b['global_rank_one_based']==[801,1200]
