@@ -1,0 +1,162 @@
+name: Football World Model V2
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/world_model_v2/**"
+      - "football-data/validation/evaluate_world_model_v2.py"
+      - ".github/workflows/football-world-model-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5
+
+      - name: Compile frozen evaluator
+        run: |
+          python -m py_compile \
+            football-data/research/world_model_v2/wmv2_source.py \
+            football-data/research/world_model_v2/wmv2_model.py \
+            football-data/validation/evaluate_world_model_v2.py
+
+      - name: Verify preregistration and pre-fit boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = json.loads(Path("football-data/research/world_model_v2/preregistration.json").read_text(encoding="utf-8"))
+          c = json.loads(Path("football-data/research/world_model_v2/coverage_preflight.json").read_text(encoding="utf-8"))
+          a = json.loads(Path("football-data/research/world_model_v2/technical_amendment_pre_fit_001.json").read_text(encoding="utf-8"))
+
+          assert p["status"] == "ZERO_LABEL_PREREGISTERED_RESEARCH_ONLY"
+          assert p["authority"]["current_version"] == "V5.2.0"
+          assert p["authority"]["formal_weight"] == 0
+          assert p["authority"]["b05_opened"] is False
+          assert p["authority"]["protected_labels_opened"] == 0
+          assert p["candidate"]["hyperparameter_search"] is False
+          assert p["development_gate"]["scientific_component_pass_allowed"] is False
+          assert p["reserved_confirmation_panel"]["status"] == "RESERVED_UNOPENED"
+
+          assert c["status"] == "COVERAGE_PASS_METADATA_VIEWED_DEVELOPMENT_ONLY"
+          assert c["development_panel"]["metadata_matches_total"] == 346
+          assert c["development_panel"]["coverage_pass"] is True
+          assert c["label_boundary"]["event_payloads_opened"] is False
+          assert c["label_boundary"]["model_fit_performed"] is False
+          assert c["reserved_confirmation_panel_opened"] is False
+
+          assert a["status"] == "TECHNICAL_CLARIFICATION_BEFORE_EVENT_TARGET_ACCESS"
+          assert a["evidence_boundary"]["event_payloads_opened"] is False
+          assert a["evidence_boundary"]["scientific_metrics_evaluated"] is False
+          assert a["clarified_implementation"]["shrinkage_center"] == 0.0
+
+          print(json.dumps({
+              "prereg": p["status"],
+              "metadata_matches": c["development_panel"]["metadata_matches_total"],
+              "amendment": a["status"],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Unit test analytic probability engine
+        run: |
+          PYTHONPATH=football-data/research/world_model_v2 python - <<'PY'
+          import numpy as np
+          from wmv2_model import baseline_outputs, candidate_outputs, fit_theta
+
+          for lh, la, theta in [(1.4, 1.1, 0.0), (2.2, 0.8, 0.15), (0.3, 3.5, 0.35)]:
+              b = baseline_outputs(lh, la)
+              c = candidate_outputs(lh, la, theta)
+              for x in (b, c):
+                  assert abs(float(x["matrix"].sum()) - 1.0) <= 1e-10
+                  assert abs(float(x["hda"].sum()) - 1.0) <= 1e-10
+                  assert abs(float(x["total"].sum()) - 1.0) <= 1e-10
+                  assert x["tail_residual"] <= 1e-10
+
+          b = baseline_outputs(1.7, 1.2)
+          z = candidate_outputs(1.7, 1.2, 0.0)
+          assert np.max(np.abs(b["matrix"] - z["matrix"])) <= 1e-12
+          assert np.max(np.abs(b["hda"] - z["hda"])) <= 1e-12
+          assert np.max(np.abs(b["total"] - z["total"])) <= 1e-12
+          assert fit_theta([]) == 0.0
+          print("analytic probability engine: PASS")
+          PY
+
+      - name: Run frozen World Model V2
+        run: |
+          mkdir -p /tmp/world-model-v2
+          python football-data/validation/evaluate_world_model_v2.py \
+            --output /tmp/world-model-v2/summary.json \
+            | tee /tmp/world-model-v2/stdout.log
+
+      - name: Verify research-only result boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("/tmp/world-model-v2/summary.json")
+          assert p.exists(), "summary missing"
+          x = json.loads(p.read_text(encoding="utf-8"))
+          assert x["status"] in {
+              "FAIL_RESEARCH_ONLY",
+              "RESEARCH_SIGNAL_PASS_RETROSPECTIVE_ONLY",
+              "STOP_DATA_COVERAGE",
+          }
+          if x["status"] != "STOP_DATA_COVERAGE":
+              b = x["boundary"]
+              assert b["formal_weight"] == 0
+              assert b["b05_opened"] is False
+              assert b["new_protected_labels_opened"] == 0
+              assert b["reserved_confirmation_panel_opened"] is False
+              assert b["market_data_used"] is False
+              assert b["formal_model_mutation"] is False
+              assert b["formal_data_mutation"] is False
+              assert b["formal_config_mutation"] is False
+              assert b["current_mutation"] is False
+              assert b["main_mutation"] is False
+              assert b["automatic_confirmation"] is False
+              assert b["automatic_promotion"] is False
+              assert x["scientific_component_pass"] is False
+              assert x["tail_diagnostic"]["max_numeric_tail_residual"] <= 1e-10
+
+          print(json.dumps({
+              "status": x["status"],
+              "research_metric_gate_pass": x.get("research_metric_gate_pass"),
+              "split": x.get("split"),
+              "deltas": ((x.get("metrics") or {}).get("deltas_candidate_minus_baseline")),
+              "bootstrap": x.get("bootstrap"),
+              "development_gate": x.get("development_gate"),
+              "theta": x.get("theta"),
+              "draw_diagnostic": x.get("draw_diagnostic"),
+              "tail_diagnostic": x.get("tail_diagnostic"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v2-${{ github.sha }}
+          path: /tmp/world-model-v2/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
