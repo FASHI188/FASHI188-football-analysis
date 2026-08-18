@@ -1,0 +1,95 @@
+name: Football C070-G State Duration Decomposition
+
+on:
+  push:
+    branches:
+      - research/c070g-state-duration-decomp-20260818
+    paths:
+      - football-data/research/c070g_state_duration_decomp_contract.json
+      - football-data/research/evaluate_c070g_state_duration_decomp.py
+      - .github/workflows/football-c070g-state-duration-decomp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c070g-state-duration-decomp
+  cancel-in-progress: false
+
+jobs:
+  develop-first-two-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.2 scipy==1.16.1 scikit-learn==1.7.1
+
+      - name: Download pinned public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c070g_source"
+          curl -L --fail --retry 5 --retry-delay 3 \
+            -o "$RUNNER_TEMP/c070g_source/database.sqlite" \
+            "https://huggingface.co/datasets/julien-c/kaggle-hugomathien-soccer/resolve/80e14cc7aa624cc266470f43a626652dabdfb80a/database.sqlite?download=true"
+          echo "4df8569777d59fdd690754b1cc8ca1f7989baf65f2eaddd0f1368285f11139a9  $RUNNER_TEMP/c070g_source/database.sqlite" | sha256sum -c -
+
+      - name: Reproduce frozen 4000 identities without labels
+        env:
+          C070F_DB: ${{ runner.temp }}/c070g_source/database.sqlite
+          C070F_OUT: ${{ runner.temp }}/c070g_identity
+        run: |
+          python football-data/research/c070f_fresh4000_identity_freeze.py
+
+      - name: Run C070-G on consumed first two blocks only
+        run: |
+          mkdir -p "$RUNNER_TEMP/c070g_out"
+          python football-data/research/evaluate_c070g_state_duration_decomp.py \
+            --db "$RUNNER_TEMP/c070g_source/database.sqlite" \
+            --manifest "$RUNNER_TEMP/c070g_identity/c070f_4000_identity_manifest.csv" \
+            --out "$RUNNER_TEMP/c070g_out/summary.json"
+
+      - name: Enforce sealed confirmation and development-only boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c070g_out'/'summary.json'
+          s=json.loads(p.read_text())
+          assert s['status']=='C070G_POSTVIEW_DEVELOPMENT_COMPLETE'
+          assert s['identity']=={
+            'manifest_sha256':'55973058d3c0ba2dee9af1392dc6cb45a088973dbe51571d4b4610778a784f34',
+            'warmup':1202,'calibration':1201,'confirmation':1597
+          }
+          assert s['payload_boundary']['confirmation_payload_opened'] is False
+          assert s['payload_boundary']['confirmation_score_rows_read']==0
+          assert s['payload_boundary']['confirmation_event_rows_read']==0
+          assert s['parser']['calibration_mismatch_count']==0
+          assert s['boundary']['postview_development_only'] is True
+          assert s['boundary']['fresh_confirmation_claim_allowed'] is False
+          assert s['boundary']['confirmation_scored'] is False
+          assert s['boundary']['formal_weight']==0
+          print(json.dumps(s,indent=2))
+          PY
+
+      - name: Upload C070-G evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c070g-state-duration-decomp
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c070g_out/summary.json
+            ${{ runner.temp }}/c070g_identity/c070f_4000_identity_manifest.csv
+            football-data/research/c070g_state_duration_decomp_contract.json
