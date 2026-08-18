@@ -1,0 +1,107 @@
+{
+  "schema_version": "C069_MATCHED_PAIR_STATE_DYNAMICS_R1",
+  "created_at": "2026-08-18T15:46:00+08:00",
+  "research_status": "POSTVIEW_RETROSPECTIVE_DEVELOPMENT_ONLY",
+  "formal_weight": 0,
+  "scientific_pass_claim_allowed": false,
+  "confirmation_pass_claim_allowed": false,
+  "formal_promotion_allowed": false,
+  "question": "Can pre-match historical match-state dynamics distinguish final draws from otherwise similar one-goal wins?",
+  "source": {
+    "dataset": "Pappalardo/Wyscout public event dataset",
+    "scope": "all 1941 matches corresponding to A01-A05 development pool",
+    "matches_sha256": "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9",
+    "events_sha256": "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45",
+    "protected_samples_used": false,
+    "market_odds_available": false
+  },
+  "target": {
+    "positive_scores": [[0,0],[1,1],[2,2]],
+    "negative_scores": [[1,0],[0,1],[2,1],[1,2]],
+    "expanded_negatives_used": false
+  },
+  "prematch_time_contract": {
+    "prediction_uses_only_prior_completed_match_history": true,
+    "same_match_events_used_for_prediction": false,
+    "same_utc_date_predict_all_before_update": true,
+    "minimum_prior_matches_each_team": 5,
+    "random_split": false
+  },
+  "controls": {
+    "note": "No native market/AH/OU quotes exist in this public event source; R1 controls the closest frozen pre-match structural proxies and must not be described as a market-matched test.",
+    "features": [
+      "baseline_pdraw",
+      "baseline_abs_home_away_prob_gap",
+      "baseline_expected_total_goals",
+      "baseline_abs_log_lambda_ratio",
+      "competition_scoring_environment",
+      "season_stage"
+    ],
+    "baseline_intensity": {
+      "type": "low_capacity_rolling_goal_independent_poisson",
+      "competition_home_away_prior": true,
+      "prior_equivalent_matches": 4.0,
+      "lambda_clip": [0.2, 3.5]
+    }
+  },
+  "state_features": {
+    "estimation": "strict prior-only empirical rates/hazards with global-prefix shrinkage; team pair aggregated as mean and absolute difference",
+    "shrinkage": {
+      "rate_pseudocount": 8.0,
+      "hazard_pseudo_exposure_minutes": 180.0
+    },
+    "features": [
+      "draw_persistence_60_mean","draw_persistence_60_absdiff",
+      "draw_persistence_70_mean","draw_persistence_70_absdiff",
+      "equalizer_hazard_mean","equalizer_hazard_absdiff",
+      "rebreak_hazard_mean","rebreak_hazard_absdiff",
+      "late_tied_goal_hazard60_mean","late_tied_goal_hazard60_absdiff",
+      "late_tied_shot_hazard60_mean","late_tied_shot_hazard60_absdiff",
+      "late_tied_shot_hazard70_mean","late_tied_shot_hazard70_absdiff",
+      "late_tied_exit_hazard60_mean","late_tied_exit_hazard60_absdiff"
+    ]
+  },
+  "models": {
+    "baseline": "StandardScaler + LogisticRegression(C=0.1,class_weight=None,max_iter=5000) on controls",
+    "candidate": "same estimator on controls + frozen state features",
+    "hyperparameter_search": false
+  },
+  "oos": {
+    "folds": 3,
+    "construction": "global unique-date chronological boundaries at 40%,60%,80%,100%; expanding train, next 20% test; exact same-date batching",
+    "minimum_total_matched_pairs": 100,
+    "minimum_pairs_each_fold": 20
+  },
+  "matching": {
+    "within_test_fold": true,
+    "exact_competition": true,
+    "one_to_one_without_replacement": true,
+    "distance": "standardized Euclidean on frozen controls",
+    "calipers": {
+      "baseline_pdraw": 0.04,
+      "baseline_abs_home_away_prob_gap": 0.08,
+      "baseline_expected_total_goals": 0.40,
+      "baseline_abs_log_lambda_ratio": 0.35,
+      "season_stage": 0.25
+    },
+    "post_result_caliper_tuning": false
+  },
+  "metrics": {
+    "primary": "paired_log_loss",
+    "secondary": ["paired_accuracy","matched_row_log_loss","matched_row_brier","roc_auc","pr_auc","calibration","fold_stability","competition_stability"],
+    "bootstrap": {"reps": 5000,"unit":"matched_pair","interval":"90%"}
+  },
+  "development_signal_gate": {
+    "coverage": "total_pairs>=100 and each_fold_pairs>=20",
+    "paired_accuracy_candidate_min": 0.60,
+    "paired_accuracy_gain_min": 0.03,
+    "paired_log_loss_delta_max": -0.01,
+    "bootstrap_p95_delta_lt": 0.0,
+    "primary_fold_wins_min": 2,
+    "matched_row_log_loss_delta_max": 0.0,
+    "matched_row_brier_delta_max": 0.0
+  },
+  "forbidden": [
+    "manual draw probability boost","forced Draw Top1","1-1 reward","class weighting","post-view threshold tuning","sample relabeling after results","caliper retuning after results","protected-sample opening"
+  ]
+}
