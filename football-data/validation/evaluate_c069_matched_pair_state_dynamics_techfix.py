@@ -1,0 +1,48 @@
+from __future__ import annotations
+import argparse
+from collections import Counter, defaultdict
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import evaluate_c069_matched_pair_state_dynamics as base
+
+
+def build_panel_zero_floor(M, summaries):
+    """Technical-only fix: honor the preregistered 0.2 lambda floor when a competition prefix has 0 total goals."""
+    M = M[M.match_id.isin(summaries)].copy().sort_values(['dt', 'match_id']).reset_index(drop=True)
+    totals = M.groupby('cid').size().to_dict()
+    idx = Counter(); TH = defaultdict(list); CH = defaultdict(list); ST = defaultdict(Counter); GST = Counter(); R = []
+    for date, G in M.groupby('date', sort=True):
+        for _, r in G.iterrows():
+            h, a, c = int(r.home), int(r.away), int(r.cid); hc = CH[c]
+            lgh = float(np.mean([x[0] for x in hc])) if hc else 1.4
+            lga = float(np.mean([x[1] for x in hc])) if hc else 1.1
+            raw_lm = (lgh + lga) / 2.0
+            lm = max(raw_lm, 0.2)
+            def ga(t):
+                x = TH[t]; n = len(x)
+                return n, (float(np.mean([q[0] for q in x])) if n else lm), (float(np.mean([q[1] for q in x])) if n else lm)
+            hn, hgf, hga = ga(h); an, agf, aga = ga(a)
+            hgf = (hgf * hn + base.PRIOR * lm) / (hn + base.PRIOR)
+            hga = (hga * hn + base.PRIOR * lm) / (hn + base.PRIOR)
+            agf = (agf * an + base.PRIOR * lm) / (an + base.PRIOR)
+            aga = (aga * an + base.PRIOR * lm) / (an + base.PRIOR)
+            lh = float(np.clip(lgh * (hgf / lm) * (aga / lm), 0.2, 3.5))
+            la = float(np.clip(lga * (agf / lm) * (hga / lm), 0.2, 3.5))
+            P = base.phda(lh, la)
+            fh = base.team_features(ST[h], GST); fa = base.team_features(ST[a], GST)
+            f = {**r.to_dict(), 'hn': hn, 'an': an, 'baseline_pdraw': P[1], 'baseline_abs_home_away_prob_gap': abs(P[0] - P[2]), 'baseline_expected_total_goals': lh + la, 'baseline_abs_log_lambda_ratio': abs(np.log(lh / la)), 'competition_scoring_environment': float(np.mean([x[0] + x[1] for x in hc])) if hc else lgh + lga, 'season_stage': idx[c] / max(1, totals[c] - 1)}
+            base.add_state_pair(f, fh, fa); R.append(f)
+        for _, r in G.iterrows():
+            h, a, c = int(r.home), int(r.away), int(r.cid)
+            TH[h].append((float(r.hg), float(r.ag))); TH[a].append((float(r.ag), float(r.hg))); CH[c].append((float(r.hg), float(r.ag))); idx[c] += 1
+            for team in [h, a]:
+                q = summaries[int(r.match_id)][team]; ST[team].update(q); GST.update(q)
+    return pd.DataFrame(R).sort_values(['dt', 'match_id']).reset_index(drop=True)
+
+
+base.build_panel = build_panel_zero_floor
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser(); ap.add_argument('--matches', required=True); ap.add_argument('--events', required=True); ap.add_argument('--contract', required=True); ap.add_argument('--out', required=True)
+    a = ap.parse_args(); base.run(Path(a.matches), Path(a.events), Path(a.contract), Path(a.out))
