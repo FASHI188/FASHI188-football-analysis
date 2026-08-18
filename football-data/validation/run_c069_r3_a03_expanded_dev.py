@@ -8,6 +8,7 @@ import evaluate_c069_r3_a03_expanded_dev as r3
 
 
 MARKER_EVENT_NAME = "__C069_CANONICAL_GOAL_MARKER__"
+RAW_EVENT_LOOKBACK = 2
 
 
 def _tags(event: dict) -> set[int]:
@@ -48,7 +49,8 @@ def _canonicalize_events(match_row: dict, raw_events: list[dict]) -> tuple[list[
     fallback_count = 0
 
     for idx, event in enumerate(raw_events):
-        if _period(event) is None:
+        period = _period(event)
+        if period is None:
             continue
         tags = _tags(event)
         if 101 not in tags or event.get("eventName") != "Save attempt":
@@ -58,15 +60,14 @@ def _canonicalize_events(match_row: dict, raw_events: list[dict]) -> tuple[list[
             continue
         scorer = _opponent(goalkeeper_team, home, away)
 
-        previous = raw_events[idx - 1] if idx > 0 else None
-        previous_scorer = (
-            _recognized_scorer(previous, home, away) if previous is not None else None
-        )
-        duplicate = (
-            previous is not None
-            and _period(previous) == _period(event)
-            and previous_scorer == scorer
-        )
+        duplicate = False
+        for previous_idx in range(max(0, idx - RAW_EVENT_LOOKBACK), idx):
+            previous = raw_events[previous_idx]
+            if _period(previous) != period:
+                continue
+            if _recognized_scorer(previous, home, away) == scorer:
+                duplicate = True
+                break
         if duplicate:
             continue
 
@@ -100,7 +101,7 @@ def _install_canonical_goal_parser() -> None:
             if fallback_count:
                 print(
                     f"C069_GOAL_FALLBACK match={int(match_row['match_id'])} "
-                    f"markers={fallback_count} rule=raw_event_adjacency"
+                    f"markers={fallback_count} rule=raw_event_lookback_{RAW_EVENT_LOOKBACK}"
                 )
             return original_match_state_stats(match_row, canonical)
 
