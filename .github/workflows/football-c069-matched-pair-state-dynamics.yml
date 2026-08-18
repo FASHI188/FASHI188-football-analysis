@@ -1,0 +1,95 @@
+name: Football C069 Matched Pair State Dynamics
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/validation/evaluate_c069_matched_pair_state_dynamics.py'
+      - 'football-data/validation/evaluate_c069_matched_pair_state_dynamics_techfix.py'
+      - 'football-data/research/c069_matched_pair_state_dynamics/**'
+      - '.github/workflows/football-c069-matched-pair-state-dynamics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scikit-learn==1.8.0
+      - name: Compile frozen C069 probe and technical safeguard
+        run: python -m py_compile football-data/validation/evaluate_c069_matched_pair_state_dynamics.py football-data/validation/evaluate_c069_matched_pair_state_dynamics_techfix.py
+      - name: Verify pre-label contract identity
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('football-data/research/c069_matched_pair_state_dynamics/contract.json')
+          x=json.loads(p.read_text())
+          assert x['schema_version']=='C069_MATCHED_PAIR_STATE_DYNAMICS_R1'
+          assert x['formal_weight']==0
+          assert x['source']['protected_samples_used'] is False
+          assert x['source']['market_odds_available'] is False
+          assert x['models']['hyperparameter_search'] is False
+          assert x['matching']['post_result_caliper_tuning'] is False
+          assert x['oos']['folds']==3
+          print('contract_sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c069
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069/events.zip https://ndownloader.figshare.com/files/14464685
+          echo 'c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9  /tmp/c069/matches.zip' | sha256sum -c -
+          echo '877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45  /tmp/c069/events.zip' | sha256sum -c -
+      - name: Run frozen C069 matched-pair state-dynamics probe
+        run: |
+          mkdir -p football-data/manifests/c069_matched_pair_state_dynamics
+          cp football-data/research/c069_matched_pair_state_dynamics/contract.json football-data/manifests/c069_matched_pair_state_dynamics/contract.json
+          python football-data/validation/evaluate_c069_matched_pair_state_dynamics_techfix.py \
+            --matches /tmp/c069/matches.zip \
+            --events /tmp/c069/events.zip \
+            --contract football-data/research/c069_matched_pair_state_dynamics/contract.json \
+            --out football-data/manifests/c069_matched_pair_state_dynamics/summary.json
+      - name: Verify result boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c069_matched_pair_state_dynamics/summary.json').read_text())
+          assert x['status']=='POSTVIEW_RETROSPECTIVE_DEVELOPMENT_COMPLETE'
+          assert x['schema_version']=='C069_MATCHED_PAIR_STATE_DYNAMICS_R1'
+          assert x['boundary']['retrospective_open_data'] is True
+          assert x['boundary']['historical_pit_proof'] is False
+          assert x['boundary']['market_matched_test'] is False
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['scientific_pass'] is False
+          assert x['boundary']['confirmation_pass'] is False
+          assert x['boundary']['formal_promotion'] is False
+          assert x['boundary']['no_same_match_event_leakage'] is True
+          assert x['boundary']['same_date_predict_before_update'] is True
+          assert len(x['folds'])==3
+          print(json.dumps({'verdict':x['verdict'],'panel':x['panel'],'pooled_pair':x['pooled_pair'],'pooled_matched_rows':x['pooled_matched_rows'],'bootstrap':x['bootstrap'],'gate':x['gate']},indent=2))
+          PY
+      - name: Upload C069 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c069-matched-pair-state-dynamics
+          path: football-data/manifests/c069_matched_pair_state_dynamics/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
