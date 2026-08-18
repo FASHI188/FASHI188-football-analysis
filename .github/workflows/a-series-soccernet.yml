@@ -24,18 +24,75 @@ jobs:
       - name: Install frozen SoccerNet SDK
         run: pip install SoccerNet==0.1.62
 
-      - name: Download public SoccerNet-v2 labels only
+      - name: Download public SoccerNet-v2 labels only in parallel
         run: |
           mkdir -p /tmp/soccernet
           python - <<'PY'
-          from SoccerNet.Downloader import SoccerNetDownloader
-          d = SoccerNetDownloader(LocalDirectory='/tmp/soccernet')
-          d.downloadGames(files=['Labels-v2.json'], split=['train','valid','test'])
+          import json, os, time, urllib.request
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          from SoccerNet.utils import getListGames
+
+          root = Path('/tmp/soccernet')
+          server = 'https://exrcsdrive.kaust.edu.sa/public.php/webdav/'
+          user = 'ZDeEfBzCzseRCLA'  # official public Labels share in SoccerNet Downloader.py
+          password = 'SoccerNet'
+          jobs = []
+          split_counts = {}
+          for split in ['train','valid','test']:
+              games = list(getListGames(split, 'spotting'))
+              split_counts[split] = len(games)
+              jobs.extend((split, game) for game in games)
+
+          def download_one(item):
+              split, game = item
+              dest = root / game / 'Labels-v2.json'
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              url = os.path.join(server, game, 'Labels-v2.json').replace(' ', '%20').replace('\\\\', '/')
+              last = None
+              for attempt in range(4):
+                  try:
+                      mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+                      mgr.add_password(None, server, user, password)
+                      opener = urllib.request.build_opener(urllib.request.HTTPBasicAuthHandler(mgr))
+                      req = urllib.request.Request(url, headers={'User-Agent':'FASHI188-football-analysis/A-series'})
+                      with opener.open(req, timeout=90) as r:
+                          data = r.read()
+                      json.loads(data.decode('utf-8'))
+                      dest.write_bytes(data)
+                      return {'split':split,'game':game,'bytes':len(data),'ok':True}
+                  except Exception as exc:
+                      last = f'{type(exc).__name__}: {exc}'
+                      time.sleep(0.5 * (2 ** attempt))
+              return {'split':split,'game':game,'ok':False,'error':last}
+
+          results=[]
+          with ThreadPoolExecutor(max_workers=16) as pool:
+              futs=[pool.submit(download_one, x) for x in jobs]
+              for fut in as_completed(futs):
+                  results.append(fut.result())
+
+          failures=[r for r in results if not r['ok']]
+          receipt={
+              'sdk':'SoccerNet==0.1.62',
+              'source':'official SoccerNet public Labels-v2 share',
+              'video_downloaded':False,
+              'nda_content_downloaded':False,
+              'split_counts':split_counts,
+              'requested_games':len(jobs),
+              'downloaded_games':sum(1 for r in results if r['ok']),
+              'failures':failures,
+          }
+          (root/'DOWNLOAD_RECEIPT.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(receipt,ensure_ascii=False,indent=2))
+          if failures:
+              raise SystemExit(f'{len(failures)} label downloads failed')
           PY
 
       - name: Package as A06 onward
         run: |
           mkdir -p /tmp/a-series-soccernet
+          cp /tmp/soccernet/DOWNLOAD_RECEIPT.json /tmp/a-series-soccernet/
           python football-data/research/a_series/build_soccernet_a_series.py \
             --source /tmp/soccernet \
             --output /tmp/a-series-soccernet \
