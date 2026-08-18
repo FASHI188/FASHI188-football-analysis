@@ -2,11 +2,14 @@
 """V5.0 competition-season selective 1X2 direction gate.
 
 This module never changes any probability, score cell, market or price. It only
-annotates whether the final 1X2 Top-1 direction is eligible to be presented as a
-formal direction, otherwise the correct action is ABSTAIN.
+annotates whether the final 1X2 Top-1 direction is eligible under the historically
+activated V5 compatibility gate, otherwise the action is ABSTAIN.
 
-Runtime activation is fail-closed: V5 governance must be formally activated and a
-matching promotion receipt must exist. Until then this module reports 未启用.
+The V5.0/V5.0.1 manifests and activation receipt are historical hash-bound
+activation provenance. They do NOT identify the project's present-day CURRENT.
+Present-day formal use still requires separate verification of the unique
+project-scoped CURRENT before this compatibility gate may be treated as formally
+authoritative.
 """
 from __future__ import annotations
 
@@ -55,9 +58,11 @@ def _activation_error() -> str | None:
         return "runtime activation competition mismatch"
     if str(activation.get("target_season") or "") != "2026/27":
         return "runtime activation target-season mismatch"
-    binding = activation.get("formal_rule_binding") or {}
-    if binding.get("version") != "V5.0.1":
-        return "runtime activation is not bound to CURRENT V5.0.1"
+    binding = activation.get("historical_formal_rule_binding") or activation.get("formal_rule_binding") or {}
+    if binding.get("version_at_activation_freeze") not in {None, "V5.0.1"}:
+        return "runtime activation historical rule binding mismatch"
+    if binding.get("version") not in {None, "V5.0.1"}:
+        return "runtime activation historical rule binding mismatch"
 
     expected_paths = activation.get("bound_paths") or {}
     expected_hashes = activation.get("bound_git_blob_sha") or {}
@@ -94,6 +99,7 @@ def evaluate_gate(context: dict[str, Any], calculation: dict[str, Any], promotio
             "target_season": season,
             "probability_mutation": False,
             "formal_direction_allowed": None,
+            "current_project_rule_authority": False,
             "reason": "promotion does not apply to this competition-season",
         }
 
@@ -106,6 +112,7 @@ def evaluate_gate(context: dict[str, Any], calculation: dict[str, Any], promotio
             "target_season": season,
             "probability_mutation": False,
             "formal_direction_allowed": False,
+            "current_project_rule_authority": False,
             "reason": "final 1X2 probabilities missing",
         }
     try:
@@ -117,6 +124,7 @@ def evaluate_gate(context: dict[str, Any], calculation: dict[str, Any], promotio
             "target_season": season,
             "probability_mutation": False,
             "formal_direction_allowed": False,
+            "current_project_rule_authority": False,
             "reason": str(exc),
         }
 
@@ -129,6 +137,7 @@ def evaluate_gate(context: dict[str, Any], calculation: dict[str, Any], promotio
         "target_season": season,
         "probability_mutation": False,
         "formal_direction_allowed": allowed,
+        "current_project_rule_authority": False,
         "top1_direction": ranking[0][0],
         "top1_probability": ranking[0][1],
         "top2_direction": ranking[1][0],
@@ -136,7 +145,7 @@ def evaluate_gate(context: dict[str, Any], calculation: dict[str, Any], promotio
         "gap": gap,
         "threshold": threshold,
         "decision": ranking[0][0] if allowed else "ABSTAIN",
-        "policy": "selection gate only; probabilities unchanged",
+        "policy": "historical V5 selection-gate compatibility only; probabilities unchanged; present-day formal authority must be verified externally",
     }
 
 
@@ -147,7 +156,8 @@ def apply_selective_direction_gate(context: dict[str, Any], calculation: dict[st
             "status": "不可用",
             "probability_mutation": False,
             "formal_direction_allowed": False,
-            "reason": "V5.0.0 promotion governance, V5.0.1 CURRENT, or promotion receipt missing",
+            "current_project_rule_authority": False,
+            "reason": "historical V5 promotion governance or promotion receipt missing",
         }
         return output
 
@@ -169,22 +179,24 @@ def apply_selective_direction_gate(context: dict[str, Any], calculation: dict[st
             "status": "未启用",
             "probability_mutation": False,
             "formal_direction_allowed": False,
-            "reason": "V5 is staged but not the formally activated unique CURRENT",
+            "current_project_rule_authority": False,
+            "reason": "historical V5.0.0 promotion governance was not activated",
             "v500_status": governance.get("status"),
         }
         return output
 
-    current = load_json(V501_STATUS)
+    historical_v501 = load_json(V501_STATUS)
     if (
-        not str(current.get("status") or "").startswith("FORMALLY_ACTIVATED")
-        or str(current.get("formal_rule_version") or "") != "V5.0.1"
+        not str(historical_v501.get("status") or "").startswith("FORMALLY_ACTIVATED")
+        or str(historical_v501.get("formal_rule_version") or "") != "V5.0.1"
     ):
         output["selective_direction_gate_v500_audit"] = {
             "status": "未启用",
             "probability_mutation": False,
             "formal_direction_allowed": False,
-            "reason": "V5.0.1 is not the formally activated unique CURRENT",
-            "v501_status": current.get("status"),
+            "current_project_rule_authority": False,
+            "reason": "historical V5.0.1 activation provenance is not valid",
+            "v501_status": historical_v501.get("status"),
         }
         return output
 
@@ -193,7 +205,8 @@ def apply_selective_direction_gate(context: dict[str, Any], calculation: dict[st
             "status": "未启用",
             "probability_mutation": False,
             "formal_direction_allowed": False,
-            "reason": "promotion receipt is not formally activated",
+            "current_project_rule_authority": False,
+            "reason": "historical promotion receipt is not activated",
             "promotion_status": promotion.get("status"),
         }
         return output
@@ -204,6 +217,7 @@ def apply_selective_direction_gate(context: dict[str, Any], calculation: dict[st
             "status": "不可用",
             "probability_mutation": False,
             "formal_direction_allowed": False,
+            "current_project_rule_authority": False,
             "reason": activation_error,
             "method": "hash_bound_runtime_activation_gate",
         }
@@ -214,5 +228,7 @@ def apply_selective_direction_gate(context: dict[str, Any], calculation: dict[st
     audit["runtime_activation_path"] = str(ACTIVATION.relative_to(ROOT))
     audit["promotion_receipt_path"] = str(PROMOTION.relative_to(ROOT))
     audit["promotion_receipt_sha256"] = sha256_file(PROMOTION)
+    audit["historical_activation_binding"] = "V5.0.1"
+    audit["current_project_rule_authority"] = False
     output["selective_direction_gate_v500_audit"] = audit
     return output
