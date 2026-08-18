@@ -1,0 +1,95 @@
+name: Football V5.2 R44L5 External Domain Zero-Label Screen
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/football-v520-r44l5-external-domain-zero-label-screen.yml'
+      - 'football-data/research/r44l5_external_domain_screen/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v520-r44l5-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zero-label-domain-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Verify V5.2 zero-label contract and source boundaries
+        run: |
+          set -euo pipefail
+          test -f football-data/governance/pit_evidence_contract_v520.json
+          test -f football-data/governance/model_promotion_gate_v520.json
+          python -m py_compile football-data/research/r44l5_external_domain_screen/run_zero_label_domain_screen_r44l5.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('football-data/research/r44l5_external_domain_screen/run_zero_label_domain_screen_r44l5.py')
+          s=p.read_text(encoding='utf-8')
+          for forbidden in ['home_score','away_score','winner','draw_label','one_goal_label']:
+              assert forbidden not in s, forbidden
+          assert 'SOURCE_PIN = "b0bc9f22dd77c206ddedc1d742893b3bbe64baec"' in s
+          assert 'EXCLUDED_COMPETITION_IDS = {37}' in s
+          pre=Path('football-data/research/r44l5_external_domain_screen/prereg_r44l5.md').read_text(encoding='utf-8')
+          for token in ['total match identities >= 720','competition seasons >= 4','competition_id=37','target/settlement labels: 0','model fits: 0']:
+              assert token in pre, token
+          print('PASS_R44L5_ZERO_LABEL_CONTRACT')
+          PY
+
+      - name: Run identity-only external domain screen
+        env:
+          R44L5_OUTPUT: ${{ runner.temp }}/r44l5
+        run: |
+          set -euo pipefail
+          rm -rf "$R44L5_OUTPUT"
+          python football-data/research/r44l5_external_domain_screen/run_zero_label_domain_screen_r44l5.py
+
+      - name: Verify receipt and hard boundaries
+        env:
+          R44L5_OUTPUT: ${{ runner.temp }}/r44l5
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,re,subprocess
+          from pathlib import Path
+          root=Path(os.environ['R44L5_OUTPUT'])
+          raw=(root/'receipt_r44l5.json').read_bytes()
+          r=json.loads(raw)
+          assert r['schema_version']=='V520-R44L5-ZERO-LABEL-DOMAIN-SCREEN-1.0'
+          assert r['terminal'] in {'PASS_R44L5_STAGE_A_CANDIDATES_FOUND','STOP_R44L5_NO_EXTERNAL_DOMAIN_MEETS_SCALE_DENSITY_GATE'}
+          assert r['research_only'] is True and r['formal_weight']==0
+          assert r['source_repo']=='hudl/open-data'
+          assert r['source_pin']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          assert re.fullmatch(r'[0-9a-f]{64}',r['competitions_sha256'])
+          h=r['hard_boundary_receipt']
+          assert all(v==0 for v in h.values())
+          actual_head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert r['run_identity']['checked_out_head_sha']==actual_head
+          expected=(root/'receipt_r44l5.sha256').read_text(encoding='ascii').strip()
+          assert expected==hashlib.sha256(raw).hexdigest()
+          domains=json.loads((root/'domains_r44l5.json').read_text(encoding='utf-8'))
+          assert len(domains)==r['domain_count']
+          assert sum(1 for x in domains if x['passes_stage_a_scale_density_gate'])==r['candidate_count']
+          assert all(x['competition_id'] != 37 for x in domains if x['passes_stage_a_scale_density_gate'])
+          print(json.dumps({'terminal':r['terminal'],'domains':r['domain_count'],'candidates':r['candidate_count'],'candidate_ids':r['candidate_competition_ids'],'head':actual_head},sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: football-v520-r44l5-zero-label-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r44l5
+          retention-days: 30
+          if-no-files-found: error
