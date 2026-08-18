@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Repository-wide integrity and completeness validation."""
+"""Repository-wide static platform validation.
+
+Default execution is read-only. This module validates committed data/config/schema
+presence and static invariants. It deliberately does not claim behavioral PASS
+from file existence: end-to-end prepare/validate/freeze/audit behavior is proven
+by tests/test_prediction_pipeline.py in Football Platform Integrity CI.
+"""
 from __future__ import annotations
 
 import argparse
@@ -25,13 +31,14 @@ REQUIRED_ENGINES = [
     "validate_platform.py",
     "evaluate_audits.py",
 ]
+BEHAVIOR_TEST = ROOT / "tests" / "test_prediction_pipeline.py"
 
 
 def _profile_path(competition_id: str) -> Path:
     return ROOT / "league_profiles" / competition_id / "profile.json"
 
 
-def run(write: bool = True, require_generated: bool = True) -> dict[str, Any]:
+def run(write: bool = False, require_generated: bool = True) -> dict[str, Any]:
     registry = load_registry()
     errors: list[str] = []
     warnings: list[str] = []
@@ -40,9 +47,7 @@ def run(write: bool = True, require_generated: bool = True) -> dict[str, Any]:
     declared_count = registry.get("competition_count")
     actual_count = len(registry["competitions"])
     if declared_count != actual_count or actual_count <= 0:
-        errors.append(
-            f"registry competition_count mismatch: declared={declared_count} actual={actual_count}"
-        )
+        errors.append(f"registry competition_count mismatch: declared={declared_count} actual={actual_count}")
 
     current_files = [
         str(path.relative_to(ROOT))
@@ -66,6 +71,8 @@ def run(write: bool = True, require_generated: bool = True) -> dict[str, Any]:
         path = ROOT / "engine" / name
         if not path.exists():
             errors.append(f"missing engine: {path.relative_to(ROOT)}")
+    if not BEHAVIOR_TEST.is_file():
+        errors.append(f"missing end-to-end behavior test: {BEHAVIOR_TEST.relative_to(ROOT)}")
 
     for competition in registry["competitions"]:
         competition_id = competition["competition_id"]
@@ -120,37 +127,47 @@ def run(write: bool = True, require_generated: bool = True) -> dict[str, Any]:
     formal_manifest_path = ROOT / "manifests" / "formal_core_v460_status.json"
     formal_manifest = load_json(formal_manifest_path) if formal_manifest_path.exists() else None
     formal_core_status = (
-        "条件通过"
+        "静态资产条件满足"
         if formal_engine_path.exists()
         and isinstance(formal_manifest, dict)
         and formal_manifest.get("competition_count_failed") == 0
         and formal_manifest.get("formal_core_available_count", 0) > 0
         else "未启用"
     )
+    pipeline_implementation_present = (ROOT / "engine" / "match_pipeline.py").is_file()
+    behavior_test_present = BEHAVIOR_TEST.is_file()
+
     report = {
-        "schema_version": "1.1",
+        "schema_version": "1.2-read-only-static-validator",
         "status": "通过" if not errors else "失败",
+        "write_mode": "EXPLICIT_WRITE_RECEIPT" if write else "READ_ONLY",
         "competition_count": actual_count,
         "errors": sorted(set(errors)),
         "warnings": sorted(set(warnings)),
         "competitions": competitions,
         "capability_status": {
-            "competition_results_and_profiles": "通过" if not any("profile" in error or "processed" in error for error in errors) else "失败",
-            "team_dynamic_descriptive_features": "通过" if all(item["team_features"].startswith("available") for item in competitions.values()) else "未启用",
-            "time_ordered_training_dataset": "通过" if all(item["training_dataset"].startswith("available") for item in competitions.values()) else "未启用",
-            "market_snapshot_contract": "通过" if (ROOT / "schemas/market_snapshot.schema.json").exists() else "失败",
-            "single_match_preflight": "通过" if (ROOT / "engine/match_pipeline.py").exists() else "失败",
+            "competition_results_and_profiles": "静态通过" if not any("profile" in e or "processed" in e for e in errors) else "失败",
+            "team_dynamic_descriptive_features": "静态通过" if all(item["team_features"].startswith("available") for item in competitions.values()) else "未启用",
+            "time_ordered_training_dataset": "静态通过" if all(item["training_dataset"].startswith("available") for item in competitions.values()) else "未启用",
+            "market_snapshot_contract": "静态实现存在" if (ROOT / "schemas/market_snapshot.schema.json").exists() else "失败",
+            "single_match_pipeline_implementation": "静态实现存在" if pipeline_implementation_present else "失败",
+            "score_matrix_audit_implementation": "静态实现存在；行为PASS只认CI测试" if pipeline_implementation_present else "失败",
+            "prediction_freeze_and_postmatch_audit": "静态实现存在；行为PASS只认CI测试" if pipeline_implementation_present and behavior_test_present else "失败",
             "formal_joint_probability_core": formal_core_status,
-            "score_matrix_audit": "通过" if (ROOT / "engine/match_pipeline.py").exists() else "失败",
-            "prediction_freeze_and_postmatch_audit": "通过" if (ROOT / "engine/match_pipeline.py").exists() else "失败",
             "domain_a_grade_receipts": formal_manifest.get("a_grade_receipt_count", 0) if formal_manifest else 0,
             "historical_timestamped_synchronized_market": "不要求用于单场；A等级验证缺口",
             "historical_point_in_time_lineup_injury": "不可用",
         },
+        "behavioral_acceptance": {
+            "test_path": str(BEHAVIOR_TEST.relative_to(ROOT)),
+            "covers": ["prepare", "validate", "score_matrix", "freeze", "postmatch_audit"],
+            "status_in_this_static_run": "NOT_EXECUTED",
+            "authority": "Football Platform Integrity CI test result",
+        },
         "known_external_evidence_gaps": known_gaps,
         "formal_readiness_statement": (
-            "Data preparation, current-season formal-core execution, validation, freezing and auditing are separately gated. "
-            "The joint core may produce B/C/D center probabilities only after its domain artifact is validated; no A grade or high-confidence EXACT is implied."
+            "Static repository readiness and behavioral/scientific readiness are separate gates. "
+            "This validator cannot promote models, change formal weights, or substitute CI/strict OOS evidence."
         ),
     }
     if write:
@@ -163,11 +180,15 @@ def run(write: bool = True, require_generated: bool = True) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--allow-missing-generated", action="store_true")
-    parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--write-receipt", action="store_true", help="Explicitly persist manifests/platform_status.json")
+    parser.add_argument("--check-only", action="store_true", help="Deprecated compatibility flag; validation is read-only by default")
     parser.add_argument("--print-summary", action="store_true")
     args = parser.parse_args()
+    if args.check_only and args.write_receipt:
+        print("ERROR: --check-only and --write-receipt are mutually exclusive")
+        return 2
     try:
-        report = run(write=not args.check_only, require_generated=not args.allow_missing_generated)
+        report = run(write=args.write_receipt, require_generated=not args.allow_missing_generated)
     except PlatformError as exc:
         print(f"ERROR: {exc}")
         return 2
