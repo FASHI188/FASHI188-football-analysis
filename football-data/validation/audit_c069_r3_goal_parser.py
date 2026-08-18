@@ -44,6 +44,37 @@ def scorer(event: dict, home: int, away: int):
     return None
 
 
+def diagnostic_events(raw_events: list[dict]) -> list[dict]:
+    focus = [
+        i for i, event in enumerate(raw_events)
+        if 101 in _tags(event) or 102 in _tags(event)
+    ]
+    indices = set()
+    for i in focus:
+        indices.update(range(max(0, i - 3), min(len(raw_events), i + 4)))
+    rows = []
+    for idx in sorted(indices):
+        event = raw_events[idx]
+        rows.append(
+            {
+                "idx": idx,
+                "score_tag_focus": idx in focus,
+                "id": event.get("id"),
+                "period": event.get("matchPeriod"),
+                "sec": event.get("eventSec"),
+                "teamId": event.get("teamId"),
+                "playerId": event.get("playerId"),
+                "eventName": event.get("eventName"),
+                "subEventName": event.get("subEventName"),
+                "eventId": event.get("eventId"),
+                "subEventId": event.get("subEventId"),
+                "tags": sorted(_tags(event)),
+                "positions": event.get("positions"),
+            }
+        )
+    return rows
+
+
 def main(packages: list[Path], out: Path) -> None:
     all_matches = []
     all_events = {}
@@ -75,7 +106,8 @@ def main(packages: list[Path], out: Path) -> None:
         regular += 1
         home, away, expected_h, expected_a = teams_and_score(match)
         row = {"match_id": mid, "home": home, "away": away}
-        canonical, fallback_count = _canonicalize_events(row, all_events[mid])
+        raw = all_events[mid]
+        canonical, fallback_count = _canonicalize_events(row, raw)
         if fallback_count:
             fallback_matches.append({"match_id": mid, "package": package_by_match[mid], "markers": fallback_count})
         gh = ga = 0
@@ -90,13 +122,15 @@ def main(packages: list[Path], out: Path) -> None:
                 "match_id": mid,
                 "package": package_by_match[mid],
                 "dateutc": match.get("dateutc"),
+                "teams": {"home": home, "away": away},
                 "expected": [expected_h, expected_a],
                 "reconstructed": [gh, ga],
                 "fallback_markers": fallback_count,
+                "score_tag_neighborhoods": diagnostic_events(raw),
             })
 
     result = {
-        "schema_version": "C069_R3_GOAL_PARSER_AUDIT_V1",
+        "schema_version": "C069_R3_GOAL_PARSER_AUDIT_V2",
         "packages": package_ids,
         "source_matches": len(all_matches),
         "regular_matches": regular,
