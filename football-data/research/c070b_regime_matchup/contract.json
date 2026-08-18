@@ -1,0 +1,129 @@
+{
+  "schema_version": "C070B_REGIME_MATCHUP_CONTRACT_V1",
+  "frozen_at": "2026-08-18T18:57:00+08:00",
+  "research_stage": "post_view_development_only",
+  "authorization": "user_explicit_start_for_multi-method_C070_program",
+  "design_lineage": "Regime+Matchup was specified as the second independent information family in the user-authorized combined plan before the C070-A result; C070-A failed and none of its features are carried into C070-B.",
+  "formal_weight": 0,
+  "protected_samples_used": false,
+  "new_A_packages_opened": [],
+  "source_boundary": {
+    "packages": ["A01", "A02", "A03"],
+    "source_match_count": 1200,
+    "A01_ids_sha256": "12ccdea126c4b92c2ea82ce4fbcbea54c8525885423371883f71339c1204adcf",
+    "A02_ids_sha256": "a91e6274a25c096ff3a70309feab4df245f705001bfc38b8689df4873346b752",
+    "A03_ids_sha256_ordered": "cb6d8f7e2c6292e46733fe1feff28945f4b2d9baa962f79c729ea7207aa0f51c",
+    "no_A04": true,
+    "no_protected": true
+  },
+  "estimand": {
+    "target": "draw_vs_one_goal_win_conditional",
+    "settlement": "90_minutes_including_stoppage_no_extra_time_or_penalties",
+    "same_day_policy": "predict_all_same_utc_date_before_any_same_date_update"
+  },
+  "orthogonality_audit": {
+    "not_C069": "does not reuse the four score-state long-horizon means as candidate information",
+    "not_C070A": "does not use score-shock windows, tied-shot pace, or shot burst windows",
+    "new_raw_dimensions": [
+      "pass_start_end_geometry",
+      "pass_accuracy_tag_1801",
+      "attacking_third_event_origin",
+      "same_team_consecutive_on_ball_run_structure"
+    ],
+    "new_information_claim": "the candidate uses prior event spatial/type/sequence style signatures and symmetric team-vs-team style mismatch, which cannot be reconstructed from C069 state means or C070-A shot timing features",
+    "forbidden": [
+      "include_C070A_features",
+      "retune_C070A_after_negative",
+      "change_folds",
+      "change_matching_calipers",
+      "change_pair_gates",
+      "hyperparameter_search",
+      "class_weight_or_threshold_search"
+    ]
+  },
+  "score_stream": {
+    "canonical_parser": "C069_R3_final_raw_event_lookback_2",
+    "required_audit": {"source_matches":1200,"regular_matches":1192,"mismatch_count":0,"only_fallback_match":2499781}
+  },
+  "style_profile": {
+    "team_history_cutoff": "strictly_prior_utc_dates_only",
+    "minimum_prior_team_matches": 4,
+    "on_ball_event_names": ["Pass", "Duel", "Shot", "Free Kick", "Others on the ball"],
+    "definitions": {
+      "pass_direct_share": "among Pass events with >=2 positions, share with end_x-start_x >= 20 percentage points; smoothed (direct+2)/(geometric_passes+4)",
+      "pass_accuracy": "tag1801 share among Pass events; smoothed (accurate+10)/(passes+20)",
+      "attacking_third_share": "share of on-ball events whose first position x>=66; smoothed (att3+2)/(onball+4)",
+      "same_team_run_mean": "mean length of consecutive same-team on-ball-event runs in event-time order; smoothed (run_events+2)/(run_count+1)"
+    }
+  },
+  "features": {
+    "baseline": ["baseline_logit"],
+    "candidate": [
+      "baseline_logit",
+      "regime_directness_mean",
+      "regime_control_logmean",
+      "matchup_directness_gap",
+      "matchup_control_loggap",
+      "matchup_attacking_third_gap"
+    ],
+    "match_level_definitions": {
+      "regime_directness_mean": "mean(home prior pass_direct_share, away prior pass_direct_share)",
+      "regime_control_logmean": "mean(log(home prior same_team_run_mean), log(away prior same_team_run_mean))",
+      "matchup_directness_gap": "abs(home prior pass_direct_share-away prior pass_direct_share)",
+      "matchup_control_loggap": "abs(log(home prior same_team_run_mean)-log(away prior same_team_run_mean))",
+      "matchup_attacking_third_gap": "abs(home prior attacking_third_share-away prior attacking_third_share)"
+    },
+    "audit_only_not_candidate": ["home_pass_accuracy", "away_pass_accuracy"]
+  },
+  "folds": {
+    "fold_1": {"train_end_exclusive":"2018-01-13","test_start_inclusive":"2018-01-13","test_end_exclusive":"2018-02-23"},
+    "fold_2": {"train_end_exclusive":"2018-02-23","test_start_inclusive":"2018-02-23","test_end_exclusive":"2018-04-08"},
+    "fold_3": {"train_end_exclusive":"2018-04-08","test_start_inclusive":"2018-04-08","test_end_exclusive":null}
+  },
+  "matching": {
+    "exact_competition": true,
+    "calipers": {"q_draw_cond":0.05,"abs_ha_gap":0.08,"lambda_total":0.45},
+    "without_replacement": true,
+    "objective": "lexicographic_maximum_cardinality_then_minimum_total_distance",
+    "minimum_train_pairs_each_fold": 30,
+    "minimum_test_pairs_each_fold": 15,
+    "expected_pair_counts": {
+      "fold_1":{"train":75,"test":25},
+      "fold_2":{"train":127,"test":23},
+      "fold_3":{"train":169,"test":33}
+    }
+  },
+  "model": {
+    "family": "standardized_logistic_regression",
+    "C": 0.1,
+    "class_weight": null,
+    "hyperparameter_search": false,
+    "threshold_tuning": false
+  },
+  "metrics": {
+    "primary": "test_log_loss_candidate_minus_baseline",
+    "secondary": ["brier","auc","accuracy","within_pair_accuracy"],
+    "bootstrap": {"unit":"matched_pair","reps":2000,"seed":7002,"ci":0.90}
+  },
+  "development_signal_gate": {
+    "pooled_delta_log_loss_lt_0": true,
+    "bootstrap_90pct_upper_delta_log_loss_lt_0": true,
+    "fold_log_loss_wins_min": 2,
+    "pooled_delta_brier_le_0": true,
+    "pooled_pair_accuracy_delta_ge_0": true
+  },
+  "stop_lines": {
+    "feature_coverage_failure": "STOP_DATA_BEFORE_MODEL",
+    "pair_coverage_failure": "STOP_COVERAGE_BEFORE_MODEL",
+    "gate_failure": "DEVELOPMENT_NEGATIVE_CLOSE_C070B_FROZEN_REPRESENTATION",
+    "gate_pass": "DEVELOPMENT_SIGNAL_ONLY_NO_FORMAL_PROMOTION",
+    "forbidden_after_result": [
+      "retune_direct_pass_20_threshold_on_same_labels",
+      "retune_attacking_third_66_threshold_on_same_labels",
+      "change_smoothing_on_same_labels",
+      "retune_C_or_class_weights",
+      "open_A04_without_new_frozen_contract",
+      "use_protected_sample_without_separate_confirmation_contract"
+    ]
+  }
+}
