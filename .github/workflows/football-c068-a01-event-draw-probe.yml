@@ -1,0 +1,85 @@
+name: Football C068 A01 Event Draw Probe
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/validation/build_c068_a01_runtime.py'
+      - 'football-data/validation/evaluate_c068_a01_event_draw_probe.py'
+      - 'football-data/research/c068_a01_event_draw_probe/**'
+      - '.github/workflows/football-c068-a01-event-draw-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scikit-learn==1.8.0
+      - name: Compile frozen A01-only probe
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/evaluate_c068_a01_event_draw_probe.py
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c068-a01
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c068-a01/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c068-a01/events.zip https://ndownloader.figshare.com/files/14464685
+      - name: Rebuild exact A01 runtime package
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c068-a01/matches.zip \
+            --events-zip /tmp/c068-a01/events.zip \
+            --out /tmp/c068-a01/A01.zip
+      - name: Run frozen C068 A01-only development probe
+        run: |
+          mkdir -p football-data/manifests/c068_a01_event_draw_probe
+          cp football-data/research/c068_a01_event_draw_probe/contract.json football-data/manifests/c068_a01_event_draw_probe/contract.json
+          python football-data/validation/evaluate_c068_a01_event_draw_probe.py \
+            --a01 /tmp/c068-a01/A01.zip \
+            --out football-data/manifests/c068_a01_event_draw_probe/summary.json
+      - name: Verify result and protected boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/c068_a01_event_draw_probe/summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_A01_ONLY_DEVELOPMENT_PROBE_COMPLETE'
+          assert x['source']['package']=='A01'
+          assert x['source']['matches']==400
+          assert x['source']['ids_sha256']=='12ccdea126c4b92c2ea82ce4fbcbea54c8525885423371883f71339c1204adcf'
+          assert x['contract']['same_match_events_used_for_prediction'] is False
+          assert x['contract']['eligible_rows']==241
+          assert x['contract']['class_weight'] is None
+          assert x['contract']['natural_argmax_only'] is True
+          assert x['boundary']['A02_A05_used'] is False
+          assert x['boundary']['B07_used'] is False
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['scientific_pass'] is False
+          assert x['boundary']['confirmation_pass'] is False
+          print(json.dumps({'verdict':x['verdict'],'pooled':x['pooled'],'folds':x['folds'],'boundary':x['boundary']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload C068 A01 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c068-a01-event-draw-probe
+          path: football-data/manifests/c068_a01_event_draw_probe/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
