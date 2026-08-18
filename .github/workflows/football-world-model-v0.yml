@@ -1,0 +1,94 @@
+name: Football World Model V0
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/world_model_v0/**'
+      - 'football-data/validation/evaluate_world_model_v0.py'
+      - '.github/workflows/football-world-model-v0.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-world-model-v0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5
+      - name: Compile frozen evaluator
+        run: python -m py_compile football-data/validation/evaluate_world_model_v0.py
+      - name: Verify zero-label preregistration boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/world_model_v0/preregistration.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='ZERO_LABEL_PREREGISTERED_RESEARCH_ONLY'
+          assert x['authority']['formal_weight']==0
+          assert x['authority']['main_mutation'] is False
+          assert x['hyperparameter_policy']['search'] is False
+          assert x['train_policy_test_split']['same_day_leakage']=='forbidden'
+          assert x['post_result_authorization']['scientific_pass_does_not_authorize_b05'] is True
+          print(json.dumps({'status':x['status'],'estimand':x['estimand']},ensure_ascii=False,indent=2))
+          PY
+      - name: Run frozen World Model V0
+        run: |
+          mkdir -p /tmp/world-model-v0
+          python football-data/validation/evaluate_world_model_v0.py \
+            --output /tmp/world-model-v0/summary.json \
+            | tee /tmp/world-model-v0/stdout.log
+      - name: Verify research-only result boundary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/world-model-v0/summary.json')
+          assert p.exists(), 'summary missing'
+          x=json.loads(p.read_text(encoding='utf-8'))
+          b=x['boundary']
+          assert b['formal_weight']==0
+          assert b['b05_opened'] is False
+          assert b['new_protected_labels_opened']==0
+          assert b['market_data_used'] is False
+          assert b['formal_model_mutation'] is False
+          assert b['formal_data_mutation'] is False
+          assert b['formal_config_mutation'] is False
+          assert b['current_mutation'] is False
+          assert b['main_mutation'] is False
+          assert b['automatic_promotion'] is False
+          print(json.dumps({
+            'status':x['status'],
+            'scientific_component_pass':x.get('scientific_component_pass'),
+            'split':x.get('split'),
+            'deltas':((x.get('metrics') or {}).get('deltas_candidate_minus_baseline')),
+            'bootstrap':x.get('bootstrap'),
+            'development_gate':x.get('development_gate'),
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v0-${{ github.sha }}
+          path: /tmp/world-model-v0/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
