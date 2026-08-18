@@ -1,0 +1,162 @@
+name: Football C069 R3 A03 Expanded Dev
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/c069_r3_a03_expanded_dev/**'
+      - 'football-data/validation/build_c069_a03_runtime.py'
+      - 'football-data/validation/evaluate_c069_r3_a03_expanded_dev.py'
+      - '.github/workflows/football-c069-r3-a03-expanded-dev.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.18.0 scikit-learn==1.8.0
+
+      - name: Compile frozen R3 implementation
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/build_c068_a02_runtime.py \
+            football-data/validation/build_c069_a03_runtime.py \
+            football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/run_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
+            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py
+          python -m json.tool football-data/research/c069_r3_a03_expanded_dev/contract.json >/dev/null
+
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c069r3
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069r3/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069r3/events.zip https://ndownloader.figshare.com/files/14464685
+          echo "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9  /tmp/c069r3/matches.zip" | sha256sum -c -
+          echo "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45  /tmp/c069r3/events.zip" | sha256sum -c -
+
+      - name: Rebuild frozen A01 and A02 reference packages
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c069r3/matches.zip --events-zip /tmp/c069r3/events.zip --out /tmp/c069r3/A01.zip
+          python football-data/validation/build_c068_a02_runtime.py \
+            --matches-zip /tmp/c069r3/matches.zip --events-zip /tmp/c069r3/events.zip --out /tmp/c069r3/A02.zip
+
+      - name: Reproduce frozen R2 before A03 evaluation
+        run: |
+          mkdir -p football-data/manifests/c069_r3_a03_expanded_dev
+          python football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
+            --a01 /tmp/c069r3/A01.zip \
+            --a02 /tmp/c069r3/A02.zip \
+            --out football-data/manifests/c069_r3_a03_expanded_dev/r2_precheck.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/r2_precheck.json').read_text())
+          assert x['status']=='STOP_COVERAGE'
+          got={k:{'train':v['r2_maxcard']['train_pairs'],'test':v['r2_maxcard']['test_pairs']} for k,v in x['folds'].items()}
+          assert got=={
+            'fold_1': {'train':27,'test':18},
+            'fold_2': {'train':56,'test':14},
+            'fold_3': {'train':86,'test':14},
+          }, got
+          assert x['boundary']['model_fitting_performed'] is False
+          assert x['boundary']['formal_weight']==0
+          print(json.dumps(got,indent=2))
+          PY
+
+      - name: Build newly authorized deterministic A03 package
+        run: |
+          python football-data/validation/build_c069_a03_runtime.py \
+            --matches-zip /tmp/c069r3/matches.zip \
+            --events-zip /tmp/c069r3/events.zip \
+            --out /tmp/c069r3/A03.zip | tee football-data/manifests/c069_r3_a03_expanded_dev/a03_build.json
+
+      - name: Run frozen C069 R3 A03 evaluation
+        run: |
+          cp football-data/research/c069_r3_a03_expanded_dev/contract.json \
+            football-data/manifests/c069_r3_a03_expanded_dev/contract.json
+          python football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+            --a01 /tmp/c069r3/A01.zip \
+            --a02 /tmp/c069r3/A02.zip \
+            --a03 /tmp/c069r3/A03.zip \
+            --matches-zip /tmp/c069r3/matches.zip \
+            --out football-data/manifests/c069_r3_a03_expanded_dev/summary.json
+
+      - name: Verify frozen boundaries and result schema
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/contract.json').read_text())
+          b=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/a03_build.json').read_text())
+          x=json.loads(Path('football-data/manifests/c069_r3_a03_expanded_dev/summary.json').read_text())
+          assert c['schema_version']=='C069_R3_A03_EXPANDED_DEV_CONTRACT_V1'
+          assert c['source_boundary']['A03']['one_based_ranks']==[801,1200]
+          assert c['matching']['calipers']=={'q_draw_cond':0.05,'abs_ha_gap':0.08,'lambda_total':0.45}
+          assert c['coverage_gates']['minimum_train_pairs_each_fold']==30
+          assert c['coverage_gates']['minimum_test_pairs_each_fold']==15
+          assert b['status']=='A03_RUNTIME_REBUILT'
+          assert b['matches']==400
+          assert b['global_rank_one_based']==[801,1200]
+          assert x['schema_version']=='C069_MATCHED_PAIR_DRAW_STATE_R3_A03'
+          assert x['source']['packages']==['A01','A02','A03']
+          assert x['source']['source_matches']==1200
+          assert x['source']['a03_ids_sha256_ordered']==b['ids_sha256']
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['new_A_packages_opened']==['A03']
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['scientific_pass'] is False
+          assert x['boundary']['confirmation_pass'] is False
+          assert x['boundary']['formal_promotion_allowed'] is False
+          expected_dates={
+            'fold_1':('2018-01-13','2018-01-13','2018-02-23'),
+            'fold_2':('2018-02-23','2018-02-23','2018-04-08'),
+            'fold_3':('2018-04-08','2018-04-08',None),
+          }
+          for name,fold in x['folds'].items():
+              assert (fold['train_date_max_exclusive'],fold['test_date_min_inclusive'],fold['test_date_max_exclusive'])==expected_dates[name]
+              assert fold['train_pairs']==fold['train_maximum_cardinality_certificate']
+              assert fold['test_pairs']==fold['test_maximum_cardinality_certificate']
+          if x['status']=='STOP_COVERAGE':
+              assert x['coverage_failures']
+              assert x['boundary']['model_fitting_performed'] is False
+              assert x['boundary']['model_scoring_performed'] is False
+              assert 'pooled' not in x
+          else:
+              assert x['status']=='POSTVIEW_A03_DEVELOPMENT_COMPLETE'
+              assert x['coverage_failures']==[]
+              assert x['boundary']['model_fitting_performed'] is True
+              assert x['boundary']['model_scoring_performed'] is True
+              assert x['pooled']['test_pairs']>=45
+              assert x['pooled']['bootstrap_logloss_delta']['reps']==2000
+              assert x['pooled']['bootstrap_logloss_delta']['seed']==6901
+          print(json.dumps({'status':x['status'],'verdict':x['verdict'],'source':x['source'],'folds':{k:{'train_pairs':v['train_pairs'],'test_pairs':v['test_pairs']} for k,v in x['folds'].items()},'pooled':x.get('pooled')},indent=2))
+          PY
+
+      - name: Upload C069 R3 A03 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c069-r3-a03-expanded-dev
+          path: football-data/manifests/c069_r3_a03_expanded_dev/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
