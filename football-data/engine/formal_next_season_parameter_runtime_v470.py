@@ -16,6 +16,7 @@ from repository_text_hash import repository_text_sha256
 
 CONFIG_PATH = ROOT / "config" / "formal_core_v460.json"
 ROLLFORWARD_PATH = ROOT / "manifests" / "formal_next_season_parameter_rollforward_v470_status.json"
+NORMALIZATION = "CRLF_AND_CR_TO_LF_BEFORE_SHA256"
 
 
 def _report_for(competition_id: str, target_season: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -37,6 +38,8 @@ def _report_for(competition_id: str, target_season: str) -> tuple[dict[str, Any]
     model = load_json(model_path)
     validation = load_json(validation_path)
 
+    normalization_marker = report.get("repository_text_hash_normalization")
+    legacy_receipt_without_marker = normalization_marker is None
     checks = {
         "engine_sha_match": report.get("engine_sha256") == repository_text_sha256(ENGINE_PATH),
         "config_sha_match": report.get("config_sha256") == repository_text_sha256(CONFIG_PATH),
@@ -47,11 +50,14 @@ def _report_for(competition_id: str, target_season: str) -> tuple[dict[str, Any]
         "model_selected_parameters_match": model.get("selected_parameters") == report.get("selected_parameters"),
         "source_season_match": str(model.get("live_target_season") or "") == str(report.get("source_season") or ""),
         "team_strength_rollforward_false": report.get("team_strength_rollforward") is False,
-        "shared_repository_text_hash_normalization": report.get("repository_text_hash_normalization") == "CRLF_AND_CR_TO_LF_BEFORE_SHA256",
+        # R1 receipts predate this metadata field. They are accepted only because
+        # every bound repository-text SHA above is recomputed using the canonical
+        # normalizer and must match exactly. Any explicit conflicting marker fails.
+        "shared_repository_text_hash_normalization": legacy_receipt_without_marker or normalization_marker == NORMALIZATION,
     }
     if not all(checks.values()):
         raise PlatformError(f"next-season parameter rollforward hash/invariant failure: {checks}")
-    return report, model, checks
+    return report, model, {**checks, "legacy_receipt_without_normalization_marker": legacy_receipt_without_marker}
 
 
 def select_rollforward_parameters(artifact: dict[str, Any], target_season: str) -> dict[str, Any]:
@@ -60,8 +66,6 @@ def select_rollforward_parameters(artifact: dict[str, Any], target_season: str) 
         raise PlatformError("formal model artifact missing competition_id")
     report, model, _ = _report_for(competition_id, target_season)
     if artifact != model:
-        # Object equality makes sure the engine-loaded artifact is exactly the source
-        # whose file hash was bound by the receipt, not a stale in-memory variant.
         raise PlatformError("engine-loaded model artifact differs from rollforward source model")
     params = report.get("selected_parameters")
     if not isinstance(params, dict) or not params:
