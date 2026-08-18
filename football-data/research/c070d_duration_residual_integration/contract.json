@@ -1,0 +1,91 @@
+{
+  "schema_version": "C070D_DURATION_RESIDUAL_INTEGRATION_CONTRACT_V1",
+  "research_stage": "post-view development integration",
+  "frozen_before_c070d_execution": true,
+  "parent": {
+    "branch": "research/c070c-semimarkov-generator-20260818",
+    "head_sha": "d3922e4497f6e39968ea7bb93303da25e95627a5",
+    "required_c070c_verdict": "C070C_SEMIMARKOV_STRUCTURAL_DEVELOPMENT_SIGNAL",
+    "execution_guard": "C070-D must not be scored unless the corrected-parent C070-C workflow completes successfully and reproduces the preregistered structural direction: 3/3 fold transition-LogLoss wins, pooled semimarkov-minus-markov LogLoss < 0, and match-bootstrap 90% upper bound < 0."
+  },
+  "source_boundary": {
+    "packages": ["A01", "A02", "A03"],
+    "source_matches_expected": 1200,
+    "regular_matches_expected": 1192,
+    "no_A04": true,
+    "no_protected": true,
+    "formal_weight": 0,
+    "same_PIT_ASOF_semantics_as_c069_r3": true,
+    "same_score_parser_as_c070c_parent": true
+  },
+  "estimand": {
+    "target": "conditional Draw versus one-goal win at 90 minutes",
+    "matching": "exact competition maximum-cardinality matched pairs without replacement",
+    "fixed_fold_dates": {
+      "fold_1": ["2018-01-13", "2018-01-13", "2018-02-23"],
+      "fold_2": ["2018-02-23", "2018-02-23", "2018-04-08"],
+      "fold_3": ["2018-04-08", "2018-04-08", null]
+    },
+    "expected_pair_counts": {
+      "fold_1": {"train": 75, "test": 25},
+      "fold_2": {"train": 127, "test": 23},
+      "fold_3": {"train": 169, "test": 33}
+    },
+    "calipers": {
+      "q_draw_cond": 0.05,
+      "abs_ha_gap": 0.08,
+      "lambda_total": 0.45
+    }
+  },
+  "information_boundary": {
+    "uses_failed_c070a_features": false,
+    "uses_failed_c070b_features": false,
+    "new_signal": "only the C070-C Semi-Markov minus Markov duration-dependent probability correction",
+    "reason": "C070-C indicates that score-state duration improves the structural next-minute transition likelihood while the absolute generator remains worse calibrated than the incumbent Draw baseline. C070-D therefore transports only the duration correction into the incumbent probability system instead of replacing the incumbent with the raw generator."
+  },
+  "integration_rule": {
+    "epsilon": 0.000001,
+    "incumbent_probability": "the frozen C069-R3 baseline prediction for each outer-fold matched test row",
+    "markov_probability": "the frozen C070-C Markov-generator conditional Draw probability P(diff=0)/P(abs(diff)<=1)",
+    "semimarkov_probability": "the frozen C070-C Semi-Markov-generator conditional Draw probability P(diff=0)/P(abs(diff)<=1)",
+    "duration_logodds_shift": "logit(clip(semimarkov_probability)) - logit(clip(markov_probability))",
+    "candidate_probability": "sigmoid(logit(clip(incumbent_probability)) + duration_logodds_shift)",
+    "learned_weight": false,
+    "learned_intercept": false,
+    "posthoc_calibration": false,
+    "blend_search": false,
+    "hyperparameter_search": false,
+    "threshold_tuning": false,
+    "alternative_alpha_values": false
+  },
+  "evaluation": {
+    "primary": "candidate minus incumbent matched-test Log Loss",
+    "secondary": ["Brier", "AUC", "accuracy", "pair_accuracy", "calibration_intercept_diagnostic", "calibration_slope_diagnostic"],
+    "pair_bootstrap": {
+      "reps": 2000,
+      "seed": 7004,
+      "unit": "matched pair",
+      "confidence_interval": 0.90
+    },
+    "development_signal_gate": {
+      "pooled_logloss_delta_candidate_minus_incumbent_lt_0": true,
+      "pair_bootstrap_90pct_upper_lt_0": true,
+      "fold_logloss_wins_gte": 2,
+      "pooled_brier_delta_candidate_minus_incumbent_lte_0": true
+    },
+    "auc_or_accuracy_cannot_override_primary_proper_score_failure": true
+  },
+  "stop_rules": {
+    "if_parent_c070c_reproduction_fails": "STOP_PARENT_REPRODUCTION",
+    "if_data_identity_or_parser_or_pair_counts_drift": "STOP_INTEGRITY",
+    "if_development_signal_gate_fails": "C070D_DURATION_RESIDUAL_INCREMENT_NOT_ESTABLISHED",
+    "if_development_signal_gate_passes": "C070D_DURATION_RESIDUAL_DEVELOPMENT_SIGNAL",
+    "after_pass": "Do not tune alpha or fit a calibrator on the already-consumed outer-test rows. Freeze a separate confirmation/calibration contract before opening any new A package or protected sample."
+  },
+  "claims": {
+    "development_only": true,
+    "scientific_pass": false,
+    "confirmation_pass": false,
+    "formal_promotion_allowed": false
+  }
+}
