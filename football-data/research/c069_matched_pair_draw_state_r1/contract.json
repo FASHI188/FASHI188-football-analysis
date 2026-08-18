@@ -1,0 +1,91 @@
+{
+  "schema_version": "C069_MATCHED_PAIR_DRAW_STATE_R1_CONTRACT_R1",
+  "created_at": "2026-08-18T16:44:00+08:00",
+  "purpose": "Test whether prematch state-dynamics histories add stable discrimination between draws and one-goal wins after deterministic matching on existing A01+A02 prematch strength/total environment.",
+  "research_status": "POSTVIEW_DEVELOPMENT_ONLY",
+  "formal_rule": {
+    "current_version": "V5.2.0",
+    "formal_weight": 0,
+    "scientific_pass_claim_allowed": false,
+    "confirmation_pass_claim_allowed": false,
+    "formal_promotion_allowed": false
+  },
+  "source_boundary": {
+    "packages": ["A01", "A02"],
+    "source_matches": 800,
+    "A01_ids_sha256": "12ccdea126c4b92c2ea82ce4fbcbea54c8525885423371883f71339c1204adcf",
+    "A02_ids_sha256": "a91e6274a25c096ff3a70309feab4df245f705001bfc38b8689df4873346b752",
+    "new_A_packages_opened": false,
+    "protected_samples_used": false,
+    "market_history_used": false,
+    "market_reason": "A01/A02 contain public match+event data but no PIT-qualified synchronized market quotes; R1 must not fake market matching."
+  },
+  "estimand": {
+    "population": "regular-duration matches with both teams having >=4 prior selected A01+A02 matches and final outcome either draw or one-goal win",
+    "target": "P(draw | outcome in {draw, one-goal win}, matched prematch environment)",
+    "settlement": "90 minutes including stoppage; only 1H/2H events; non-regular-duration matches excluded"
+  },
+  "pit_contract": {
+    "same_match_events_used_for_prediction": false,
+    "same_utc_date_predict_before_update": true,
+    "history_inputs": "prior selected A01+A02 matches only",
+    "event_goal_reconstruction_must_match_final_90m_score": true
+  },
+  "matching": {
+    "exact_competition": true,
+    "without_replacement": true,
+    "deterministic_greedy": true,
+    "features": ["q_draw_cond", "abs_ha_gap", "lambda_total"],
+    "calipers": {"q_draw_cond": 0.05, "abs_ha_gap": 0.08, "lambda_total": 0.45},
+    "distance": "sum_squared_caliper_normalized"
+  },
+  "state_features": {
+    "draw_persistence": "mean home/away prior smoothed P(FT draw | tied at 60/70/80)",
+    "equalizer_hazard": "mean home/away prior smoothed equalizers per 90 minutes spent trailing by exactly one goal",
+    "rebreak_hazard": "mean home/away prior smoothed tie-breaking goals per 90 minutes spent tied after an equalizer",
+    "late_tied_aggression": "mean home/away prior smoothed shots per 90 tied minutes from minute 60 onward"
+  },
+  "smoothing": {
+    "draw_persistence": "Beta-style 2 successes / 4 opportunities prior",
+    "equalizer_hazard": "0.5 event / 30 exposure-minute prior",
+    "rebreak_hazard": "0.5 event / 30 exposure-minute prior",
+    "late_tied_aggression": "1 shot / 30 exposure-minute prior"
+  },
+  "models": {
+    "baseline": {
+      "estimator": "StandardScaler + LogisticRegression",
+      "features": ["baseline_logit"],
+      "C": 0.1,
+      "class_weight": null,
+      "max_iter": 5000
+    },
+    "candidate": {
+      "estimator": "StandardScaler + LogisticRegression",
+      "features": ["baseline_logit", "draw_persistence", "equalizer_hazard", "rebreak_hazard", "late_tied_aggression"],
+      "C": 0.1,
+      "class_weight": null,
+      "max_iter": 5000
+    },
+    "hyperparameter_search": false
+  },
+  "evaluation": {
+    "folds": "three growing-train chronological folds; test blocks are non-overlapping by unique-date 40/60/80 percent cutpoints",
+    "minimum_train_pairs_per_fold": 30,
+    "minimum_test_pairs_per_fold": 15,
+    "primary_metric": "binary log loss candidate minus baseline",
+    "secondary_metrics": ["Brier", "ROC AUC", "accuracy", "within-pair accuracy"],
+    "bootstrap": {"unit": "matched_pair", "reps": 2000, "seed": 6901, "interval": "90%"},
+    "development_signal_gate": [
+      "pooled delta log_loss < 0",
+      "90% matched-pair bootstrap CI upper bound < 0",
+      "at least 2 of 3 folds improve log_loss",
+      "pooled Brier delta <= 0",
+      "candidate within-pair accuracy > baseline within-pair accuracy"
+    ]
+  },
+  "interpretation": {
+    "positive_result": "development signal only; requires an untouched confirmation design before any scientific/promotion claim",
+    "negative_result": "do not model-shop the same state representation; move to the next orthogonal state/PIT representation or stop",
+    "formal_weight": 0
+  }
+}
