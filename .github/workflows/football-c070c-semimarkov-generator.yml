@@ -1,0 +1,169 @@
+name: Football C070-C Semi-Markov Generator
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/c070c_semimarkov_generator/**'
+      - 'football-data/validation/evaluate_c070c_semimarkov_generator.py'
+      - 'football-data/validation/run_c070c_semimarkov_generator_fast.py'
+      - '.github/workflows/football-c070c-semimarkov-generator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.18.0 scikit-learn==1.8.0
+
+      - name: Compile frozen C070-C implementation
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/build_c068_a02_runtime.py \
+            football-data/validation/build_c069_a03_runtime.py \
+            football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/run_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
+            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+            football-data/validation/run_c069_r3_a03_expanded_dev.py \
+            football-data/validation/audit_c069_r3_goal_parser.py \
+            football-data/validation/evaluate_c070c_semimarkov_generator.py \
+            football-data/validation/run_c070c_semimarkov_generator_fast.py
+          python -m json.tool football-data/research/c070c_semimarkov_generator/contract.json >/dev/null
+          python -m json.tool football-data/research/c070c_semimarkov_generator/IMPLEMENTATION_CORRECTION_01.json >/dev/null
+
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c070c
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070c/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070c/events.zip https://ndownloader.figshare.com/files/14464685
+          echo "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9  /tmp/c070c/matches.zip" | sha256sum -c -
+          echo "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45  /tmp/c070c/events.zip" | sha256sum -c -
+
+      - name: Rebuild frozen A01 A02 A03 development packages
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c070c/matches.zip --events-zip /tmp/c070c/events.zip --out /tmp/c070c/A01.zip
+          python football-data/validation/build_c068_a02_runtime.py \
+            --matches-zip /tmp/c070c/matches.zip --events-zip /tmp/c070c/events.zip --out /tmp/c070c/A02.zip
+          python football-data/validation/build_c069_a03_runtime.py \
+            --matches-zip /tmp/c070c/matches.zip --events-zip /tmp/c070c/events.zip --out /tmp/c070c/A03.zip \
+            | tee /tmp/c070c/a03_build.json
+
+      - name: Re-audit final score parser before structural model
+        run: |
+          mkdir -p football-data/manifests/c070c_semimarkov_generator
+          python football-data/validation/audit_c069_r3_goal_parser.py \
+            --package /tmp/c070c/A01.zip \
+            --package /tmp/c070c/A02.zip \
+            --package /tmp/c070c/A03.zip \
+            --out football-data/manifests/c070c_semimarkov_generator/goal_parser_audit.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c070c_semimarkov_generator/goal_parser_audit.json').read_text())
+          assert x['status']=='PASS'
+          assert x['source_matches']==1200
+          assert x['regular_matches']==1192
+          assert x['mismatch_count']==0
+          assert [z['match_id'] for z in x['fallback_matches']]==[2499781]
+          PY
+
+      - name: Execute frozen C070-C structural evaluation
+        run: |
+          cp football-data/research/c070c_semimarkov_generator/contract.json \
+            football-data/manifests/c070c_semimarkov_generator/contract.json
+          cp football-data/research/c070c_semimarkov_generator/IMPLEMENTATION_CORRECTION_01.json \
+            football-data/manifests/c070c_semimarkov_generator/IMPLEMENTATION_CORRECTION_01.json
+          cp /tmp/c070c/a03_build.json football-data/manifests/c070c_semimarkov_generator/a03_build.json
+          python football-data/validation/run_c070c_semimarkov_generator_fast.py \
+            --a01 /tmp/c070c/A01.zip \
+            --a02 /tmp/c070c/A02.zip \
+            --a03 /tmp/c070c/A03.zip \
+            --matches-zip /tmp/c070c/matches.zip \
+            --out football-data/manifests/c070c_semimarkov_generator/summary.json
+
+      - name: Verify frozen boundaries and structural evidence closure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('football-data/manifests/c070c_semimarkov_generator')
+          c=json.loads((root/'contract.json').read_text())
+          corr=json.loads((root/'IMPLEMENTATION_CORRECTION_01.json').read_text())
+          x=json.loads((root/'summary.json').read_text())
+          assert c['schema_version']=='C070C_SEMIMARKOV_GENERATOR_CONTRACT_V1'
+          assert corr['schema_version']=='C070C_IMPLEMENTATION_CORRECTION_01'
+          assert corr['recorded_before_effect_result'] is True
+          assert corr['research_recipe_changed'] is False
+          assert corr['fitted_parameters_changed'] is False
+          assert corr['transition_equations_changed'] is False
+          assert corr['metrics_or_gates_changed'] is False
+          assert c['source_boundary']['packages']==['A01','A02','A03']
+          assert c['source_boundary']['no_A04'] is True
+          assert c['source_boundary']['no_protected'] is True
+          assert c['score_stream']['minute_binning']['bins']==90
+          assert c['models']['C']==0.1
+          assert c['models']['hyperparameter_search'] is False
+          assert c['derived_draw_evaluation']['no_posthoc_calibration'] is True
+          assert x['schema_version']=='C070C_SEMIMARKOV_GENERATOR_V1'
+          assert x['status']=='POSTVIEW_C070C_STRUCTURAL_DEVELOPMENT_COMPLETE'
+          assert x['source']['source_matches']==1200
+          assert x['source']['regular_matches']==1192
+          assert x['source']['minute_diagnostics']['score_fallback_matches']==[2499781]
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['new_A_packages_opened']==[]
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['failed_c070a_features_used'] is False
+          assert x['boundary']['failed_c070b_features_used'] is False
+          assert x['boundary']['posthoc_probability_calibration_performed'] is False
+          expected={'fold_1':(75,25),'fold_2':(127,23),'fold_3':(169,33)}
+          for name,(tr,te) in expected.items():
+              d=x['folds'][name]['derived_draw']
+              assert d['train_pairs']==tr
+              assert d['test_pairs']==te
+              assert d['train_maximum_cardinality_certificate']==tr
+              assert d['test_maximum_cardinality_certificate']==te
+          assert x['pooled_derived_draw']['test_pairs']==81
+          assert x['pooled_derived_draw']['test_rows']==162
+          assert x['pooled_structural']['match_bootstrap']['reps']==2000
+          assert x['pooled_structural']['match_bootstrap']['seed']==7103
+          assert x['pooled_derived_draw']['pair_bootstrap_semimarkov_minus_markov']['reps']==2000
+          assert x['pooled_derived_draw']['pair_bootstrap_semimarkov_minus_markov']['seed']==7003
+          assert x['boundary']['model_fitting_performed'] is True
+          assert x['boundary']['model_scoring_performed'] is True
+          print(json.dumps({
+              'verdict':x['verdict'],
+              'minute_diagnostics':x['source']['minute_diagnostics'],
+              'pooled_structural':x['pooled_structural'],
+              'pooled_derived_draw':x['pooled_derived_draw'],
+              'development_signal':x['development_signal']
+          },indent=2))
+          PY
+
+      - name: Upload C070-C evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c070c-semimarkov-generator
+          path: football-data/manifests/c070c_semimarkov_generator/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
