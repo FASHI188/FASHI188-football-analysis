@@ -1,0 +1,212 @@
+name: World Model V2 B06 StatsBomb Identity Only
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/world_model_v2_b06/**"
+      - ".github/workflows/world-model-v2-b06-statsbomb-identity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify frozen contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/world_model_v2_b06/statsbomb_identity_contract.json')
+          x=json.loads(p.read_text())
+          assert x['status']=='ZERO_LABEL_IDENTITY_SCAN_AUTHORIZED'
+          assert x['package_id']=='B06'
+          assert x['selection_rule']['package_size']==400
+          assert x['hard_boundary']['formal_weight']==0
+          print('contract-ok')
+          PY
+
+      - name: Identity-only provider scan and exact-400 freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b06-identity
+          python - <<'PY'
+          import collections, hashlib, json, re, time, urllib.request
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+
+          UA='FASHI188-football-analysis/b06-identity-only'
+          ROOT='https://raw.githubusercontent.com/hudl/open-data/master'
+          EXCLUDED={2,7,9,11,12,37,43,49,55,223}
+          SEED='WORLD_MODEL_V2_B06_STATSBOMB_IDENTITY_R1'
+          MATCH_ID_RE=re.compile(rb'"match_id"\s*:\s*(\d+)')
+
+          def get(url, attempts=4):
+              last=None
+              for i in range(attempts):
+                  try:
+                      req=urllib.request.Request(url,headers={'User-Agent':UA})
+                      with urllib.request.urlopen(req,timeout=120) as r:
+                          return r.read()
+                  except Exception as e:
+                      last=e
+                      if i+1<attempts: time.sleep(0.5*(2**i))
+              raise RuntimeError(f'GET failed {url}: {last}')
+
+          comps=json.loads(get(f'{ROOT}/data/competitions.json').decode('utf-8'))
+          # competitions.json has no match outcomes; structured parsing is permitted by contract.
+          groups=collections.defaultdict(list)
+          meta={}
+          for c in comps:
+              cid=int(c['competition_id']); sid=int(c['season_id'])
+              if cid in EXCLUDED: continue
+              raw=get(f'{ROOT}/data/matches/{cid}/{sid}.json')
+              # Critical boundary: per-season match payload is NOT json-decoded.
+              mids=[int(x) for x in MATCH_ID_RE.findall(raw)]
+              if not mids: continue
+              groups[cid].append((sid,mids))
+              meta[(cid,sid)]={
+                  'country_name':c['country_name'],
+                  'competition_name':c['competition_name'],
+                  'competition_gender':c['competition_gender'],
+                  'season_name':c['season_name'],
+                  'rows':len(mids),
+                  'raw_sha256':hashlib.sha256(raw).hexdigest(),
+              }
+
+          totals={cid:sum(len(mids) for _,mids in seasons) for cid,seasons in groups.items()}
+          qualifying=sorted(cid for cid,n in totals.items() if n>=400)
+          inventory={
+              'excluded_competition_ids':sorted(EXCLUDED),
+              'competition_totals':{str(k):v for k,v in sorted(totals.items())},
+              'qualifying_competition_ids':qualifying,
+          }
+          if not qualifying:
+              out={
+                  'schema_version':'WORLD_MODEL_V2_B06_STATSBOMB_IDENTITY_RESULT_1',
+                  'status':'STOP_DATA_COVERAGE',
+                  'selected_rows':0,
+                  'target_labels_opened':0,
+                  'event_payload_get_requests':0,
+                  'model_fit':False,
+                  'scientific_metrics':False,
+                  'inventory':inventory,
+              }
+              Path('/tmp/b06-identity/summary.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+              print(json.dumps(out,indent=2,sort_keys=True))
+              raise SystemExit(0)
+
+          cid=qualifying[0]
+          candidates=[]
+          for sid,mids in groups[cid]:
+              for mid in mids:
+                  rank=hashlib.sha256(f'{SEED}|{cid}|{sid}|{mid}'.encode()).hexdigest()
+                  candidates.append((rank,sid,mid))
+          candidates.sort()
+          chosen=candidates[:400]
+          assert len(chosen)==400
+          ids=[mid for _,_,mid in chosen]
+          assert len(set(ids))==400
+
+          def head_event(mid):
+              url=f'{ROOT}/data/events/{mid}.json'
+              try:
+                  req=urllib.request.Request(url,headers={'User-Agent':UA},method='HEAD')
+                  with urllib.request.urlopen(req,timeout=60) as r:
+                      return mid, 200 <= int(r.status) < 400
+              except Exception:
+                  return mid, False
+
+          ok=0; missing=[]
+          with ThreadPoolExecutor(max_workers=20) as ex:
+              futs=[ex.submit(head_event,mid) for mid in ids]
+              for f in as_completed(futs):
+                  mid,good=f.result()
+                  if good: ok+=1
+                  else: missing.append(mid)
+          rate=ok/400
+
+          rows=[]
+          for rank,sid,mid in chosen:
+              m=meta[(cid,sid)]
+              rows.append({
+                  'provider':'statsbomb',
+                  'competition_id':cid,
+                  'season_id':sid,
+                  'match_id':mid,
+                  'selection_rank_sha256':rank,
+                  'country_name':m['country_name'],
+                  'competition_name':m['competition_name'],
+                  'competition_gender':m['competition_gender'],
+                  'season_name':m['season_name'],
+              })
+          identity_text='\n'.join(str(x) for x in sorted(ids))
+          identity_sha=hashlib.sha256(identity_text.encode()).hexdigest()
+          canonical=json.dumps(rows,sort_keys=True,separators=(',',':'))
+          rows_sha=hashlib.sha256(canonical.encode()).hexdigest()
+          status='B06_IDENTITY_FROZEN_EVENT_TARGETS_UNOPENED' if rate>=0.98 else 'STOP_DATA_COVERAGE'
+          out={
+              'schema_version':'WORLD_MODEL_V2_B06_STATSBOMB_IDENTITY_RESULT_1',
+              'status':status,
+              'package_id':'B06',
+              'selected_competition_id':cid,
+              'selected_competition_name':rows[0]['competition_name'],
+              'selected_rows':400,
+              'event_head_success':ok,
+              'event_head_success_rate':rate,
+              'event_head_missing_ids':sorted(missing),
+              'identity_sha256':identity_sha,
+              'manifest_rows_sha256':rows_sha,
+              'target_labels_opened':0,
+              'per_season_match_payload_structured_parse':False,
+              'event_payload_get_requests':0,
+              'model_fit':False,
+              'scientific_metrics':False,
+              'formal_weight':0,
+              'inventory':inventory,
+              'season_receipts':[
+                  {'competition_id':k[0],'season_id':k[1],**v}
+                  for k,v in sorted(meta.items()) if k[0]==cid
+              ],
+              'rows':rows,
+          }
+          Path('/tmp/b06-identity/summary.json').write_text(json.dumps(out,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in out.items() if k!='rows'},ensure_ascii=False,indent=2,sort_keys=True))
+          PY
+
+      - name: Verify fail-closed identity boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('/tmp/b06-identity/summary.json').read_text())
+          assert x['target_labels_opened']==0
+          assert x['event_payload_get_requests']==0
+          assert x['model_fit'] is False
+          assert x['scientific_metrics'] is False
+          assert x.get('formal_weight',0)==0
+          if x['status']=='B06_IDENTITY_FROZEN_EVENT_TARGETS_UNOPENED':
+              assert x['selected_rows']==400
+              assert x['event_head_success_rate']>=0.98
+              assert x['per_season_match_payload_structured_parse'] is False
+          print(x['status'])
+          PY
+
+      - name: Upload identity evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v2-b06-statsbomb-identity-${{ github.sha }}
+          path: /tmp/b06-identity/summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
