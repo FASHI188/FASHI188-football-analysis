@@ -79,7 +79,7 @@ def build_payload() -> dict:
             "version_at_activation_freeze": "V5.0.1",
             "filename": v501.get("formal_rule_file"),
             "sha256": v501.get("formal_rule_sha256"),
-            "current_authority": false
+            "current_authority": False
         },
         "checks": checks,
         "policy": "Fail closed on any bound artifact mismatch. Historical formal-rule binding is provenance only; this script never identifies the project's current CURRENT.",
