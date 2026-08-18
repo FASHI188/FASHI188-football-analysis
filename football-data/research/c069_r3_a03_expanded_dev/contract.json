@@ -1,0 +1,141 @@
+{
+  "schema_version": "C069_R3_A03_EXPANDED_DEV_CONTRACT_V1",
+  "frozen_at": "2026-08-18T17:40:00+08:00",
+  "authorization": {
+    "user_instruction": "开始吧",
+    "meaning": "explicit authorization to expand C069 development sample after STATE89 required authorization before any new A package"
+  },
+  "formal_rule": {
+    "current_version": "V5.2.0",
+    "formal_weight": 0,
+    "scientific_pass_claim_allowed": false,
+    "confirmation_pass_claim_allowed": false,
+    "formal_promotion_allowed": false
+  },
+  "parent_r2": {
+    "pr": 226,
+    "head_sha": "c8d6de1865946f922775762de6a37175d4ce9e82",
+    "verdict": "MAXCARD_CANNOT_RECOVER_FROZEN_COVERAGE",
+    "r2_maxcard_fold_pairs": {
+      "fold_1": {"train": 27, "test": 18},
+      "fold_2": {"train": 56, "test": 14},
+      "fold_3": {"train": 86, "test": 14}
+    }
+  },
+  "purpose": "Open exactly one deterministic new development package A03, then test whether the already-frozen matched-pair state-dynamics candidate can be legally evaluated without changing the estimand, calipers, coverage gates, model recipe, or formal boundary.",
+  "source_boundary": {
+    "dataset": "Pappalardo/Wyscout public event dataset",
+    "matches_zip_sha256": "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9",
+    "events_zip_sha256": "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45",
+    "selection_seed": "A_SERIES_WYSCOUT_20260818_R1",
+    "selection_order": "ascending sha256(selection_seed + '|' + match_id) over the full source match universe",
+    "A01": {"one_based_ranks": [1, 400], "match_count": 400, "ids_sha256": "12ccdea126c4b92c2ea82ce4fbcbea54c8525885423371883f71339c1204adcf"},
+    "A02": {"one_based_ranks": [401, 800], "match_count": 400, "ids_sha256": "a91e6274a25c096ff3a70309feab4df245f705001bfc38b8689df4873346b752"},
+    "A03": {
+      "one_based_ranks": [801, 1200],
+      "match_count": 400,
+      "ids_sha256": "MEASURE_AFTER_DETERMINISTIC_BUILD_NOT_A_SELECTION_INPUT",
+      "semantics": "RESEARCH_DEVELOPMENT_ONLY_NOT_PROTECTED"
+    },
+    "union_expected_match_count": 1200,
+    "overlap_rule": "A01/A02/A03 match-id overlap must equal zero",
+    "additional_A_packages_allowed_in_r3": false,
+    "protected_samples_allowed": false,
+    "market_history_used": false,
+    "market_reason": "A-series public match/event packages contain no PIT-qualified synchronized market quotes; no retrospective market input may be fabricated."
+  },
+  "estimand": {
+    "population": "regular-duration selected A01+A02+A03 matches with both teams having >=4 prior selected union matches and final outcome either draw or one-goal win",
+    "target": "P(draw | outcome in {draw, one-goal win}, matched prematch environment)",
+    "settlement": "90 minutes including stoppage; only 1H/2H events; non-regular-duration matches excluded"
+  },
+  "pit_contract": {
+    "same_match_events_used_for_prediction": false,
+    "same_utc_date_predict_before_update": true,
+    "history_inputs": "prior selected A01+A02+A03 matches only",
+    "event_goal_reconstruction_must_match_final_90m_score": true,
+    "goal_event_rule": "own-goal tag102 always score-changing; ordinary tag101 score-changing only for eventName in {Shot, Free Kick} to exclude goalkeeper Save-attempt duplication"
+  },
+  "folds": {
+    "policy": "reuse the exact R1 absolute chronological date boundaries; do not recompute cutpoints after A03 is opened",
+    "fold_1": {"train_date_max_exclusive": "2018-01-13", "test_date_min_inclusive": "2018-01-13", "test_date_max_exclusive": "2018-02-23"},
+    "fold_2": {"train_date_max_exclusive": "2018-02-23", "test_date_min_inclusive": "2018-02-23", "test_date_max_exclusive": "2018-04-08"},
+    "fold_3": {"train_date_max_exclusive": "2018-04-08", "test_date_min_inclusive": "2018-04-08", "test_date_max_exclusive": null}
+  },
+  "matching": {
+    "exact_competition": true,
+    "without_replacement": true,
+    "features": ["q_draw_cond", "abs_ha_gap", "lambda_total"],
+    "calipers": {"q_draw_cond": 0.05, "abs_ha_gap": 0.08, "lambda_total": 0.45},
+    "distance": "sum_squared_caliper_normalized",
+    "objective": "lexicographic maximum cardinality then minimum total normalized distance",
+    "maximum_cardinality_certificate": "independent deterministic augmenting-path bipartite matching",
+    "minimum_distance_solver": "scipy.optimize.linear_sum_assignment_with_dummy_unmatched_columns"
+  },
+  "coverage_gates": {
+    "minimum_train_pairs_each_fold": 30,
+    "minimum_test_pairs_each_fold": 15,
+    "all_folds_must_pass_before_any_model_fit": true
+  },
+  "state_features": {
+    "draw_persistence": "mean home/away prior smoothed P(FT draw | tied at 60/70/80)",
+    "equalizer_hazard": "mean home/away prior smoothed equalizers per 90 minutes spent trailing by exactly one goal",
+    "rebreak_hazard": "mean home/away prior smoothed tie-breaking goals per 90 minutes spent tied after an equalizer",
+    "late_tied_aggression": "mean home/away prior smoothed shots per 90 tied minutes from minute 60 onward"
+  },
+  "smoothing": {
+    "draw_persistence": "Beta-style 2 successes / 4 opportunities prior",
+    "equalizer_hazard": "0.5 event / 30 exposure-minute prior",
+    "rebreak_hazard": "0.5 event / 30 exposure-minute prior",
+    "late_tied_aggression": "1 shot / 30 exposure-minute prior"
+  },
+  "models_if_and_only_if_coverage_passes": {
+    "baseline": {
+      "estimator": "StandardScaler + LogisticRegression",
+      "features": ["baseline_logit"],
+      "C": 0.1,
+      "class_weight": null,
+      "max_iter": 5000,
+      "random_state": 0
+    },
+    "candidate": {
+      "estimator": "StandardScaler + LogisticRegression",
+      "features": ["baseline_logit", "draw_persistence", "equalizer_hazard", "rebreak_hazard", "late_tied_aggression"],
+      "C": 0.1,
+      "class_weight": null,
+      "max_iter": 5000,
+      "random_state": 0
+    },
+    "hyperparameter_search": false
+  },
+  "evaluation_if_and_only_if_coverage_passes": {
+    "primary_metric": "binary log loss candidate minus baseline",
+    "secondary_metrics": ["Brier", "ROC AUC", "accuracy", "within-pair accuracy"],
+    "bootstrap": {"unit": "matched_pair", "reps": 2000, "seed": 6901, "interval": "90%"},
+    "development_signal_gate": [
+      "pooled delta log_loss < 0",
+      "90% matched-pair bootstrap CI upper bound < 0",
+      "at least 2 of 3 folds improve log_loss",
+      "pooled Brier delta <= 0",
+      "candidate within-pair accuracy > baseline within-pair accuracy"
+    ]
+  },
+  "stop_and_interpretation": {
+    "coverage_failure": "STOP_COVERAGE; no model fitting/scoring and no positive/negative feature verdict",
+    "coverage_pass_then_signal": "development signal only; not scientific confirmation and formal_weight remains 0",
+    "coverage_pass_then_no_signal": "development negative for this frozen representation; do not model-shop same information after viewing R3 labels",
+    "no_threshold_relaxation_after_view": true,
+    "no_caliper_relaxation_after_view": true,
+    "no_fold_change_after_view": true,
+    "no_A04_or_protected_sample_in_r3": true
+  },
+  "boundary": {
+    "post_view_development_only": true,
+    "new_A_packages_opened": ["A03"],
+    "protected_samples_used": false,
+    "formal_weight": 0,
+    "scientific_pass": false,
+    "confirmation_pass": false,
+    "formal_promotion_allowed": false
+  }
+}
