@@ -1,0 +1,170 @@
+name: Football V5.1 Context Market Prototype R1
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_context_market_prototype_r1.json"
+      - "football-data/config/v510_direct_draw_residual_r2.json"
+      - "football-data/config/v510_context_feature_packet_r1.json"
+      - "football-data/config/v510_total_goal_difference_contract_r1.json"
+      - "football-data/config/v510_existing_score_market_pit_ledger_r1.json"
+      - "football-data/config/v510_historical_label_structure_rolling_r1.json"
+      - "football-data/config/v510_historical_tail_mapping_r1.json"
+      - "football-data/config/v510_historical_tail_confirmation_r2.json"
+      - "football-data/validation/audit_v510_pit_context_readiness_r1.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/evaluate_v510_market_residual_1x2_r1.py"
+      - "football-data/validation/evaluate_v510_direct_draw_residual_r2.py"
+      - "football-data/validation/materialize_v510_context_feature_packets_r1.py"
+      - "football-data/validation/materialize_v510_total_goal_difference_contract_r1.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - "football-data/validation/evaluate_v510_historical_label_structure_rolling_r1.py"
+      - "football-data/validation/evaluate_v510_historical_tail_mapping_r1.py"
+      - "football-data/validation/evaluate_v510_historical_tail_confirmation_r2.py"
+      - "football-data/forward/v6_context_enriched_events_v6486.json"
+      - "football-data/forward/inbox/market_first_results_v651.json"
+      - "football-data/benchmarks/v6_1x2_neutral_fixed1000_v6131.json"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-context-market-prototype-r1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-context-market-prototype-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile prototype
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_pit_context_readiness_r1.py \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/evaluate_v510_market_residual_1x2_r1.py \
+            football-data/validation/evaluate_v510_direct_draw_residual_r2.py \
+            football-data/validation/materialize_v510_context_feature_packets_r1.py \
+            football-data/validation/materialize_v510_total_goal_difference_contract_r1.py \
+            football-data/validation/v510_historical_structure_features_r1.py \
+            football-data/validation/v510_historical_structure_model_r1.py \
+            football-data/validation/evaluate_v510_historical_label_structure_rolling_r1.py \
+            football-data/validation/evaluate_v510_historical_tail_mapping_r1.py \
+            football-data/validation/evaluate_v510_historical_tail_confirmation_r2.py
+      - name: Run deterministic self-tests
+        run: |
+          python football-data/validation/audit_v510_pit_context_readiness_r1.py --self-test
+          python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py --self-test
+          python football-data/validation/evaluate_v510_market_residual_1x2_r1.py --self-test
+          python football-data/validation/evaluate_v510_direct_draw_residual_r2.py --self-test
+          python football-data/validation/materialize_v510_context_feature_packets_r1.py --self-test
+          python football-data/validation/materialize_v510_total_goal_difference_contract_r1.py --self-test
+          python football-data/validation/evaluate_v510_historical_label_structure_rolling_r1.py --self-test
+          python football-data/validation/evaluate_v510_historical_tail_mapping_r1.py --self-test
+          python football-data/validation/evaluate_v510_historical_tail_confirmation_r2.py --self-test
+      - name: Materialize audited context feature packets
+        run: python football-data/validation/materialize_v510_context_feature_packets_r1.py
+      - name: Materialize direct-total and conditional-goal-difference contract
+        run: python football-data/validation/materialize_v510_total_goal_difference_contract_r1.py
+      - name: Audit existing processed score and market PIT ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Evaluate rolling historical label structure
+        run: python football-data/validation/evaluate_v510_historical_label_structure_rolling_r1.py
+      - name: Evaluate historical 7+ tail and legal score mapping
+        run: python football-data/validation/evaluate_v510_historical_tail_mapping_r1.py
+      - name: Confirm historical exact-tail candidate catalog R2
+        run: python football-data/validation/evaluate_v510_historical_tail_confirmation_r2.py
+      - name: Audit existing prospective PIT context
+        run: python football-data/validation/audit_v510_pit_context_readiness_r1.py
+      - name: Evaluate frozen three-class residual R1
+        run: python football-data/validation/evaluate_v510_market_residual_1x2_r1.py
+      - name: Evaluate direct-draw residual R2
+        run: python football-data/validation/evaluate_v510_direct_draw_residual_r2.py
+      - name: Show compact receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in (
+              Path('football-data/manifests/v510_context_feature_packets_r1_status.json'),
+              Path('football-data/manifests/v510_total_goal_difference_contract_r1_status.json'),
+              Path('football-data/manifests/v510_existing_score_market_pit_ledger_r1_status.json'),
+              Path('football-data/manifests/v510_historical_label_structure_rolling_r1_status.json'),
+              Path('football-data/manifests/v510_historical_tail_mapping_r1_status.json'),
+              Path('football-data/manifests/v510_historical_tail_confirmation_r2_status.json'),
+              Path('football-data/manifests/v510_pit_context_readiness_r1_status.json'),
+              Path('football-data/manifests/v510_market_residual_1x2_r1_status.json'),
+              Path('football-data/manifests/v510_direct_draw_residual_r2_status.json'),
+          ):
+              x=json.loads(path.read_text(encoding='utf-8'))
+              print(path)
+              print(json.dumps({
+                  'status':x.get('status'),
+                  'counts':x.get('counts'),
+                  'data_identity':x.get('data_identity'),
+                  'total_goal_distribution':x.get('total_goal_distribution'),
+                  'label_coverage_gate':x.get('label_coverage_gate'),
+                  'strict_pit_fit_gate':x.get('strict_pit_fit_gate'),
+                  'market_evidence_ruling':x.get('market_evidence_ruling'),
+                  'model_ruling':x.get('model_ruling'),
+                  'pooled':x.get('pooled'),
+                  'stability':x.get('stability'),
+                  'diagnostic':x.get('diagnostic'),
+                  'tail_and_matrix_ruling':x.get('tail_and_matrix_ruling'),
+                  'matrix_gate':x.get('matrix_gate'),
+                  'formal_ruling':x.get('formal_ruling'),
+                  'label_distributions':x.get('label_distributions'),
+                  'input_audit':x.get('input_audit'),
+                  'direct_total_fit_gate':x.get('direct_total_fit_gate'),
+                  'conditional_goal_difference_fit_gate':x.get('conditional_goal_difference_fit_gate'),
+                  'tail_gate':x.get('tail_gate'),
+                  'unified_score_matrix_gate':x.get('unified_score_matrix_gate'),
+                  'fixed_outputs':x.get('fixed_outputs'),
+                  'benchmark_rows':x.get('benchmark_rows'),
+                  'market_unavailable_rows':x.get('market_unavailable_rows'),
+                  'sample_count':x.get('sample_count'),
+                  'fit_gate':x.get('fit_gate'),
+                  'challenge_gate':x.get('challenge_gate'),
+                  'delta_model_minus_market':x.get('delta_model_minus_market'),
+                  'draw_audit':x.get('draw_audit'),
+              },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload research receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-context-market-prototype-r1
+          path: |
+            football-data/manifests/v510_context_feature_packets_r1_status.json
+            football-data/manifests/v510_total_goal_difference_contract_r1_status.json
+            football-data/manifests/v510_existing_score_market_pit_ledger_r1_status.json
+            football-data/manifests/v510_existing_score_market_pit_ledger_r1_rows.csv
+            football-data/manifests/v510_historical_label_structure_rolling_r1_status.json
+            football-data/manifests/v510_historical_label_structure_rolling_r1_stability.csv
+            football-data/manifests/v510_historical_tail_mapping_r1_status.json
+            football-data/manifests/v510_historical_tail_mapping_r1_stability.csv
+            football-data/manifests/v510_historical_tail_confirmation_r2_status.json
+            football-data/manifests/v510_pit_context_readiness_r1_status.json
+            football-data/manifests/v510_market_residual_1x2_r1_status.json
+            football-data/manifests/v510_direct_draw_residual_r2_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"

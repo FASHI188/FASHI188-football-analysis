@@ -1,0 +1,82 @@
+name: Football V5.1 Constrained Selective Draw Gate R12
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_constrained_selective_draw_gate_r12.json"
+      - "football-data/validation/evaluate_v510_constrained_selective_draw_gate_r12.py"
+      - "football-data/validation/evaluate_v510_selective_draw_gate_r11.py"
+      - "football-data/validation/evaluate_v510_learned_draw_gate_r10.py"
+      - "football-data/validation/evaluate_v510_core_joint_chain_r8.py"
+      - "football-data/validation/evaluate_v510_full_range_score_allocation_r4.py"
+      - "football-data/validation/evaluate_v510_online_ensemble_ablation_r7.py"
+      - "football-data/validation/evaluate_v510_nonlinear_continuation_boosting_r6.py"
+      - "football-data/validation/evaluate_v510_prequential_algorithm_challenge_r3.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/v510_historical_structure_model_r1.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-constrained-selective-draw-gate-r12.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-constrained-selective-draw-gate-r12-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.17.0 scikit-learn==1.8.0
+      - name: Compile R12 evaluator
+        run: python -m py_compile football-data/validation/evaluate_v510_constrained_selective_draw_gate_r12.py
+      - name: Run R12 self-test
+        run: python football-data/validation/evaluate_v510_constrained_selective_draw_gate_r12.py --self-test
+      - name: Materialize audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Evaluate R12 constrained selective draw gate
+        run: python football-data/validation/evaluate_v510_constrained_selective_draw_gate_r12.py
+      - name: Show compact receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_constrained_selective_draw_gate_r12_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps({
+            'status':x.get('status'),
+            'reproduction':x.get('reproduction'),
+            'pass_gates':x.get('pass_gates'),
+            'audits':x.get('audits'),
+            'stability':x.get('stability'),
+            'ruling':x.get('ruling'),
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R12 receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-constrained-selective-draw-gate-r12
+          path: |
+            football-data/manifests/v510_constrained_selective_draw_gate_r12_status.json
+            football-data/manifests/v510_constrained_selective_draw_gate_r12_stability.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"

@@ -1,0 +1,72 @@
+name: Football V5.1 Forward Prediction Receipt R17
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_forward_prediction_receipt_r17.json"
+      - "football-data/forward/inbox/v510_forward_prediction_receipt_r17.json"
+      - "football-data/forward/inbox/v510_strict_pit_capture_r14.json"
+      - "football-data/validation/audit_v510_forward_prediction_receipt_r17.py"
+      - "football-data/validation/audit_v510_strict_pit_capture_r14.py"
+      - "football-data/validation/append_v510_strict_pit_capture_r15.py"
+      - ".github/workflows/football-v510-forward-prediction-receipt-r17.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-forward-prediction-receipt-r17-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R17 auditor
+        run: python -m py_compile football-data/validation/audit_v510_forward_prediction_receipt_r17.py
+      - name: Run R17 self-test
+        run: python football-data/validation/audit_v510_forward_prediction_receipt_r17.py --self-test
+      - name: Audit real R14 capture ledger
+        run: python football-data/validation/audit_v510_strict_pit_capture_r14.py
+      - name: Audit real R17 prediction ledger
+        run: python football-data/validation/audit_v510_forward_prediction_receipt_r17.py
+      - name: Confirm empty real ledgers are not inflated by specimens
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_forward_prediction_receipt_r17_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['infrastructure_pass'] is True
+          assert x['counts']['capture_events'] == 0
+          assert x['counts']['unique_captured_fixtures'] == 0
+          assert x['counts']['prediction_events'] == 0
+          assert x['counts']['valid_unique_fixture_predictions'] == 0
+          assert x['counts']['first_batch_remaining_unique_predictions'] == 20
+          assert x['ruling']['capture_event_inflation_blocked'] is True
+          assert x['ruling']['current_match_probability_allowed'] is False
+          print(json.dumps({
+            'status':x['status'],
+            'counts':x['counts'],
+            'ruling':x['ruling'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R17 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-forward-prediction-receipt-r17
+          path: |
+            football-data/manifests/v510_strict_pit_capture_r14_status.json
+            football-data/manifests/v510_forward_prediction_receipt_r17_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"

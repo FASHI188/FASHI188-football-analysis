@@ -1,0 +1,72 @@
+name: Football V5.1 Strict PIT Settlement R16
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_strict_pit_capture_r14.json"
+      - "football-data/config/v510_strict_pit_settlement_r16.json"
+      - "football-data/forward/inbox/v510_strict_pit_capture_r14.json"
+      - "football-data/forward/inbox/market_first_results_v651.json"
+      - "football-data/validation/audit_v510_strict_pit_capture_r14.py"
+      - "football-data/validation/audit_v510_strict_pit_settlement_r16.py"
+      - ".github/workflows/football-v510-strict-pit-settlement-r16.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-strict-pit-settlement-r16-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R14 and R16
+        run: |
+          python -m py_compile football-data/validation/audit_v510_strict_pit_capture_r14.py
+          python -m py_compile football-data/validation/audit_v510_strict_pit_settlement_r16.py
+      - name: Run R16 settlement, mismatch and pending self-tests
+        run: python football-data/validation/audit_v510_strict_pit_settlement_r16.py --self-test
+      - name: Audit current strict-PIT capture and result inboxes
+        run: python football-data/validation/audit_v510_strict_pit_settlement_r16.py
+      - name: Enforce no-capture or valid forward-settlement state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_strict_pit_settlement_r16_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status'] in {
+              'PASS_R16_SETTLEMENT_INTERFACE_READY_NO_CAPTURE_ROWS',
+              'PASS_R16_AWAITING_SETTLEMENT',
+              'PASS_R16_SETTLEMENT_LINK_VALID_SAMPLE_GATE_NOT_MET',
+              'PASS_R16_READY_FOR_STRICT_PIT_CONTEXT_RESIDUAL_FIT',
+          }, x['status']
+          assert x['ruling']['pre_match_capture_immutable'] is True
+          assert x['ruling']['result_backfilled_into_capture'] is False
+          assert x['ruling']['probability_mutation_allowed'] is False
+          print(json.dumps({
+              'status':x['status'],
+              'counts':x['counts'],
+              'readiness_gates':x['readiness_gates'],
+              'ruling':x['ruling'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R16 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-strict-pit-settlement-r16
+          path: football-data/manifests/v510_strict_pit_settlement_r16_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"
