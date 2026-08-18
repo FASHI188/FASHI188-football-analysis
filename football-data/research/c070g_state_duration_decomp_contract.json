@@ -1,0 +1,73 @@
+{
+  "schema_version": "C070G_STATE_DURATION_DECOMP_V1",
+  "frozen_before_execution": true,
+  "authorization": "2026-08-18 user: start development on the already-consumed first two C070-F blocks only",
+  "scientific_status": "POSTVIEW_DEVELOPMENT_ONLY",
+  "identity": {
+    "manifest_sha256": "55973058d3c0ba2dee9af1392dc6cb45a088973dbe51571d4b4610778a784f34",
+    "allowed_blocks": {"warmup": 1202, "calibration": 1201},
+    "forbidden_block": {"confirmation": 1597},
+    "confirmation_payload_must_remain_unopened": true
+  },
+  "source_and_parser": {
+    "inherit_exactly_from": "C070-F FIRST TWO @ 45ce9cdc6fa0e919aaa2a68c33af7984f134fc36",
+    "database_sha256": "4df8569777d59fdd690754b1cc8ca1f7989baf65f2eaddd0f1368285f11139a9",
+    "warmup_structural_only_mismatch_ids": [8117, 10687, 21581, 21708, 22365],
+    "calibration_mismatch_allowed": 0,
+    "minute_bins": 90,
+    "multi_goal_same_bin": "exclude that minute from structural likelihood but update score state in event order"
+  },
+  "question": "Does duration become predictively useful when conditioned on exact tied-score / one-goal-margin / late-tied / post-equalizer states, rather than transported as one generic residual?",
+  "base_markov_features": [
+    "log_lambda_home", "log_lambda_away", "minute_frac", "minute_frac_sq",
+    "score_diff_clip", "is_tied", "home_ahead", "away_ahead"
+  ],
+  "legacy_semimarkov_extra": [
+    "duration_frac", "duration_frac_sq", "duration_if_tied",
+    "duration_if_home_ahead", "duration_if_away_ahead"
+  ],
+  "state_controls": [
+    "is_00", "is_11", "is_tied_2plus", "is_margin1",
+    "is_late_tied", "is_post_equalizer_tied"
+  ],
+  "state_control_reference": {
+    "features": "base_markov + duration_frac + duration_frac_sq + state_controls",
+    "purpose": "control exact state and generic duration before testing state-specific duration interactions"
+  },
+  "frozen_interactions": {
+    "tied_score_family": ["duration_x_00", "duration_x_11", "duration_x_tied_2plus"],
+    "margin_family": ["duration_x_margin1"],
+    "context_family": ["duration_x_late_tied", "duration_x_post_equalizer_tied"],
+    "combined_primary": [
+      "duration_x_00", "duration_x_11", "duration_x_tied_2plus",
+      "duration_x_margin1", "duration_x_late_tied", "duration_x_post_equalizer_tied"
+    ]
+  },
+  "models": {
+    "C": 0.1,
+    "class_weight": null,
+    "scaler": "StandardScaler",
+    "hyperparameter_search": false,
+    "threshold_search": false,
+    "feature_search_after_result": false
+  },
+  "validation": {
+    "universe": "warmup+calibration only; all already consumed before C070-G",
+    "chronology": "3 expanding whole-date folds: train before 40/60/80-percent date cuts, test 40-60 / 60-80 / 80-100 percent",
+    "primary": "minute-level multinomial LogLoss of COMBINED_PRIMARY minus STATE_CONTROL_REFERENCE",
+    "bootstrap": {"unit": "match", "reps": 2000, "seed": 7307, "ci": 0.90},
+    "development_signal_gate": [
+      "pooled_delta_logloss < 0",
+      "bootstrap_ci90_high < 0",
+      "at_least_2_of_3_fold_logloss_wins"
+    ],
+    "diagnostic_only_families": ["legacy_semimarkov", "tied_score_family", "margin_family", "context_family"]
+  },
+  "boundaries": {
+    "confirmation_opened": false,
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "fresh_confirmation_claim_allowed": false,
+    "result_can_only_select_a_future_hypothesis_for_a_new_contract": true
+  }
+}
