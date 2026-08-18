@@ -1,6 +1,7 @@
 {
   "status": "ZERO_LABEL_PREREGISTERED_RESEARCH_ONLY",
   "registered_at_local": "2026-08-18 10:26 +08:00",
+  "implementation_frozen_at_local": "2026-08-18 10:31 +08:00",
   "governance": {
     "current_version": "V5.2.0",
     "current_identity": "足球项目_CURRENT_唯一正式规则_V5.2.0_PIT数据优先与尾部闭合统一晋级版.docx",
@@ -22,6 +23,12 @@
       "tactical role-shape and lineup-continuity state"
     ],
     "forbidden": "No V0 test-190 metric, threshold, residual, fixture outcome, or per-match error may be used to tune V1."
+  },
+  "source_schema_inspection": {
+    "performed_before_evaluator_run": true,
+    "purpose": "Freeze exact StatsBomb field mapping and implementation constants, not choose parameters from outcome performance.",
+    "v1_metric_evaluation_performed_before_freeze": false,
+    "note": "The official match metadata source co-locates fixture metadata and final score fields. V1 code intentionally does not parse home_score/away_score; evaluation labels are derived only from event streams opened after all same-date predictions are frozen."
   },
   "data_contract": {
     "provider": "Hudl/StatsBomb Open Data",
@@ -46,8 +53,9 @@
     "same_day_policy": "all fixtures on a calendar date are predicted before any event outcomes from that date update history",
     "current_fixture_event_stream_allowed_before_prediction": false,
     "current_fixture_lineup_snapshot_allowed": true,
-    "lineup_snapshot_fields_allowed": "starter identity and opening position only; no substitution/end-time/post-kickoff position information",
-    "historical_events_allowed": "completed prior calendar dates only"
+    "lineup_snapshot_fields_allowed": "only a position record with from=00:00 and start_reason=Starting XI; cards, substitution times, end_reason and later tactical shifts are ignored",
+    "historical_events_allowed": "completed prior calendar dates only",
+    "event_coverage_preflight": "HTTP HEAD only before target event streams are opened"
   },
   "split": {
     "burn_in_fraction": 0.50,
@@ -56,12 +64,15 @@
     "test_folds": 3,
     "folding": "chronological match-date groups split into three contiguous folds with no date split across folds",
     "minimum_test_matches": 140,
-    "minimum_matches_each_fold": 40
+    "minimum_matches_each_fold": 40,
+    "minimum_hazard_training_segment_rows": 4000
   },
   "baseline": {
     "name": "rolling_xg_independent_poisson",
     "rolling_window_matches_per_team": 12,
     "prior_match_equivalent": 6.0,
+    "initial_home_xg_fallback": 1.45,
+    "initial_away_xg_fallback": 1.15,
     "lambda_min": 0.15,
     "lambda_max": 4.0,
     "score_bucket": "0,1,2,3,4,5,6,7+"
@@ -72,6 +83,9 @@
     "segment_minutes": 5,
     "historical_team_window": 8,
     "temporal_profile_bins": 6,
+    "temporal_profile_smoothing_per_bin": 0.25,
+    "temporal_factor_clip": [0.45, 2.0],
+    "temporal_factor_normalization": "mean of six factors = 1",
     "event_latents": [
       "xg_for",
       "xg_against",
@@ -85,6 +99,27 @@
       "counter_xg_share",
       "six-bin xg timing profile"
     ],
+    "event_mapping": {
+      "final_third_completed_pass": "pass outcome is null and end_x >= 80",
+      "penalty_box_completed_pass": "pass outcome is null and end_x >= 102 and 18 <= end_y <= 62",
+      "set_piece_xg": "Shot play_pattern contains Corner or Free Kick",
+      "counter_xg": "Shot play_pattern contains Counter",
+      "goal_bins": "Shot outcome Goal plus own-goal event handling; five-minute bin capped at segment 17"
+    },
+    "player_contribution_weights": {
+      "attack_shot_xg": 1.0,
+      "attack_completed_final_third_pass": 0.01,
+      "attack_completed_box_pass": 0.03,
+      "attack_shot_assist": 0.08,
+      "defense_pressure": 0.02,
+      "defense_counterpress_bonus": 0.01,
+      "defense_ball_recovery": 0.04,
+      "defense_interception": 0.06,
+      "defense_duel_won": 0.04,
+      "starter_attack_prior_numerator": 0.05,
+      "starter_defense_prior_numerator": 0.20,
+      "starter_rate_prior_appearances": 2.0
+    },
     "lineup_latents": [
       "starting-XI continuity versus prior start XI",
       "unknown-starter share from prior team history",
@@ -93,12 +128,21 @@
       "opening defender/midfielder/attacker role counts",
       "role-shape change versus prior starting XI"
     ],
+    "position_role_mapping": {
+      "Goalkeeper": "gk",
+      "position containing Back": "def",
+      "position containing Midfield": "mid",
+      "position containing Wing/Forward/Striker": "att",
+      "fallback": "mid"
+    },
+    "lineup_continuity": "starter set overlap with prior starting XI divided by 11; fallback 0.5 if no prior lineup",
+    "role_shift": "absolute defender/attacker count change versus prior XI divided by 3",
     "player_state_source": "prior completed event files only",
     "hazard_model": "single symmetric Poisson log-link residual hazard model with baseline log(lambda/18) plus temporal-profile offset",
     "dynamic_state": [
       "normalized segment time",
       "time squared",
-      "current simulated score difference clipped to [-2,2]",
+      "current simulated score difference clipped to [-2,2] and divided by 2",
       "leading indicator",
       "trailing indicator"
     ],
@@ -107,12 +151,14 @@
       "ridge_alpha": 8.0,
       "max_iterations": 15,
       "coefficient_clip_abs": 2.5,
-      "feature_standardization": "training rows only; intercept/home/time-state handling frozen in code",
+      "feature_standardization": "training rows only",
+      "segment_mu_clip": [0.00012340980408667956, 1.5],
       "hyperparameter_search": false
     },
     "simulation": {
       "paths_per_fixture": 10000,
       "seed": 20260818,
+      "same_segment_home_away_updates": "simultaneous from pre-segment state",
       "score_matrix_dirichlet_alpha": 0.25
     }
   },
