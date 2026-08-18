@@ -1,0 +1,188 @@
+name: Football C070-E A04 Fresh Calibration Confirmation
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/c070e_a04_fresh_cal_confirm/**'
+      - 'football-data/validation/build_c070e_a04_runtime.py'
+      - 'football-data/validation/evaluate_c070e_a04_fresh_cal_confirm.py'
+      - '.github/workflows/football-c070e-a04-fresh-cal-confirm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scipy==1.18.0 scikit-learn==1.8.0
+
+      - name: Compile frozen C070-E implementation
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/build_c068_a02_runtime.py \
+            football-data/validation/build_c069_a03_runtime.py \
+            football-data/validation/build_c070e_a04_runtime.py \
+            football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
+            football-data/validation/evaluate_c069_r2_maxcard_coverage.py \
+            football-data/validation/evaluate_c069_r3_a03_expanded_dev.py \
+            football-data/validation/run_c069_r3_a03_expanded_dev.py \
+            football-data/validation/audit_c069_r3_goal_parser.py \
+            football-data/validation/evaluate_c070c_semimarkov_generator.py \
+            football-data/validation/evaluate_c070d_duration_residual_integration.py \
+            football-data/validation/evaluate_c070e_a04_fresh_cal_confirm.py
+          python -m json.tool football-data/research/c070e_a04_fresh_cal_confirm/contract.json >/dev/null
+          python -m json.tool football-data/research/c070e_a04_fresh_cal_confirm/execution_spec.json >/dev/null
+
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c070e
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070e/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c070e/events.zip https://ndownloader.figshare.com/files/14464685
+          echo "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9  /tmp/c070e/matches.zip" | sha256sum -c -
+          echo "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45  /tmp/c070e/events.zip" | sha256sum -c -
+
+      - name: Rebuild consumed A01 A02 A03 only
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c070e/matches.zip --events-zip /tmp/c070e/events.zip --out /tmp/c070e/A01.zip
+          python football-data/validation/build_c068_a02_runtime.py \
+            --matches-zip /tmp/c070e/matches.zip --events-zip /tmp/c070e/events.zip --out /tmp/c070e/A02.zip
+          python football-data/validation/build_c069_a03_runtime.py \
+            --matches-zip /tmp/c070e/matches.zip --events-zip /tmp/c070e/events.zip --out /tmp/c070e/A03.zip
+
+      - name: Reproduce final C070-D parent before A04 open
+        run: |
+          mkdir -p /tmp/c070e/parent
+          python football-data/validation/evaluate_c070d_duration_residual_integration.py \
+            --a01 /tmp/c070e/A01.zip \
+            --a02 /tmp/c070e/A02.zip \
+            --a03 /tmp/c070e/A03.zip \
+            --matches-zip /tmp/c070e/matches.zip \
+            --out /tmp/c070e/parent/c070d.json
+          python - <<'PY'
+          import json, math
+          from pathlib import Path
+          x=json.loads(Path('/tmp/c070e/parent/c070d.json').read_text())
+          assert x['status']=='POSTVIEW_C070D_DEVELOPMENT_COMPLETE'
+          assert x['verdict']=='C070D_DURATION_RESIDUAL_INCREMENT_NOT_ESTABLISHED'
+          assert x['parent_reproduction']['guard_pass'] is True
+          assert x['parent_reproduction']['fold_logloss_wins']==3
+          assert math.isclose(x['parent_reproduction']['delta_log_loss_semimarkov_minus_markov'],-0.00017178004389581392,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(x['pooled']['candidate_minus_incumbent']['log_loss'],0.0003487066724116028,rel_tol=0,abs_tol=1e-12)
+          assert x['pooled']['pair_bootstrap']['ci90_low'] > 0
+          PY
+
+      - name: Open exactly frozen A04 ranks 1201-1600
+        run: |
+          python football-data/validation/build_c070e_a04_runtime.py \
+            --matches-zip /tmp/c070e/matches.zip \
+            --events-zip /tmp/c070e/events.zip \
+            --out /tmp/c070e/A04.zip | tee /tmp/c070e/a04_build.json
+
+      - name: Audit unchanged score parser on A01-A04
+        run: |
+          mkdir -p football-data/manifests/c070e_a04_fresh_cal_confirm
+          python football-data/validation/audit_c069_r3_goal_parser.py \
+            --package /tmp/c070e/A01.zip \
+            --package /tmp/c070e/A02.zip \
+            --package /tmp/c070e/A03.zip \
+            --package /tmp/c070e/A04.zip \
+            --out football-data/manifests/c070e_a04_fresh_cal_confirm/goal_parser_audit.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c070e_a04_fresh_cal_confirm/goal_parser_audit.json').read_text())
+          assert x['status']=='PASS'
+          assert x['source_matches']==1600
+          assert x['mismatch_count']==0
+          PY
+
+      - name: Execute one-shot frozen C070-E calibration-confirmation
+        run: |
+          cp football-data/research/c070e_a04_fresh_cal_confirm/contract.json \
+            football-data/manifests/c070e_a04_fresh_cal_confirm/contract.json
+          cp football-data/research/c070e_a04_fresh_cal_confirm/execution_spec.json \
+            football-data/manifests/c070e_a04_fresh_cal_confirm/execution_spec.json
+          cp /tmp/c070e/a04_build.json football-data/manifests/c070e_a04_fresh_cal_confirm/a04_build.json
+          cp /tmp/c070e/parent/c070d.json football-data/manifests/c070e_a04_fresh_cal_confirm/parent_c070d.json
+          python football-data/validation/evaluate_c070e_a04_fresh_cal_confirm.py \
+            --a01 /tmp/c070e/A01.zip \
+            --a02 /tmp/c070e/A02.zip \
+            --a03 /tmp/c070e/A03.zip \
+            --a04 /tmp/c070e/A04.zip \
+            --matches-zip /tmp/c070e/matches.zip \
+            --out football-data/manifests/c070e_a04_fresh_cal_confirm/summary.json
+
+      - name: Verify frozen boundaries and one-shot evidence closure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('football-data/manifests/c070e_a04_fresh_cal_confirm')
+          c=json.loads((root/'contract.json').read_text())
+          e=json.loads((root/'execution_spec.json').read_text())
+          x=json.loads((root/'summary.json').read_text())
+          assert c['schema_version']=='C070E_A04_FRESH_CAL_CONFIRM_CONTRACT_V1'
+          assert c['frozen_before_a04_open'] is True
+          assert c['source_boundary']['source_global_rank_one_based_start']==1201
+          assert c['source_boundary']['source_global_rank_one_based_stop']==1600
+          assert c['source_boundary']['match_count']==400
+          assert c['source_boundary']['no_A05_or_later'] is True
+          assert c['source_boundary']['no_protected'] is True
+          assert c['integration']['only_learned_parameter']=='alpha_hat'
+          assert c['integration']['alpha_domain']==[0.0,1.0]
+          assert c['integration']['learned_intercept'] is False
+          assert c['integration']['secondary_calibrator'] is False
+          assert c['integration']['blend_search'] is False
+          assert e['frozen_before_a04_open'] is True
+          assert e['prequential_prediction']['minimum_prior_training_pairs']==30
+          assert x['schema_version']=='C070E_A04_FRESH_CAL_CONFIRM_V1'
+          assert x['source']['source_matches']==1600
+          assert x['source']['a04_rank_window']==[1201,1600]
+          assert x['source']['fresh_split']['calibration_raw_matches']>=160
+          assert x['source']['fresh_split']['confirmation_raw_matches']>=160
+          assert x['boundary']['a05_or_later_opened'] is False
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['formal_weight']==0
+          if x['status']=='FRESH_A04_CONFIRMATION_COMPLETE':
+              assert x['calibration']['matched_pairs']>=25
+              assert x['confirmation']['matched_pairs']>=25
+              assert x['confirmation']['pair_bootstrap']['reps']==2000
+              assert x['confirmation']['pair_bootstrap']['seed']==7205
+              assert x['boundary']['a01_a02_a03_outer_test_labels_used_for_alpha_fit'] is False
+              assert x['boundary']['only_learned_integration_parameter']=='alpha_hat'
+              assert x['boundary']['learned_intercept'] is False
+              assert x['boundary']['secondary_calibrator'] is False
+              assert x['boundary']['blend_search'] is False
+              assert x['breakthrough_gate']['all_pass'] == (x['verdict']=='C070E_FRESH_CONFIRMATION_BREAKTHROUGH')
+          else:
+              assert x['verdict']=='C070E_FRESH_CONFIRMATION_NOT_ESTABLISHED'
+          print(json.dumps({'status':x['status'],'verdict':x['verdict'],'calibration':x.get('calibration'),'confirmation':x.get('confirmation'),'gate':x.get('breakthrough_gate')},indent=2))
+          PY
+
+      - name: Upload C070-E evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c070e-a04-fresh-cal-confirm
+          path: football-data/manifests/c070e_a04_fresh_cal_confirm/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
