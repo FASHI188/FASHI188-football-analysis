@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse
+import argparse, json
 from collections import Counter, defaultdict
 from pathlib import Path
 import numpy as np
@@ -38,7 +38,20 @@ def build_panel_zero_floor(M, summaries):
             TH[h].append((float(r.hg), float(r.ag))); TH[a].append((float(r.ag), float(r.hg))); CH[c].append((float(r.hg), float(r.ag))); idx[c] += 1
             for team in [h, a]:
                 q = summaries[int(r.match_id)][team]; ST[team].update(q); GST.update(q)
-    return pd.DataFrame(R).sort_values(['dt', 'match_id']).reset_index(drop=True)
+    out = pd.DataFrame(R)
+    diag = {
+        'state_reconciled_input_matches': int(len(M)),
+        'panel_rows_before_history_gate': int(len(out)),
+        'max_home_prior_matches': int(out.hn.max()) if len(out) else None,
+        'max_away_prior_matches': int(out.an.max()) if len(out) else None,
+        'rows_hn_an_ge_5': int(((out.hn >= 5) & (out.an >= 5)).sum()) if len(out) else 0,
+        'competitions': int(out.cid.nunique()) if len(out) else 0,
+        'dates': int(out.date.nunique()) if len(out) else 0,
+    }
+    print('C069_ZERO_LABEL_COVERAGE_DIAGNOSTIC=' + json.dumps(diag, sort_keys=True))
+    if not len(out):
+        raise RuntimeError('C069_ZERO_LABEL_COVERAGE_EMPTY_BEFORE_HISTORY_GATE')
+    return out.sort_values(['dt', 'match_id']).reset_index(drop=True)
 
 
 base.build_panel = build_panel_zero_floor
