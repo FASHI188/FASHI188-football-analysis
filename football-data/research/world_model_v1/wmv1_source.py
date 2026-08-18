@@ -43,6 +43,8 @@ class MatchMeta:
     match_id: int
     match_date: str
     kick_off: str
+    home_id: int
+    away_id: int
     home: str
     away: str
 
@@ -54,6 +56,7 @@ class Starter:
 
 @dataclass(frozen=True)
 class TeamLineup:
+    team_id: int
     team: str
     starters: tuple[Starter, ...]
     role_counts: tuple[int, int, int, int]
@@ -140,7 +143,7 @@ def load_matches() -> tuple[list[MatchMeta], str]:
             raise RuntimeError(f'match payload is not a list: {url}')
         source_shas.append(f'{url}:{sha}')
         for item in payload:
-            meta = MatchMeta(match_id=int(item['match_id']), match_date=str(item['match_date']), kick_off=str(item.get('kick_off') or ''), home=str(item['home_team']['home_team_name']), away=str(item['away_team']['away_team_name']))
+            meta = MatchMeta(match_id=int(item['match_id']), match_date=str(item['match_date']), kick_off=str(item.get('kick_off') or ''), home_id=int(item['home_team']['home_team_id']), away_id=int(item['away_team']['away_team_id']), home=str(item['home_team']['home_team_name']), away=str(item['away_team']['away_team_name']))
             if meta.match_id in matches_by_id:
                 raise RuntimeError(f'duplicate match_id across recovery panel: {meta.match_id}')
             matches_by_id[meta.match_id] = meta
@@ -177,19 +180,19 @@ def _extract_team_lineup(team_obj: dict[str, Any]) -> TeamLineup:
         roles[_role(st.position)] += 1
     if len(starters) != 11:
         raise RuntimeError(f"expected 11 starters for {team_obj.get('team_name')}, got {len(starters)}")
-    return TeamLineup(team=str(team_obj.get('team_name') or ''), starters=tuple(starters), role_counts=(roles['gk'], roles['def'], roles['mid'], roles['att']))
+    return TeamLineup(team_id=int(team_obj['team_id']), team=str(team_obj.get('team_name') or ''), starters=tuple(starters), role_counts=(roles['gk'], roles['def'], roles['mid'], roles['att']))
 
 def load_lineup(meta: MatchMeta) -> LineupSnapshot:
     payload, sha = _download_json(LINEUP_URL.format(match_id=meta.match_id))
     if not isinstance(payload, list):
         raise RuntimeError('lineup payload is not a list')
-    teams: dict[str, TeamLineup] = {}
+    teams: dict[int, TeamLineup] = {}
     for team_obj in payload:
         parsed = _extract_team_lineup(team_obj)
-        teams[parsed.team] = parsed
-    if meta.home not in teams or meta.away not in teams:
-        raise RuntimeError(f'lineup team identity mismatch for {meta.match_id}')
-    return LineupSnapshot(home=teams[meta.home], away=teams[meta.away], sha256=sha)
+        teams[parsed.team_id] = parsed
+    if meta.home_id not in teams or meta.away_id not in teams:
+        raise RuntimeError(f'lineup team_id mismatch for {meta.match_id}: expected {meta.home_id}/{meta.away_id}, found {sorted(teams)}')
+    return LineupSnapshot(home=teams[meta.home_id], away=teams[meta.away_id], sha256=sha)
 
 def load_all_lineups(matches: list[MatchMeta]) -> tuple[dict[int, LineupSnapshot], list[dict[str, Any]]]:
     out: dict[int, LineupSnapshot] = {}
@@ -243,10 +246,17 @@ def summarize_events(meta: MatchMeta, lineup: LineupSnapshot) -> MatchSummary:
     for event in events:
         if not isinstance(event, dict):
             continue
-        team = str((event.get('team') or {}).get('name') or '')
-        if team not in acc:
+        team_obj = event.get('team') or {}
+        team_id = team_obj.get('id')
+        if team_id is None:
             continue
-        other = meta.away if team == meta.home else meta.home
+        team_id = int(team_id)
+        if team_id == meta.home_id:
+            team, other = meta.home, meta.away
+        elif team_id == meta.away_id:
+            team, other = meta.away, meta.home
+        else:
+            continue
         a = acc[team]
         etype = str((event.get('type') or {}).get('name') or '')
         minute = int(event.get('minute') or 0)
