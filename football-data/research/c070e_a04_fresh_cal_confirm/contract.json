@@ -1,0 +1,129 @@
+{
+  "schema_version": "C070E_A04_FRESH_CAL_CONFIRM_CONTRACT_V1",
+  "frozen_before_a04_open": true,
+  "authorized_by_user": "2026-08-18T20:59:00+08:00",
+  "parent": {
+    "branch": "research/c070d-duration-residual-integration-20260818",
+    "head_sha": "3fb99b017525d321b9590bc4d0400ae3f65129aa",
+    "state": 91,
+    "required_parent_fact": "C070-C score-state-duration structural signal reproduced; C070-D alpha=1 end-to-end integration negative"
+  },
+  "source_boundary": {
+    "source": "Pappalardo/Wyscout public event dataset",
+    "selection_seed": "A_SERIES_WYSCOUT_20260818_R1",
+    "matches_zip_sha256": "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9",
+    "events_zip_sha256": "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45",
+    "package_id": "A04",
+    "source_global_rank_one_based_start": 1201,
+    "source_global_rank_one_based_stop": 1600,
+    "match_count": 400,
+    "must_be_disjoint_from": ["A01", "A02", "A03"],
+    "no_A05_or_later": true,
+    "no_protected": true,
+    "semantics": "FRESH_RESEARCH_CALIBRATION_CONFIRMATION_NOT_PROTECTED"
+  },
+  "fresh_split": {
+    "ordering": ["kickoff_utc", "match_id"],
+    "no_same_utc_calendar_date_across_boundary": true,
+    "boundary_algorithm": "group A04 matches by UTC calendar date; choose the end-of-date cumulative count minimizing abs(cumulative_count-200); tie -> earlier boundary date",
+    "calibration_partition": "all A04 matches on or before frozen split boundary date",
+    "confirmation_partition": "all A04 matches after frozen split boundary date",
+    "minimum_raw_matches_each_partition": 160,
+    "if_split_minimum_fails": "STOP_SPLIT_BEFORE_LABEL_SCORING"
+  },
+  "estimand": {
+    "target": "conditional Draw versus one-goal win at 90 minutes",
+    "exact_competition": true,
+    "without_replacement": true,
+    "matching_objective": [
+      "maximum cardinality",
+      "among maximum-cardinality solutions minimize total squared caliper-normalized distance"
+    ],
+    "calipers": {
+      "q_draw_cond_max": 0.05,
+      "abs_ha_gap_max": 0.08,
+      "lambda_total_max": 0.45
+    },
+    "minimum_calibration_pairs": 25,
+    "minimum_confirmation_pairs": 25,
+    "same_goal_parser": "C069-R3 final raw-event-lookback2 Save101 canonicalization",
+    "same_regular_90m_semantics": true
+  },
+  "pit_asof": {
+    "strict_chronological_prediction": true,
+    "same_utc_date_predict_before_update": true,
+    "no_postmatch_or_future_information": true,
+    "a01_a02_a03_rows_may_train_only_if_kickoff_precedes_target": true,
+    "a04_calibration_predictions": "prequential; only prior UTC dates may update model/team state",
+    "alpha_freeze_point": "after all calibration predictions and labels are complete, before any confirmation label is used for alpha or hyperparameter selection",
+    "a04_confirmation_predictions": "prequential strict OOS; alpha and all research hyperparameters remain frozen; prior completed confirmation dates may enter ordinary model/state updates but may not alter alpha, feature definitions, gates, or hyperparameters"
+  },
+  "incumbent": {
+    "definition": "C069-R3 baseline probability model",
+    "model": "logistic regression",
+    "C": 0.1,
+    "input": ["baseline_logit"],
+    "no_model_search": true
+  },
+  "duration_mechanism": {
+    "definition": "C070-C fixed Semi-Markov versus Markov score-state generator residual",
+    "minute_bins": 90,
+    "markov_inputs": ["prematch lambdas", "minute", "score state"],
+    "semimarkov_increment_only": "frozen duration-since-current-score-state terms",
+    "multinomial_logistic_C": 0.1,
+    "no_new_features": true,
+    "no_c070a_features": true,
+    "no_c070b_features": true,
+    "no_structure_or_hyperparameter_search": true
+  },
+  "integration": {
+    "formula": "logit(p_candidate)=logit(p_incumbent)+alpha_hat*(logit(p_semimarkov)-logit(p_markov))",
+    "only_learned_parameter": "alpha_hat",
+    "alpha_domain": [0.0, 1.0],
+    "alpha_fit_data": "A04 calibration matched pairs only",
+    "alpha_objective": "minimize binary Log Loss on A04 calibration matched pairs",
+    "alpha_solver": "deterministic bounded scalar minimization; xatol=1e-8",
+    "learned_intercept": false,
+    "secondary_calibrator": false,
+    "blend_search": false,
+    "threshold_search": false,
+    "if_alpha_hat_equals_zero_within_1e-8": "STOP_NO_CALIBRATION_SUPPORT_BEFORE_CONFIRMATION_CLAIM"
+  },
+  "confirmation_metrics": {
+    "primary": "candidate minus incumbent binary Log Loss",
+    "secondary_proper": "candidate minus incumbent Brier",
+    "diagnostic": ["AUC", "accuracy", "pair_accuracy", "calibration intercept", "calibration slope"],
+    "pair_bootstrap": {
+      "reps": 2000,
+      "seed": 7205,
+      "confidence": 0.90
+    },
+    "chronological_stability": "sort confirmation pairs by max kickoff UTC of the two matches; split into first and second halves by pair count"
+  },
+  "breakthrough_gate": {
+    "all_required": [
+      "calibration matched pairs >= 25",
+      "confirmation matched pairs >= 25",
+      "alpha_hat > 0",
+      "confirmation pooled delta Log Loss < 0",
+      "confirmation pair-bootstrap 90% CI upper bound for delta Log Loss < 0",
+      "confirmation pooled delta Brier <= 0",
+      "confirmation chronological first-half delta Log Loss <= 0",
+      "confirmation chronological second-half delta Log Loss <= 0"
+    ],
+    "pass_verdict": "C070E_FRESH_CONFIRMATION_BREAKTHROUGH",
+    "fail_verdict": "C070E_FRESH_CONFIRMATION_NOT_ESTABLISHED",
+    "proper_score_overrides_discrimination": true,
+    "no_posthoc_rescue_after_confirmation": true
+  },
+  "boundaries": {
+    "formal_weight": 0,
+    "formal_promotion_allowed": false,
+    "protected_confirmation": false,
+    "a01_a02_a03_outer_test_labels_forbidden_for_alpha_fit": true,
+    "no_alpha_grid_on_consumed_dev": true,
+    "no_reopening_failed_c070a_or_c070b": true,
+    "confirmation_is_one_shot": true,
+    "if_fail": "close current duration-to-probability mapping route; any further work requires a new preregistered information/data family, not retuning this confirmation"
+  }
+}
