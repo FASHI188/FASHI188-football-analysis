@@ -1,45 +1,40 @@
-name: Football State Document Integrity
+name: Football Governance Topology Integrity
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'ACTIVE_CHECKPOINT.md'
-      - 'PROJECT_CURRENT.md'
-      - 'LAST_HANDOFF.md'
-      - '.github/workflows/football-state-doc-integrity.yml'
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: football-state-doc-integrity-main
+  group: football-governance-topology-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  state-doc-integrity:
+  governance-topology-integrity:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
-      - name: Checkout exact main commit
+      - name: Checkout exact commit
         uses: actions/checkout@v7
-
-      - name: Compute checkpoint/state document SHA-256 and compare state versions
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate single control plane and engineering boundaries
         shell: bash
         run: |
           set -euo pipefail
-          test -s ACTIVE_CHECKPOINT.md
-          test -s PROJECT_CURRENT.md
-          test -s LAST_HANDOFF.md
-          sha256sum ACTIVE_CHECKPOINT.md PROJECT_CURRENT.md LAST_HANDOFF.md
-          project_version="$(awk -F': ' '$1 == "- state_version" {print $2; exit}' PROJECT_CURRENT.md)"
-          handoff_version="$(awk -F': ' '$1 == "- state_version" {print $2; exit}' LAST_HANDOFF.md)"
-          test -n "$project_version"
-          test -n "$handoff_version"
-          test "$project_version" = "$handoff_version"
-          case "$project_version" in
-            *[!0-9]*) echo "Invalid state_version: $project_version"; exit 1 ;;
-          esac
-          echo "FOOTBALL_STATE_DOC_INTEGRITY_PASS state_version=$project_version"
+          python governance/validate_project_continuity.py --self-test
+          python governance/validate_project_continuity.py --root .
+          python -m py_compile \
+            governance/validate_project_continuity.py \
+            football-data/validation/validate_engineering_research_profile_v6494.py \
+            football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py \
+            football-data/runtime/activation/activate_selective_direction_runtime_v501.py \
+            football-data/engine/validate_platform.py
+          python football-data/validation/validate_engineering_research_profile_v6494.py --print-summary
+          sha256sum AGENTS.md EXECUTION_LITE.md governance/validate_project_continuity.py football-data/docs/ASSET_LIFECYCLE.md

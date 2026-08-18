@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build the hash-bound runtime activation manifest for promoted USA_MLS D|T."""
+"""Build or verify the hash-bound USA_MLS D|T runtime activation artifact.
+
+This operational entrypoint is intentionally located under runtime/activation,
+not validation. `--check` is read-only. Running without `--check` materializes
+the activation receipt and therefore requires an explicitly authorized use.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 ENGINE_DIR = ROOT_DIR / "engine"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
@@ -83,55 +88,33 @@ def build_payload() -> dict:
             "runtime_gate": canonical_sha256(RUNTIME_GATE),
             "actionable_runner": canonical_sha256(ACTIONABLE_RUNNER),
         } if active else {},
-        "policy": "Fail closed on any bound hash mismatch. Activation is USA_MLS 2026 only and does not alter any other competition or challenger.",
+        "policy": "Fail closed on any bound hash mismatch. This script does not select project tasks or grant activation authority by itself.",
     }
     return payload
 
 
 def critical_view(payload: dict) -> dict:
-    return {
-        key: payload.get(key)
-        for key in (
-            "schema_version",
-            "activation_status",
-            "competition_id",
-            "target_season",
-            "module",
-            "activation_order",
-            "formal_weight",
-            "checks",
-            "bound_sha256",
-            "policy",
-        )
-    }
+    return {key: payload.get(key) for key in (
+        "schema_version", "activation_status", "competition_id", "target_season",
+        "module", "activation_order", "formal_weight", "checks", "bound_sha256",
+    )}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Verify the committed activation without rewriting it.",
-    )
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     payload = build_payload()
     active = payload["activation_status"] == "ACTIVE"
     if args.check:
         current = load_json(OUT) if OUT.exists() else {}
         passed = critical_view(current) == critical_view(payload)
-        print(
-            json.dumps(
-                {
-                    "status": "PASS" if passed else "FAIL_STALE_ACTIVATION",
-                    "activation_status": payload["activation_status"],
-                    "bound_sha256": payload["bound_sha256"],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps({
+            "status": "PASS" if passed else "FAIL_STALE_ACTIVATION",
+            "activation_status": payload["activation_status"],
+            "bound_sha256": payload["bound_sha256"],
+        }, ensure_ascii=False, indent=2))
         return 0 if passed else 2
-
     atomic_write_json(OUT, payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if active else 2

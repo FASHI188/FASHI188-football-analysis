@@ -1,8 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Force UTF-8 end-to-end on Windows PowerShell / PowerShell 7 so Python JSON and
-# Kambi/non-ASCII output cannot fall back to the system ANSI/GBK code page.
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $Utf8NoBom
 [Console]::OutputEncoding = $Utf8NoBom
@@ -23,23 +21,19 @@ Invoke-Python -m py_compile `
     scripts/governance/verify_consolidated_capabilities.py `
     scripts/governance/verify_powershell_acceptance_parity.py
 
-Invoke-Python scripts/governance/final_workflow_acceptance.py `
-    --strict `
-    --write-archive-blob-ledger
-
-Invoke-Python scripts/governance/verify_consolidated_capabilities.py `
-    --require-archived `
-    --execute-retained
-
+Invoke-Python scripts/governance/final_workflow_acceptance.py --strict --write-archive-blob-ledger
+Invoke-Python scripts/governance/verify_consolidated_capabilities.py --require-archived --execute-retained
 Invoke-Python scripts/governance/verify_powershell_acceptance_parity.py
 
 $EnginePath = 'football-data/engine'
+$RuntimeActivationPath = 'football-data/runtime/activation'
 $ValidationPath = 'football-data/validation'
 $Separator = [System.IO.Path]::PathSeparator
+$ProjectPaths = "$EnginePath$Separator$RuntimeActivationPath$Separator$ValidationPath"
 if ([string]::IsNullOrEmpty($env:PYTHONPATH)) {
-    $env:PYTHONPATH = "$EnginePath$Separator$ValidationPath"
+    $env:PYTHONPATH = $ProjectPaths
 } else {
-    $env:PYTHONPATH = "$EnginePath$Separator$ValidationPath$Separator$($env:PYTHONPATH)"
+    $env:PYTHONPATH = "$ProjectPaths$Separator$($env:PYTHONPATH)"
 }
 
 Invoke-Python -m unittest `
@@ -48,8 +42,8 @@ Invoke-Python -m unittest `
     football-data/tests/test_oof_matrix_calibration_v461.py `
     football-data/tests/test_v462_bottom_invariants.py -v
 
-Invoke-Python football-data/validation/activate_selective_direction_runtime_v501.py --check
-Invoke-Python football-data/validation/activate_mls_d_conditional_runtime_v470.py --check
+Invoke-Python football-data/runtime/activation/activate_selective_direction_runtime_v501.py --check
+Invoke-Python football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py --check
 Invoke-Python football-data/validation/smoke_formal_ev_lomo_gate_v470.py
 Invoke-Python football-data/validation/smoke_formal_governance_runtime_v470.py
 Invoke-Python football-data/validation/smoke_selective_direction_runtime_v500.py

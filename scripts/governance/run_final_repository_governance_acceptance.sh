@@ -20,15 +20,15 @@ python scripts/governance/verify_consolidated_capabilities.py \
 
 python scripts/governance/verify_powershell_acceptance_parity.py
 
-export PYTHONPATH="football-data/engine:football-data/validation${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="football-data/engine:football-data/runtime/activation:football-data/validation${PYTHONPATH:+:$PYTHONPATH}"
 python -m unittest \
   football-data/tests/test_football_v460_engine.py \
   football-data/tests/test_nested_backtest_v460.py \
   football-data/tests/test_oof_matrix_calibration_v461.py \
   football-data/tests/test_v462_bottom_invariants.py -v
 
-python football-data/validation/activate_selective_direction_runtime_v501.py --check
-python football-data/validation/activate_mls_d_conditional_runtime_v470.py --check
+python football-data/runtime/activation/activate_selective_direction_runtime_v501.py --check
+python football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py --check
 python football-data/validation/smoke_formal_ev_lomo_gate_v470.py
 python football-data/validation/smoke_formal_governance_runtime_v470.py
 python football-data/validation/smoke_selective_direction_runtime_v500.py
