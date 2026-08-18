@@ -1,0 +1,82 @@
+name: Football C069 Matched Pair Draw State R1
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/c069_matched_pair_draw_state_r1/**'
+      - 'football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py'
+      - '.github/workflows/football-c069-matched-pair-draw-state-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install deterministic research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 pandas==2.2.3 scikit-learn==1.8.0
+      - name: Compile frozen R1 implementation
+        run: |
+          python -m py_compile \
+            football-data/validation/build_c068_a01_runtime.py \
+            football-data/validation/build_c068_a02_runtime.py \
+            football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py
+          python -m json.tool football-data/research/c069_matched_pair_draw_state_r1/contract.json >/dev/null
+      - name: Download exact public Wyscout source archives
+        run: |
+          mkdir -p /tmp/c069
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069/matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/c069/events.zip https://ndownloader.figshare.com/files/14464685
+      - name: Rebuild already-viewed A01 and A02 packages
+        run: |
+          python football-data/validation/build_c068_a01_runtime.py \
+            --matches-zip /tmp/c069/matches.zip --events-zip /tmp/c069/events.zip --out /tmp/c069/A01.zip
+          python football-data/validation/build_c068_a02_runtime.py \
+            --matches-zip /tmp/c069/matches.zip --events-zip /tmp/c069/events.zip --out /tmp/c069/A02.zip
+      - name: Run frozen C069 matched-pair state R1
+        run: |
+          mkdir -p football-data/manifests/c069_matched_pair_draw_state_r1
+          cp football-data/research/c069_matched_pair_draw_state_r1/contract.json \
+            football-data/manifests/c069_matched_pair_draw_state_r1/contract.json
+          python football-data/validation/evaluate_c069_matched_pair_draw_state_r1.py \
+            --a01 /tmp/c069/A01.zip \
+            --a02 /tmp/c069/A02.zip \
+            --out football-data/manifests/c069_matched_pair_draw_state_r1/summary.json
+      - name: Verify research boundaries and result schema
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/c069_matched_pair_draw_state_r1/summary.json').read_text())
+          assert x['schema_version']=='C069_MATCHED_PAIR_DRAW_STATE_R1'
+          assert x['status'] in {'POSTVIEW_MATCHED_PAIR_DEVELOPMENT_COMPLETE','STOP_COVERAGE'}
+          assert x['source']['packages']==['A01','A02'] and x['source']['source_matches']==800
+          assert x['boundary']['protected_samples_used'] is False
+          assert x['boundary']['new_A_packages_opened'] is False
+          assert x['boundary']['formal_weight']==0
+          assert x['boundary']['scientific_pass'] is False
+          assert x['boundary']['confirmation_pass'] is False
+          print(json.dumps(x,indent=2))
+          PY
+      - name: Upload C069 R1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c069-matched-pair-draw-state-r1
+          path: football-data/manifests/c069_matched_pair_draw_state_r1/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only output
+        run: |
+          test -z "$(git diff --cached --name-only)"
+          test -z "$(git status --short | grep -v '^?? football-data/manifests/' || true)"
