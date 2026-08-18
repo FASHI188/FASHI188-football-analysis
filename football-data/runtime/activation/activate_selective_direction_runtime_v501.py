@@ -46,7 +46,10 @@ def build_payload() -> dict:
     v501 = load_json(PATHS["v501_governance"])
     runner_text = PATHS["actionable_runner"].read_text(encoding="utf-8")
     checks = {
-        "historical_v501_binding_verified": (
+        # Legacy receipt key retained for hash-bound compatibility. It verifies the
+        # historical V5.0.1 binding at activation freeze time; it does NOT claim
+        # that V5.0.1 is the project's current formal rule today.
+        "v501_unique_current_verified": (
             str(v501.get("status") or "").startswith("FORMALLY_ACTIVATED")
             and v501.get("formal_rule_version") == "V5.0.1"
         ),
