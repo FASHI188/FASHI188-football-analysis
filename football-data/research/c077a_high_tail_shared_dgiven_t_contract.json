@@ -1,0 +1,90 @@
+{
+  "schema_version": "C077A_HIGH_TAIL_SHARED_DGIVENT_DEVELOPMENT_V1",
+  "frozen_before_oos_scoring": true,
+  "scientific_scope": "development-only shared conditional goal-difference model P(D|T,X) for exact T>=7. This component cannot solve exact-tail q(k|T>=7), cannot generate a unified matrix and cannot create exact-score permission.",
+  "source": {
+    "name": "eatpizzanot/soccer-dataset",
+    "revision": "f0cbe86bee3f28cc4b803f735a5287968741c471",
+    "fixtures_sha256": "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7",
+    "match_stats_sha256": "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9",
+    "identity_gate": "same C071 threshold-8 strict-PIT eligible identities",
+    "goal_label_horizon": "file-read predicate date_utc < 2024-01-01 only"
+  },
+  "population": "eligible completed pre-2024 matches with realized exact total T>=7",
+  "estimand": {
+    "primary": "P(D=d | exact T=t, X), t>=7",
+    "equivalent_parameterization": "H=(T+D)/2; model P(H=h | T=t,X) on h=0..t and map D=2H-T",
+    "support_guarantee": "binomial support H=0..T implies every output D has correct T/D parity and maps to nonnegative integer H,A"
+  },
+  "baseline": {
+    "family": "exact-T pooled Dirichlet-smoothed empirical P(H|T) from training rows only",
+    "alpha": 1.0,
+    "support": "H=0..T for each exact T; unseen training T falls back to uniform legal support",
+    "league_conditioning": false,
+    "reason": "high-tail league-by-T cells are too sparse for a stable league-specific primary baseline"
+  },
+  "candidate": {
+    "family": "cross-T shared conditional binomial goal-allocation model",
+    "distribution": "H | T,X ~ Binomial(T, p(X,T))",
+    "p_model": "SimpleImputer(median) + StandardScaler + LogisticRegression(C=0.1, solver=lbfgs, max_iter=2000, class_weight=null, random_state=0)",
+    "fit_likelihood": "exact binomial likelihood implemented by expanding each match into T Bernoulli goal-allocation trials, H home-goal successes and T-H away-goal failures",
+    "features": [
+      "league_total_mean", "league_total_sd",
+      "home_goals_for_mean", "home_goals_for_sd", "home_goals_against_mean", "home_goals_against_sd",
+      "away_goals_for_mean", "away_goals_for_sd", "away_goals_against_mean", "away_goals_against_sd",
+      "log1p_home_result_history_n", "log1p_away_result_history_n",
+      "exact_total"
+    ],
+    "feature_provenance": "first 12 are exactly the frozen C073-A score-history feature representation; exact_total is the one structural conditioning feature",
+    "feature_search": false,
+    "C_search": false,
+    "interaction_search": false,
+    "per_T_models": false,
+    "manual_draw_or_score_boost": false
+  },
+  "frozen_oos_years": [2019, 2020, 2021, 2022, 2023],
+  "fold_rule": "for each test calendar year, fit baseline and candidate only on eligible completed tail rows with calendar_year strictly earlier than the test year; features are strict-PIT snapshots using outcomes available before target kickoff",
+  "coverage_gate": {
+    "minimum_training_tail_rows_each_fold": 500,
+    "minimum_test_tail_rows_each_fold": 150,
+    "minimum_training_goal_allocation_trials_each_fold": 3500,
+    "minimum_pooled_test_tail_rows": 1200,
+    "candidate_binary_classes_required": [0,1]
+  },
+  "metrics": {
+    "primary": "conditional exact-D LogLoss",
+    "secondary": ["multiclass Brier", "normalized RPS"],
+    "top1": "conditional D Top1 accuracy",
+    "draw_diagnostics": ["even-T D=0 binary LogLoss", "even-T D=0 binary Brier", "actual even-T draw recall when D=0 is candidate Top1"],
+    "paired_match_bootstrap": {"reps": 3000, "seed": 77001, "ci": 0.90},
+    "structural_audits": ["probability sum", "T/D parity", "H/A exact integer mapping", "all legal support probabilities nonnegative"]
+  },
+  "frozen_pass_gate": {
+    "all_required": [
+      "coverage gate passes before effect interpretation",
+      "pooled candidate-minus-baseline conditional D LogLoss < 0",
+      "paired bootstrap 90% upper bound for dLogLoss < 0",
+      "pooled conditional D Brier delta <= 0",
+      "pooled normalized RPS delta <= 0",
+      "at least 4/5 chronological year folds have dLogLoss < 0",
+      "probability-sum max residual <=1e-10",
+      "all candidate support cells satisfy parity/integer score mapping"
+    ],
+    "decision": "SCIENTIFIC_COMPONENT_PASS_DEVELOPMENT_ONLY only if every required gate passes; otherwise FAIL_PARK; STOP_COVERAGE if coverage fails"
+  },
+  "stopping_rule": "If FAIL, do not tune C, add interactions, change feature subsets, fit separate T=7/8/9 models, add draw/1-1 boosts or alter folds/gates on these scored OOS labels as a repair of C077-A.",
+  "hard_boundaries": {
+    "exact_tail_created": false,
+    "C076D_fresh_score_values_opened": false,
+    "C075C_consumed_tail_labels_used": false,
+    "C075E_consumed_tail_labels_used": false,
+    "C071_post2024_goal_labels_opened": false,
+    "C071_reserve_52180_opened": false,
+    "C070F_confirmation1597_opened": false,
+    "A05_opened": false,
+    "protected_opened": false,
+    "unified_matrix_generated": false,
+    "formal_weight": 0,
+    "CURRENT_change": false
+  }
+}

@@ -1,0 +1,102 @@
+name: Football C077-A High-Tail Shared D|T Development
+
+on:
+  push:
+    branches:
+      - research/c077a-high-tail-shared-dgiven-t-development-20260819
+    paths:
+      - football-data/research/c077a_high_tail_shared_dgiven_t_contract.json
+      - football-data/research/evaluate_c077a_high_tail_shared_dgiven_t.py
+      - .github/workflows/football-c077a-high-tail-shared-dgiven-t.yml
+  pull_request:
+    paths:
+      - football-data/research/c077a_high_tail_shared_dgiven_t_contract.json
+      - football-data/research/evaluate_c077a_high_tail_shared_dgiven_t.py
+      - .github/workflows/football-c077a-high-tail-shared-dgiven-t.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c077a-high-tail-shared-dgiven-t-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  shared-dgiven-t-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout frozen research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+
+      - name: Download and verify pinned broad PIT source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c077a_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077a_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077a_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c077a_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c077a_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Run frozen C077-A rolling OOS development
+        run: |
+          mkdir -p "$RUNNER_TEMP/c077a_out"
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c077a_high_tail_shared_dgiven_t.py \
+            --fixtures "$RUNNER_TEMP/c077a_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c077a_source/match_stats.parquet" \
+            --out-dir "$RUNNER_TEMP/c077a_out"
+
+      - name: Enforce governance and structural boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c077a_out'/'summary.json').read_text())
+          assert s['schema_version']=='C077A_HIGH_TAIL_SHARED_DGIVENT_DEVELOPMENT_V1'
+          assert s['status'] in {'STOP_COVERAGE','SCIENTIFIC_COMPONENT_PASS_DEVELOPMENT_ONLY','FAIL_PARK'}
+          b=s['boundaries']
+          assert b['exact_tail_created'] is False
+          assert b['C076D_fresh_score_values_opened'] is False
+          assert b['C075C_consumed_tail_labels_used'] is False
+          assert b['C075E_consumed_tail_labels_used'] is False
+          assert b['C071_post2024_goal_labels_opened'] is False
+          assert b['C071_sealed_identity_count']==72180
+          assert b['C071_reserve_52180_opened'] is False
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['A05_opened'] is False
+          assert b['protected_opened'] is False
+          assert b['unified_matrix_generated'] is False
+          assert b['formal_weight']==0
+          if s['status']!='STOP_COVERAGE':
+              assert s['candidate_spec']['feature_search'] is False
+              assert s['candidate_spec']['C_search'] is False
+              assert s['candidate_spec']['interaction_search'] is False
+              assert s['candidate_spec']['per_T_models'] is False
+              assert s['candidate_spec']['manual_draw_or_score_boost'] is False
+              assert s['structural_audit']['mapping_failures']==0
+              assert s['structural_audit']['max_probability_sum_abs_residual']<=1e-10
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload C077-A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c077a-high-tail-shared-dgiven-t-development
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c077a_out/summary.json
+            ${{ runner.temp }}/c077a_out/row_metrics.csv
+            football-data/research/c077a_high_tail_shared_dgiven_t_contract.json
