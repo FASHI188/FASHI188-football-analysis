@@ -1,0 +1,54 @@
+name: football3-c072i2-dgiven-t-forward-confirm
+
+on:
+  pull_request:
+    branches:
+      - football3/c072h2-dgiven-t-development-20260819
+    paths:
+      - 'football-data/research/C072I2_DGIVENT_FORWARD_CONFIRM_CONTRACT.md'
+      - 'football-data/research/evaluate_c072i2_dgiven_t_forward_confirm.py'
+      - 'football-data/research/run_c072i2_dgiven_t_forward_confirm.py'
+      - '.github/workflows/football3-c072i2-dgiven-t-forward-confirm.yml'
+  workflow_dispatch:
+
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas==2.2.3 numpy==2.1.3 scikit-learn==1.7.1
+      - name: Frozen one-shot contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072I2_DGIVENT_FORWARD_CONFIRM_CONTRACT.md').read_text()
+          assert 'MODEL_A_OPENING' in c
+          assert 'No closing/movement feature is permitted' in c
+          assert 'exactly 4,184 raw identities' in c
+          assert 'C073-C077 quarantined' in c
+          assert '5,000 reps' in c and 'seed 72026' in c
+          print('I2 one-shot contract guard: PASS')
+          PY
+      - name: Run one-shot external confirmation
+        run: python football-data/research/run_c072i2_dgiven_t_forward_confirm.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072i2_summary.json').read_text())
+          b=x['boundary']
+          assert b['replacement_rows'] == 0
+          assert b['C073_C077_quarantined'] is True
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['formal_weight'] == 0
+          assert b['model_coefficients_refit_on_confirmation'] is False
+          print('I2 boundary guard: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072i2-dgiven-t-forward-confirmation
+          path: football-data/research/c072i2_summary.json
