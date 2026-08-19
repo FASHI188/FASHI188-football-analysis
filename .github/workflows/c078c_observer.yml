@@ -1,0 +1,72 @@
+name: C078-C Market Gate Observer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/c078c_observer.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: 56c03fde6e89b236c75050f69d6e899ecf10c53e
+      TARGET_WORKFLOW_NAME: C078-C Fresh Market Zero-Label Gate
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Wait for unique frozen market-gate run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p relay
+          found=0
+          for i in $(seq 1 120); do
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/actions/runs?head_sha=$TARGET_SHA&event=push&per_page=100" -o relay/runs.json
+            count=$(jq --arg n "$TARGET_WORKFLOW_NAME" '[.workflow_runs[] | select(.name==$n)] | length' relay/runs.json)
+            if [ "$count" -gt 1 ]; then exit 2; fi
+            if [ "$count" -eq 1 ]; then
+              jq --arg n "$TARGET_WORKFLOW_NAME" '.workflow_runs[] | select(.name==$n)' relay/runs.json > relay/run_meta.json
+              found=1
+              status=$(jq -r '.status' relay/run_meta.json)
+              echo "target run=$(jq -r '.id' relay/run_meta.json) status=$status"
+              if [ "$status" = "completed" ]; then break; fi
+            fi
+            sleep 10
+          done
+          test "$found" -eq 1
+          test "$(jq -r '.status' relay/run_meta.json)" = "completed"
+      - name: Relay job and artifact or logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=$(jq -r '.id' relay/run_meta.json)
+          conclusion=$(jq -r '.conclusion' relay/run_meta.json)
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs/$run_id/jobs?per_page=100" -o relay/jobs.json
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs/$run_id/artifacts?per_page=100" -o relay/artifacts.json
+          if [ "$conclusion" = "success" ]; then
+            count=$(jq '[.artifacts[] | select(.name=="c078c-fresh-market-zero-label-gate")] | length' relay/artifacts.json)
+            test "$count" -eq 1
+            artifact_id=$(jq -r '.artifacts[] | select(.name=="c078c-fresh-market-zero-label-gate") | .id' relay/artifacts.json)
+            jq '.artifacts[] | select(.name=="c078c-fresh-market-zero-label-gate")' relay/artifacts.json > relay/artifact_meta.json
+            curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/artifacts/$artifact_id/zip" -o relay/result.zip
+            mkdir -p relay/extracted
+            unzip -q relay/result.zip -d relay/extracted
+            summary=$(find relay/extracted -type f -name summary.json | head -n1)
+            test -n "$summary"
+            cp "$summary" relay/source_summary.json
+          else
+            curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs/$run_id/logs" -o relay/failed_run_logs.zip || true
+          fi
+          jq '{id,name,event,status,conclusion,head_sha,run_number,created_at,updated_at}' relay/run_meta.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c078c-market-gate-observer-relay
+          retention-days: 30
+          if-no-files-found: error
+          path: relay/
