@@ -1,0 +1,95 @@
+name: football3-c072n16-footiqo-new2000-zero-label
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n15w-aleague-women-structured-pt-development-20260819
+    paths:
+      - 'football-data/research/C072N16_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_CONTRACT.md'
+      - 'football-data/research/download_c072n16_footiqo_new2000_zero_label.py'
+      - '.github/workflows/football3-c072n16-footiqo-new2000-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install zero-label downloader dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4
+
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N16_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_CONTRACT.md').read_text()
+          assert 'exactly 2,000-match' in c
+          assert 'Turkey Super Lig Footiqo' in c
+          assert 'Greece Super League Footiqo' in c
+          assert 'Brazil Serie A Footiqo' in c
+          assert 'USA MLS Footiqo' in c
+          assert 'identity_sha256 = SHA256' in c
+          assert 'No results/stats table may be requested' in c
+          assert 'C070-F Confirmation1597' in c
+          print('N16 contract guard: PASS')
+          PY
+
+      - name: Download exact zero-label inventory and select 2000
+        run: python football-data/research/download_c072n16_footiqo_new2000_zero_label.py
+
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n16_footiqo_new2000_zero_label_summary.json').read_text())
+          assert s['target_result_columns_requested_or_materialized']==0
+          assert s['target_result_values_materialized']==0
+          assert s['model_fit']==0 and s['model_score']==0
+          assert s['nonce_values_persisted_or_logged']==0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['aleague_men_2025_26_target_opened'] is False
+          assert s['aleague_women_2025_26_target_opened'] is False
+          assert s['terminal'] in {'C072N16_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_PASS','C072N16_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_STOP'}
+          p=Path('football-data/research/c072n16_footiqo_new2000_zero_label.csv')
+          with p.open(encoding='utf-8',newline='') as f:
+              rows=list(csv.DictReader(f))
+          forbidden={'FTHG','FTAG','FTR','HTHG','HTAG','HTR','1HHG','1HAG','1HR','2HHG','2HAG','2HR','score','result','total_goals','target'}
+          assert not forbidden.intersection(rows[0].keys() if rows else set())
+          assert len(rows)==s['selected_rows']
+          if s['pass']:
+              assert len(rows)==2000
+          print(json.dumps({
+            'terminal':s['terminal'],
+            'raw_rows':s['raw_retrieved_rows'],
+            'unique_rows':s['pooled_unique_nonconflicting_rows'],
+            'selected_rows':s['selected_rows'],
+            'selected_source_counts':s['selected_source_counts'],
+            'coverage':s['selected_coverage'],
+            'selected_csv_sha256':s['selected_csv_sha256'],
+            'identity_sha256':s['selected_ordered_identity_sha256'],
+            'gates':s['gates'],
+          },indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n16-footiqo-new2000-zero-label
+          path: |
+            football-data/research/c072n16_footiqo_new2000_zero_label.csv
+            football-data/research/c072n16_footiqo_new2000_zero_label_summary.json
+            football-data/research/c072n16_footiqo_full_zero_label_inventory.csv
+          if-no-files-found: warn
+          retention-days: 30
