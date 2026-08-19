@@ -1,0 +1,72 @@
+name: football3-c072n11-fabul0us-dynamic-ou25-zero-label
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - 'football-data/research/C072N11_DYNAMIC_MULTILINE_OU_ZERO_LABEL_SOURCE_CONTRACT.md'
+      - 'football-data/research/audit_c072n11_fabul0us_dynamic_ou25_zero_label.py'
+      - '.github/workflows/football3-c072n11-fabul0us-dynamic-ou25-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  zero-label-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boundary guard before source download
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N11_DYNAMIC_MULTILINE_OU_ZERO_LABEL_SOURCE_CONTRACT.md').read_text()
+          assert 'N11 itself MUST NOT read, materialize, infer, score, join, or inspect outcome labels.' in c
+          assert 'T-24h, T-6h, T-1h' in c
+          assert 'C073-C077 scientific conclusions remain quarantined' in c
+          print('N11 boundary guard: PASS')
+          PY
+
+      - name: Download immutable Hugging Face dynamic odds asset
+        run: |
+          mkdir -p /tmp/c072n11
+          curl --location --fail --silent --show-error \
+            'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' \
+            --output /tmp/c072n11/match_odds.csv
+          echo 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a  /tmp/c072n11/match_odds.csv' | sha256sum -c -
+          ls -lh /tmp/c072n11/match_odds.csv
+
+      - name: Execute frozen zero-label source audit
+        run: |
+          python football-data/research/audit_c072n11_fabul0us_dynamic_ou25_zero_label.py \
+            --csv /tmp/c072n11/match_odds.csv
+
+      - name: Boundary guard after audit
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n11_fabul0us_dynamic_ou25_zero_label_summary.json').read_text())
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['sha256'] == 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a'
+          assert s['terminal'] in {
+            'C072N11_FABULOUS_DYNAMIC_OU25_STRICT_PIT_PASS',
+            'C072N11_FABULOUS_DYNAMIC_OU25_ASSET_PASS_KICKOFF_JOIN_REQUIRED',
+            'C072N11_FABULOUS_DYNAMIC_OU25_SOURCE_STOP',
+          }
+          print('N11 zero-label boundaries: PASS')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-fabul0us-dynamic-ou25-zero-label
+          path: football-data/research/c072n11_fabul0us_dynamic_ou25_zero_label_summary.json
+          if-no-files-found: error
