@@ -6,6 +6,7 @@ on:
       - football3/c072n7r1-fiveleague-metadata-engineering-replay-20260819
     paths:
       - 'football-data/research/C072N8_IMPLEMENTATION_CORRECTION_01.json'
+      - 'football-data/research/C072N8_IMPLEMENTATION_CORRECTION_02.json'
       - 'football-data/research/adjudicate_c072n8_date_parser_offline.py'
       - '.github/workflows/football3-c072n8-date-parser-offline-adjudication.yml'
   workflow_dispatch:
@@ -20,17 +21,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Correction contract guard
+      - name: Correction contracts guard
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          c=json.loads(Path('football-data/research/C072N8_IMPLEMENTATION_CORRECTION_01.json').read_text())
-          assert c['classification'] == 'POST_RETRIEVAL_DATE_PARSER_ENGINEERING_ERROR'
-          assert c['observed_run_id'] == 32244931845
-          assert c['observed_dataset_sha256'] == 'e9538997e1ec46582e240add8eb37372341a0c75b51e024c8bef0139aa29c082'
-          assert 'No source re-fetch or admin-ajax request.' in c['forbidden_changes']
-          print('N8 correction contract: PASS')
+          c1=json.loads(Path('football-data/research/C072N8_IMPLEMENTATION_CORRECTION_01.json').read_text())
+          c2=json.loads(Path('football-data/research/C072N8_IMPLEMENTATION_CORRECTION_02.json').read_text())
+          assert c1['classification'] == 'POST_RETRIEVAL_DATE_PARSER_ENGINEERING_ERROR'
+          assert c1['observed_run_id'] == 32244931845
+          assert c1['observed_dataset_sha256'] == 'e9538997e1ec46582e240add8eb37372341a0c75b51e024c8bef0139aa29c082'
+          assert 'No source re-fetch or admin-ajax request.' in c1['forbidden_changes']
+          assert c2['classification'] == 'OFFLINE_ADJUDICATION_GUARD_ENGINEERING_MISMATCH'
+          assert c2['frozen_integrity']['original_run_id'] == 32244931845
+          assert c2['new_source_requests_allowed'] == 0
+          print('N8 correction contracts: PASS')
           PY
       - name: Download exact frozen N8 artifact from original run
         env:
