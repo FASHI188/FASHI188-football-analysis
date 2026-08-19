@@ -1,0 +1,78 @@
+name: football3-c072n9r1-development-join-correction
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n9-multiline-pt-preregister-and-zero-label-join-20260819
+    paths:
+      - 'football-data/research/C072N9_POSTRUN_ADJUDICATION.md'
+      - 'football-data/research/C072N9R1_MULTILINE_PT_DEVELOPMENT_JOIN_CORRECTION_CONTRACT.md'
+      - 'football-data/research/audit_c072n9r1_development_join.py'
+      - '.github/workflows/football3-c072n9r1-development-join-correction.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preregistration guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N9R1_MULTILINE_PT_DEVELOPMENT_JOIN_CORRECTION_CONTRACT.md').read_text()
+          assert 'Original N9 remains `C072N9_ZERO_LABEL_JOIN_STOP`' in c
+          assert 'No new source request, no rematching' in c
+          assert '2024/2025 is **not** a confirmation domain' in c
+          assert 'REPLICATION / REPRODUCTION' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N9R1 preregistration: PASS')
+          PY
+      - name: Download immutable N8 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/n8 /tmp/n9
+          gh run download 32244931845 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n8-multiline-odds-zero-label \
+            --dir /tmp/n8
+      - name: Download immutable N9 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 32246282879 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n9-zero-label-join \
+            --dir /tmp/n9
+      - name: Run development-only zero-label correction
+        run: |
+          python football-data/research/audit_c072n9r1_development_join.py \
+            --n8-csv /tmp/n8/c072n8_multiline_odds.csv \
+            --n9-manifest /tmp/n9/c072n9_zero_label_join_manifest.csv
+      - name: Binding boundary and PASS guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n9r1_development_join_summary.json').read_text())
+          assert s['terminal'] == 'C072N9R1_DEVELOPMENT_JOIN_PASS'
+          assert s['2024_25_target_values_materialized'] == 0
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['C073_C077_quarantined'] is True
+          assert s['C070F_confirmation1597_opened'] is False
+          print('N9R1 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n9r1-development-join-correction
+          path: |
+            football-data/research/c072n9r1_development_join_summary.json
+            football-data/research/c072n9r1_development_manifest.csv
+          if-no-files-found: error
