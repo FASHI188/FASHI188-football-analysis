@@ -5,6 +5,7 @@ import json
 import math
 
 import numpy as np
+import pandas as pd
 
 import evaluate_c077a_high_tail_shared_dgiven_t as c077a
 import evaluate_c077b_independent_confirmation as c077b
@@ -44,8 +45,51 @@ def main() -> int:
     assert np.allclose(base, np.full(8, 1 / 8))
     assert abs(float(base.sum()) - 1.0) <= 1e-12
 
+    assert c077b.league_key("albania/2024-25_al1.txt") == "albania/al1"
+    assert c077b.league_key("belarus/2025_by1.txt") == "belarus/by1"
+
+    synthetic = pd.DataFrame([
+        {
+            "date": "2024-01-01", "calendar_year": 2024,
+            "competition_family": "synthetic", "league_key": "synthetic/s1",
+            "home": "A", "away": "B", "home_norm": "a", "away_norm": "b",
+            "source_file": "synthetic/2024_s1.txt",
+            "goals_home": 2, "goals_away": 1, "exact_total": 3, "D": 1,
+        },
+        {
+            "date": "2024-01-01", "calendar_year": 2024,
+            "competition_family": "synthetic", "league_key": "synthetic/s1",
+            "home": "A", "away": "C", "home_norm": "a", "away_norm": "c",
+            "source_file": "synthetic/2024_s1.txt",
+            "goals_home": 1, "goals_away": 1, "exact_total": 2, "D": 0,
+        },
+        {
+            "date": "2024-01-02", "calendar_year": 2024,
+            "competition_family": "synthetic", "league_key": "synthetic/s1",
+            "home": "A", "away": "B", "home_norm": "a", "away_norm": "b",
+            "source_file": "synthetic/2024_s1.txt",
+            "goals_home": 0, "goals_away": 0, "exact_total": 0, "D": 0,
+        },
+    ])
+    ft = c077b.build_external_features(synthetic)
+    assert len(ft) == 3
+    day1 = ft[ft["date"] == "2024-01-01"].reset_index(drop=True)
+    assert len(day1) == 2
+    assert np.isnan(day1.loc[0, "home_goals_for_mean"])
+    assert np.isnan(day1.loc[1, "home_goals_for_mean"])
+    assert day1.loc[0, "log1p_home_result_history_n"] == 0.0
+    assert day1.loc[1, "log1p_home_result_history_n"] == 0.0
+    day2 = ft[ft["date"] == "2024-01-02"].iloc[0]
+    assert abs(float(day2["home_goals_for_mean"]) - 1.5) <= 1e-12
+    assert abs(float(day2["home_goals_against_mean"]) - 1.0) <= 1e-12
+    assert abs(float(day2["away_goals_for_mean"]) - 1.0) <= 1e-12
+    assert abs(float(day2["away_goals_against_mean"]) - 2.0) <= 1e-12
+    assert abs(float(day2["league_total_mean"]) - 2.5) <= 1e-12
+    assert abs(float(day2["log1p_home_result_history_n"]) - math.log1p(2)) <= 1e-12
+    assert abs(float(day2["log1p_away_result_history_n"]) - math.log1p(1)) <= 1e-12
+
     result = {
-        "schema_version": "C077B_PREFLIGHT_UNIT_TESTS_V1",
+        "schema_version": "C077B_PREFLIGHT_UNIT_TESTS_V2",
         "status": "PASS",
         "score_parser": parser,
         "metric_tests": {
@@ -54,6 +98,13 @@ def main() -> int:
             "finite_proper_scores": "PASS",
             "perfect_prediction_zero_loss": "PASS",
             "unseen_T_uniform_baseline": "PASS"
+        },
+        "transport_tests": {
+            "league_key_parsing": "PASS",
+            "same_day_predict_before_update": "PASS",
+            "prior_team_history_means": "PASS",
+            "prior_league_history_mean": "PASS",
+            "history_count_features": "PASS"
         },
         "confirmation_numeric_labels_opened": False,
         "confirmation_total_goals_computed": False,
