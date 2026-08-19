@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -53,6 +55,25 @@ class QualitySecurityGuardTests(unittest.TestCase):
             self.skipTest("dedicated workflow not created yet")
         findings = scan_text(DEDICATED_WORKFLOW, path.read_text(encoding="utf-8"), is_added=True)
         self.assertEqual(findings, [])
+
+    def test_c072d3_temporary_execution_hook(self) -> None:
+        """Temporary PR-CI execution hook for frozen C072-D3; remove after evidence capture."""
+        install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "numpy==2.1.3", "pandas==2.2.3", "scikit-learn==1.7.1"],
+            text=True,
+            capture_output=True,
+        )
+        print("C072D3_INSTALL_STDOUT\n" + install.stdout)
+        print("C072D3_INSTALL_STDERR\n" + install.stderr)
+        self.assertEqual(install.returncode, 0, "C072-D3 dependency install failed")
+        run = subprocess.run(
+            [sys.executable, "football-data/research/evaluate_c072d3_ou25_movement_pt.py"],
+            text=True,
+            capture_output=True,
+        )
+        print("C072D3_EXEC_STDOUT\n" + run.stdout)
+        print("C072D3_EXEC_STDERR\n" + run.stderr)
+        self.assertIn(run.returncode, (0, 3), "C072-D3 evaluator engineering failure")
 
 
 if __name__ == "__main__":
