@@ -1,0 +1,82 @@
+name: football3-c072n10-multiline-pt-development
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n9r1-development-join-correction-20260819
+    paths:
+      - 'football-data/research/C072N10_MULTILINE_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/evaluate_c072n10_multiline_pt_development.py'
+      - '.github/workflows/football3-c072n10-multiline-pt-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frozen model dependencies
+        run: pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 scikit-learn==1.7.1
+      - name: Contract guard before target access
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N10_MULTILINE_PT_DEVELOPMENT_CONTRACT.md').read_text()
+          assert 'REPLICATION / REPRODUCTION' in c
+          assert 'market_logit_25' in c
+          assert 'market_logit_05' in c and 'market_logit_45' in c
+          assert '2024/25 target values materialized/read must remain exactly 0' in c
+          assert 'No 2024/25 or 2025/26 score/result access' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N10 contract guard: PASS')
+          PY
+      - name: Download immutable N8 and N9 zero-label artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/n8 /tmp/n9
+          gh run download 32244931845 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n8-multiline-odds-zero-label \
+            --dir /tmp/n8
+          gh run download 32246282879 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n9-zero-label-join \
+            --dir /tmp/n9
+          sha256sum /tmp/n8/c072n8_multiline_odds.csv /tmp/n9/c072n9_zero_label_join_manifest.csv
+      - name: Execute frozen rolling-OOS multi-line P(T) development
+        run: |
+          python football-data/research/evaluate_c072n10_multiline_pt_development.py \
+            --n8-csv /tmp/n8/c072n8_multiline_odds.csv \
+            --n9-manifest /tmp/n9/c072n9_zero_label_join_manifest.csv
+      - name: Boundary guard after target access
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n10_multiline_pt_development_summary.json').read_text())
+          assert s['classification'] == 'REPLICATION / REPRODUCTION'
+          assert s['target_values_2024_25_read'] == 0
+          assert s['target_values_2025_26_read'] == 0
+          assert s['source_meta']['target_values_2024_25_read'] == 0
+          assert s['source_meta']['target_values_2025_26_read'] == 0
+          assert s['C073_C077_quarantined'] is True
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['terminal'] in {'C072N10_MULTILINE_PT_DEVELOPMENT_PASS','C072N10_MULTILINE_PT_DEVELOPMENT_PARK'}
+          print('N10 target boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n10-multiline-pt-development
+          path: |
+            football-data/research/c072n10_multiline_pt_development_summary.json
+            football-data/research/c072n10_multiline_pt_development_predictions.csv
+          if-no-files-found: error
