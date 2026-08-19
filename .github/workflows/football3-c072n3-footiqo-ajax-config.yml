@@ -1,0 +1,55 @@
+name: football3-c072n3-footiqo-ajax-config
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n2-footiqo-multiline-zero-label-source-20260819
+    paths:
+      - 'football-data/research/C072N3_FOOTIQO_AJAX_BACKEND_ZERO_LABEL_CONTRACT.md'
+      - 'football-data/research/audit_c072n3_footiqo_ajax_backend.py'
+      - '.github/workflows/football3-c072n3-footiqo-ajax-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser dependencies
+        run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N3_FOOTIQO_AJAX_BACKEND_ZERO_LABEL_CONTRACT.md').read_text()
+          assert 'MUST NOT request any football table-data AJAX endpoint' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N3 contract guard: PASS')
+          PY
+      - name: Run AJAX configuration discovery
+        run: python football-data/research/audit_c072n3_footiqo_ajax_backend.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072n3_ajax_config_result.json').read_text())
+          assert x['football_data_endpoint_requests_made'] == 0
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0 and x['model_score'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          print('N3 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n3-footiqo-ajax-config
+          path: football-data/research/c072n3_ajax_config_result.json
+          if-no-files-found: error
