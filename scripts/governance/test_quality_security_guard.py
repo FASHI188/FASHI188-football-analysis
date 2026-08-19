@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 
@@ -55,13 +53,6 @@ class QualitySecurityGuardTests(unittest.TestCase):
             self.skipTest("dedicated workflow not created yet")
         findings = scan_text(DEDICATED_WORKFLOW, path.read_text(encoding="utf-8"), is_added=True)
         self.assertEqual(findings, [])
-
-    def test_c072d2_temporary_zero_label_execution_hook(self) -> None:
-        """Temporary engineering hook for PR #284; remove immediately after evidence capture."""
-        script = Path("football-data/research/audit_c072d2_free_ou25_zero_label.py")
-        if not script.exists():
-            self.skipTest("C072-D2 auditor not present on this branch")
-        subprocess.run([sys.executable, str(script)], check=True)
 
 
 if __name__ == "__main__":
