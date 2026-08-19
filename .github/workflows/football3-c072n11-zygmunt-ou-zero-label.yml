@@ -1,0 +1,86 @@
+name: football3 C072-N11 zygmunt O/U zero-label audit
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-zygmunt-ou-zero-label.yml'
+      - 'football-data/research/audit_c072n11_zygmunt_betfair_ou.py'
+      - 'football-data/research/C072N11_ZYGMUNT_BETFAIR_SPORTS_ZERO_LABEL_ADDENDUM.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile frozen audit
+        run: python -m py_compile football-data/research/audit_c072n11_zygmunt_betfair_ou.py
+      - name: Download exact public Kaggle source
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/n11-z /tmp/n11-z.zip
+          mkdir -p /tmp/n11-z
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/zygmunt/betfair-sports' \
+            -o /tmp/n11-z.zip
+          python - <<'PY'
+          import zipfile
+          z=zipfile.ZipFile('/tmp/n11-z.zip')
+          print({'archive_files':z.namelist()})
+          z.extractall('/tmp/n11-z')
+          PY
+      - name: Run zero-label O/U source audit
+        run: |
+          mkdir -p artifacts/research/c072n11
+          python football-data/research/audit_c072n11_zygmunt_betfair_ou.py \
+            --source-dir /tmp/n11-z \
+            --out artifacts/research/c072n11/zygmunt_betfair_ou_zero_label.json
+      - name: Enforce boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/zygmunt_betfair_ou_zero_label.json').read_text())
+          assert x['source']=='zygmunt/betfair-sports'
+          assert x['forbidden_field_values_materialized']==0
+          assert x['winner_or_result_values_materialized']==0
+          assert x['model_fit']==0
+          assert x['c073_c077_scientific_results_used'] is False
+          assert x['c070f_confirmation_opened'] is False
+          assert x['terminal'] in {'ZYGMUNT_OU_SOURCE_PASS','ZYGMUNT_OU_SOURCE_LIMITED','ZYGMUNT_OU_SOURCE_STOP'}
+          assert x['authorization']=='NO_TARGET_ACCESS'
+          print(json.dumps({
+            'terminal':x['terminal'],
+            'stats':x['stats'],
+            'clean_ou_event_line_markets':x['clean_ou_event_line_markets'],
+            'unique_ou_events':x['unique_ou_events'],
+            'preferred_line_event_counts':x['preferred_line_event_counts'],
+            'strict_cutoff_counts':x['strict_cutoff_counts'],
+            'proxy_cutoff_counts':x['proxy_cutoff_counts'],
+            'events_ge2':x['events_ge2_preferred_lines'],
+            'events_ge3':x['events_ge3_preferred_lines'],
+            'events_all5':x['events_all5_preferred_lines'],
+            'candidate_event_names_top20':x['candidate_event_names_top20'],
+          },indent=2))
+          PY
+      - name: Remove raw source
+        if: always()
+        run: rm -rf /tmp/n11-z /tmp/n11-z.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-zygmunt-ou-zero-label
+          path: artifacts/research/c072n11/zygmunt_betfair_ou_zero_label.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,68 @@
+name: football3 C072-N11 public Betfair zero-label audit official
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-public-betfair-zero-label-audit-pr.yml'
+      - 'football-data/research/audit_c072n11_public_betfair_mirror.py'
+      - 'football-data/research/C072N11_PUBLIC_BETFAIR_MIRROR_PRERUN_ADDENDUM.md'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-structural-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile frozen zero-label audit
+        run: python -m py_compile football-data/research/audit_c072n11_public_betfair_mirror.py
+      - name: Clone exact public Betfair mirror revision without credentials
+        run: |
+          rm -rf /tmp/c072n11-betfair-mirror
+          git -c http.https://github.com/.extraheader= clone --filter=blob:none --no-checkout https://github.com/marcosf63/bet.git /tmp/c072n11-betfair-mirror
+          git -C /tmp/c072n11-betfair-mirror -c http.https://github.com/.extraheader= checkout --detach 90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff
+          test "$(git -C /tmp/c072n11-betfair-mirror rev-parse HEAD)" = "90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff"
+          test -d /tmp/c072n11-betfair-mirror/data/dados_historicos/BASIC
+      - name: Execute zero-label dynamic O/U structural replay
+        run: |
+          mkdir -p artifacts/research/c072n11
+          python football-data/research/audit_c072n11_public_betfair_mirror.py \
+            /tmp/c072n11-betfair-mirror/data/dados_historicos/BASIC \
+            --out artifacts/research/c072n11/public_betfair_zero_label_audit.json
+      - name: Enforce target and settlement boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/public_betfair_zero_label_audit.json').read_text())
+          assert x['source_revision']=='90f818e2ad78aa3c624a0fe251c3e60fcfb0ccff'
+          assert x['classification']=='REPLICATION_STRUCTURE_ONLY_GLOBALLY_CONSUMED_OUTCOME_DOMAIN'
+          assert x['fresh_confirmation_eligible'] is False
+          assert x['forbidden_target_fields_accessed']==0
+          assert x['settlement_fields_accessed']==0
+          assert x['model_fit']==0
+          assert x['c073_c077_scientific_results_used'] is False
+          assert x['c070f_confirmation_opened'] is False
+          assert x['terminal'] in {'STRUCTURAL_REPLAY_PASS','STRUCTURAL_REPLAY_STOP'}
+          print(json.dumps(x, indent=2))
+          PY
+      - name: Remove external raw checkout
+        if: always()
+        run: rm -rf /tmp/c072n11-betfair-mirror
+      - name: Upload aggregate zero-label summary only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-public-betfair-zero-label-audit-official
+          path: artifacts/research/c072n11/public_betfair_zero_label_audit.json
+          if-no-files-found: error
+          retention-days: 30

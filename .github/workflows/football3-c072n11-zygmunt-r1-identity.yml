@@ -1,0 +1,69 @@
+name: football3 C072-N11 zygmunt R1 identity correction
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-zygmunt-r1-identity.yml'
+      - 'football-data/research/audit_c072n11_zygmunt_betfair_ou_r1.py'
+      - 'football-data/research/C072N11_ZYGMUNT_R1_MATCH_IDENTITY_CORRECTION.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-r1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m py_compile football-data/research/audit_c072n11_zygmunt_betfair_ou_r1.py
+      - name: Download public source
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/n11zr1 /tmp/n11zr1.zip
+          mkdir -p /tmp/n11zr1
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            --user-agent 'Mozilla/5.0' \
+            'https://www.kaggle.com/api/v1/datasets/download/zygmunt/betfair-sports' \
+            -o /tmp/n11zr1.zip
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('/tmp/n11zr1.zip') as z:z.extractall('/tmp/n11zr1')
+          PY
+      - name: Run R1 zero-label identity correction
+        run: |
+          mkdir -p artifacts/research/c072n11
+          python football-data/research/audit_c072n11_zygmunt_betfair_ou_r1.py \
+            --source-dir /tmp/n11zr1 \
+            --out artifacts/research/c072n11/zygmunt_r1_identity.json
+      - name: Enforce boundaries and print aggregate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/zygmunt_r1_identity.json').read_text())
+          assert x['forbidden_field_values_materialized']==0
+          assert x['winner_or_result_values_materialized']==0
+          assert x['model_fit']==0
+          assert x['c073_c077_scientific_results_used'] is False
+          assert x['c070f_confirmation_opened'] is False
+          assert x['authorization']=='NO_TARGET_ACCESS'
+          assert x['terminal'] in {'ZYGMUNT_R1_MULTILINE_STRUCTURE_PASS','ZYGMUNT_R1_MULTILINE_STRUCTURE_LIMITED','ZYGMUNT_R1_MULTILINE_STRUCTURE_STOP'}
+          print(json.dumps({k:x[k] for k in ['terminal','clean_exact_ou_line_markets','reconstructed_matches','matches_with_ge2_preferred_lines_anytime','matches_with_ge3_preferred_lines_anytime','matches_with_all5_preferred_lines_anytime','per_line_reconstructed_match_counts','strict_multiline_cutoff','proxy_multiline_cutoff','joint_T6_T1_same_lines','duplicate_match_line_multiple_event_ids']},indent=2))
+          PY
+      - if: always()
+        run: rm -rf /tmp/n11zr1 /tmp/n11zr1.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-zygmunt-r1-identity
+          path: artifacts/research/c072n11/zygmunt_r1_identity.json
+          if-no-files-found: error
+          retention-days: 30

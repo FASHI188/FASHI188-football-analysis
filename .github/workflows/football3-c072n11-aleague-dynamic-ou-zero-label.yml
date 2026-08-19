@@ -1,0 +1,94 @@
+name: football3 C072-N11 A-League dynamic O/U zero-label audit
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-aleague-dynamic-ou-zero-label.yml'
+      - 'football-data/research/audit_c072n11_aleague_dynamic_ou_zero_label.py'
+      - 'football-data/research/C072N11_ALEAGUE_DYNAMIC_OU_ZERO_LABEL_COVERAGE_CONTRACT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile frozen audit
+        run: python -m py_compile football-data/research/audit_c072n11_aleague_dynamic_ou_zero_label.py
+      - name: Download six exact pinned official All Markets files
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c072n11-aleague
+          mkdir -p /tmp/c072n11-aleague
+          python - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          seasons=['2020-2021','2021-2022','2022-2023','2023-2024','2024-2025','2025-2026']
+          for season in seasons:
+              rel=f'docs/data/assets/A-League_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/{rel}'
+              dest=Path('/tmp/c072n11-aleague')/f'A-League_{season}_All_Markets.csv'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-zero-label-source-audit/1.0'})
+              with urllib.request.urlopen(req,timeout=180) as r, dest.open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      f.write(b)
+              print(season, dest.stat().st_size)
+          PY
+      - name: Execute zero-label dynamic O/U coverage audit
+        run: |
+          mkdir -p artifacts/research/c072n11
+          python football-data/research/audit_c072n11_aleague_dynamic_ou_zero_label.py \
+            --source-dir /tmp/c072n11-aleague \
+            --out artifacts/research/c072n11/aleague_dynamic_ou_zero_label.json
+      - name: Enforce zero-label and project boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/aleague_dynamic_ou_zero_label.json').read_text())
+          assert x['source_revision']=='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          assert x['forbidden_field_values_accessed']==0
+          assert x['target_outcome_values_materialized']==0
+          assert x['model_fit']==0 and x['model_score']==0
+          assert x['c073_c077_scientific_results_used'] is False
+          assert x['c070f_confirmation_opened'] is False
+          assert x['terminal'] in {'ALEAGUE_DYNAMIC_OU_SOURCE_PASS','ALEAGUE_DYNAMIC_OU_SOURCE_LIMITED','ALEAGUE_DYNAMIC_OU_SOURCE_STOP'}
+          assert x['authorization'].startswith('NO_TARGET_ACCESS')
+          print(json.dumps({
+              'terminal':x['terminal'],
+              'eligible_ou_runner_rows':x['eligible_ou_runner_rows'],
+              'recognized_market_instances':x['recognized_market_instances'],
+              'pooled_unique_events':x['pooled_unique_nonconflict_events_seen_in_eligible_ou_rows'],
+              'pooled_per_line_snapshot_complete':x['pooled_per_line_snapshot_complete'],
+              'pooled_per_line_all3_complete':x['pooled_per_line_all3_complete'],
+              'pooled_matches_ge2_all3':x['pooled_matches_ge2_preferred_lines_all3'],
+              'pooled_matches_ge3_all3':x['pooled_matches_ge3_preferred_lines_all3'],
+              'pooled_matches_all5_all3':x['pooled_matches_all5_preferred_lines_all3'],
+              'per_season':x['per_season'],
+              'diagnostics':x['diagnostics'],
+              'gates':x['gates'],
+          },indent=2))
+          PY
+      - name: Remove raw source files
+        if: always()
+        run: rm -rf /tmp/c072n11-aleague
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-aleague-dynamic-ou-zero-label
+          path: artifacts/research/c072n11/aleague_dynamic_ou_zero_label.json
+          if-no-files-found: error
+          retention-days: 30
