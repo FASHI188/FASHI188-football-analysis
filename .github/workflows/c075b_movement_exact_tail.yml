@@ -1,0 +1,89 @@
+name: Football C075-B Movement Exact-Tail Development
+
+on:
+  push:
+    branches:
+      - research/c075b-movement-exact-tail-development-20260819
+    paths:
+      - research/c075b_movement_exact_tail_contract.json
+      - research/c075b_movement_exact_tail.py
+      - .github/workflows/c075b_movement_exact_tail.yml
+  pull_request:
+    paths:
+      - research/c075b_movement_exact_tail_contract.json
+      - research/c075b_movement_exact_tail.py
+      - .github/workflows/c075b_movement_exact_tail.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075b-movement-exact-tail-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  movement-exact-tail-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 scikit-learn==1.7.1
+
+      - name: Clone and pin C074 market source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nm2890/football-data.git external-football-data
+          git -C external-football-data checkout 279978313f9c16a210fa80e8986fa22f0f866fba
+          test "$(git -C external-football-data rev-parse HEAD)" = "279978313f9c16a210fa80e8986fa22f0f866fba"
+
+      - name: Run frozen C075-B development
+        run: |
+          mkdir -p artifacts/c075b_exact_tail
+          PYTHONPATH=research python research/c075b_movement_exact_tail.py \
+            --external-root external-football-data \
+            --out-dir artifacts/c075b_exact_tail
+
+      - name: Enforce governance and exact-tail boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075b_exact_tail/summary.json').read_text())
+          assert s['schema_version']=='C075B_MOVEMENT_EXACT_TAIL_DEVELOPMENT_V1'
+          b=s['boundaries']
+          assert b['C071_reserve_52180_opened'] is False
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['A05_opened'] is False
+          assert b['protected_opened'] is False
+          assert b['C074G_2025_26_used_as_tail_confirmation'] is False
+          assert b['high_tail_D_given_T_tested'] is False
+          assert b['unified_matrix_generated'] is False
+          if s['status']!='STOP_COVERAGE':
+              assert s['candidate']['feature_search'] is False
+              assert s['candidate']['hyperparameter_search'] is False
+              assert s['candidate']['distribution_family_search'] is False
+              assert s['pooled']['max_unenumerated_tail_residual'] <= 1e-8
+              assert s['pooled']['max_probability_sum_abs_residual'] <= 1e-10
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload C075-B evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075b-movement-exact-tail-development
+          retention-days: 30
+          path: |
+            artifacts/c075b_exact_tail/summary.json
+            artifacts/c075b_exact_tail/row_metrics.csv
+            research/c075b_movement_exact_tail_contract.json
