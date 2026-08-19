@@ -25,6 +25,9 @@ For each source file, N10 may decode `FTHG` and `FTAG` **only** for row indices 
 
 Target: `T=min(FTHG+FTAG,7)` with classes `[0,1,2,3,4,5,6,7+]`.
 
+### Frozen score-validity handling
+For an authorized development row, `FTHG` and `FTAG` must both parse as finite nonnegative integers. If either is missing/invalid, that row is excluded from both baseline and candidate with no replacement and is reported as an invalid-label row. No outcome-dependent subset rule is otherwise allowed.
+
 2024/25 target values materialized/read must remain exactly 0.
 2025/26 target values materialized/read must remain exactly 0.
 C070-F Confirmation1597/protected remain sealed.
