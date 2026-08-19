@@ -1,0 +1,61 @@
+name: football3-c072n7-footiqo-fiveleague-metadata
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n6-footiqo-nonce-one-row-preflight-20260819
+    paths:
+      - 'football-data/research/C072N7_FOOTIQO_FIVELEAGUE_METADATA_PREFLIGHT_CONTRACT.md'
+      - 'football-data/research/audit_c072n7_footiqo_fiveleague_metadata.py'
+      - '.github/workflows/football3-c072n7-footiqo-fiveleague-metadata.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N7_FOOTIQO_FIVELEAGUE_METADATA_PREFLIGHT_CONTRACT.md').read_text()
+          assert 'Maximum football table-data requests in N7 = 5' in c
+          assert 'pooled sum of the five `recordsFiltered` counts >= 4,000' in c
+          assert 'Returned football row values are never persisted' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N7 contract guard: PASS')
+          PY
+      - name: Run frozen five-league metadata preflight
+        run: python football-data/research/audit_c072n7_footiqo_fiveleague_metadata.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/c072n7_metadata_result.json')
+          x=json.loads(p.read_text())
+          assert x['football_table_data_requests_made'] <= 5
+          assert x['nonce_values_persisted_or_logged'] == 0
+          assert x['football_row_values_persisted'] == 0
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0 and x['model_score'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          assert 'nonce_value' not in p.read_text().lower()
+          print('N7 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n7-fiveleague-metadata
+          path: football-data/research/c072n7_metadata_result.json
+          if-no-files-found: error
