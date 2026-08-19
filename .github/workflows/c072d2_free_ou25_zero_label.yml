@@ -1,56 +1,26 @@
 name: C072-D2 free OU2.5 zero-label source audit
 
 on:
-  push:
-    branches:
-      - football3/c072d2-free-ou25-zero-label-20260819
-    paths:
-      - 'football-data/research/C072D2_FREE_OU25_OPEN_CLOSE_ZERO_LABEL_CONTRACT.md'
-      - 'football-data/research/audit_c072d2_free_ou25_zero_label.py'
-      - '.github/workflows/c072d2_free_ou25_zero_label.yml'
-      - 'scripts/governance/test_quality_security_guard.py'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   audit:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Run frozen zero-label source audit
-        shell: bash
-        run: |
-          set +e
-          python football-data/research/audit_c072d2_free_ou25_zero_label.py
-          code=$?
-          echo "AUDIT_EXIT=${code}" >> "$GITHUB_ENV"
-          exit 0
-      - name: Commit immutable audit evidence to research branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add football-data/research/c072d2_free_ou25_zero_label_audit.json
-          if git diff --cached --quiet; then
-            echo 'No evidence diff to commit.'
-          else
-            git commit -m 'evidence: C072-D2 zero-label source audit [skip ci]'
-            git push origin HEAD:football3/c072d2-free-ou25-zero-label-20260819
-          fi
-      - name: Enforce frozen gate result
-        shell: bash
-        run: |
-          if [[ "${AUDIT_EXIT}" != "0" ]]; then
-            echo "Frozen source gate failed with exit ${AUDIT_EXIT}. Evidence was still committed."
-            exit "${AUDIT_EXIT}"
-          fi
+      - name: Reproduce frozen zero-label source audit
+        run: python football-data/research/audit_c072d2_free_ou25_zero_label.py
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c072d2-free-ou25-zero-label-audit
+          path: football-data/research/c072d2_free_ou25_zero_label_audit.json
+          if-no-files-found: error
