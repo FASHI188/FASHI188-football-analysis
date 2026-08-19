@@ -1,0 +1,49 @@
+name: football3-c072e2-ou25-movement-directt
+
+on:
+  pull_request:
+    branches:
+      - football3/c072d2-free-ou25-openclose-source-20260819
+    paths:
+      - 'football-data/research/C072E2_OU25_MOVEMENT_DIRECTT_CONTRACT.md'
+      - 'football-data/research/evaluate_c072e2_ou25_movement_directt.py'
+      - '.github/workflows/football3-c072e2-ou25-movement-directt.yml'
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas==2.2.3 numpy==2.1.3 scikit-learn==1.7.1
+      - name: Contract lineage guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072E2_OU25_MOVEMENT_DIRECTT_CONTRACT.md').read_text()
+          assert 'e3e73c998020beef585cc459a69ea5b73b44ddb3' in c
+          assert 'C073-C077 are quarantined' in c
+          assert '2024/25 target goal values are **sealed**' in c
+          print('lineage/confirmation seal guard: PASS')
+          PY
+      - name: Run frozen development
+        run: python football-data/research/evaluate_c072e2_ou25_movement_directt.py
+      - name: Verify 2024-25 label seal
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072e2_summary.json').read_text())
+          b=x['boundary']
+          assert b['sealed_2024_25_goal_values_parsed'] == 0
+          assert b['C073_C077_quarantined'] is True
+          assert b['C070F_confirmation1597_opened'] is False
+          print('2024/25 target seal: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072e2-movement-directt
+          path: football-data/research/c072e2_summary.json
