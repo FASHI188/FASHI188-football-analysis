@@ -26,13 +26,11 @@ def sha256(p:Path):
  with p.open('rb') as f:
   for b in iter(lambda:f.read(8*1024*1024),b''): h.update(b)
  return h.hexdigest()
-
 def utc_ns(x):
  z=pd.to_datetime(x,utc=True,errors='coerce')
  if isinstance(z,pd.Series): return z.dt.as_unit('ns')
  if isinstance(z,pd.DatetimeIndex): return z.as_unit('ns')
  return z
-
 def fit_simple(e):
  e=np.asarray(e,float); return float((e.sum()+.5)/((e+1).sum()+1.0))
 def fit_four(e):
@@ -114,7 +112,7 @@ def main():
  df=pd.concat(parts,ignore_index=True); df['dll']=df.candidate_ll-df.baseline_ll; df.to_csv(out/'row_metrics.csv',index=False)
  pooled={'baseline':{'logloss':float(df.baseline_ll.mean()),'brier':float(df.baseline_brier.mean()),'rps':float(df.baseline_rps.mean())},'candidate':{'logloss':float(df.candidate_ll.mean()),'brier':float(df.candidate_brier.mean()),'rps':float(df.candidate_rps.mean())}}
  delta={m:pooled['candidate'][m]-pooled['baseline'][m] for m in pooled['baseline']}; bs=boot(df.dll.to_numpy()); wins=sum(folds[str(y)]['delta']['ll']<0 for y in TEST_YEARS)
- gate={'pooled_dll_lt0':delta['logloss']<0,'bootstrap90_upper_lt0':bs['ci90_high']<0,'pooled_dbrier_le0':delta['brier']<=0,'pooled_drps_le0':delta['rps']<=0,'fold_wins_ge4':wins>=4,'tail_residual_le1e8':maxres<=TAIL_LIMIT,'prob_residual_le1e10':maxprob<=PROB_LIMIT}; passed=all(gate.values())
+ gate={'pooled_dll_lt0':bool(delta['logloss']<0),'bootstrap90_upper_lt0':bool(bs['ci90_high']<0),'pooled_dbrier_le0':bool(delta['brier']<=0),'pooled_drps_le0':bool(delta['rps']<=0),'fold_wins_ge4':bool(wins>=4),'tail_residual_le1e8':bool(maxres<=TAIL_LIMIT),'prob_residual_le1e10':bool(maxprob<=PROB_LIMIT)}; passed=all(gate.values())
  param=None
  if passed:
   e=tail.E.to_numpy(int); par,_=fit_four(e); param={'family':'four-parameter piecewise hazard','h1':par[0],'h2':par[1],'h3':par[2],'rho_tail':par[3],'development_tail_n':len(e),'horizon':'pre-2024 broad C071 threshold8','source_revision':'f0cbe86bee3f28cc4b803f735a5287968741c471'}; param['parameter_sha256']=par_sha(param); (out/'confirmation_ready_parameter.json').write_text(json.dumps(param,indent=2)+'\n')
