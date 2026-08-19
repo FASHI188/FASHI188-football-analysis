@@ -5,12 +5,11 @@ import hashlib
 import json
 import os
 import random
-import sys
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
 from pathlib import Path
+
+from curl_cffi import requests as curl_requests
 
 TARGET_N = 5000
 MIN_XG_SHOTS = 6
@@ -26,11 +25,12 @@ TOURNAMENTS = [
     (238, "Liga Portugal"),
 ]
 BASE_URLS = [
-    "https://www.sofascore.com/api/v1",
     "https://api.sofascore.com/api/v1",
+    "https://www.sofascore.com/api/v1",
 ]
 OUTDIR = Path(os.environ.get("N18A_OUTDIR", "football-data/research/_n18a_sofascore_history5000"))
-USER_AGENT = "football3-n18a-zero-target-source-audit/1.0"
+USER_AGENT = "football3-n18a-zero-target-source-audit/1.1"
+SESSION = curl_requests.Session()
 
 
 def utc_now():
@@ -42,24 +42,28 @@ def request_json(path, attempts=5):
     for attempt in range(attempts):
         for base in BASE_URLS:
             url = base + path
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "application/json,text/plain,*/*",
-                    "Cache-Control": "no-cache",
-                },
-            )
             try:
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    if resp.status != 200:
-                        raise RuntimeError(f"HTTP {resp.status} {url}")
-                    raw = resp.read()
-                    return json.loads(raw.decode("utf-8")), url
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, RuntimeError) as exc:
+                resp = SESSION.get(
+                    url,
+                    impersonate="chrome",
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": "application/json,text/plain,*/*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Referer": "https://www.sofascore.com/",
+                        "Cache-Control": "no-cache",
+                    },
+                    timeout=25,
+                    allow_redirects=True,
+                )
+                if resp.status_code != 200:
+                    raise RuntimeError(f"HTTP {resp.status_code} {url}")
+                return resp.json(), url
+            except Exception as exc:
                 last = exc
-                if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
-                    time.sleep(min(20, 2 ** attempt + random.random()))
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 429 or "HTTP 429" in str(exc):
+                    time.sleep(min(30, 2 ** attempt + random.random()))
                 else:
                     time.sleep(min(5, 0.4 * (attempt + 1)))
         time.sleep(min(10, 1.2 * (attempt + 1)))
@@ -123,14 +127,19 @@ def get_seasons(tournament_id, expected_name, failures, source_urls):
         source_urls.add(url.split("/unique-tournament/")[0])
     except Exception as exc:
         failures.append({"stage": "seasons", "tournament_id": tournament_id, "error": str(exc)})
+        print(f"ACCESS_FAIL seasons tournament={tournament_id} error={exc}", flush=True)
         return []
     out = []
+    observed_years = []
     for s in obj.get("seasons", []):
         year = str(s.get("year", ""))
+        observed_years.append(year)
         if year in ELIGIBLE_YEARS:
             sid = safe_int(s.get("id"))
             if sid is not None:
                 out.append({"id": sid, "year": year, "name": s.get("name") or expected_name})
+    if not out:
+        print(f"NO_ELIGIBLE_SEASON tournament={tournament_id} observed_years={observed_years[:12]}", flush=True)
     return out
 
 
@@ -150,6 +159,7 @@ def get_finished_events(tournament_id, tournament_name, season, failures, source
                 "page": page,
                 "error": str(exc),
             })
+            print(f"ACCESS_FAIL events tournament={tournament_id} season={season['year']} page={page} error={exc}", flush=True)
             break
         events = obj.get("events") or []
         for ev in events:
@@ -185,7 +195,7 @@ def get_finished_events(tournament_id, tournament_name, season, failures, source
         if page > 100:
             failures.append({"stage": "events", "tournament_id": tournament_id, "season_id": season["id"], "error": "page_guard"})
             break
-        time.sleep(0.05)
+        time.sleep(0.08)
     return rows
 
 
@@ -197,6 +207,27 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def write_technical_receipt(started, failures, inventory_count, status):
+    OUTDIR.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "project": "football3",
+        "experiment": "C072-N18A",
+        "status": status,
+        "started_at_utc": started,
+        "finished_at_utc": utc_now(),
+        "inventory_identities": inventory_count,
+        "request_failures": len(failures),
+        "failure_examples": failures[:50],
+        "selected_matches": 0,
+        "persisted_outcome_fields": 0,
+        "model_fits": 0,
+        "target_scores": 0,
+    }
+    (OUTDIR / "sofascore_n18a_technical_receipt.json").write_text(
+        json.dumps(receipt, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def main():
     started = utc_now()
     OUTDIR.mkdir(parents=True, exist_ok=True)
@@ -204,7 +235,7 @@ def main():
     source_urls = set()
     inventory = []
 
-    print(f"N18A START {started} target={TARGET_N}", flush=True)
+    print(f"N18A START {started} target={TARGET_N} transport=curl_cffi_chrome", flush=True)
     for tid, tname in TOURNAMENTS:
         seasons = get_seasons(tid, tname, failures, source_urls)
         if not seasons:
@@ -223,12 +254,15 @@ def main():
     candidates.sort(key=lambda r: (r["selection_hash"], r["event_id"]))
 
     if len(candidates) < TARGET_N:
-        raise SystemExit(f"STOP_COVERAGE candidate identities {len(candidates)} < {TARGET_N}")
+        status = "TECHNICAL_ACCESS_FAILURE_PRE_IDENTITY" if not candidates and failures else "STOP_COVERAGE"
+        write_technical_receipt(started, failures, len(candidates), status)
+        raise SystemExit(f"{status} candidate identities {len(candidates)} < {TARGET_N}")
 
     selected_matches = []
     selected_shots = []
     skipped_no_shotmap = 0
     skipped_xg_gate = 0
+    idx = 0
 
     for idx, row in enumerate(candidates, 1):
         eid = row["event_id"]
@@ -264,7 +298,7 @@ def main():
             print(f"SELECTED {n}/{TARGET_N} scanned={idx}/{len(candidates)} shots={len(selected_shots)} failures={len(failures)}", flush=True)
         if n >= TARGET_N:
             break
-        time.sleep(0.06)
+        time.sleep(0.10)
 
     status = "PASS_HISTORY5000" if len(selected_matches) == TARGET_N else "STOP_COVERAGE"
 
@@ -285,13 +319,14 @@ def main():
         "experiment": "C072-N18A",
         "status": status,
         "role": "HISTORY_FEATURE_SOURCE_ONLY_GLOBALLY_CONSUMED_AS_TARGET_IDENTITIES",
+        "transport": "curl_cffi==0.15.0 impersonate=chrome",
         "started_at_utc": started,
         "finished_at_utc": utc_now(),
         "target_matches": TARGET_N,
         "selected_matches": len(selected_matches),
         "selected_numeric_xg_shots": len(selected_shots),
         "candidate_identities": len(candidates),
-        "scanned_candidates": idx if candidates else 0,
+        "scanned_candidates": idx,
         "skipped_no_shotmap": skipped_no_shotmap,
         "skipped_xg_gate": skipped_xg_gate,
         "request_failures": len(failures),
