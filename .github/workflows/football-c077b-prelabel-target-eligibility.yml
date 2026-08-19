@@ -1,0 +1,74 @@
+name: Football C077-B Prelabel Target Eligibility
+
+on:
+  push:
+    branches: [research/c077b-high-tail-dgiven-t-independent-confirmation-20260819]
+    paths:
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/c077b_zero_label_source_receipt.json
+      - football-data/research/c077b_prelabel_target_eligibility_contract.json
+      - football-data/research/audit_c077b_zero_label_source_gate.py
+      - football-data/research/audit_c077b_prelabel_target_eligibility.py
+      - .github/workflows/football-c077b-prelabel-target-eligibility.yml
+  pull_request:
+    paths:
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/c077b_zero_label_source_receipt.json
+      - football-data/research/c077b_prelabel_target_eligibility_contract.json
+      - football-data/research/audit_c077b_zero_label_source_gate.py
+      - football-data/research/audit_c077b_prelabel_target_eligibility.py
+      - .github/workflows/football-c077b-prelabel-target-eligibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prelabel-target-eligibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Clone pinned openfootball Europe source
+        run: |
+          git clone https://github.com/openfootball/europe.git external-openfootball-europe
+          git -C external-openfootball-europe checkout e27eb01726f394ddf9fa68b15d37b900487b5903
+      - name: Audit frozen target eligibility without score values
+        run: |
+          mkdir -p artifacts/c077b_prelabel_eligibility
+          PYTHONPATH=football-data/research python football-data/research/audit_c077b_prelabel_target_eligibility.py \
+            --source-root external-openfootball-europe \
+            --out-dir artifacts/c077b_prelabel_eligibility
+      - name: Enforce zero-label boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c077b_prelabel_eligibility/summary.json').read_text())
+          assert s['status']=='PASS_PRELABEL_ELIGIBILITY_AUDIT'
+          assert s['source_identity_count']==9376
+          assert s['source_identity_sha256']=='f1e70a3f783be235136060a117645d3a1b42b400dfcef7b4be19d8f11233b8b2'
+          assert s['eligible_duplicate_identity_count']==0
+          assert s['eligibility_rule']['minimum_prior_home']==8
+          assert s['eligibility_rule']['minimum_prior_away']==8
+          assert s['eligibility_rule']['strict_earlier_calendar_date_only'] is True
+          assert s['eligibility_rule']['same_day_predict_before_update'] is True
+          b=s['label_boundary']
+          for k,v in b.items():
+              assert v is False, (k,v)
+          c=s['scientific_confirmation_coverage_not_yet_known']
+          assert all(v is None for v in c.values())
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c077b-prelabel-target-eligibility
+          retention-days: 30
+          path: |
+            artifacts/c077b_prelabel_eligibility/summary.json
+            artifacts/c077b_prelabel_eligibility/eligible_identity_manifest.jsonl
+            football-data/research/c077b_prelabel_target_eligibility_contract.json
+            football-data/research/c077b_zero_label_source_receipt.json
