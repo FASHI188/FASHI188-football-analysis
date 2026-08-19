@@ -1,0 +1,49 @@
+name: football3-c072j2-fresh-joint-source
+
+on:
+  pull_request:
+    branches:
+      - football3/c072i2-dgiven-t-forward-confirm-20260819
+    paths:
+      - 'football-data/research/C072J2_FRESH_JOINT_SOURCE_CONTRACT.md'
+      - 'football-data/research/audit_c072j2_fresh_joint_source.py'
+      - '.github/workflows/football3-c072j2-fresh-joint-source.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas==2.2.3 numpy==2.1.3
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072J2_FRESH_JOINT_SOURCE_CONTRACT.md').read_text()
+          assert '`EC`' in c and '`T1`' in c and '`G1`' in c
+          assert 'ZERO-LABEL / ZERO-RESULT' in c
+          assert 'C073-C077 quarantined' in c
+          print('J2 source contract guard: PASS')
+          PY
+      - name: Run zero-label source audit
+        run: python football-data/research/audit_c072j2_fresh_joint_source.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072j2_source_summary.json').read_text())
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          print('J2 zero-label boundary: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072j2-fresh-joint-source
+          path: football-data/research/c072j2_source_summary.json
