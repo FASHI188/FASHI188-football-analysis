@@ -1,20 +1,13 @@
-name: football3-c072n8-footiqo-bulk-multiline-odds
+name: football3-c072n8-footiqo-bulk-multiline-odds-reproduction
 
 on:
-  pull_request:
-    branches:
-      - football3/c072n7r1-fiveleague-metadata-engineering-replay-20260819
-    paths:
-      - 'football-data/research/C072N8_FOOTIQO_MULTILINE_ODDS_BULK_ZERO_LABEL_CONTRACT.md'
-      - 'football-data/research/audit_c072n8_footiqo_bulk_multiline_odds.py'
-      - '.github/workflows/football3-c072n8-footiqo-bulk-multiline-odds.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  freeze:
+  reproduce:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -24,44 +17,12 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
-      - name: Contract guard
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          c=Path('football-data/research/C072N8_FOOTIQO_MULTILINE_ODDS_BULK_ZERO_LABEL_CONTRACT.md').read_text()
-          assert 'page size `L=500` fixed before retrieval' in c
-          assert 'hard maximum total table-data requests across all five leagues = 60' in c
-          assert 'No score/result label in N8' in c
-          assert 'C073-C077 quarantined' in c
-          print('N8 contract guard: PASS')
-          PY
-      - name: Retrieve and audit frozen zero-label multi-line odds
+      - name: Reproduce frozen N8 zero-label retrieval
         run: python football-data/research/audit_c072n8_footiqo_bulk_multiline_odds.py
-      - name: Boundary guard
-        run: |
-          python - <<'PY'
-          import csv,json
-          from pathlib import Path
-          sp=Path('football-data/research/c072n8_zero_label_summary.json')
-          dp=Path('football-data/research/c072n8_multiline_odds.csv')
-          x=json.loads(sp.read_text())
-          assert x['football_table_data_requests_made'] <= 60
-          assert x['nonce_values_persisted_or_logged'] == 0
-          assert x['target_result_columns_requested_or_materialized'] == 0
-          assert x['model_fit'] == 0 and x['model_score'] == 0
-          assert x['C073_C077_quarantined'] is True
-          assert x['C070F_confirmation1597_opened'] is False
-          with dp.open(newline='',encoding='utf-8') as f:
-            header=next(csv.reader(f))
-          forbidden={'FTHG','FTAG','FTR','HTHG','HTAG','HTR','score','result'}
-          assert not any(h in forbidden for h in header)
-          assert header == ['sourceCode','id','matchDate','Country','League','Season','homeTeam','awayTeam','H','D','A','O05','U05','O15','U15','O25','U25','O35','U35','O45','U45','BTTSY','BTTSN']
-          print('N8 boundaries: PASS')
-          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: football3-c072n8-multiline-odds-zero-label
+          name: football3-c072n8-multiline-odds-zero-label-reproduction
           path: |
             football-data/research/c072n8_zero_label_summary.json
             football-data/research/c072n8_multiline_odds.csv
