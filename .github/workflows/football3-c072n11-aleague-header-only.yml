@@ -1,0 +1,85 @@
+name: football3 C072-N11 A-League header-only source audit
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-aleague-header-only.yml'
+      - 'football-data/research/C072N11_BETFAIR_HUB_ALEAGUE_HEADER_ONLY_CONTRACT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  header-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Download pinned public files and decode header only
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/research/c072n11 /tmp/c072n11-aleague
+          python - <<'PY'
+          import csv, hashlib, json, urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          seasons=['2020-2021','2021-2022','2022-2023','2023-2024','2024-2025','2025-2026']
+          rows=[]; decoded_data_rows=0; outcome_values_materialized=0; model_fit=0
+          for season in seasons:
+              rel=f'docs/data/assets/A-League_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/{rel}'
+              dest=Path('/tmp/c072n11-aleague')/f'A-League_{season}_All_Markets.csv'
+              rec={'season':season,'path':rel,'url':url,'retrieved':False}
+              try:
+                  req=urllib.request.Request(url,headers={'User-Agent':'football3-zero-label-source-audit/1.0'})
+                  with urllib.request.urlopen(req,timeout=120) as r, dest.open('wb') as f:
+                      h=hashlib.sha256(); n=0
+                      while True:
+                          b=r.read(1<<20)
+                          if not b:break
+                          h.update(b);n+=len(b);f.write(b)
+                  rec.update({'retrieved':True,'bytes':n,'sha256':h.hexdigest()})
+                  # Header only: open the file and consume exactly the first CSV record.
+                  with dest.open('r',encoding='utf-8-sig',errors='strict',newline='') as f:
+                      reader=csv.reader(f)
+                      header=next(reader)
+                  rec['header']=header
+                  rec['header_columns']=len(header)
+              except Exception as e:
+                  rec['error']=type(e).__name__+': '+str(e)
+              rows.append(rec)
+          passed=any(x.get('retrieved') and x.get('header') for x in rows)
+          payload={
+              'schema_version':'C072N11_ALEAGUE_HEADER_ONLY_V1','project':'football3',
+              'source_repo':'betfair-datascientists/betfair-datascientists.github.io','source_revision':rev,
+              'files':rows,'decoded_data_rows':decoded_data_rows,'outcome_values_materialized':outcome_values_materialized,'model_fit':model_fit,
+              'terminal':'ALEAGUE_HEADER_PASS' if passed else 'ALEAGUE_HEADER_STOP','authorization':'HEADER_ONLY_NO_DATA_ROWS_NO_TARGET_ACCESS'
+          }
+          Path('artifacts/research/c072n11/aleague_header_only.json').write_text(json.dumps(payload,indent=2)+'\n')
+          print(json.dumps(payload,indent=2))
+          PY
+      - name: Enforce boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/aleague_header_only.json').read_text())
+          assert x['source_revision']=='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          assert x['decoded_data_rows']==0
+          assert x['outcome_values_materialized']==0
+          assert x['model_fit']==0
+          assert x['terminal'] in {'ALEAGUE_HEADER_PASS','ALEAGUE_HEADER_STOP'}
+          PY
+      - if: always()
+        run: rm -rf /tmp/c072n11-aleague
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-aleague-header-only
+          path: artifacts/research/c072n11/aleague_header_only.json
+          if-no-files-found: error
+          retention-days: 30
