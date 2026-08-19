@@ -1,0 +1,88 @@
+name: football3 C072-N11 archived Betfair mirror discovery
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - '.github/workflows/football3-c072n11-wayback-nielda-source-discovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Query Internet Archive CDX for old public Betfair mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/research/c072n11
+          python - <<'PY'
+          import json, urllib.parse, urllib.request
+          from pathlib import Path
+          queries = [
+              'http://www.nielda.co.uk/bf/data/*',
+              'http://nielda.co.uk/bf/data/*',
+          ]
+          all_rows=[]
+          errors=[]
+          for q in queries:
+              params=urllib.parse.urlencode({
+                  'url':q,
+                  'output':'json',
+                  'filter':['statuscode:200'],
+                  'collapse':'urlkey',
+                  'fl':'timestamp,original,mimetype,statuscode,digest,length',
+              }, doseq=True)
+              url='https://web.archive.org/cdx/search/cdx?'+params
+              try:
+                  req=urllib.request.Request(url,headers={'User-Agent':'football3-zero-label-source-audit/1.0'})
+                  with urllib.request.urlopen(req,timeout=60) as r:
+                      data=json.loads(r.read().decode('utf-8','replace'))
+                  if data:
+                      header=data[0]
+                      for row in data[1:]: all_rows.append(dict(zip(header,row)))
+              except Exception as e:
+                  errors.append({'query':q,'error':type(e).__name__+': '+str(e)})
+          uniq={}
+          for r in all_rows:
+              uniq[(r.get('timestamp'),r.get('original'))]=r
+          rows=sorted(uniq.values(),key=lambda x:(x.get('original',''),x.get('timestamp','')))
+          payload={
+              'schema_version':'C072N11_WAYBACK_NIELDA_DISCOVERY_V1',
+              'project':'football3',
+              'query_domain':'nielda.co.uk/bf/data',
+              'zero_label':True,
+              'outcome_values_accessed':0,
+              'model_fit':0,
+              'captures_found':len(rows),
+              'errors':errors,
+              'captures':rows[:5000],
+              'terminal':'ARCHIVE_CAPTURE_LIST_FOUND' if rows else 'ARCHIVE_CAPTURE_LIST_NOT_FOUND',
+          }
+          Path('artifacts/research/c072n11/wayback_nielda_discovery.json').write_text(json.dumps(payload,indent=2)+'\n')
+          print(json.dumps({'terminal':payload['terminal'],'captures_found':len(rows),'errors':errors,'sample':rows[:20]},indent=2))
+          PY
+      - name: Enforce zero-label boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n11/wayback_nielda_discovery.json').read_text())
+          assert x['zero_label'] is True
+          assert x['outcome_values_accessed']==0
+          assert x['model_fit']==0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11-wayback-nielda-discovery
+          path: artifacts/research/c072n11/wayback_nielda_discovery.json
+          if-no-files-found: error
+          retention-days: 30
