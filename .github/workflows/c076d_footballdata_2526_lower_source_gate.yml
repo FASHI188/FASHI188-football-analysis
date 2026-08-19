@@ -1,0 +1,45 @@
+name: Football C076-D 2025-26 Lower-League Zero-Value Source Gate
+on:
+  push:
+    branches: [research/c076d-footballdata-2526-lower-source-gate-20260819]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  zero-value-source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Download fixed public source files
+        run: python research/download_c076d_football_data_sources.py --out-dir "$RUNNER_TEMP/c076d_source"
+      - name: Run zero-value source audit
+        run: python research/audit_c076d_footballdata_2526_lower_source_gate.py --source-dir "$RUNNER_TEMP/c076d_source" --out-dir "$RUNNER_TEMP/c076d_out"
+      - name: Enforce governance boundary
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c076d_out'/'summary.json').read_text())
+          assert s['status']=='PASS_ZERO_VALUE_FRESH_SOURCE_GATE'
+          assert s['identity_count']>=3500 and s['duplicate_identity_count']==0
+          assert s['score_pair_presence_fraction']>=.99 and s['minimum_file_presence_fraction']>=.98
+          l=s['label_boundary']
+          assert l['FTHG_FTAG_numeric_conversion'] is False and l['FTHG_FTAG_values_stored'] is False and l['FTHG_FTAG_values_hashed'] is False
+          assert l['goal_totals_computed'] is False and l['tail_membership_computed'] is False and l['model_fit'] is False
+          p=s['protected_boundaries']
+          assert p['C071_reserve_52180_opened'] is False and p['C070F_confirmation1597_opened'] is False and p['A05_opened'] is False and p['protected_opened'] is False and p['unified_matrix_generated'] is False
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c076d-footballdata-2526-lower-source-gate
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c076d_out/summary.json
+            ${{ runner.temp }}/c076d_out/identity_manifest.jsonl
+            research/c076d_footballdata_2526_lower_source_gate_contract.json
