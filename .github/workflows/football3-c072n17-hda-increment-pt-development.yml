@@ -6,7 +6,9 @@ on:
       - football3/c072n16r1-new2000-footiqo-protocol-correction-20260819
     paths:
       - 'football-data/research/C072N17_HDA_INCREMENT_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/C072N17_EXECUTION_CORRECTION_20260819.md'
       - 'football-data/research/run_c072n17_hda_increment_pt_development.py'
+      - 'football-data/research/run_c072n17_serialization_replay.py'
       - '.github/workflows/football3-c072n17-hda-increment-pt-development.yml'
   workflow_dispatch:
 
@@ -27,11 +29,13 @@ jobs:
           python-version: '3.12'
       - name: Install frozen dependencies
         run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 numpy==2.3.2 pandas==2.3.1 scikit-learn==1.7.1
-      - name: Contract guard
+      - name: Contract and execution-correction guard
         run: |
           python - <<'PY'
           from pathlib import Path
           c=Path('football-data/research/C072N17_HDA_INCREMENT_PT_DEVELOPMENT_CONTRACT.md').read_text()
+          e=Path('football-data/research/C072N17_EXECUTION_CORRECTION_20260819.md').read_text()
+          w=Path('football-data/research/run_c072n17_serialization_replay.py').read_text()
           assert 'development: **1,734** identities' in c
           assert 'later reserve: **266** identities' in c
           assert 'hda_gap = log(pH/pA)' in c
@@ -40,7 +44,11 @@ jobs:
           assert 'LogLoss improves in at least 4/5 chronological folds' in c
           assert 'LogLoss improves in at least 3/4 source leagues' in c
           assert 'C070-F Confirmation1597 remains sealed' in c
-          print('N17 contract guard: PASS')
+          assert '32265308160' in e and '96108223180' in e
+          assert 'changes **only JSON serialization**' in e
+          assert 'obj.item()' in w
+          assert 'm.json.dumps = _dumps' in w
+          print('N17 frozen contract + serialization-only replay guard: PASS')
           PY
       - name: Download immutable N16R1 exact-2000 artifact
         env:
@@ -61,8 +69,8 @@ jobs:
           assert h=='b5c988c77f7f0855481297eb5878e52742a94145bc35499f29c8ac893a596997',h
           print('immutable input PASS',h)
           PY
-      - name: Run frozen N17 development
-        run: python football-data/research/run_c072n17_hda_increment_pt_development.py --input /tmp/n16r1/c072n16r1_footiqo_new2000_zero_label.csv
+      - name: Replay exact frozen N17 with serialization-only correction
+        run: python football-data/research/run_c072n17_serialization_replay.py --input /tmp/n16r1/c072n16r1_footiqo_new2000_zero_label.csv
       - name: Boundary and terminal guard
         run: |
           python - <<'PY'
