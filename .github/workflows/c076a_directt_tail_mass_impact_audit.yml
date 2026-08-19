@@ -1,0 +1,67 @@
+name: Football C076-A Direct-T Tail-Mass Impact Audit
+
+on:
+  push:
+    branches:
+      - research/c076a-directt-tail-mass-impact-audit-20260819
+    paths:
+      - research/C076A_DIRECTT_TAIL_MASS_IMPACT_AUDIT.md
+      - research/c076a_directt_tail_mass_impact_audit.py
+      - .github/workflows/c076a_directt_tail_mass_impact_audit.yml
+  pull_request:
+    paths:
+      - research/C076A_DIRECTT_TAIL_MASS_IMPACT_AUDIT.md
+      - research/c076a_directt_tail_mass_impact_audit.py
+      - .github/workflows/c076a_directt_tail_mass_impact_audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c076a-tail-mass-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  descriptive-tail-mass-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install frozen C074-G runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 scikit-learn==1.7.1
+      - name: Run read-only C076-A audit
+        run: |
+          mkdir -p artifacts/c076a_tail_mass
+          PYTHONPATH=research python research/c076a_directt_tail_mass_impact_audit.py --out artifacts/c076a_tail_mass
+      - name: Enforce no-promotion boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c076a_tail_mass/summary.json').read_text())
+          assert s['schema_version']=='C076A_DIRECTT_TAIL_MASS_IMPACT_AUDIT_V1'
+          assert s['status']=='DESCRIPTIVE_IMPACT_AUDIT_COMPLETE'
+          assert s['coverage']['train_n']==14032 and s['coverage']['test_n']==2329
+          g=s['governance']
+          assert g['low_tail_mass_exception_created'] is False
+          assert g['CURRENT_exact_tail_gate_overridden'] is False
+          assert g['unified_matrix_generated'] is False
+          assert g['formal_exact_score_allowed'] is False
+          assert g['feature_search'] is False and g['C_search'] is False and g['subset_search'] is False and g['transform_search'] is False
+          assert g['new_target_domain_opened'] is False
+          assert g['C071_reserve_52180_opened'] is False and g['C070F_confirmation1597_opened'] is False and g['A05_opened'] is False and g['protected_opened'] is False
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c076a-directt-tail-mass-impact-audit
+          retention-days: 30
+          path: |
+            artifacts/c076a_tail_mass/summary.json
+            artifacts/c076a_tail_mass/confirmation_tail_mass_rows.csv
+            artifacts/c076a_tail_mass/league_tail_mass.csv
+            research/C076A_DIRECTT_TAIL_MASS_IMPACT_AUDIT.md
