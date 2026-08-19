@@ -1,0 +1,84 @@
+name: football3-c072n16r1-footiqo-new2000-zero-label
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n16-new2000-footiqo-zero-label-download-20260819
+    paths:
+      - 'football-data/research/C072N16R1_FOOTIQO_NEW2000_PROTOCOL_CORRECTION_CONTRACT.md'
+      - 'football-data/research/download_c072n16r1_footiqo_new2000_zero_label.py'
+      - '.github/workflows/football3-c072n16r1-footiqo-new2000-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install zero-label downloader dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4
+      - name: R1 protocol-only guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N16R1_FOOTIQO_NEW2000_PROTOCOL_CORRECTION_CONTRACT.md').read_text()
+          assert '**0** table-data POST requests' in c
+          assert 'changes only table disambiguation' in c
+          assert 'same SHA256(identity) ascending exact-2000 selection rule' in c
+          assert 'start year <=2024' in c
+          print('N16R1 protocol guard: PASS')
+          PY
+      - name: Execute protocol-corrected exact-2000 zero-label download
+        run: python football-data/research/download_c072n16r1_footiqo_new2000_zero_label.py
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n16r1_footiqo_new2000_zero_label_summary.json').read_text())
+          assert s['parent_n16_terminal']=='C072N16_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_STOP'
+          assert s['target_result_columns_requested_or_materialized']==0
+          assert s['target_result_values_materialized']==0
+          assert s['model_fit']==0 and s['model_score']==0
+          assert s['nonce_values_persisted_or_logged']==0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['aleague_men_2025_26_target_opened'] is False
+          assert s['aleague_women_2025_26_target_opened'] is False
+          assert s['terminal'] in {'C072N16R1_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_PASS','C072N16R1_FOOTIQO_NEW2000_ZERO_LABEL_DOWNLOAD_STOP'}
+          with Path('football-data/research/c072n16r1_footiqo_new2000_zero_label.csv').open(encoding='utf-8',newline='') as f:
+              rows=list(csv.DictReader(f))
+          if s['pass']:
+              assert len(rows)==2000
+          print(json.dumps({
+            'terminal':s['terminal'],
+            'raw_rows':s['raw_retrieved_rows'],
+            'unique_rows':s['pooled_unique_nonconflicting_rows'],
+            'selected_rows':s['selected_rows'],
+            'selected_source_counts':s['selected_source_counts'],
+            'coverage':s['selected_coverage'],
+            'selected_csv_sha256':s['selected_csv_sha256'],
+            'identity_sha256':s['selected_ordered_identity_sha256'],
+            'gates':s['gates'],
+          },indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n16r1-footiqo-new2000-zero-label
+          path: |
+            football-data/research/c072n16r1_footiqo_new2000_zero_label.csv
+            football-data/research/c072n16r1_footiqo_new2000_zero_label_summary.json
+            football-data/research/c072n16r1_footiqo_full_zero_label_inventory.csv
+          if-no-files-found: warn
+          retention-days: 30
