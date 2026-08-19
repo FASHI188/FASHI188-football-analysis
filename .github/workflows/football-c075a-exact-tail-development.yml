@@ -1,0 +1,99 @@
+name: Football C075-A Exact-Tail Development
+
+on:
+  push:
+    branches:
+      - research/c075a-exact-tail-development-20260819
+    paths:
+      - football-data/research/c075a_exact_tail_development_contract.json
+      - football-data/research/evaluate_c075a_exact_tail_development.py
+      - .github/workflows/football-c075a-exact-tail-development.yml
+  pull_request:
+    paths:
+      - football-data/research/c075a_exact_tail_development_contract.json
+      - football-data/research/evaluate_c075a_exact_tail_development.py
+      - .github/workflows/football-c075a-exact-tail-development.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075a-exact-tail-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  exact-tail-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+
+      - name: Download and verify pinned C071 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c075a_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c075a_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c075a_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c075a_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c075a_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Run frozen C075-A development
+        run: |
+          mkdir -p "$RUNNER_TEMP/c075a_out"
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c075a_exact_tail_development.py \
+            --fixtures "$RUNNER_TEMP/c075a_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c075a_source/match_stats.parquet" \
+            --out-dir "$RUNNER_TEMP/c075a_out"
+
+      - name: Enforce V5.2 tail and label boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c075a_out'/'summary.json'
+          s=json.loads(p.read_text())
+          assert s['schema_version']=='C075A_EXACT_TAIL_DEVELOPMENT_V1'
+          assert s['boundaries']['sealed_C071_52180_goal_rows_returned']==0
+          assert s['boundaries']['C070F_confirmation1597_opened'] is False
+          assert s['boundaries']['A05_opened'] is False
+          assert s['boundaries']['protected_opened'] is False
+          assert s['boundaries']['C074G_2025_26_used_for_tail_confirmation'] is False
+          assert s['boundaries']['unified_matrix_generated'] is False
+          assert s['boundaries']['high_tail_D_given_T_tested'] is False
+          assert s['boundaries']['formal_weight']==0
+          if s['status']!='STOP_COVERAGE':
+              assert s['candidate']['feature_search'] is False
+              assert s['candidate']['hyperparameter_search'] is False
+              assert s['candidate']['distribution_family_search'] is False
+              assert s['candidate']['same_day_predict_before_update'] is True
+              assert s['pooled']['max_unenumerated_tail_residual'] <= 1e-8
+              assert s['pooled']['max_probability_sum_abs_residual'] <= 1e-8
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload C075-A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075a-exact-tail-development
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c075a_out/summary.json
+            ${{ runner.temp }}/c075a_out/row_metrics.csv
+            football-data/research/c075a_exact_tail_development_contract.json
+          if-no-files-found: error

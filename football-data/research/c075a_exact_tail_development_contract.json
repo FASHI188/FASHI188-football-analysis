@@ -1,0 +1,113 @@
+{
+  "schema_version": "C075A_EXACT_TAIL_DEVELOPMENT_V1",
+  "frozen_before_c075a_tail_scoring": true,
+  "authorization": "2026-08-19 user said continue/start after STATE106; scope is the next missing CURRENT V5.2 exact-tail component only. No authorization to open any sealed confirmation pool.",
+  "scientific_scope": "development-only strict-time-OOS test of q(k | T>=7, X), k=7,8,... required by CURRENT V5.2 exact-tail closure. This does not test high-tail D|T, does not create a unified score matrix, and is not a formal promotion.",
+  "why_reopen_allowed": "different estimand: legacy total_tail_challenger_v470 only tilts public 4+/5+/7+ buckets and does not disaggregate T>=7. C073-A explicitly excludes T7plus. CURRENT V5.2 requires exact q(k|T>=7,X).",
+  "source": {
+    "name": "eatpizzanot/soccer-dataset",
+    "revision": "f0cbe86bee3f28cc4b803f735a5287968741c471",
+    "fixtures_sha256": "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7",
+    "match_stats_sha256": "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9",
+    "identity_gate": "same C071 threshold-8 strict-PIT eligible identity algorithm",
+    "result_availability": "kickoff + 105 minutes"
+  },
+  "label_boundary": {
+    "allowed_for_this_development": "only eligible identities strictly before 2024-01-01T00:00:00Z; these are historical development labels already non-protected in C073-A",
+    "historical_labels_are_pristine_confirmation": false,
+    "remaining_C071_52180_goal_rows_must_not_be_returned": true,
+    "C070F_confirmation1597_must_not_be_returned": true,
+    "A05_must_not_be_opened": true,
+    "protected_must_not_be_opened": true,
+    "2024plus_identity_or_target_label_use": false
+  },
+  "estimand": {
+    "condition": "realized T>=7",
+    "target": "E=T-7 in {0,1,2,...}",
+    "output": "q(k|T>=7,X)=P(E=k-7|X) for every integer k>=7",
+    "factorization": "geometric survival law q(E=e|X)=(1-r(X))*r(X)^e",
+    "interpretation": "r(X) is the per-extra-goal continuation probability after reaching 7 total goals",
+    "tail_support": "infinite integer support; numerical enumeration uses adaptive K until residual survival mass <=1e-8",
+    "no_manual_allocation": true
+  },
+  "features": {
+    "strict_PIT_score_history_only": [
+      "league_total_mean",
+      "league_total_sd",
+      "home_goals_for_mean",
+      "home_goals_for_sd",
+      "home_goals_against_mean",
+      "home_goals_against_sd",
+      "away_goals_for_mean",
+      "away_goals_for_sd",
+      "away_goals_against_mean",
+      "away_goals_against_sd",
+      "log1p_home_result_history_n",
+      "log1p_away_result_history_n"
+    ],
+    "same_day_policy": "all matches on a UTC date are predicted before any result from that same date updates history",
+    "feature_search": false,
+    "market_features": false,
+    "opportunity_features": false
+  },
+  "rolling_oos": {
+    "folds": [
+      {"train_end_exclusive": "2020-01-01T00:00:00Z", "test_start_inclusive": "2020-01-01T00:00:00Z", "test_end_exclusive": "2021-01-01T00:00:00Z"},
+      {"train_end_exclusive": "2021-01-01T00:00:00Z", "test_start_inclusive": "2021-01-01T00:00:00Z", "test_end_exclusive": "2022-01-01T00:00:00Z"},
+      {"train_end_exclusive": "2022-01-01T00:00:00Z", "test_start_inclusive": "2022-01-01T00:00:00Z", "test_end_exclusive": "2023-01-01T00:00:00Z"},
+      {"train_end_exclusive": "2023-01-01T00:00:00Z", "test_start_inclusive": "2023-01-01T00:00:00Z", "test_end_exclusive": "2024-01-01T00:00:00Z"}
+    ],
+    "minimum_tail_rows_per_test_fold": 100,
+    "minimum_pooled_tail_test_rows": 600,
+    "minimum_training_tail_rows_per_fold": 500,
+    "coverage_stop": "if any minimum is missed, STOP_COVERAGE before candidate fitting/scoring for that scientific run"
+  },
+  "baseline": {
+    "family": "training-fold global intercept-only geometric tail",
+    "fit": "MLE r=sum(E)/(N+sum(E)) using only T>=7 training rows strictly before the fold test period",
+    "probability": "q0(e)=(1-r0)*r0^e"
+  },
+  "candidate": {
+    "family": "covariate geometric survival regression",
+    "implementation": "expand each T>=7 training match to E continuation=1 Bernoulli rows plus one terminal continuation=0 row; fit SimpleImputer(median)+StandardScaler+LogisticRegression",
+    "C": 0.1,
+    "solver": "lbfgs",
+    "max_iter": 2000,
+    "class_weight": null,
+    "random_state": 0,
+    "same_features_as_c073a": true,
+    "feature_search": false,
+    "hyperparameter_search": false,
+    "distribution_family_search": false
+  },
+  "metrics": {
+    "primary": "conditional exact-tail LogLoss on realized T>=7 matches",
+    "secondary_proper": ["multiclass tail Brier", "tail RPS"],
+    "diagnostics": ["mean predicted excess", "observed mean excess", "P(T>=8)", "P(T>=9)", "P(T>=10)", "exact-tail Top1", "eligible league cluster deltas"],
+    "bootstrap": {"unit": "match", "reps": 3000, "seed": 75001, "ci": 0.90},
+    "probability_audit": {"adaptive_residual_max": 1e-8, "probability_sum_abs_residual_max": 1e-8}
+  },
+  "frozen_gate": {
+    "pooled_candidate_minus_baseline_logloss": "<0",
+    "paired_bootstrap_90pct_upper_logloss_delta": "<0",
+    "pooled_candidate_minus_baseline_brier": "<=0",
+    "pooled_candidate_minus_baseline_rps": "<=0",
+    "fold_logloss_wins": ">=3 of 4",
+    "league_cluster_logloss_wins": ">=50% among leagues with >=50 pooled test tail rows",
+    "probability_residual": "<=1e-8 for baseline and candidate on every scored match",
+    "decision": "SCIENTIFIC_COMPONENT_PASS_DEVELOPMENT_ONLY only if all gates pass; otherwise FAIL/PARK. A pass still cannot open unified matrix because independent confirmation and T>=7 D|T remain missing."
+  },
+  "hard_boundaries": {
+    "remaining_C071_52180_labels_opened": false,
+    "C070F_confirmation1597_opened": false,
+    "A05_opened": false,
+    "protected_opened": false,
+    "C074G_2025_26_used_for_tail_confirmation": false,
+    "unified_matrix_generated": false,
+    "high_tail_D_given_T_tested": false,
+    "CURRENT_change": false,
+    "formal_model_change": false,
+    "formal_weight": 0,
+    "automatic_promotion": false
+  }
+}
