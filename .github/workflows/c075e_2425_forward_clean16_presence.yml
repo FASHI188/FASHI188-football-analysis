@@ -1,0 +1,50 @@
+name: Football C075-E 2024-25 Clean16 Presence Gate
+on:
+  push:
+    branches: [research/c075e-2425-forward-clean16-presence-audit-20260819]
+    paths: [research/c075e_2425_forward_clean16_presence_contract.json, research/audit_c075e_2425_forward_clean16_presence.py, .github/workflows/c075e_2425_forward_clean16_presence.yml]
+  pull_request:
+    paths: [research/c075e_2425_forward_clean16_presence_contract.json, research/audit_c075e_2425_forward_clean16_presence.py, .github/workflows/c075e_2425_forward_clean16_presence.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: football-c075e-clean16-presence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  clean16-presence-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - name: Clone pinned external source
+        run: |
+          git clone https://github.com/openfootball/football.json.git external-openfootball
+          git -C external-openfootball checkout ea767ac28cf9a2d737bb3e4ce65aa4b1f4ac9361
+      - name: Run zero-value source gate
+        run: |
+          mkdir -p artifacts/c075e_presence
+          python research/audit_c075e_2425_forward_clean16_presence.py --source-root external-openfootball --out-dir artifacts/c075e_presence
+      - name: Enforce boundary and gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075e_presence/summary.json').read_text())
+          assert s['status']=='PASS_ZERO_VALUE_FORWARD_SOURCE_GATE'
+          assert s['fixed_file_count']==16 and s['identity_count']>=5000 and s['duplicate_identity_count']==0
+          assert s['score_ft_presence_fraction']>=.98 and s['minimum_per_file_presence_fraction']>=.95
+          l=s['label_boundary']; assert not any(l[k] for k in ['score_numbers_captured','score_numbers_converted','score_numbers_stored','score_numbers_hashed','goal_totals_computed','tail_membership_computed','model_fit'])
+          p=s['protected_boundaries']; assert p['C075C_consumed_tail_labels_reused'] is False and p['C071_reserve_52180_opened'] is False and p['C070F_confirmation1597_opened'] is False and p['A05_opened'] is False and p['protected_opened'] is False and p['unified_matrix_generated'] is False
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c075e-2425-forward-clean16-presence-gate
+          retention-days: 30
+          path: |
+            artifacts/c075e_presence/summary.json
+            artifacts/c075e_presence/identity_manifest.jsonl
+            research/c075e_2425_forward_clean16_presence_contract.json
