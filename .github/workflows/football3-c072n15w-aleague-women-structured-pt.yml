@@ -1,0 +1,153 @@
+name: football3-c072n15w-aleague-women-structured-pt
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n14wr1-aleague-women-dev-plan-zero-label-20260819
+    paths:
+      - 'football-data/research/C072N15W_ALEAGUE_WOMEN_STRUCTURED_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/evaluate_c072n15w_aleague_women_structured_pt.py'
+      - '.github/workflows/football3-c072n15w-aleague-women-structured-pt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frozen dependencies
+        run: pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1
+
+      - name: Preregistration guard before target access
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N15W_ALEAGUE_WOMEN_STRUCTURED_PT_DEVELOPMENT_CONTRACT.md').read_text()
+          assert 'POST-VIEW HYPOTHESIS ON A NEW DATA PLAN' in c
+          assert 'There is no model fit' in c
+          assert 'p0 = 1-z0' in c and 'p4 = z3-z4' in c
+          assert 'same single-line lambda from B0' in c
+          assert '2025-2026 fixed reserve inventory 116 remains **target-sealed**' in c
+          assert 'No post-view repair of N15W development labels is allowed' in c
+          assert 'C070-F Confirmation1597 and protected assets remain sealed' in c
+          print('N15W preregistration guard: PASS')
+          PY
+
+      - name: Verify immutable N14WR1 zero-label plan PASS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf /tmp/n14wr1 && mkdir -p /tmp/n14wr1
+          gh run download 32258495452 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n14wr1-aleague-women-dev-plan-zero-label \
+            --dir /tmp/n14wr1
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('/tmp/n14wr1/c072n14wr1_aleague_women_dev_plan_summary.json').read_text())
+          assert s['terminal']=='C072N14WR1_ALEAGUE_WOMEN_DEV_PLAN_ZERO_LABEL_PASS'
+          assert s['development_all5_total']==394
+          assert s['sealed_reserve_2025_26_all5']==116
+          assert s['target_result_values_materialized']==0
+          print('N14WR1 immutable plan: PASS')
+          PY
+
+      - name: Download exactly four development files only
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c072n15w && mkdir -p /tmp/c072n15w
+          python - <<'PY'
+          import hashlib, urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          expected={
+            '2021-2022':'f2e2a957c7674c5626eff71c7ab360e698c1ccb9f8054383e5c5c0eb6498a86f',
+            '2022-2023':'899992d57d65c4786b47057a8c009dbeea3ec170aadc29beb1fd47e4b12a7524',
+            '2023-2024':'85e3b6d3cf2f3e54e1adbe456e24ec5042946e5102c99501c412039279814792',
+            '2024-2025':'3daf737dd36ef95b4e2e0d354674842faec755016e43abb9f987d67b1d594060',
+          }
+          root=Path('/tmp/c072n15w')
+          for season,digest in expected.items():
+              name=f'A-League_Womens_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/docs/data/assets/{name}'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-c072n15w/1.0'})
+              h=hashlib.sha256()
+              with urllib.request.urlopen(req,timeout=180) as r, (root/name).open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      h.update(b); f.write(b)
+              got=h.hexdigest()
+              if got!=digest: raise SystemExit(f'SHA mismatch {season}: {got}')
+              print(season,(root/name).stat().st_size,got)
+          assert not (root/'A-League_Womens_2020-2021_All_Markets.csv').exists()
+          assert not (root/'A-League_Womens_2025-2026_All_Markets.csv').exists()
+          print('excluded 2020-21 downloaded: false')
+          print('sealed 2025-26 downloaded: false')
+          PY
+
+      - name: Execute one-shot frozen structured P(T) development
+        run: |
+          python football-data/research/evaluate_c072n15w_aleague_women_structured_pt.py \
+            --source-dir /tmp/c072n15w
+
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n15w_aleague_women_structured_pt_summary.json').read_text())
+          assert s['project_line']=='football3'
+          assert s['classification']=='POST_VIEW_HYPOTHESIS_NEW_DATA_PLAN'
+          assert s.get('target_values_2025_26_read',0)==0
+          assert s.get('reserve_2025_26_downloaded',False) is False
+          assert s.get('excluded_2020_21_downloaded',False) is False
+          assert s.get('model_fit',0)==0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['formal_weight']==0
+          assert s['terminal'] in {
+            'C072N15W_ZERO_LABEL_ELIGIBILITY_MISMATCH_STOP',
+            'C072N15W_STRUCTURED_PT_BREAKTHROUGH_SCREEN_PASS',
+            'C072N15W_STRUCTURED_PT_DEVELOPMENT_PASS',
+            'C072N15W_STRUCTURED_PT_PARK',
+          }
+          print(json.dumps({
+            'terminal':s['terminal'],
+            'development_pass':s.get('development_pass'),
+            'breakthrough':s.get('breakthrough_screen_pass'),
+            'eligible':s.get('eligible_events'),
+            'scored':s.get('scored_events'),
+            'pooled':s.get('pooled'),
+            'bootstrap':s.get('paired_bootstrap_delta_log_loss'),
+            'season_wins':s.get('season_logloss_wins'),
+            'all_four_nonpositive':s.get('all_four_seasons_dlogloss_nonpositive'),
+            'isotonic':s.get('isotonic_diagnostics'),
+            'gates':s.get('gates'),
+          },indent=2))
+          PY
+
+      - name: Delete downloaded source files
+        if: always()
+        run: rm -rf /tmp/c072n15w /tmp/n14wr1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n15w-aleague-women-structured-pt
+          path: |
+            football-data/research/c072n15w_aleague_women_structured_pt_summary.json
+            football-data/research/c072n15w_aleague_women_structured_pt_predictions.csv
+          if-no-files-found: warn
+          retention-days: 30
