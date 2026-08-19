@@ -1,0 +1,103 @@
+name: Football C077-B Zero-Label Source Gate
+
+on:
+  push:
+    branches: [research/c077b-high-tail-dgiven-t-independent-confirmation-20260819]
+    paths:
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/audit_c077b_zero_label_source_gate.py
+      - .github/workflows/football-c077b-zero-label-source-gate.yml
+  pull_request:
+    paths:
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/audit_c077b_zero_label_source_gate.py
+      - .github/workflows/football-c077b-zero-label-source-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c077b-zero-label-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Clone pinned openfootball Europe source
+        run: |
+          git clone https://github.com/openfootball/europe.git external-openfootball-europe
+          git -C external-openfootball-europe checkout e27eb01726f394ddf9fa68b15d37b900487b5903
+
+      - name: Run zero-label identity and coverage gate
+        run: |
+          mkdir -p artifacts/c077b_zero_label_source
+          python football-data/research/audit_c077b_zero_label_source_gate.py \
+            --source-root external-openfootball-europe \
+            --out-dir artifacts/c077b_zero_label_source
+
+      - name: Enforce no-label boundary and frozen source gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          s = json.loads(Path('artifacts/c077b_zero_label_source/summary.json').read_text())
+          assert s['status'] == 'PASS_ZERO_LABEL_SOURCE_GATE', s['gate']
+          assert s['frozen_file_count'] == 58
+          assert s['completed_identity_count'] >= 6000
+          assert s['duplicate_identity_count'] == 0
+          assert s['time_block_completed_counts']['2024_early'] >= 2000
+          assert s['time_block_completed_counts']['2025_late'] >= 2000
+          assert s['competition_family_count'] >= 20
+          assert s['score_token_presence_fraction'] >= .95
+          assert not s['competition_family_overlap_with_prior_exclusions']
+          assert not s['prior_named_family_overlap']
+
+          b = s['label_boundary']
+          for k in [
+              'numeric_score_values_captured',
+              'numeric_score_values_converted',
+              'numeric_score_values_stored',
+              'numeric_score_values_hashed',
+              'goal_totals_computed',
+              'goal_difference_computed',
+              'tail_membership_computed',
+              'model_fit',
+              'candidate_or_baseline_loss_computed',
+          ]:
+              assert b[k] is False, (k, b[k])
+          assert b['only_score_token_presence_inspected'] is True
+
+          p = s['protected_boundaries']
+          for k in [
+              'C076D_fresh_score_values_opened',
+              'C071_reserve_52180_opened',
+              'C070F_confirmation1597_opened',
+              'A05_opened',
+              'protected_opened',
+              'unified_matrix_generated',
+              'CURRENT_change',
+          ]:
+              assert p[k] is False, (k, p[k])
+          assert p['formal_weight'] == 0
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c077b-zero-label-source-gate
+          retention-days: 30
+          path: |
+            artifacts/c077b_zero_label_source/summary.json
+            artifacts/c077b_zero_label_source/identity_manifest.jsonl
+            football-data/research/c077b_candidate_source_freeze_v1.json
+            football-data/research/c077b_high_tail_dgiven_t_independent_confirmation_contract.json
