@@ -1,0 +1,56 @@
+name: football3-c072n18a1-fotmob-static-release-discovery
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/C072N18A1_FOTMOB_STATIC_SHOTXG_RELEASE_DISCOVERY_CONTRACT.md'
+      - 'football-data/research/audit_c072n18a1_fotmob_static_release.py'
+      - '.github/workflows/football3-c072n18a1-fotmob-static-release-discovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover-release-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Audit public release metadata only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python football-data/research/audit_c072n18a1_fotmob_static_release.py
+
+      - name: Assert zero-label discovery boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/research/_n18a1_fotmob_release_discovery/fotmob_release_discovery_summary.json')
+          x = json.loads(p.read_text(encoding='utf-8'))
+          assert x['status'] == 'PASS_STATIC_RELEASE_METADATA_DISCOVERY', x
+          assert x['labels_accessed'] == 0, x
+          assert x['match_data_bytes_downloaded'] == 0, x
+          assert x['model_fits'] == 0, x
+          assert x['target_scores'] == 0, x
+          print('N18A1_RELEASE_METADATA_PASS')
+          PY
+
+      - name: Upload discovery receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n18a1-fotmob-release-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/_n18a1_fotmob_release_discovery/
+          if-no-files-found: warn
+          retention-days: 30
