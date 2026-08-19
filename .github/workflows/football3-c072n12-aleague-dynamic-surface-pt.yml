@@ -1,0 +1,121 @@
+name: football3 C072-N12 R1 A-League dynamic surface P(T) development
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n11-dynamic-multiline-ou-zero-label-source-20260819
+    paths:
+      - '.github/workflows/football3-c072n12-aleague-dynamic-surface-pt.yml'
+      - 'football-data/research/evaluate_c072n12_aleague_dynamic_surface_pt.py'
+      - 'football-data/research/evaluate_c072n12r1_aleague_dynamic_surface_pt.py'
+      - 'football-data/research/C072N12_ALEAGUE_DYNAMIC_SURFACE_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/C072N12_R1_TARGET_EXTRACTION_ENGINEERING_CONTRACT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  development-r1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Pin frozen scientific environment
+        run: |
+          python -m pip install --disable-pip-version-check --no-input numpy==2.3.2 scikit-learn==1.7.1
+          python - <<'PY'
+          import numpy, sklearn
+          assert numpy.__version__=='2.3.2'
+          assert sklearn.__version__=='1.7.1'
+          print({'numpy':numpy.__version__,'sklearn':sklearn.__version__})
+          PY
+      - name: Compile original frozen evaluator and R1 wrapper
+        run: |
+          python -m py_compile football-data/research/evaluate_c072n12_aleague_dynamic_surface_pt.py
+          python -m py_compile football-data/research/evaluate_c072n12r1_aleague_dynamic_surface_pt.py
+      - name: Download six exact pinned official All Markets files
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c072n12r1-aleague
+          mkdir -p /tmp/c072n12r1-aleague
+          python - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          seasons=['2020-2021','2021-2022','2022-2023','2023-2024','2024-2025','2025-2026']
+          for season in seasons:
+              rel=f'docs/data/assets/A-League_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/{rel}'
+              dest=Path('/tmp/c072n12r1-aleague')/f'A-League_{season}_All_Markets.csv'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-c072n12r1/1.0'})
+              with urllib.request.urlopen(req,timeout=180) as r, dest.open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      f.write(b)
+              print(season,dest.stat().st_size)
+          PY
+      - name: Execute frozen N12 scientific experiment via R1 target extractor
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          mkdir -p artifacts/research/c072n12r1
+          python football-data/research/evaluate_c072n12r1_aleague_dynamic_surface_pt.py \
+            --source-dir /tmp/c072n12r1-aleague \
+            --out-summary artifacts/research/c072n12r1/c072n12r1_summary.json \
+            --out-predictions artifacts/research/c072n12r1/c072n12r1_predictions.csv
+      - name: Enforce R1, reserve and governance boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('artifacts/research/c072n12r1/c072n12r1_summary.json').read_text())
+          assert x['schema_version']=='C072N12R1_ALEAGUE_DYNAMIC_SURFACE_PT_DEVELOPMENT_V1'
+          assert x['scientific_contract_unchanged'] is True
+          assert x['source_revision']=='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          assert x['classification']=='NEW_DOMAIN_DEVELOPMENT'
+          assert x['source_meta']['eligible_all5_per_season']=={
+              '2020-2021':125,'2021-2022':156,'2022-2023':159,
+              '2023-2024':168,'2024-2025':174,'2025-2026':162}
+          t=x['target_access']
+          assert t['authorized_development_events_before_target_availability']==782
+          assert t['valid_development_event_targets']==779
+          assert t['missing_target_development_events']==3
+          assert t['conflicting_event_level_targets']==0
+          assert t['target_values_2025_2026_read']==0
+          assert t['forbidden_non_total_goals_outcome_values_read']==0
+          assert x['target_values_2025_26_read']==0
+          assert x['c073_c077_scientific_results_used'] is False
+          assert x['c070f_confirmation_opened'] is False
+          assert x['terminal'] in {
+              'C072N12_BREAKTHROUGH_CANDIDATE',
+              'C072N12_STABLE_SMALL_INCREMENT',
+              'C072N12_DYNAMIC_SURFACE_PT_DEVELOPMENT_PARK'}
+          print(json.dumps({
+              'terminal':x['terminal'],
+              'target_access':t,
+              'development_oos_n':x['development_oos_n'],
+              'fold_wins':x['fold_logloss_wins'],
+              'pooled_baseline':x['pooled_baseline'],
+              'pooled_candidate':x['pooled_candidate'],
+              'delta':x['pooled_delta_candidate_minus_baseline'],
+              'bootstrap':x['paired_date_cluster_bootstrap_dlogloss'],
+              'gates':x['gates'],
+              'reserve_target_read':x['target_values_2025_26_read'],
+          },indent=2))
+          PY
+      - name: Remove raw source
+        if: always()
+        run: rm -rf /tmp/c072n12r1-aleague
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n12r1-aleague-dynamic-surface-pt-development
+          path: artifacts/research/c072n12r1/
+          if-no-files-found: error
+          retention-days: 30
