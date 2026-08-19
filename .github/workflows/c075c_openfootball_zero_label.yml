@@ -1,0 +1,89 @@
+name: Football C075-C OpenFootball Zero-Label Audit
+
+on:
+  push:
+    branches:
+      - research/c075c-openfootball-zero-label-audit-20260819
+    paths:
+      - research/c075c_openfootball_zero_label_contract.json
+      - research/audit_c075c_openfootball_zero_label.py
+      - .github/workflows/c075c_openfootball_zero_label.yml
+  pull_request:
+    paths:
+      - research/c075c_openfootball_zero_label_contract.json
+      - research/audit_c075c_openfootball_zero_label.py
+      - .github/workflows/c075c_openfootball_zero_label.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075c-openfootball-zero-label-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Clone and pin external source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/openfootball/football.json.git external-openfootball
+          git -C external-openfootball checkout ea767ac28cf9a2d737bb3e4ce65aa4b1f4ac9361
+          test "$(git -C external-openfootball rev-parse HEAD)" = "ea767ac28cf9a2d737bb3e4ce65aa4b1f4ac9361"
+
+      - name: Run zero-label identity audit
+        run: |
+          mkdir -p artifacts/c075c_zero_label
+          python research/audit_c075c_openfootball_zero_label.py \
+            --source-root external-openfootball \
+            --out-dir artifacts/c075c_zero_label
+
+      - name: Enforce no-label/no-model boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075c_zero_label/summary.json').read_text())
+          assert s['status']=='PASS_ZERO_LABEL_EXTERNAL_IDENTITY_FREEZE'
+          assert s['fixed_file_count']==13
+          assert s['frozen_identity_count'] >= 1500
+          assert s['duplicate_identity_count']==0
+          b=s['label_boundary']
+          assert b['score_fields_selected'] is False
+          assert b['score_values_materialized'] is False
+          assert b['result_or_goal_metrics_computed'] is False
+          assert b['tail_membership_computed'] is False
+          assert b['model_fit'] is False
+          assert b['tail_scoring'] is False
+          p=s['protected_boundaries']
+          assert p['C071_reserve_52180_opened'] is False
+          assert p['C070F_confirmation1597_opened'] is False
+          assert p['A05_opened'] is False
+          assert p['protected_opened'] is False
+          assert p['unified_matrix_generated'] is False
+          assert p['formal_weight']==0
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload zero-label evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075c-openfootball-zero-label-audit
+          retention-days: 30
+          path: |
+            artifacts/c075c_zero_label/summary.json
+            artifacts/c075c_zero_label/frozen_identity_manifest.jsonl
+            research/c075c_openfootball_zero_label_contract.json
