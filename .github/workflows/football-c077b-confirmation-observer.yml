@@ -1,0 +1,112 @@
+name: Football C077-B Confirmation Observer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/football-c077b-confirmation-observer.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe-one-shot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: fd3f664adeb27facf3bd179eb6dc6e651edebfa9
+      TARGET_WORKFLOW_NAME: Football C077-B Independent Confirmation One Shot
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Wait for the unique push-only confirmation run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p relay
+          found=0
+          for i in $(seq 1 90); do
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/actions/runs?head_sha=$TARGET_SHA&event=push&per_page=100" \
+              -o relay/runs.json
+            count=$(jq --arg n "$TARGET_WORKFLOW_NAME" '[.workflow_runs[] | select(.name==$n)] | length' relay/runs.json)
+            if [ "$count" -gt 1 ]; then
+              echo "More than one one-shot confirmation run exists for frozen head $TARGET_SHA" >&2
+              jq --arg n "$TARGET_WORKFLOW_NAME" '[.workflow_runs[] | select(.name==$n)]' relay/runs.json >&2
+              exit 2
+            fi
+            if [ "$count" -eq 1 ]; then
+              jq --arg n "$TARGET_WORKFLOW_NAME" '.workflow_runs[] | select(.name==$n)' relay/runs.json > relay/run_meta.json
+              status=$(jq -r '.status' relay/run_meta.json)
+              run_id=$(jq -r '.id' relay/run_meta.json)
+              echo "target run=$run_id status=$status"
+              found=1
+              if [ "$status" = "completed" ]; then
+                break
+              fi
+            else
+              echo "target run not visible yet"
+            fi
+            sleep 10
+          done
+          test "$found" -eq 1
+          test "$(jq -r '.status' relay/run_meta.json)" = "completed"
+
+      - name: Relay run jobs and immutable confirmation artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=$(jq -r '.id' relay/run_meta.json)
+          conclusion=$(jq -r '.conclusion' relay/run_meta.json)
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
+            -o relay/jobs.json
+
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/actions/runs/$run_id/artifacts?per_page=100" \
+            -o relay/artifacts.json
+
+          if [ "$conclusion" = "success" ]; then
+            count=$(jq '[.artifacts[] | select(.name=="c077b-independent-confirmation-one-shot")] | length' relay/artifacts.json)
+            test "$count" -eq 1
+            artifact_id=$(jq -r '.artifacts[] | select(.name=="c077b-independent-confirmation-one-shot") | .id' relay/artifacts.json)
+            jq '.artifacts[] | select(.name=="c077b-independent-confirmation-one-shot")' relay/artifacts.json > relay/artifact_meta.json
+            curl -fsSL -L \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/actions/artifacts/$artifact_id/zip" \
+              -o relay/confirmation.zip
+            mkdir -p relay/extracted
+            unzip -q relay/confirmation.zip -d relay/extracted
+            summary=$(find relay/extracted -type f -name summary.json | head -n 1)
+            test -n "$summary"
+            cp "$summary" relay/confirmation_summary.json
+            row_metrics=$(find relay/extracted -type f -name row_metrics.csv | head -n 1 || true)
+            if [ -n "$row_metrics" ]; then cp "$row_metrics" relay/confirmation_row_metrics.csv; fi
+          else
+            curl -fsSL -L \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/actions/runs/$run_id/logs" \
+              -o relay/failed_run_logs.zip || true
+          fi
+          jq '{id,name,event,status,conclusion,head_sha,run_number,created_at,updated_at}' relay/run_meta.json
+
+      - name: Upload observer relay
+        uses: actions/upload-artifact@v4
+        with:
+          name: c077b-confirmation-observer-relay
+          retention-days: 30
+          if-no-files-found: error
+          path: relay/
