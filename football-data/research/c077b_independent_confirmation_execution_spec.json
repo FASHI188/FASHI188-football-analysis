@@ -1,0 +1,151 @@
+{
+  "schema_version": "C077B_INDEPENDENT_CONFIRMATION_EXECUTION_SPEC_V1",
+  "frozen_before_numeric_confirmation_label_access": true,
+  "parent_scientific_contract": "football-data/research/c077b_high_tail_dgiven_t_independent_confirmation_contract.json",
+  "parent_development": {
+    "pr": 272,
+    "head": "70a17e38fa4042e66413d28d18d8deef4557da96",
+    "candidate_code": "football-data/research/evaluate_c077a_high_tail_shared_dgiven_t.py",
+    "candidate_code_sha": "bf1ba3752779514bf25388bdb0bad7fbe300a6f6"
+  },
+  "confirmation_source_receipt": {
+    "run": 32271737058,
+    "job": 96129579288,
+    "artifact": 9372417479,
+    "artifact_digest": "sha256:acfcbeaa601b18739b1e17011a869f79f3db7a81ea2750edeeff12a422d83ffc",
+    "source_identity_count": 9376,
+    "source_identity_sha256": "f1e70a3f783be235136060a117645d3a1b42b400dfcef7b4be19d8f11233b8b2"
+  },
+  "confirmation_target_receipt": {
+    "run": 32272203473,
+    "job": 96131094925,
+    "artifact": 9372586706,
+    "artifact_digest": "sha256:5f396b7e6d4a8db43ab2ed8adca360d8ca64f52b7f46b93858387b5be5d40c51",
+    "eligible_identity_count": 6943,
+    "eligible_identity_sha256": "4b607eca3a9c2f5589e811fd90b986503ceece87d3ff947f155e99c7e9623149",
+    "time_blocks": {"2024": 3506, "2025": 3437},
+    "competition_families": 39,
+    "eligibility": "both teams have >=8 prior completed identities strictly before target calendar date; same-date eligibility assessed before same-date updates"
+  },
+  "training_source": {
+    "repository": "eatpizzanot/soccer-dataset",
+    "revision": "f0cbe86bee3f28cc4b803f735a5287968741c471",
+    "fixtures_sha256": "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7",
+    "match_stats_sha256": "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9",
+    "training_population": "all C077-A eligible completed pre-2024 rows with realized exact T>=7",
+    "confirmation_source_labels_used_for_fit": false
+  },
+  "baseline": {
+    "family": "exact-T pooled Dirichlet-smoothed empirical P(H|T) from frozen pre-2024 training tail only",
+    "alpha": 1.0,
+    "unseen_T": "uniform over legal H=0..T support"
+  },
+  "candidate": {
+    "family": "H|T,X ~ Binomial(T,p(X,T))",
+    "fit": "expand each frozen pre-2024 high-tail training match into T Bernoulli goal-allocation trials, H successes and T-H failures",
+    "pipeline": "SimpleImputer(median) + StandardScaler + LogisticRegression(C=0.1, solver=lbfgs, max_iter=2000, class_weight=null, random_state=0)",
+    "features": [
+      "league_total_mean",
+      "league_total_sd",
+      "home_goals_for_mean",
+      "home_goals_for_sd",
+      "home_goals_against_mean",
+      "home_goals_against_sd",
+      "away_goals_for_mean",
+      "away_goals_for_sd",
+      "away_goals_against_mean",
+      "away_goals_against_sd",
+      "log1p_home_result_history_n",
+      "log1p_away_result_history_n",
+      "exact_total"
+    ],
+    "feature_search": false,
+    "C_search": false,
+    "interaction_search": false,
+    "per_T_models": false,
+    "class_weights": false,
+    "manual_draw_or_score_boost": false,
+    "calibration_or_blend": false,
+    "confirmation_refit": false
+  },
+  "external_feature_transport": {
+    "confirmation_numeric_values_materialized": "only for the frozen 6943 eligible target identities, after all preflight gates pass",
+    "history_updates": "only prior frozen eligible identities contribute score-history features, matching C077-A result_events over eligible identities",
+    "team_history_key": "competition_family + normalized team name",
+    "league_history_key": "competition_family + league-series token derived from frozen source filename after stripping season/year prefix and .txt, e.g. czech-republic/cz1 versus czech-republic/cz2",
+    "same_day_rule": "all fixtures on a calendar date receive feature snapshots from history strictly before that date; no same-date result updates occur until every same-date snapshot is frozen",
+    "mean_definition": "arithmetic mean over prior eligible results",
+    "sd_definition": "population standard deviation sqrt(E[x^2]-E[x]^2), ddof=0",
+    "missing_history": "NaN passed to the frozen training-fitted median imputer; no external-domain refit",
+    "count_features": "log1p of prior eligible result-history count for home and away teams",
+    "exact_total": "conditioning variable T for the target row; used only after numeric label open because the estimand is P(D|T,X)"
+  },
+  "numeric_score_open_rule": {
+    "precondition": "source count/SHA and eligible count/SHA must be regenerated exactly from zero-label metadata before any score integer conversion",
+    "eligible_only": true,
+    "parser": "for an eligible fixture line, decode the first full-time score token after the fixture identity and before any parenthesized auxiliary score; league-only files are frozen to avoid knockout extra-time ambiguity",
+    "settlement": "90 minutes plus stoppage",
+    "all_6943_labels_considered_consumed_after_first successful numeric conversion": true,
+    "no_identity_replacement_after_open": true
+  },
+  "coverage_gate_before_scoring": {
+    "pooled_realized_T_ge_7_min": 150,
+    "2024_realized_T_ge_7_min": 50,
+    "2025_realized_T_ge_7_min": 50,
+    "competition_families_with_at_least_one_realized_T_ge_7_min": 3,
+    "failure_decision": "STOP_COVERAGE_CONFIRMATION_LABELS_CONSUMED; do not score candidate vs baseline; do not replace identities or lower gates"
+  },
+  "domain_replication_rule": {
+    "report_all_domains_with_tail": true,
+    "eligible_domain_for_majority_vote": "frozen competition family with at least 5 realized T>=7 scored rows",
+    "minimum_eligible_domains_for_vote": 3,
+    "strict_majority_definition": "number of eligible domains with mean candidate-minus-baseline LogLoss <0 must be strictly greater than half of eligible domains",
+    "threshold_frozen_prelabel": 5
+  },
+  "metrics": {
+    "primary": "conditional exact-D LogLoss; scored equivalently on legal home-goal H support because D=2H-T is one-to-one at fixed T",
+    "secondary": ["multiclass Brier", "normalized RPS"],
+    "top1": "diagnostic only",
+    "paired_bootstrap": {"reps": 5000, "seed": 77002, "ci": 0.90},
+    "time_blocks": [2024, 2025]
+  },
+  "frozen_confirmation_pass_gate": {
+    "all_required": [
+      "coverage gate passes",
+      "pooled candidate-minus-baseline conditional D LogLoss <0",
+      "paired bootstrap 90% upper bound for pooled dLogLoss <0",
+      "pooled Brier delta <=0",
+      "pooled normalized RPS delta <=0",
+      "2024 dLogLoss <0",
+      "2025 dLogLoss <0",
+      "at least 3 eligible competition domains for majority vote",
+      "strict majority of eligible competition domains have dLogLoss <0",
+      "probability-sum max residual <=1e-10",
+      "mapping failures =0",
+      "source identity SHA exact",
+      "eligible identity SHA exact",
+      "prior exclusion overlap=0"
+    ],
+    "decision": "CONFIRMATION_PASS only if every required gate passes; otherwise CONFIRMATION_FAIL_PARK",
+    "no_rescue_after_view": true
+  },
+  "preflight_before_label_open": {
+    "required": true,
+    "must_train_frozen_pre2024_candidate_and_baseline_without_confirmation_labels": true,
+    "must_regenerate_source_and_eligible_identity_shas_without_numeric_score_conversion": true,
+    "must_run synthetic score-parser and metric unit checks": true,
+    "only_after_preflight_pass_may_confirmation_workflow_be_added_or_enabled": true
+  },
+  "hard_boundaries": {
+    "exact_tail_created": false,
+    "C076D_fresh_score_values_opened": false,
+    "C071_reserve_52180_opened": false,
+    "C070F_confirmation1597_opened": false,
+    "A05_opened": false,
+    "protected_opened": false,
+    "unified_matrix_generated": false,
+    "formal_weight": 0,
+    "automatic_formal_promotion": false,
+    "CURRENT_change": false
+  }
+}
