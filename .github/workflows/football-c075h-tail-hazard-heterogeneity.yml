@@ -1,0 +1,94 @@
+name: Football C075-H Tail Hazard Heterogeneity Audit
+
+on:
+  push:
+    branches:
+      - research/c075h-tail-hazard-heterogeneity-audit-20260819
+    paths:
+      - football-data/research/c075h_tail_hazard_heterogeneity_contract.json
+      - football-data/research/audit_c075h_tail_hazard_heterogeneity.py
+      - .github/workflows/football-c075h-tail-hazard-heterogeneity.yml
+  pull_request:
+    paths:
+      - football-data/research/c075h_tail_hazard_heterogeneity_contract.json
+      - football-data/research/audit_c075h_tail_hazard_heterogeneity.py
+      - .github/workflows/football-c075h-tail-hazard-heterogeneity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075h-tail-hazard-heterogeneity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  structural-heterogeneity-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen audit runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scipy==1.17.1
+
+      - name: Download and verify pinned broad PIT source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c075h_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c075h_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c075h_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c075h_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c075h_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Run frozen structural audit
+        run: |
+          mkdir -p "$RUNNER_TEMP/c075h_out"
+          PYTHONPATH=football-data/research python football-data/research/audit_c075h_tail_hazard_heterogeneity.py \
+            --fixtures "$RUNNER_TEMP/c075h_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c075h_source/match_stats.parquet" \
+            --out-dir "$RUNNER_TEMP/c075h_out"
+
+      - name: Enforce governance boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c075h_out'/'summary.json').read_text())
+          assert s['schema_version']=='C075H_TAIL_HAZARD_HETEROGENEITY_AUDIT_V1'
+          assert s['status'] in {'STRONG_DOMAIN_HETEROGENEITY','MODERATE_DOMAIN_HETEROGENEITY','HETEROGENEITY_NOT_ESTABLISHED'}
+          assert s['predictive_model_test'] is False
+          b=s['boundaries']
+          assert b['C075C_consumed_tail_labels_used'] is False
+          assert b['C075E_consumed_tail_labels_used'] is False
+          assert b['C075F_scored_internal_OOS_used_as_new_target_source'] is False
+          assert b['C071_post2024_goal_labels_opened'] is False
+          assert b['C071_sealed_identity_count']==72180
+          assert b['C071_reserve_52180_opened'] is False
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['A05_opened'] is False
+          assert b['protected_opened'] is False
+          assert b['model_fit'] is False
+          assert b['unified_matrix_generated'] is False
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload C075-H evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075h-tail-hazard-heterogeneity-audit
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c075h_out/summary.json
+            ${{ runner.temp }}/c075h_out/hazard_group_cells.csv
+            football-data/research/c075h_tail_hazard_heterogeneity_contract.json
