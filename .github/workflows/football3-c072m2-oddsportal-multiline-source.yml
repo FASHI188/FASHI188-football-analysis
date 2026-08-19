@@ -1,0 +1,55 @@
+name: football3-c072m2-oddsportal-multiline-source
+
+on:
+  pull_request:
+    branches:
+      - football3/c072l2-postview-top1-mechanism-audit-20260819
+    paths:
+      - 'football-data/research/C072M2_ODDSPORTAL_MULTILINE_ZERO_LABEL_SOURCE_CONTRACT.md'
+      - 'football-data/research/audit_c072m2_oddsportal_multiline_source.py'
+      - '.github/workflows/football3-c072m2-oddsportal-multiline-source.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned OddsHarvester
+        run: |
+          pip install 'git+https://github.com/jordantete/OddsHarvester.git@5f6fc5e9768fcb089aa13c7d447aea8644a00b10'
+          python -m playwright install --with-deps chromium
+      - name: Zero-label contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072M2_ODDSPORTAL_MULTILINE_ZERO_LABEL_SOURCE_CONTRACT.md').read_text()
+          assert 'ZERO-LABEL / FUTURE-MATCH' in c
+          assert 'No account/API key/purchase' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('M2 contract guard: PASS')
+          PY
+      - name: Run multi-line source audit
+        run: python football-data/research/audit_c072m2_oddsportal_multiline_source.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072m2_source_summary.json').read_text())
+          assert x['model_fit'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          if x['terminal'] != 'SOURCE_ACCESS_BLOCKED':
+              assert x['nonnull_score_rows'] == 0
+              assert x['target_result_values_materialized'] == 0
+          print('M2 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072m2-multiline-source-audit
+          path: football-data/research/c072m2_source_summary.json
