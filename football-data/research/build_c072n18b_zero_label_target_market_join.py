@@ -315,6 +315,14 @@ def visible_seasons(table, headers):
     return sorted(set(vals))
 
 
+def has_pre2025_start(seasons):
+    for s in seasons:
+        mm = re.match(r"\s*(\d{4})", s)
+        if mm and int(mm.group(1)) <= 2024:
+            return True
+    return False
+
+
 def resolve_historical_odds_table(page_html: str):
     marker = page_html.find(HEADING)
     if marker < 0:
@@ -329,7 +337,7 @@ def resolve_historical_odds_table(page_html: str):
         if not raw_tid.isdigit():
             continue
         seasons = visible_seasons(t, h)
-        if any(re.match(r"\s*2024", x) for x in seasons):
+        if has_pre2025_start(seasons):
             candidates.append((t, int(raw_tid)))
     if len(candidates) != 1:
         return None, None
