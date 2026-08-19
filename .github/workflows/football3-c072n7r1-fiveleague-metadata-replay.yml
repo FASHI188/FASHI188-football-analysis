@@ -1,0 +1,70 @@
+name: football3-c072n7r1-fiveleague-metadata-replay
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n7-footiqo-fiveleague-metadata-preflight-20260819
+    paths:
+      - 'football-data/research/C072N7_TECHNICAL_FAILURE_01.json'
+      - 'football-data/research/C072N7R1_METADATA_ENGINEERING_REPLAY_CONTRACT.md'
+      - 'football-data/research/replay_c072n7r1_fiveleague_metadata.py'
+      - '.github/workflows/football3-c072n7r1-fiveleague-metadata-replay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
+      - name: Replay contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N7R1_METADATA_ENGINEERING_REPLAY_CONTRACT.md').read_text()
+          assert 'exact N7 network/scientific recipe with NO changes' in c
+          assert 'ONLY allowed change is evidence persistence safety logic' in c
+          assert 'Max football table-data requests = 5' in c
+          print('N7R1 replay contract: PASS')
+          PY
+      - name: Replay frozen N7 evaluator with evidence-safe persist only
+        run: python football-data/research/replay_c072n7r1_fiveleague_metadata.py
+      - name: Boundary and persistence guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/c072n7_metadata_result.json')
+          x=json.loads(p.read_text())
+          assert x['football_table_data_requests_made'] <= 5
+          assert x['nonce_values_persisted_or_logged'] == 0
+          assert x['football_row_values_persisted'] == 0
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0 and x['model_score'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          forbidden={'nonce_value','raw_nonce','request_body','wdtNonce'}
+          def walk(o):
+            if isinstance(o,dict):
+              for k,v in o.items():
+                assert str(k) not in forbidden
+                walk(v)
+            elif isinstance(o,list):
+              for v in o: walk(v)
+          walk(x)
+          print('N7R1 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n7r1-fiveleague-metadata-replay
+          path: football-data/research/c072n7_metadata_result.json
+          if-no-files-found: error
