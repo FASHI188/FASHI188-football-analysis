@@ -1,0 +1,89 @@
+name: Football C075-C Simple Tail Parameter Freeze
+
+on:
+  push:
+    branches:
+      - research/c075c-simple-tail-parameter-freeze-20260819
+    paths:
+      - research/c075c_simple_tail_parameter_freeze_contract.json
+      - research/freeze_c075c_simple_tail_parameter.py
+      - .github/workflows/c075c_simple_tail_parameter_freeze.yml
+  pull_request:
+    paths:
+      - research/c075c_simple_tail_parameter_freeze_contract.json
+      - research/freeze_c075c_simple_tail_parameter.py
+      - .github/workflows/c075c_simple_tail_parameter_freeze.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075c-simple-tail-freeze-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  parameter-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 scikit-learn==1.7.1
+
+      - name: Clone and pin internal already-open source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nm2890/football-data.git external-football-data
+          git -C external-football-data checkout 279978313f9c16a210fa80e8986fa22f0f866fba
+          test "$(git -C external-football-data rev-parse HEAD)" = "279978313f9c16a210fa80e8986fa22f0f866fba"
+
+      - name: Freeze simple exact-tail parameter
+        run: |
+          mkdir -p artifacts/c075c_parameter
+          PYTHONPATH=research python research/freeze_c075c_simple_tail_parameter.py \
+            --external-root external-football-data \
+            --out-dir artifacts/c075c_parameter
+
+      - name: Enforce pre-external-label boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075c_parameter/summary.json').read_text())
+          assert s['status']=='PARAMETER_FROZEN_INTERNAL_ONLY'
+          p=s['parameter']
+          assert 0 < p['r'] < 1
+          assert p['development_tail_n'] >= 300
+          assert p['residual_after_K'] <= 1e-8
+          e=s['external_label_boundary']
+          assert e['OpenFootball_score_fields_selected'] is False
+          assert e['OpenFootball_tail_membership_computed'] is False
+          assert e['OpenFootball_model_or_metric_run'] is False
+          b=s['protected_boundaries']
+          assert b['C071_reserve_52180_opened'] is False
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['A05_opened'] is False
+          assert b['protected_opened'] is False
+          assert b['unified_matrix_generated'] is False
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload frozen parameter evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075c-simple-tail-parameter-freeze
+          retention-days: 30
+          path: |
+            artifacts/c075c_parameter/summary.json
+            artifacts/c075c_parameter/frozen_parameter.json
+            research/c075c_simple_tail_parameter_freeze_contract.json
