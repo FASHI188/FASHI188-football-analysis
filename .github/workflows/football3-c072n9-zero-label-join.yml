@@ -1,0 +1,79 @@
+name: football3-c072n9-zero-label-join
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n8-footiqo-multiline-odds-bulk-zero-label-20260819
+    paths:
+      - 'football-data/research/C072N9_MULTILINE_PT_PREREGISTRATION_AND_ZERO_LABEL_JOIN_CONTRACT.md'
+      - 'football-data/research/audit_c072n9_zero_label_identity_join.py'
+      - '.github/workflows/football3-c072n9-zero-label-join.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install identity-audit dependency
+        run: pip install --disable-pip-version-check pandas==2.2.3
+      - name: Preregistration guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N9_MULTILINE_PT_PREREGISTRATION_AND_ZERO_LABEL_JOIN_CONTRACT.md').read_text()
+          assert 'Scientific question frozen BEFORE outcome labels' in c
+          assert 'Baseline numeric market features' in c and 'market_logit_25' in c
+          assert 'Candidate numeric market features' in c and 'market_logit_05' in c and 'market_logit_45' in c
+          assert 'One-shot forward confirmation season: **2024/25**' in c
+          assert 'No football outcome label in N9' in c
+          assert 'C073-C077 quarantined' in c
+          print('N9 preregistration: PASS')
+          PY
+      - name: Download exact authoritative N8 zero-label dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/c072n8
+          gh run download 32244931845 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n8-multiline-odds-zero-label \
+            --dir /tmp/c072n8
+          sha256sum /tmp/c072n8/c072n8_multiline_odds.csv
+      - name: Run zero-label identity join audit
+        run: |
+          python football-data/research/audit_c072n9_zero_label_identity_join.py \
+            --n8-csv /tmp/c072n8/c072n8_multiline_odds.csv
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n9_zero_label_join_summary.json').read_text())
+          assert s['target_result_columns_materialized'] == 0
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['reserve_2025_26_rows_label_unread'] > 0
+          assert s['C073_C077_quarantined'] is True
+          assert s['C070F_confirmation1597_opened'] is False
+          with Path('football-data/research/c072n9_zero_label_join_manifest.csv').open(encoding='utf-8',newline='') as f:
+            h=next(csv.reader(f))
+          forbidden={'FTHG','FTAG','FTR','HTHG','HTAG','HTR','score','result'}
+          assert not any(x in forbidden for x in h)
+          print('N9 zero-label boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n9-zero-label-join
+          path: |
+            football-data/research/c072n9_zero_label_join_summary.json
+            football-data/research/c072n9_zero_label_join_manifest.csv
+          if-no-files-found: error
