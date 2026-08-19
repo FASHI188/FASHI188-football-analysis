@@ -1,0 +1,99 @@
+name: Football C073-A Fresh20k Conditional-D Confirmation
+
+on:
+  push:
+    branches:
+      - research/c073a-fresh20k-conditional-d-20260819
+    paths:
+      - football-data/research/c073a_fresh20k_conditional_d_contract.json
+      - football-data/research/evaluate_c073a_fresh20k_conditional_d.py
+      - .github/workflows/football-c073a-fresh20k-conditional-d.yml
+  pull_request:
+    paths:
+      - football-data/research/c073a_fresh20k_conditional_d_contract.json
+      - football-data/research/evaluate_c073a_fresh20k_conditional_d.py
+      - .github/workflows/football-c073a-fresh20k-conditional-d.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c073a-fresh20k-conditional-d-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fresh20k-confirmation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+
+      - name: Download and verify pinned C071 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c073a_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c073a_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c073a_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c073a_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c073a_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Run frozen C073-A fresh20k confirmation
+        run: |
+          mkdir -p "$RUNNER_TEMP/c073a_out"
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c073a_fresh20k_conditional_d.py \
+            --fixtures "$RUNNER_TEMP/c073a_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c073a_source/match_stats.parquet" \
+            --out-dir "$RUNNER_TEMP/c073a_out"
+
+      - name: Enforce label budget and governance boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c073a_out'/'summary.json'
+          s=json.loads(p.read_text())
+          assert s['identity']['parent_confirmation_pool']==72180
+          assert s['identity']['selected_confirmation']==20000
+          assert s['identity']['remaining_reserve']==52180
+          assert s['identity']['remaining_labels_opened'] is False
+          assert s['label_boundary']['candidate_models_fit_before_confirmation_label_read'] is True
+          assert s['label_boundary']['selected_confirmation_goal_rows_returned']==20000
+          assert s['label_boundary']['reserve_52180_goal_rows_returned']==0
+          assert s['candidate']['feature_search'] is False
+          assert s['candidate']['hyperparameter_search'] is False
+          assert s['candidate']['manual_draw_or_1_1_boost'] is False
+          assert s['boundaries']['dynamic_multiline_OU_tested_here'] is False
+          assert s['boundaries']['unified_matrix_generated'] is False
+          assert s['boundaries']['exact_score_top1_claim_allowed'] is False
+          assert s['boundaries']['formal_weight']==0
+          assert s['boundaries']['C070F_confirmation1597_opened'] is False
+          assert s['boundaries']['A05_opened'] is False
+          assert s['boundaries']['protected_opened'] is False
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload C073-A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c073a-fresh20k-conditional-d
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c073a_out/summary.json
+            ${{ runner.temp }}/c073a_out/selected_confirmation_identity.csv
+            football-data/research/c073a_fresh20k_conditional_d_contract.json
