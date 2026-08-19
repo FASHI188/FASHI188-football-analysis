@@ -1,4 +1,4 @@
-# Engineering trigger after workflow registration; scientific contract unchanged.
+# R2 engineering correction: same already-consumed 20k IDs only; null results get no replacement.
 name: Football C073-A Fresh20k Conditional-D Confirmation
 
 on:
@@ -7,12 +7,16 @@ on:
       - research/c073a-fresh20k-conditional-d-20260819
     paths:
       - football-data/research/c073a_fresh20k_conditional_d_contract.json
+      - football-data/research/c073a_missing_result_adjudication.json
       - football-data/research/evaluate_c073a_fresh20k_conditional_d.py
+      - football-data/research/evaluate_c073a_fresh20k_conditional_d_r2_missingfix.py
       - .github/workflows/football-c073a-fresh20k-conditional-d.yml
   pull_request:
     paths:
       - football-data/research/c073a_fresh20k_conditional_d_contract.json
+      - football-data/research/c073a_missing_result_adjudication.json
       - football-data/research/evaluate_c073a_fresh20k_conditional_d.py
+      - football-data/research/evaluate_c073a_fresh20k_conditional_d_r2_missingfix.py
       - .github/workflows/football-c073a-fresh20k-conditional-d.yml
   workflow_dispatch:
 
@@ -53,10 +57,10 @@ jobs:
           echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c073a_source/fixtures.parquet" | sha256sum -c -
           echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c073a_source/match_stats.parquet" | sha256sum -c -
 
-      - name: Run frozen C073-A fresh20k confirmation
+      - name: Run frozen C073-A on same 20k IDs with zero replacement
         run: |
           mkdir -p "$RUNNER_TEMP/c073a_out"
-          PYTHONPATH=football-data/research python football-data/research/evaluate_c073a_fresh20k_conditional_d.py \
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c073a_fresh20k_conditional_d_r2_missingfix.py \
             --fixtures "$RUNNER_TEMP/c073a_source/fixtures.parquet" \
             --stats "$RUNNER_TEMP/c073a_source/match_stats.parquet" \
             --out-dir "$RUNNER_TEMP/c073a_out"
@@ -75,10 +79,15 @@ jobs:
           assert s['identity']['remaining_labels_opened'] is False
           assert s['label_boundary']['candidate_models_fit_before_confirmation_label_read'] is True
           assert s['label_boundary']['selected_confirmation_goal_rows_returned']==20000
+          assert s['label_boundary']['selected_confirmation_completed_nonnull_rows'] + s['label_boundary']['selected_confirmation_null_result_rows'] == 20000
+          assert s['label_boundary']['null_result_replacement_count']==0
+          assert s['label_boundary']['unique_confirmation_ids_ever_target_label_projected']==20000
           assert s['label_boundary']['reserve_52180_goal_rows_returned']==0
           assert s['candidate']['feature_search'] is False
           assert s['candidate']['hyperparameter_search'] is False
           assert s['candidate']['manual_draw_or_1_1_boost'] is False
+          assert s['boundaries']['remaining_52180_labels_opened'] is False
+          assert s['boundaries']['sample_reselection_after_label_read'] is False
           assert s['boundaries']['dynamic_multiline_OU_tested_here'] is False
           assert s['boundaries']['unified_matrix_generated'] is False
           assert s['boundaries']['exact_score_top1_claim_allowed'] is False
@@ -98,3 +107,4 @@ jobs:
             ${{ runner.temp }}/c073a_out/summary.json
             ${{ runner.temp }}/c073a_out/selected_confirmation_identity.csv
             football-data/research/c073a_fresh20k_conditional_d_contract.json
+            football-data/research/c073a_missing_result_adjudication.json
