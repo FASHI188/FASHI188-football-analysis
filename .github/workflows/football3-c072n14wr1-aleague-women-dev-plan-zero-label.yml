@@ -1,0 +1,64 @@
+name: football3-c072n14wr1-aleague-women-dev-plan-zero-label
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n14w-aleague-women-surface-zero-label-20260819
+    paths:
+      - 'football-data/research/C072N14WR1_ALEAGUE_WOMEN_DEV_PLAN_ZERO_LABEL_CONTRACT.md'
+      - 'football-data/research/adjudicate_c072n14wr1_aleague_women_dev_plan.py'
+      - '.github/workflows/football3-c072n14wr1-aleague-women-dev-plan-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  adjudicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N14WR1_ALEAGUE_WOMEN_DEV_PLAN_ZERO_LABEL_CONTRACT.md').read_text()
+          assert 'N14W remains permanently' in c
+          assert 'Fixed development zero-label inventory: **394**' in c
+          assert 'Sealed reserve' in c and '116' in c
+          assert 'No threshold is lowered' in c
+          print('N14WR1 contract guard: PASS')
+          PY
+      - name: Download immutable N14W zero-label summary only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf /tmp/n14w && mkdir -p /tmp/n14w
+          gh run download 32258210499 \
+            --repo FASHI188/FASHI188-football-analysis \
+            --name football3-c072n14w-aleague-women-surface-zero-label \
+            --dir /tmp/n14w
+          ls -l /tmp/n14w
+      - name: Adjudicate new zero-label development plan
+        run: |
+          python football-data/research/adjudicate_c072n14wr1_aleague_women_dev_plan.py \
+            --n14w-summary /tmp/n14w/c072n14w_aleague_women_surface_zero_label_summary.json
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n14wr1_aleague_women_dev_plan_summary.json').read_text())
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['parent_n14w_terminal'] == 'C072N14W_ALEAGUE_WOMEN_SURFACE_ZERO_LABEL_STOP'
+          assert s['terminal'] in {'C072N14WR1_ALEAGUE_WOMEN_DEV_PLAN_ZERO_LABEL_PASS','C072N14WR1_ALEAGUE_WOMEN_DEV_PLAN_ZERO_LABEL_STOP'}
+          print(json.dumps(s,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n14wr1-aleague-women-dev-plan-zero-label
+          path: football-data/research/c072n14wr1_aleague_women_dev_plan_summary.json
+          if-no-files-found: error
