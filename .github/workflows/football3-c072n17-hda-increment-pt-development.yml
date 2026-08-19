@@ -1,0 +1,93 @@
+name: football3-c072n17-hda-increment-pt-development
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n16r1-new2000-footiqo-protocol-correction-20260819
+    paths:
+      - 'football-data/research/C072N17_HDA_INCREMENT_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/run_c072n17_hda_increment_pt_development.py'
+      - '.github/workflows/football3-c072n17-hda-increment-pt-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frozen dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 numpy==2.3.2 pandas==2.3.1 scikit-learn==1.7.1
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N17_HDA_INCREMENT_PT_DEVELOPMENT_CONTRACT.md').read_text()
+          assert 'development: **1,734** identities' in c
+          assert 'later reserve: **266** identities' in c
+          assert 'hda_gap = log(pH/pA)' in c
+          assert 'hda_draw = log(pD/sqrt(pH*pA))' in c
+          assert '3,000 resamples, seed `72017`' in c
+          assert 'LogLoss improves in at least 4/5 chronological folds' in c
+          assert 'LogLoss improves in at least 3/4 source leagues' in c
+          assert 'C070-F Confirmation1597 remains sealed' in c
+          print('N17 contract guard: PASS')
+          PY
+      - name: Download immutable N16R1 exact-2000 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import os, urllib.request, zipfile, hashlib
+          url='https://api.github.com/repos/FASHI188/FASHI188-football-analysis/actions/artifacts/9368768296/zip'
+          req=urllib.request.Request(url, headers={'Authorization':f'Bearer {os.environ["GH_TOKEN"]}','Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'football3-n17'})
+          with urllib.request.urlopen(req, timeout=60) as r:
+              raw=r.read()
+          open('/tmp/n16r1.zip','wb').write(raw)
+          with zipfile.ZipFile('/tmp/n16r1.zip') as z:
+              z.extractall('/tmp/n16r1')
+          p='/tmp/n16r1/c072n16r1_footiqo_new2000_zero_label.csv'
+          h=hashlib.sha256(open(p,'rb').read()).hexdigest()
+          assert h=='b5c988c77f7f0855481297eb5878e52742a94145bc35499f29c8ac893a596997',h
+          print('immutable input PASS',h)
+          PY
+      - name: Run frozen N17 development
+        run: python football-data/research/run_c072n17_hda_increment_pt_development.py --input /tmp/n16r1/c072n16r1_footiqo_new2000_zero_label.csv
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n17/summary.json').read_text())
+          assert s['classification']=='DEVELOPMENT_REPLICATION_NOT_CONFIRMATION'
+          assert s['development_rows_frozen']==1734
+          assert s['later_reserve_rows']==266
+          assert s['later_reserve_target_values_materialized']==0
+          assert s['nonselected_target_values_decoded']==0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['aleague_men_2025_26_target_opened'] is False
+          assert s['aleague_women_2025_26_target_opened'] is False
+          assert s['BTTS_feature_used'] is False
+          assert s['terminal'] in {'C072N17_TARGET_JOIN_OR_BOUNDARY_STOP','C072N17_OOS_FOLD_STOP','C072N17_HDA_INCREMENT_PT_DEVELOPMENT_PASS','C072N17_HDA_INCREMENT_PT_DEVELOPMENT_PARK'}
+          print(json.dumps(s,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n17-hda-increment-pt-development
+          path: |
+            football-data/research/c072n17/summary.json
+            football-data/research/c072n17/oos_predictions.csv
+            football-data/research/c072n17/development_join_audit.csv
+          if-no-files-found: warn
+          retention-days: 30
