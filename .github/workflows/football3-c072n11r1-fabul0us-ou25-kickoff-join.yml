@@ -1,0 +1,79 @@
+name: football3-c072n11r1-fabul0us-ou25-kickoff-join
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n10-multiline-pt-development-20260819
+    paths:
+      - 'football-data/research/C072N11R1_FABULOUS_OU25_KICKOFF_ZERO_LABEL_JOIN_CONTRACT.md'
+      - 'football-data/research/audit_c072n11r1_fabul0us_ou25_kickoff_join.py'
+      - '.github/workflows/football3-c072n11r1-fabul0us-ou25-kickoff-join.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kickoff-join:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install zero-label identity dependency
+        run: pip install --disable-pip-version-check pandas==2.3.1
+
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N11R1_FABULOUS_OU25_KICKOFF_ZERO_LABEL_JOIN_CONTRACT.md').read_text()
+          assert 'N11R1 is ZERO-LABEL ENGINEERING / PIT JOIN ONLY' in c
+          assert 'Only `Date`, `Season`, `HomeTeam`, `AwayTeam`' in c
+          assert 'T-24h, T-6h and T-1h' in c
+          assert 'REPLICATION / REPRODUCTION' in c
+          print('N11R1 contract guard: PASS')
+          PY
+
+      - name: Download exact immutable dynamic odds source
+        run: |
+          mkdir -p /tmp/c072n11r1
+          curl --location --fail --silent --show-error \
+            'https://huggingface.co/datasets/fabul0us/football_odds_2023-24/resolve/211feb35f9dcd270bd7a1b27b39a8b1f45f239aa/match_odds.csv?download=true' \
+            --output /tmp/c072n11r1/match_odds.csv
+          echo 'c0e8854302159e1a8c529463f33280b728909c5e0ba95262515a7a144a43aa2a  /tmp/c072n11r1/match_odds.csv' | sha256sum -c -
+
+      - name: Execute frozen zero-label kickoff join and PIT freeze audit
+        run: |
+          python football-data/research/audit_c072n11r1_fabul0us_ou25_kickoff_join.py \
+            --dynamic-csv /tmp/c072n11r1/match_odds.csv
+
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import csv,json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n11r1_fabul0us_ou25_kickoff_join_summary.json').read_text())
+          assert s['target_result_columns_materialized'] == 0
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['terminal'] in {'C072N11R1_FABULOUS_OU25_KICKOFF_JOIN_PASS','C072N11R1_FABULOUS_OU25_KICKOFF_JOIN_STOP'}
+          with Path('football-data/research/c072n11r1_fabul0us_ou25_kickoff_manifest.csv').open(encoding='utf-8',newline='') as f:
+            h=next(csv.reader(f))
+          forbidden={'FTHG','FTAG','FTR','score','result','target','total_goals'}
+          assert not forbidden.intersection(set(h))
+          print('N11R1 boundaries: PASS')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n11r1-fabul0us-ou25-kickoff-join
+          path: |
+            football-data/research/c072n11r1_fabul0us_ou25_kickoff_join_summary.json
+            football-data/research/c072n11r1_fabul0us_ou25_kickoff_manifest.csv
+          if-no-files-found: error
