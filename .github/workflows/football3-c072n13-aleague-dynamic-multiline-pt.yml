@@ -1,0 +1,141 @@
+name: football3-c072n13-aleague-dynamic-multiline-pt
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n11-dynamic-multiline-ou-zero-label-source-20260819
+    paths:
+      - 'football-data/research/C072N13_ALEAGUE_DYNAMIC_MULTILINE_PT_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/evaluate_c072n13_aleague_dynamic_multiline_pt.py'
+      - '.github/workflows/football3-c072n13-aleague-dynamic-multiline-pt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen model dependencies
+        run: pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 scikit-learn==1.7.1
+
+      - name: Preregistration guard before any development target access
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N13_ALEAGUE_DYNAMIC_MULTILINE_PT_DEVELOPMENT_CONTRACT.md').read_text()
+          assert 'DEVELOPMENT EVIDENCE, NOT CONFIRMATION' in c
+          assert '2025-2026 remains strictly target-sealed in N13' in c
+          assert 'The N13 workflow must download only the five development files' in c
+          assert 'Primary scientific comparison: `C - B1`.' in c
+          assert 'all 15 line × time logits exactly' in c
+          assert 'No post-view repair is allowed on N13 development labels' in c
+          assert 'C070-F Confirmation1597 and protected assets remain sealed' in c
+          print('N13 preregistration guard: PASS')
+          PY
+
+      - name: Download exactly five pinned DEVELOPMENT files only
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c072n13-aleague
+          mkdir -p /tmp/c072n13-aleague
+          python - <<'PY'
+          import hashlib, urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          expected={
+            '2020-2021':'e794f97ce8d95676a0cf14a78057aba8837973459eda2a1e04194402c4bfaa37',
+            '2021-2022':'5411a5a311a2f2e379967b585a2e54646168ca434923e4ca5389cb614d27de78',
+            '2022-2023':'916724fe4cad4af6d350805f4962c94456a14edc7afcc6184b01f3fcb77fc06d',
+            '2023-2024':'2e4f761f484891bec3457b4c52a3d1ee20e5379fe5efa69e6564133edcbec1b7',
+            '2024-2025':'a62ce23b14c112ae02be470bf8e29f3568f2a40a311b2b0034be6cd8c1b53cb3',
+          }
+          root=Path('/tmp/c072n13-aleague')
+          for season,digest in expected.items():
+              rel=f'docs/data/assets/A-League_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/{rel}'
+              dest=root/f'A-League_{season}_All_Markets.csv'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-c072n13/1.0'})
+              h=hashlib.sha256()
+              with urllib.request.urlopen(req,timeout=180) as r, dest.open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      h.update(b); f.write(b)
+              got=h.hexdigest()
+              if got != digest:
+                  raise SystemExit(f'SHA mismatch {season}: {got}')
+              print(season,dest.stat().st_size,got)
+          assert not (root/'A-League_2025-2026_All_Markets.csv').exists()
+          print('sealed 2025-2026 file downloaded: false')
+          PY
+
+      - name: Execute one-shot frozen N13 development
+        run: |
+          python football-data/research/evaluate_c072n13_aleague_dynamic_multiline_pt.py \
+            --source-dir /tmp/c072n13-aleague
+
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/c072n13_aleague_dynamic_multiline_pt_summary.json')
+          s=json.loads(p.read_text())
+          assert s['project_line'] == 'football3'
+          assert s['classification'] == 'DEVELOPMENT_EVIDENCE_NOT_CONFIRMATION'
+          assert s.get('target_values_2025_26_read',0) == 0
+          assert s.get('reserve_2025_26_downloaded',False) is False
+          assert s['C073_C077_quarantined'] is True
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['formal_weight'] == 0
+          assert s['terminal'] in {
+            'C072N13_ZERO_LABEL_ELIGIBILITY_REPRODUCTION_MISMATCH',
+            'C072N13_ALEAGUE_DATA_INSUFFICIENT_ALL_CLASSES',
+            'C072N13_ALEAGUE_DYNAMIC_MULTILINE_PT_BREAKTHROUGH_SCREEN_PASS',
+            'C072N13_ALEAGUE_DYNAMIC_MULTILINE_PT_DEVELOPMENT_PASS',
+            'C072N13_ALEAGUE_SINGLELINE_DYNAMIC_PASS_MULTILINE_NOT_ESTABLISHED',
+            'C072N13_ALEAGUE_DYNAMIC_MULTILINE_PT_PARK',
+          }
+          if 'zero_label_meta' in s:
+              assert s['zero_label_meta']['zero_label_all5_counts'] == {
+                '2020-2021':125,'2021-2022':156,'2022-2023':159,'2023-2024':168,'2024-2025':174
+              }
+          print(json.dumps({
+            'terminal':s['terminal'],
+            'breakthrough':s.get('breakthrough_screen_pass'),
+            'primary_pass':s.get('primary_dynamic_multiline_vs_dynamic_ou25_pass'),
+            'broad_pass':s.get('broad_dynamic_multiline_vs_static_ou25_pass'),
+            'singleline_dynamic_pass':s.get('singleline_dynamic_vs_static_pass'),
+            'eligible':s.get('eligible_development_events'),
+            'paired_rows':s.get('paired_model_rows_all_development_seasons'),
+            'oos_n':s.get('development_oos_n'),
+            'deltas':s.get('deltas'),
+            'bootstraps':s.get('bootstraps'),
+            'fold_wins':s.get('fold_logloss_wins'),
+          },indent=2))
+          PY
+
+      - name: Delete source files including any accidental reserve path
+        if: always()
+        run: rm -rf /tmp/c072n13-aleague
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n13-aleague-dynamic-multiline-pt
+          path: |
+            football-data/research/c072n13_aleague_dynamic_multiline_pt_summary.json
+            football-data/research/c072n13_aleague_dynamic_multiline_pt_predictions.csv
+          if-no-files-found: warn
+          retention-days: 30
