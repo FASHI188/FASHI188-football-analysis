@@ -1,0 +1,104 @@
+name: football3-c072n14w-aleague-women-surface-zero-label
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n13-aleague-dynamic-multiline-pt-development-20260819
+    paths:
+      - 'football-data/research/C072N14W_ALEAGUE_WOMEN_SURFACE_ZERO_LABEL_CONTRACT.md'
+      - 'football-data/research/audit_c072n14w_aleague_women_surface_zero_label.py'
+      - '.github/workflows/football3-c072n14w-aleague-women-surface-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install zero-label dependency
+        run: pip install --disable-pip-version-check pandas==2.3.1
+
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N14W_ALEAGUE_WOMEN_SURFACE_ZERO_LABEL_CONTRACT.md').read_text()
+          assert 'ZERO-LABEL SOURCE/COVERAGE AUDIT ONLY' in c
+          assert 'TOTAL_GOALS' in c and 'Explicitly forbidden' in c
+          assert 'A-League Women' in c
+          assert 'structurally constrained' in c
+          assert 'C070-F Confirmation1597 and protected assets remain sealed' in c
+          print('N14W contract guard: PASS')
+          PY
+
+      - name: Download exact six pinned A-League Women files
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c072n14w
+          mkdir -p /tmp/c072n14w
+          python - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          rev='9fe7fb127cd05316dbd438fe0e5be82c5c3ed536'
+          seasons=['2020-2021','2021-2022','2022-2023','2023-2024','2024-2025','2025-2026']
+          root=Path('/tmp/c072n14w')
+          for season in seasons:
+              name=f'A-League_Womens_{season}_All_Markets.csv'
+              url=f'https://raw.githubusercontent.com/betfair-datascientists/betfair-datascientists.github.io/{rev}/docs/data/assets/{name}'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-c072n14w/1.0'})
+              with urllib.request.urlopen(req,timeout=180) as r, (root/name).open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      f.write(b)
+              print(name,(root/name).stat().st_size)
+          PY
+
+      - name: Execute zero-label surface coverage audit
+        run: |
+          python football-data/research/audit_c072n14w_aleague_women_surface_zero_label.py \
+            --source-dir /tmp/c072n14w
+
+      - name: Boundary and terminal guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/c072n14w_aleague_women_surface_zero_label_summary.json').read_text())
+          assert s['classification'] == 'ZERO_LABEL_SOURCE_COVERAGE'
+          assert s['target_result_columns_materialized'] == 0
+          assert s['target_result_values_materialized'] == 0
+          assert s['model_fit'] == 0 and s['model_score'] == 0
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['C070F_confirmation1597_opened'] is False
+          assert s['terminal'] in {'C072N14W_ALEAGUE_WOMEN_SURFACE_ZERO_LABEL_PASS','C072N14W_ALEAGUE_WOMEN_SURFACE_ZERO_LABEL_STOP'}
+          print(json.dumps({
+            'terminal':s['terminal'],
+            'per_season':{k:{'events':v.get('preferred_ou_events'),'all5':v.get('all5_lines_all3_events'),'sha256':v.get('sha256')} for k,v in s['per_season'].items()},
+            'pooled_events':s['pooled_preferred_ou_events'],
+            'pooled_all5':s['pooled_all5_all3_events'],
+            'gates':s['gates'],
+          },indent=2))
+          PY
+
+      - name: Delete source files
+        if: always()
+        run: rm -rf /tmp/c072n14w
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n14w-aleague-women-surface-zero-label
+          path: football-data/research/c072n14w_aleague_women_surface_zero_label_summary.json
+          if-no-files-found: warn
+          retention-days: 30
