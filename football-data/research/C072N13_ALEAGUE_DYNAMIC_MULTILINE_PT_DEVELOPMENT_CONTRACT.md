@@ -91,7 +91,7 @@ Forbidden outcome/settlement fields in N13 model construction or diagnostics:
 - `RUNNER_STATUS`
 - any derived H/D/A or exact-score outcome.
 
-`TOTAL_GOALS` may be decoded only once per already-eligible development EVENT_ID after all market eligibility has been established from non-target fields. If multiple rows for the same eligible event expose non-identical TOTAL_GOALS values, that event is excluded as target-conflict; no repair is allowed.
+After all market eligibility has been established from non-target fields, N13 may decode `TOTAL_GOALS` **only on rows belonging to already-eligible development EVENT_IDs**. All repeated `TOTAL_GOALS` values for an eligible EVENT_ID may be read solely to verify within-event consistency; exactly one target value is then materialized per event. If the repeated eligible-event values are non-identical, invalid or missing, that event is excluded as target-conflict with no replacement or repair. `TOTAL_GOALS` for non-eligible events must never be decoded.
 
 Target:
 `T = min(TOTAL_GOALS, 7)` with classes `[0,1,2,3,4,5,6,7+]`.
