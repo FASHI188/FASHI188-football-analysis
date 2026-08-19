@@ -1,0 +1,61 @@
+name: football3-c072n6-footiqo-nonce-one-row-preflight
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n5-footiqo-protocol-reconstruction-zero-request-20260819
+    paths:
+      - 'football-data/research/C072N6_FOOTIQO_NONCE_ONE_ROW_PREFLIGHT_CONTRACT.md'
+      - 'football-data/research/audit_c072n6_footiqo_nonce_one_row_preflight.py'
+      - '.github/workflows/football3-c072n6-footiqo-nonce-one-row-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N6_FOOTIQO_NONCE_ONE_ROW_PREFLIGHT_CONTRACT.md').read_text()
+          assert 'add **only** the resolved nonce field' in c
+          assert 'Exactly one football table-data POST maximum' in c
+          assert 'nonce value must never be printed' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N6 contract guard: PASS')
+          PY
+      - name: Run frozen nonce-bearing one-row preflight
+        run: python football-data/research/audit_c072n6_footiqo_nonce_one_row_preflight.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072n6_preflight_result.json').read_text())
+          assert x['football_table_data_requests_made'] <= 1
+          assert x['nonce_persisted_or_logged'] == 0
+          assert x['football_row_values_persisted'] == 0
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0 and x['model_score'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          text=Path('football-data/research/c072n6_preflight_result.json').read_text()
+          assert 'nonce_value' not in text.lower()
+          print('N6 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n6-footiqo-nonce-one-row-preflight
+          path: football-data/research/c072n6_preflight_result.json
+          if-no-files-found: error
