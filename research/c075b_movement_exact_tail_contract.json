@@ -1,0 +1,77 @@
+{
+  "schema_version": "C075B_MOVEMENT_EXACT_TAIL_DEVELOPMENT_V1",
+  "frozen_before_tail_scoring": true,
+  "scientific_question": "Does the already-fixed C074-D O/U2.5 open-to-close movement scalar add stable information for q(k|T>=7,X) after a match has already entered the 7+ public bucket?",
+  "claim_boundary": "development-only on previously opened C074-E market domain; not independent confirmation; formal_weight=0; unified score matrix remains closed",
+  "source": {
+    "repo": "nm2890/football-data",
+    "revision": "279978313f9c16a210fa80e8986fa22f0f866fba",
+    "market_semantics": "average O/U2.5 opening and closing prices only; no immutable per-row quote timestamp; single line; research-level coarse-PIT evidence"
+  },
+  "population": {
+    "reuse": "exact C074-E valid-row parsing, league/team identity, same-date predict-before-update history and both-team >=8 prior result gate",
+    "test_seasons": ["2019-2020", "2020-2021", "2021-2022", "2022-2023", "2023-2024"],
+    "target_subset": "eligible rows with realized exact total T>=7",
+    "coverage_gate": {
+      "minimum_training_tail_rows_each_fold": 100,
+      "minimum_test_tail_rows_each_fold": 20,
+      "minimum_pooled_test_tail_rows": 150
+    }
+  },
+  "estimand": {
+    "excess": "E=T-7, E in {0,1,2,...}",
+    "target": "q(E=e | T>=7, X) on infinite nonnegative support",
+    "mapping": "exact total k=7+e"
+  },
+  "baseline": {
+    "family": "training-fold intercept-only geometric survival law",
+    "fit": "r = total continuation events / total survival exposures among training-fold T>=7 rows",
+    "pmf": "P(E=e)=(1-r)*r^e"
+  },
+  "candidate": {
+    "family": "match-conditional geometric survival law",
+    "feature": "movement_logit=logit(devig_over_close)-logit(devig_over_open)",
+    "model": "StandardScaler + LogisticRegression(C=0.1, lbfgs, class_weight=null, random_state=0)",
+    "expanded_survival_rows": "for each tail match E, create j=0..E with continue=1 if j<E else 0; same movement scalar repeated; no step index",
+    "pmf": "P(E=e|x)=(1-r(x))*r(x)^e",
+    "feature_search": false,
+    "hyperparameter_search": false,
+    "distribution_family_search": false,
+    "opening_level_added": false,
+    "league_subset_search": false,
+    "movement_transform_search": false
+  },
+  "metrics": {
+    "primary": "conditional exact-tail LogLoss",
+    "secondary": ["multiclass Brier", "normalized RPS"],
+    "diagnostics": ["Top1", "Brier for T>=8|T>=7", "Brier for T>=9|T>=7", "Brier for T>=10|T>=7", "league-cluster LogLoss"],
+    "paired_bootstrap": {"unit": "tail match", "reps": 3000, "seed": 75002, "ci": 0.90}
+  },
+  "frozen_gate": {
+    "all_required": [
+      "coverage gate passes before effect interpretation",
+      "pooled candidate-minus-baseline LogLoss < 0",
+      "paired bootstrap 90% upper bound for LogLoss delta < 0",
+      "pooled Brier delta <= 0",
+      "pooled RPS delta <= 0",
+      "at least 4 of 5 chronological folds have LogLoss delta < 0",
+      "at least half of league clusters with >=15 pooled tail test rows have LogLoss delta < 0",
+      "maximum unenumerated candidate tail residual <= 1e-8",
+      "maximum probability-sum absolute residual <= 1e-10"
+    ],
+    "decision": "STOP_COVERAGE if coverage fails; SCIENTIFIC_COMPONENT_PASS_DEVELOPMENT_ONLY only if every gate passes; otherwise FAIL_PARK"
+  },
+  "stopping_rule": "After this result, do not tune C, movement transform, opening-price level, feature subset, fold definitions, league subset or survival/distribution family on the scored C075-B tail labels. A failure parks this representation.",
+  "hard_boundaries": {
+    "C071_reserve_52180_opened": false,
+    "C070F_confirmation1597_opened": false,
+    "A05_opened": false,
+    "protected_opened": false,
+    "C074G_2025_26_used_as_tail_confirmation": false,
+    "high_tail_D_given_T_tested": false,
+    "unified_matrix_generated": false,
+    "formal_weight": 0,
+    "CURRENT_change": false,
+    "formal_model_change": false
+  }
+}
