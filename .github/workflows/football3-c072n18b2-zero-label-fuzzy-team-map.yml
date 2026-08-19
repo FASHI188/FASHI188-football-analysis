@@ -1,0 +1,67 @@
+name: football3-c072n18b2-zero-label-fuzzy-team-map
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/C072N18B2_ZERO_LABEL_UNIQUE_FUZZY_TEAM_MAP_CONTRACT.md'
+      - 'football-data/research/run_c072n18b2_zero_label_unique_fuzzy_team_map.py'
+      - '.github/workflows/football3-c072n18b2-zero-label-fuzzy-team-map.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-zero-label-join-b2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen zero-label dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 rapidfuzz==3.14.1
+
+      - name: Execute frozen N18B2 resolver and unchanged cohort gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python football-data/research/run_c072n18b2_zero_label_unique_fuzzy_team_map.py
+
+      - name: Assert N18B2 boundary and unchanged split
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/_c072n18b_zero_label_join/c072n18b_summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS_N18B2_ZERO_LABEL_TARGET_MARKET_JOIN', x
+          assert x['parent_n18b_terminal']=='STOP_COVERAGE', x
+          assert x['selected_rows']==550 and x['dev_rows']==400 and x['confirmation_rows']==150, x
+          assert x['source_target_overlap']==0 and x['feature_count']==16, x
+          assert x['identity_resolver']['best_min']==90.0, x
+          assert x['identity_resolver']['margin_min']==10.0, x
+          assert x['identity_resolver']['manual_aliases']==0, x
+          assert x['target_result_columns_requested_or_materialized']==0, x
+          assert x['target_result_values_materialized']==0, x
+          assert x['model_fit']==0 and x['target_score']==0, x
+          assert x['C070F_confirmation1597_opened'] is False, x
+          assert x['sealed_reserves_opened'] is False, x
+          assert x['C073_C077_scientific_results_used'] is False, x
+          print('C072N18B2_ZERO_LABEL_JOIN_PASS')
+          PY
+
+      - name: Upload N18B2 zero-label receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n18b2-zero-label-join-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/_c072n18b_zero_label_join/
+          if-no-files-found: warn
+          retention-days: 30
