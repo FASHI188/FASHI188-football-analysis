@@ -1,0 +1,142 @@
+name: Football C077-B Independent Confirmation One Shot
+
+on:
+  push:
+    branches: [research/c077b-high-tail-dgiven-t-independent-confirmation-20260819]
+    paths:
+      - .github/workflows/football-c077b-independent-confirmation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c077b-independent-confirmation-one-shot
+  cancel-in-progress: false
+
+jobs:
+  independent-confirmation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout frozen research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+
+      - name: Verify preflight receipt is frozen and labels were unopened there
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/c077b_confirmation_preflight_receipt.json')
+          s=json.loads(p.read_text())
+          assert s['status']=='PASS_PREFLIGHT_NO_CONFIRMATION_LABELS'
+          assert s['run']==32273067673
+          assert s['artifact']==9372945070
+          assert s['source_identity_count']==9376
+          assert s['source_identity_sha256']=='f1e70a3f783be235136060a117645d3a1b42b400dfcef7b4be19d8f11233b8b2'
+          assert s['eligible_identity_count']==6943
+          assert s['eligible_identity_sha256']=='4b607eca3a9c2f5589e811fd90b986503ceece87d3ff947f155e99c7e9623149'
+          assert s['frozen_training']['training_tail_rows']==3310
+          assert s['frozen_training']['training_goal_allocation_trials']==24663
+          assert all(v=='PASS' for v in s['unit_tests'].values())
+          b=s['label_boundary']
+          assert all(v is False for v in b.values())
+          assert s['formal_weight']==0
+          assert s['exact_tail_created'] is False
+          assert s['unified_matrix_generated'] is False
+          assert s['CURRENT_change'] is False
+          PY
+
+      - name: Download and verify frozen C077-A training source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c077b_training_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077b_training_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077b_training_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c077b_training_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c077b_training_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Clone pinned confirmation source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/openfootball/europe.git "$RUNNER_TEMP/c077b_openfootball"
+          git -C "$RUNNER_TEMP/c077b_openfootball" checkout e27eb01726f394ddf9fa68b15d37b900487b5903
+
+      - name: ONE SHOT open frozen 6943 labels and execute confirmation
+        run: |
+          mkdir -p "$RUNNER_TEMP/c077b_confirmation"
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c077b_independent_confirmation.py \
+            --mode confirm \
+            --fixtures "$RUNNER_TEMP/c077b_training_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c077b_training_source/match_stats.parquet" \
+            --confirmation-source "$RUNNER_TEMP/c077b_openfootball" \
+            --out-dir "$RUNNER_TEMP/c077b_confirmation"
+
+      - name: Enforce frozen scientific decision and governance boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c077b_confirmation'/'summary.json'
+          assert p.is_file(), 'confirmation did not emit summary.json'
+          s=json.loads(p.read_text())
+          assert s['schema_version']=='C077B_INDEPENDENT_CONFIRMATION_V1'
+          assert s['status'] in {
+              'STOP_COVERAGE_CONFIRMATION_LABELS_CONSUMED',
+              'CONFIRMATION_PASS',
+              'CONFIRMATION_FAIL_PARK'
+          }
+          assert s['confirmation_labels_consumed']==6943
+          assert s['training']['training_tail_rows']==3310
+          assert s['training']['training_goal_allocation_trials']==24663
+          assert s['formal_weight']==0
+          assert s['no_rescue_after_view'] is True
+
+          c=s['coverage']
+          if s['status']=='STOP_COVERAGE_CONFIRMATION_LABELS_CONSUMED':
+              assert s['candidate_scored_against_baseline'] is False
+              assert not all(v for k,v in c.items() if k.startswith('pass_'))
+          else:
+              assert all(v for k,v in c.items() if k.startswith('pass_'))
+              assert s['exact_tail_created'] is False
+              assert s['unified_matrix_generated'] is False
+              assert s['automatic_formal_promotion'] is False
+              assert s['CURRENT_change'] is False
+              assert s['structural_audit']['mapping_failures']==0
+              assert s['structural_audit']['max_probability_sum_abs_residual']<=1e-10
+              g=s['gates']
+              if s['status']=='CONFIRMATION_PASS':
+                  assert all(g.values())
+              else:
+                  assert not all(g.values())
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload immutable one-shot confirmation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c077b-independent-confirmation-one-shot
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c077b_confirmation/summary.json
+            ${{ runner.temp }}/c077b_confirmation/row_metrics.csv
+            football-data/research/c077b_high_tail_dgiven_t_independent_confirmation_contract.json
+            football-data/research/c077b_independent_confirmation_execution_spec.json
+            football-data/research/c077b_confirmation_preflight_receipt.json
+            football-data/research/c077b_zero_label_source_receipt.json
+            football-data/research/c077b_prelabel_target_eligibility_receipt.json
+            football-data/research/evaluate_c077b_independent_confirmation.py

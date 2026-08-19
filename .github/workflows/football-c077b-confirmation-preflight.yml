@@ -1,0 +1,133 @@
+name: Football C077-B Confirmation Preflight
+
+on:
+  push:
+    branches: [research/c077b-high-tail-dgiven-t-independent-confirmation-20260819]
+    paths:
+      - football-data/research/c077b_independent_confirmation_execution_spec.json
+      - football-data/research/evaluate_c077b_independent_confirmation.py
+      - football-data/research/test_c077b_preflight_units.py
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/c077b_prelabel_target_eligibility_contract.json
+      - football-data/research/c077b_zero_label_source_receipt.json
+      - football-data/research/c077b_prelabel_target_eligibility_receipt.json
+      - .github/workflows/football-c077b-confirmation-preflight.yml
+  pull_request:
+    paths:
+      - football-data/research/c077b_independent_confirmation_execution_spec.json
+      - football-data/research/evaluate_c077b_independent_confirmation.py
+      - football-data/research/test_c077b_preflight_units.py
+      - football-data/research/c077b_candidate_source_freeze_v1.json
+      - football-data/research/c077b_prelabel_target_eligibility_contract.json
+      - football-data/research/c077b_zero_label_source_receipt.json
+      - football-data/research/c077b_prelabel_target_eligibility_receipt.json
+      - .github/workflows/football-c077b-confirmation-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c077b-confirmation-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout frozen research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 pyarrow==21.0.0 scikit-learn==1.7.1
+
+      - name: Download and verify frozen C077-A training source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c077b_training_source"
+          REV="f0cbe86bee3f28cc4b803f735a5287968741c471"
+          BASE="https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/$REV"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077b_training_source/fixtures.parquet" "$BASE/fixtures.parquet?download=true"
+          curl -L --fail --retry 5 --retry-delay 3 -o "$RUNNER_TEMP/c077b_training_source/match_stats.parquet" "$BASE/match_stats.parquet?download=true"
+          echo "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  $RUNNER_TEMP/c077b_training_source/fixtures.parquet" | sha256sum -c -
+          echo "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  $RUNNER_TEMP/c077b_training_source/match_stats.parquet" | sha256sum -c -
+
+      - name: Clone pinned confirmation source without opening scores
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/openfootball/europe.git "$RUNNER_TEMP/c077b_openfootball"
+          git -C "$RUNNER_TEMP/c077b_openfootball" checkout e27eb01726f394ddf9fa68b15d37b900487b5903
+
+      - name: Run synthetic parser metric and transport unit checks
+        run: |
+          PYTHONPATH=football-data/research python football-data/research/test_c077b_preflight_units.py | tee "$RUNNER_TEMP/c077b_unit_tests.json"
+
+      - name: Run frozen no-confirmation-label preflight
+        run: |
+          mkdir -p "$RUNNER_TEMP/c077b_preflight"
+          PYTHONPATH=football-data/research python football-data/research/evaluate_c077b_independent_confirmation.py \
+            --mode preflight \
+            --fixtures "$RUNNER_TEMP/c077b_training_source/fixtures.parquet" \
+            --stats "$RUNNER_TEMP/c077b_training_source/match_stats.parquet" \
+            --confirmation-source "$RUNNER_TEMP/c077b_openfootball" \
+            --out-dir "$RUNNER_TEMP/c077b_preflight"
+
+      - name: Enforce frozen preflight and zero-label boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          temp=Path(os.environ['RUNNER_TEMP'])
+          s=json.loads((temp/'c077b_preflight'/'summary.json').read_text())
+          u=json.loads((temp/'c077b_unit_tests.json').read_text())
+          assert s['schema_version']=='C077B_INDEPENDENT_CONFIRMATION_PREFLIGHT_V1'
+          assert s['status']=='PASS_PREFLIGHT_NO_CONFIRMATION_LABELS'
+          assert s['source_identity_count']==9376
+          assert s['source_identity_sha256']=='f1e70a3f783be235136060a117645d3a1b42b400dfcef7b4be19d8f11233b8b2'
+          assert s['eligible_identity_count']==6943
+          assert s['eligible_identity_sha256']=='4b607eca3a9c2f5589e811fd90b986503ceece87d3ff947f155e99c7e9623149'
+          t=s['training']
+          assert t['training_tail_rows']==3310
+          assert t['training_goal_allocation_trials']==24663
+          assert t['candidate_classes']==[0,1]
+          assert t['candidate_feature_count']==13
+          assert s['score_parser_synthetic_test']['status']=='PASS'
+          assert s['confirmation_numeric_score_values_captured'] is False
+          assert s['confirmation_total_goals_computed'] is False
+          assert s['confirmation_tail_membership_computed'] is False
+          assert s['confirmation_candidate_scored'] is False
+          assert s['formal_weight']==0
+          assert u['schema_version']=='C077B_PREFLIGHT_UNIT_TESTS_V2'
+          assert u['status']=='PASS'
+          assert all(v=='PASS' for v in u['metric_tests'].values())
+          assert all(v=='PASS' for v in u['transport_tests'].values())
+          assert u['confirmation_numeric_labels_opened'] is False
+          assert u['confirmation_total_goals_computed'] is False
+          assert u['confirmation_tail_membership_computed'] is False
+          assert u['confirmation_model_scored'] is False
+          print(json.dumps({'preflight':s,'unit_tests':u},ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload preflight evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c077b-confirmation-preflight
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/c077b_preflight/summary.json
+            ${{ runner.temp }}/c077b_unit_tests.json
+            football-data/research/c077b_independent_confirmation_execution_spec.json
+            football-data/research/c077b_high_tail_dgiven_t_independent_confirmation_contract.json
+            football-data/research/c077b_zero_label_source_receipt.json
+            football-data/research/c077b_prelabel_target_eligibility_receipt.json
+            football-data/research/test_c077b_preflight_units.py
+            football-data/research/evaluate_c077b_independent_confirmation.py
