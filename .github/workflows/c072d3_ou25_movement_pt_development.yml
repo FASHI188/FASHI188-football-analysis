@@ -1,74 +1,28 @@
-name: C072-D3 O/U2.5 movement P(T) development
+name: C072-D3 O/U2.5 movement P(T) development reproduction
 
 on:
-  push:
-    branches:
-      - football3/c072d3-ou25-movement-pt-development-20260819
-    paths:
-      - 'football-data/research/c072d3_ou25_movement_pt_contract.json'
-      - 'football-data/research/evaluate_c072d3_ou25_movement_pt.py'
-      - '.github/workflows/c072d3_ou25_movement_pt_development.yml'
-      - 'football-data/research/C072D3_EXECUTION_TRIGGER.txt'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  develop:
-    if: github.actor != 'github-actions[bot]'
+  reproduce:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install frozen runtime dependencies
-        shell: bash
-        run: |
-          set +e
-          python -m pip install --disable-pip-version-check numpy==2.1.3 pandas==2.2.3 scikit-learn==1.7.1 > football-data/research/c072d3_dependency_install.log 2>&1
-          code=$?
-          cat football-data/research/c072d3_dependency_install.log
-          echo "INSTALL_EXIT=${code}" >> "$GITHUB_ENV"
-          exit 0
-      - name: Run frozen rolling-OOS development
-        shell: bash
-        run: |
-          set +e
-          if [[ "${INSTALL_EXIT}" == "0" ]]; then
-            python football-data/research/evaluate_c072d3_ou25_movement_pt.py > football-data/research/c072d3_execution.log 2>&1
-            code=$?
-          else
-            echo "Dependency install failed; evaluator not executed." > football-data/research/c072d3_execution.log
-            code=97
-          fi
-          cat football-data/research/c072d3_execution.log
-          echo "SCIENTIFIC_EXIT=${code}" >> "$GITHUB_ENV"
-          exit 0
-      - name: Commit execution evidence even on failure
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add football-data/research/c072d3_dependency_install.log football-data/research/c072d3_execution.log
-          if [[ -f football-data/research/c072d3_ou25_movement_pt_summary.json ]]; then
-            git add football-data/research/c072d3_ou25_movement_pt_summary.json
-          fi
-          if git diff --cached --quiet; then
-            echo 'No execution evidence diff to commit.'
-          else
-            git commit -m 'evidence: C072-D3 execution diagnostics [skip ci]'
-            git push origin HEAD:football3/c072d3-ou25-movement-pt-development-20260819
-          fi
-      - name: Enforce frozen scientific gate
-        shell: bash
-        run: |
-          if [[ "${SCIENTIFIC_EXIT}" != "0" ]]; then
-            echo "Frozen development gate did not pass or execution failed (exit ${SCIENTIFIC_EXIT}); diagnostics were committed."
-            exit "${SCIENTIFIC_EXIT}"
-          fi
+        run: python -m pip install --disable-pip-version-check numpy==2.1.3 pandas==2.2.3 scikit-learn==1.7.1
+      - name: Reproduce frozen rolling-OOS development
+        run: python football-data/research/evaluate_c072d3_ou25_movement_pt.py
+      - name: Upload reproduced summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c072d3-ou25-movement-pt-summary
+          path: football-data/research/c072d3_ou25_movement_pt_summary.json
+          if-no-files-found: error
