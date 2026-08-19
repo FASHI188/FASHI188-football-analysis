@@ -1,0 +1,36 @@
+name: football3-c072d2-free-ou25-source
+
+on:
+  pull_request:
+    branches:
+      - research/c072c-xg-total-scalar-20260818
+    paths:
+      - 'football-data/research/C072D2_FREE_OU25_OPENCLOSE_SOURCE_CONTRACT.md'
+      - 'football-data/research/audit_c072d2_free_ou25_source.py'
+      - '.github/workflows/football3-c072d2-free-ou25-source.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas==2.2.3 numpy==2.1.3
+      - name: Run zero-label source audit
+        run: python football-data/research/audit_c072d2_free_ou25_source.py
+      - name: Verify no target-label access in evaluator
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('football-data/research/audit_c072d2_free_ou25_source.py').read_text()
+          forbidden=['FTHG','FTAG','HTHG','HTAG','FTR']
+          assert all(x not in s for x in forbidden), [x for x in forbidden if x in s]
+          print('target-label lexical gate: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072d2-zero-label-source-audit
+          path: football-data/research/c072d2_source_audit_summary.json
