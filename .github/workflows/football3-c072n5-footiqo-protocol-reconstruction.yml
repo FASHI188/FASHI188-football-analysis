@@ -1,0 +1,70 @@
+name: football3-c072n5-footiqo-protocol-reconstruction
+
+on:
+  pull_request:
+    branches:
+      - football3/c072n4-footiqo-ajax-minimal-preflight-20260819
+    paths:
+      - 'football-data/research/C072N5_FOOTIQO_PROTOCOL_RECONSTRUCTION_ZERO_REQUEST_CONTRACT.md'
+      - 'football-data/research/C072N5_IMPLEMENTATION_CORRECTION_01.json'
+      - 'football-data/research/C072N5_IMPLEMENTATION_CORRECTION_02.json'
+      - 'football-data/research/C072N5_IMPLEMENTATION_CORRECTION_03.json'
+      - 'football-data/research/C072N5_IMPLEMENTATION_CORRECTION_04.json'
+      - 'football-data/research/audit_c072n5_footiqo_protocol_reconstruction.py'
+      - 'football-data/research/adjudicate_c072n5_table545_nonce.py'
+      - 'football-data/research/adjudicate_c072n5_nonce_syntax.py'
+      - 'football-data/research/adjudicate_c072n5_nonce_dom.py'
+      - '.github/workflows/football3-c072n5-footiqo-protocol-reconstruction.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check requests==2.32.5 beautifulsoup4==4.13.4
+      - name: Contract guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N5_FOOTIQO_PROTOCOL_RECONSTRUCTION_ZERO_REQUEST_CONTRACT.md').read_text()
+          assert 'zero football table-data requests' in c
+          assert 'Forbidden:' in c and 'admin-ajax.php' in c
+          assert 'C073-C077 remain quarantined' in c
+          print('N5 contract guard: PASS')
+          PY
+      - name: Run zero-request protocol reconstruction
+        run: python football-data/research/audit_c072n5_footiqo_protocol_reconstruction.py
+      - name: Apply table-545 nonce relation adjudication
+        run: python football-data/research/adjudicate_c072n5_table545_nonce.py
+      - name: Classify table-545 nonce syntax
+        run: python football-data/research/adjudicate_c072n5_nonce_syntax.py
+      - name: Locate exact table-545 nonce DOM carrier
+        run: python football-data/research/adjudicate_c072n5_nonce_dom.py
+      - name: Boundary guard
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/c072n5_protocol_result.json').read_text())
+          assert x['football_table_data_endpoint_requests_made'] == 0
+          assert x['football_row_values_persisted'] == 0
+          assert x['target_result_values_materialized'] == 0
+          assert x['model_fit'] == 0 and x['model_score'] == 0
+          assert x['C073_C077_quarantined'] is True
+          assert x['C070F_confirmation1597_opened'] is False
+          print('N5 boundaries: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n5-footiqo-protocol-reconstruction
+          path: football-data/research/c072n5_protocol_result.json
+          if-no-files-found: error
