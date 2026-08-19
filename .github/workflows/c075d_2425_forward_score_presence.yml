@@ -1,0 +1,93 @@
+name: Football C075-D 2024-25 Forward Score-Presence Gate
+
+on:
+  push:
+    branches:
+      - research/c075d-2425-forward-score-presence-audit-20260819
+    paths:
+      - research/c075d_2425_forward_score_presence_contract.json
+      - research/audit_c075d_2425_forward_score_presence.py
+      - .github/workflows/c075d_2425_forward_score_presence.yml
+  pull_request:
+    paths:
+      - research/c075d_2425_forward_score_presence_contract.json
+      - research/audit_c075d_2425_forward_score_presence.py
+      - .github/workflows/c075d_2425_forward_score_presence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075d-2425-forward-presence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  score-presence-only-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Clone and pin external source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/openfootball/football.json.git external-openfootball
+          git -C external-openfootball checkout ea767ac28cf9a2d737bb3e4ce65aa4b1f4ac9361
+          test "$(git -C external-openfootball rev-parse HEAD)" = "ea767ac28cf9a2d737bb3e4ce65aa4b1f4ac9361"
+
+      - name: Run identity and score-ft-presence-only source gate
+        run: |
+          mkdir -p artifacts/c075d_presence
+          python research/audit_c075d_2425_forward_score_presence.py \
+            --source-root external-openfootball \
+            --out-dir artifacts/c075d_presence
+
+      - name: Enforce zero-value label boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075d_presence/summary.json').read_text())
+          assert s['schema_version']=='C075D_2425_FORWARD_SCORE_PRESENCE_AUDIT_V1'
+          assert s['status']=='PASS_ZERO_VALUE_FORWARD_SOURCE_GATE'
+          assert s['fixed_file_count']==18
+          assert s['identity_count']>=5000
+          assert s['duplicate_identity_count']==0
+          assert s['score_ft_presence_fraction']>=0.98
+          assert s['minimum_per_file_presence_fraction']>=0.95
+          l=s['label_boundary']
+          assert l['score_numbers_captured'] is False
+          assert l['score_numbers_converted'] is False
+          assert l['score_numbers_stored'] is False
+          assert l['score_numbers_hashed'] is False
+          assert l['goal_totals_computed'] is False
+          assert l['tail_membership_computed'] is False
+          assert l['model_fit'] is False
+          p=s['protected_boundaries']
+          assert p['C075C_consumed_tail_labels_reused'] is False
+          assert p['C071_reserve_52180_opened'] is False
+          assert p['C070F_confirmation1597_opened'] is False
+          assert p['A05_opened'] is False
+          assert p['protected_opened'] is False
+          assert p['unified_matrix_generated'] is False
+          print(json.dumps(s, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload C075-D source gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075d-2425-forward-score-presence-gate
+          retention-days: 30
+          path: |
+            artifacts/c075d_presence/summary.json
+            artifacts/c075d_presence/identity_manifest.jsonl
+            research/c075d_2425_forward_score_presence_contract.json
