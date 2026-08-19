@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-SCHEMA = "C072N3_AJAX_CONFIG_RESULT_V1"
+SCHEMA = "C072N3_AJAX_CONFIG_RESULT_V1R1"
 PAGES = {
     "EPL": "https://footiqo.com/database/leagues/england-premier-league/",
     "LL": "https://footiqo.com/database/leagues/spain-laliga/",
@@ -17,10 +17,10 @@ PAGES = {
     "SA": "https://footiqo.com/database/leagues/italy-serie-a/",
     "L1": "https://footiqo.com/database/leagues/france-ligue-1/",
 }
+HEADING = "Historical Odds: 1X2, Over/Under Goals, BTTS"
 OUT = Path("football-data/research/c072n3_ajax_config_result.json")
 ASSET_HINTS = ("wpdatatable", "datatable", "wpdt", "buttons")
 
-# Token-only regexes. No arbitrary source snippets are persisted.
 AJAX_URL_RE = re.compile(r"(?:https?:)?//[^\"'\s<>]*admin-ajax\.php|/wp-admin/admin-ajax\.php", re.I)
 TABLE_DOM_RE = re.compile(r"(?:wpDataTableID-|table_)(\d+)", re.I)
 TABLE_NUM_RE = re.compile(r"(?:tableId|table_id|wpdatatable_id|wpDataTableId)[\"'\s:=]+(\d+)", re.I)
@@ -71,6 +71,31 @@ def merge_scan(dst: dict, src: dict) -> None:
         dst[k] = bool(dst.get(k, False) or src.get(k, False))
 
 
+def historical_odds_table_ids(html: str) -> list[int]:
+    marker = html.find(HEADING)
+    if marker < 0:
+        return []
+    soup = BeautifulSoup(html[marker:], "html.parser")
+    found: set[int] = set()
+    for table in soup.find_all("table"):
+        headers = [re.sub(r"\s+", " ", th.get_text(" ", strip=True)) for th in table.find_all("th")]
+        if not {"O15", "U15", "O25", "U25", "O35", "U35"}.issubset(set(headers)):
+            continue
+        token_text = " ".join([
+            table.get("id", ""),
+            " ".join(table.get("class", [])),
+            str(table.get("data-wpdatatable_id", "")),
+            str(table.get("data-wpdatatable-id", "")),
+        ])
+        found.update(int(x) for x in TABLE_DOM_RE.findall(token_text))
+        found.update(int(x) for x in TABLE_NUM_RE.findall(token_text))
+        for attr in ("data-wpdatatable_id", "data-wpdatatable-id"):
+            val = table.get(attr)
+            if val and str(val).isdigit():
+                found.add(int(val))
+    return sorted(found)
+
+
 def main() -> int:
     s = requests.Session()
     s.headers.update({
@@ -102,11 +127,12 @@ def main() -> int:
                 "status_code": r.status_code,
                 "bytes": len(r.content),
                 "asset_urls": sorted(set(assets)),
+                "historical_odds_table_ids": historical_odds_table_ids(html),
                 **scan,
             }
         except Exception as exc:
             blocked.append(code)
-            page_results[code] = {"error": repr(exc), "asset_urls": []}
+            page_results[code] = {"error": repr(exc), "asset_urls": [], "historical_odds_table_ids": []}
 
     asset_results = {}
     for asset in sorted(global_assets):
@@ -119,25 +145,23 @@ def main() -> int:
         except Exception as exc:
             asset_results[asset] = {"error": repr(exc)}
 
-    # Combine asset transport tokens into each page only as global code evidence; no football row endpoint is requested.
     global_scan = {
         "ajax_urls": [], "table_ids": [], "actions": [], "transport_keys": [],
         "wpdatatables_fingerprint": False, "datatables_fingerprint": False,
         "server_side_marker": False, "ajax_marker": False, "table_tools_marker": False,
     }
     for v in asset_results.values():
-        if "status_code" in v and v.get("status_code") == 200:
+        if v.get("status_code") == 200:
             merge_scan(global_scan, v)
-
     for v in page_results.values():
         if v.get("status_code") == 200:
-            # only transport/code fields are merged
             merge_scan(v, global_scan)
 
     all_ajax = sorted({x for v in page_results.values() for x in v.get("ajax_urls", [])})
     all_actions = sorted({x for v in page_results.values() for x in v.get("actions", [])})
     all_keys = sorted({x for v in page_results.values() for x in v.get("transport_keys", [])})
     page_table_ok = sum(1 for v in page_results.values() if v.get("table_ids"))
+    page_odds_table_ok = sum(1 for v in page_results.values() if v.get("historical_odds_table_ids"))
     page_fp_ok = sum(1 for v in page_results.values() if v.get("wpdatatables_fingerprint") or v.get("datatables_fingerprint"))
     page_server_ok = sum(1 for v in page_results.values() if v.get("server_side_marker") or v.get("ajax_marker"))
 
@@ -153,9 +177,10 @@ def main() -> int:
             "wpdatatables_fingerprint_all_five": page_fp_ok == 5,
             "public_ajax_url_identified": bool(all_ajax),
             "table_identifier_all_five": page_table_ok == 5,
+            "historical_odds_table_identifier_all_five": page_odds_table_ok == 5,
             "server_ajax_evidence_ge_four": page_server_ok >= 4,
             "plausible_data_action_or_config_key": plausible_action_or_key,
-            "football_data_endpoint_invoked": False,
+            "no_football_data_endpoint_invoked": True,
             "zero_target_materialization": True,
             "zero_model": True,
         }
