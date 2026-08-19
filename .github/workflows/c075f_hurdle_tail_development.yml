@@ -1,0 +1,95 @@
+name: Football C075-F Hurdle-Tail Development
+
+on:
+  push:
+    branches:
+      - research/c075f-hurdle-tail-development-20260819
+    paths:
+      - research/c075f_hurdle_tail_development_contract.json
+      - research/evaluate_c075f_hurdle_tail_development.py
+      - .github/workflows/c075f_hurdle_tail_development.yml
+  pull_request:
+    paths:
+      - research/c075f_hurdle_tail_development_contract.json
+      - research/evaluate_c075f_hurdle_tail_development.py
+      - .github/workflows/c075f_hurdle_tail_development.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-c075f-hurdle-tail-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  hurdle-tail-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout frozen research branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 scikit-learn==1.7.1
+
+      - name: Clone and pin already-open internal source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nm2890/football-data.git external-football-data
+          git -C external-football-data checkout 279978313f9c16a210fa80e8986fa22f0f866fba
+          test "$(git -C external-football-data rev-parse HEAD)" = "279978313f9c16a210fa80e8986fa22f0f866fba"
+
+      - name: Run frozen C075-F rolling OOS development
+        run: |
+          mkdir -p artifacts/c075f_hurdle
+          PYTHONPATH=research python research/evaluate_c075f_hurdle_tail_development.py \
+            --external-root external-football-data \
+            --out-dir artifacts/c075f_hurdle
+
+      - name: Enforce label and governance boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('artifacts/c075f_hurdle/summary.json').read_text())
+          assert s['schema_version']=='C075F_HURDLE_TAIL_DEVELOPMENT_V1'
+          b=s['boundaries']
+          assert b['C075C_consumed_tail_labels_used'] is False
+          assert b['C075E_consumed_tail_labels_used'] is False
+          assert b['C071_reserve_52180_opened'] is False
+          assert b['C070F_confirmation1597_opened'] is False
+          assert b['A05_opened'] is False
+          assert b['protected_opened'] is False
+          assert b['T_ge_7_D_given_T_tested'] is False
+          assert b['unified_matrix_generated'] is False
+          assert b['formal_weight']==0
+          if s['status']!='STOP_COVERAGE':
+              assert s['candidate']['feature_search'] is False
+              assert s['candidate']['hyperparameter_search'] is False
+              assert s['candidate']['distribution_family_search'] is False
+              assert s['pooled']['max_unenumerated_tail_residual'] <= 1e-8
+              assert s['pooled']['max_probability_sum_abs_residual'] <= 1e-10
+              if s['status']=='SCIENTIFIC_COMPONENT_PASS_DEVELOPMENT_ONLY':
+                  assert s['confirmation_ready_parameter'] is not None
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload C075-F evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c075f-hurdle-tail-development
+          retention-days: 30
+          path: |
+            artifacts/c075f_hurdle/summary.json
+            artifacts/c075f_hurdle/row_metrics.csv
+            artifacts/c075f_hurdle/confirmation_ready_parameter.json
+            research/c075f_hurdle_tail_development_contract.json
+          if-no-files-found: warn
