@@ -1,0 +1,55 @@
+name: C074-E score-history plus OU2.5 movement Direct-T
+
+on:
+  pull_request:
+    paths:
+      - 'research/C074E_CONTRACT.md'
+      - 'research/c074e_scorehistory_movement_directt.py'
+      - 'research/c074e_runner.py'
+      - '.github/workflows/c074e_scorehistory_movement_directt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen dependencies
+        run: python -m pip install --disable-pip-version-check pandas==2.2.3 numpy==2.1.3 scikit-learn==1.5.2
+
+      - name: Clone and pin free public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nm2890/football-data.git external-football-data
+          git -C external-football-data checkout 279978313f9c16a210fa80e8986fa22f0f866fba
+          test "$(git -C external-football-data rev-parse HEAD)" = "279978313f9c16a210fa80e8986fa22f0f866fba"
+          git -C external-football-data rev-parse HEAD | tee source_revision.txt
+
+      - name: Run preregistered C074-E conditional increment bridge
+        run: |
+          python research/c074e_runner.py \
+            --external-root external-football-data \
+            --out artifacts/c074e_directt
+          cp source_revision.txt artifacts/c074e_directt/source_revision.txt
+          cp research/C074E_CONTRACT.md artifacts/c074e_directt/C074E_CONTRACT.md
+          cp research/c074e_runner.py artifacts/c074e_directt/c074e_runner.py
+
+      - name: Upload C074-E artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: c074e-scorehistory-movement-directt
+          path: artifacts/c074e_directt/
+          if-no-files-found: error
+          retention-days: 30
