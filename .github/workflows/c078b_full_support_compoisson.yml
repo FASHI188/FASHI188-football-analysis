@@ -1,0 +1,100 @@
+name: C078-B Full-Support COM-Poisson Development
+
+on:
+  push:
+    branches: [research/c078b-full-support-compoisson-prereg-20260820]
+    paths:
+      - research/C078B_FULL_SUPPORT_COMPOISSON_CONTRACT.md
+      - research/c078b_full_support_compoisson.py
+      - research/test_c078b_compoisson_units.py
+      - .github/workflows/c078b_full_support_compoisson.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c078b-full-support-compoisson-development
+  cancel-in-progress: false
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install frozen scientific runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2 scipy==1.16.1 scikit-learn==1.7.1
+      - name: Clone pinned already-viewed C074-E development source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/nm2890/football-data.git "$RUNNER_TEMP/c078b_source"
+          git -C "$RUNNER_TEMP/c078b_source" checkout 279978313f9c16a210fa80e8986fa22f0f866fba
+          test "$(git -C "$RUNNER_TEMP/c078b_source" rev-parse HEAD)" = "279978313f9c16a210fa80e8986fa22f0f866fba"
+      - name: Run frozen COM-Poisson math and PIT unit tests
+        run: |
+          PYTHONPATH=research python research/test_c078b_compoisson_units.py | tee "$RUNNER_TEMP/c078b_unit_tests.json"
+      - name: Run one frozen post-C078-A development comparison
+        run: |
+          mkdir -p "$RUNNER_TEMP/c078b_result"
+          PYTHONPATH=research python research/c078b_full_support_compoisson.py \
+            --source-root "$RUNNER_TEMP/c078b_source" \
+            --out-dir "$RUNNER_TEMP/c078b_result"
+      - name: Enforce frozen terminal logic and boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          temp=Path(os.environ['RUNNER_TEMP'])
+          s=json.loads((temp/'c078b_result'/'summary.json').read_text())
+          u=json.loads((temp/'c078b_unit_tests.json').read_text())
+          assert s['schema_version']=='C078B_FULL_SUPPORT_COMPOISSON_V1'
+          assert s['status'] in {'FULL_SUPPORT_THIN_TAIL_DEVELOPMENT_PASS_POSTVIEW','FAIL_PARK'}
+          assert s['evidence_class']=='POST_C078A_DEVELOPMENT_NOT_INDEPENDENT_CONFIRMATION'
+          assert s['source_revision']=='279978313f9c16a210fa80e8986fa22f0f866fba'
+          assert s['pooled_exact']['n']==13329
+          assert s['pooled_tail']['n']==339
+          assert len(s['folds'])==5
+          assert s['feature_count']==13
+          assert abs(s['collapsed8']['categorical_scorehistory']['logloss']-1.8648259043516286)<5e-6
+          assert abs(s['collapsed8']['categorical_movement']['logloss']-1.8560610996892817)<5e-6
+          assert abs(s['collapsed8']['poisson']['logloss']-1.855654637468573)<5e-6
+          assert s['formal_weight']==0
+          assert s['C077B_labels_read'] is False
+          assert s['C076D_4567_opened'] is False
+          assert s['C071_reserve52180_opened'] is False
+          assert s['C070F1597_opened'] is False
+          assert s['A05_or_protected_opened'] is False
+          assert s['exact_tail_formally_promoted'] is False
+          assert s['unified_matrix_generated'] is False
+          assert s['CURRENT_change'] is False
+          assert s['no_rescue_after_view'] is True
+          assert s['no_more_thin_tail_family_shopping_on_this_domain_if_fail'] is True
+          if s['status']=='FULL_SUPPORT_THIN_TAIL_DEVELOPMENT_PASS_POSTVIEW':
+              assert all(s['gates'].values()), s['gates']
+          else:
+              assert not all(s['gates'].values()), s['gates']
+          assert u['schema_version']=='C078B_COMPOISSON_UNIT_TESTS_V1'
+          assert u['status']=='PASS'
+          assert u['max_gradient_abs_error']<=1e-5
+          assert all(v=='PASS' for v in u['tests'].values())
+          assert u['C077B_labels_read'] is False
+          assert u['sealed_pool_opened'] is False
+          print(json.dumps({'scientific':s,'unit_tests':u},ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c078b-full-support-compoisson-development
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c078b_result/summary.json
+            ${{ runner.temp }}/c078b_result/row_metrics.csv
+            ${{ runner.temp }}/c078b_unit_tests.json
+            research/C078B_FULL_SUPPORT_COMPOISSON_CONTRACT.md
+            research/c078b_full_support_compoisson.py
+            research/test_c078b_compoisson_units.py
