@@ -3,38 +3,87 @@ name: Football Governance Topology Integrity
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
 permissions:
   contents: read
+  pull-requests: read
+  checks: read
 
 concurrency:
-  group: football-governance-topology-${{ github.ref }}
+  group: football-governance-topology-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   governance-topology-integrity:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 35
+    env:
+      PR_BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout exact commit
+      - name: Checkout exact head
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Validate single control plane and engineering boundaries
+      - name: Fetch branch refs for read-only topology inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --filter=blob:none origin '+refs/heads/*:refs/remotes/origin/*'
+      - name: Validate single control plane and nested mirror negatives
         shell: bash
         run: |
           set -euo pipefail
           python governance/validate_project_continuity.py --self-test
           python governance/validate_project_continuity.py --root .
+      - name: Validate repository authority base policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/validate_pr_authority_scope.py --self-test
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            python governance/validate_pr_authority_scope.py --base-ref "$PR_BASE_REF" --base-sha "$PR_BASE_SHA"
+          fi
+          if python governance/validate_pr_authority_scope.py --base-ref research/simulated-non-main --changed-file governance/simulated.py; then
+            echo 'non-main-base governance bypass was incorrectly accepted' >&2
+            exit 2
+          fi
+      - name: Compile governance and stable boundary validators
+        shell: bash
+        run: |
+          set -euo pipefail
           python -m py_compile \
             governance/validate_project_continuity.py \
+            governance/validate_pr_authority_scope.py \
+            governance/repository_governance_audit.py \
             football-data/validation/validate_engineering_research_profile_v6494.py \
             football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py \
             football-data/runtime/activation/activate_selective_direction_runtime_v501.py \
             football-data/engine/validate_platform.py
           python football-data/validation/validate_engineering_research_profile_v6494.py --print-summary
-          sha256sum AGENTS.md EXECUTION_LITE.md governance/validate_project_continuity.py football-data/docs/ASSET_LIFECYCLE.md
+      - name: Generate complete read-only governance ledgers
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$PR_BASE_SHA"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse origin/main)"; fi
+          python governance/repository_governance_audit.py --root . --repo "$GITHUB_REPOSITORY" --base-sha "$base" --out _governance_audit
+      - name: Confirm repository unchanged by audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+      - name: Upload machine-readable governance audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-governance-audit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: _governance_audit/
+          if-no-files-found: error
+          retention-days: 30
