@@ -1,0 +1,63 @@
+name: C079-P1000 Public Multiline Pilot
+
+on:
+  push:
+    branches: [research/c079p1000-public-multiline-pilot-20260820]
+    paths:
+      - research/C079P1000_PUBLIC_MULTILINE_PILOT_CONTRACT.md
+      - research/audit_c079p1000_public_multiline.py
+      - .github/workflows/c079p1000_public_multiline_pilot.yml
+  pull_request:
+    branches: [research/c079a2-footiqo-endpoint-audit-20260820]
+    paths:
+      - research/C079P1000_PUBLIC_MULTILINE_PILOT_CONTRACT.md
+      - research/audit_c079p1000_public_multiline.py
+      - .github/workflows/c079p1000_public_multiline_pilot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install numpy==2.2.6 pandas==2.3.2 requests==2.32.5 beautifulsoup4==4.13.5 lxml==6.0.1
+      - name: Run public zero-label 1000 pilot
+        run: |
+          mkdir -p "$RUNNER_TEMP/c079p1000_out"
+          python research/audit_c079p1000_public_multiline.py --out-dir "$RUNNER_TEMP/c079p1000_out" --workers 8
+      - name: Enforce zero-label boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c079p1000_out'/'summary.json').read_text())
+          assert s['schema_version']=='C079P1000_PUBLIC_MULTILINE_V1'
+          assert s['status'] in {'PASS_PILOT1000_SOURCE','STOP_PILOT1000_SOURCE'}
+          b=s['label_boundary']
+          assert b['result_score_fields_materialized']==0
+          assert b['FTHG_FTAG_FTR_access'] is False
+          assert b['goal_totals_computed'] is False
+          assert b['tail_membership_computed'] is False
+          assert b['model_fit'] is False
+          assert s['formal_gate_3000_unchanged'] is True
+          if s['status']=='PASS_PILOT1000_SOURCE':
+              assert s['pilot1000_count']==1000
+              assert all(s['gate'].values()),s['gate']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c079p1000-public-multiline-pilot
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c079p1000_out/summary.json
+            ${{ runner.temp }}/c079p1000_out/public_multiline_inventory.csv
+            ${{ runner.temp }}/c079p1000_out/pilot1000_market_only.csv
+            research/C079P1000_PUBLIC_MULTILINE_PILOT_CONTRACT.md
+            research/audit_c079p1000_public_multiline.py
