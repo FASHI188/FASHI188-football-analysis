@@ -1,0 +1,88 @@
+name: Football3 C072-N20 P1000 Evaluation
+
+on:
+  push:
+    branches: [football3/c072n20-latent-market-measurement-p1000-20260820]
+    paths:
+      - football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md
+      - football-data/research/run_c072n20_p1000_evaluation.py
+      - .github/workflows/football3-c072n20-p1000-evaluation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.12'}
+      - name: Install frozen dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 numpy==2.3.2 pandas==2.3.1 scipy==1.16.1 scikit-learn==1.7.1
+      - name: Guard frozen identity and scientific contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          c=Path('football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md').read_text()
+          r=Path('football-data/research/run_c072n20_p1000_evaluation.py').read_text()
+          sha='a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf'
+          assert sha in c and sha in r
+          assert '5,000 match resamples, seed `72020`' in c
+          assert "EXPECTED_NEW_N=1000" in r
+          assert "C072N20_P1000_PILOT_SIGNAL" in r and "C072N20_P1000_PILOT_NO_SIGNAL" in r
+          assert 'N17 reserve266' in c and 'C070-F1597' in c and 'N18 confirmation150' in c
+          print('N20 frozen identity/evaluation contract PASS')
+          PY
+      - name: Download immutable N16R1, N17-consumed-training and N20-zero-label artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/n16" "$RUNNER_TEMP/n17" "$RUNNER_TEMP/n20" "$RUNNER_TEMP/out"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9368768296/zip" > "$RUNNER_TEMP/n16.zip"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9370213104/zip" > "$RUNNER_TEMP/n17.zip"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9391374469/zip" > "$RUNNER_TEMP/n20.zip"
+          unzip -q "$RUNNER_TEMP/n16.zip" -d "$RUNNER_TEMP/n16"
+          unzip -q "$RUNNER_TEMP/n17.zip" -d "$RUNNER_TEMP/n17"
+          unzip -q "$RUNNER_TEMP/n20.zip" -d "$RUNNER_TEMP/n20"
+      - name: Run frozen one-shot N20 evaluation
+        run: |
+          python football-data/research/run_c072n20_p1000_evaluation.py \
+            --n16-dir "$RUNNER_TEMP/n16" \
+            --n17-dir "$RUNNER_TEMP/n17" \
+            --n20-dir "$RUNNER_TEMP/n20" \
+            --out-dir "$RUNNER_TEMP/out"
+      - name: Adjudicate frozen N20 terminal
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json'
+          if not p.exists():
+              raise SystemExit('N20 summary missing: engineering failure before adjudication')
+          s=json.loads(p.read_text())
+          assert s['classification']=='POST_VIEW_DEVELOPMENT_REPLICATION_PILOT'
+          assert s['expected_new_identity_sha256']=='a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf'
+          assert s['N17_reserve266_opened'] is False and s['N18_confirmation150_opened'] is False and s['C070F1597_opened'] is False
+          assert s['C073_C077_scientific_results_used'] is False
+          assert s['terminal'] in {'C072N20_P1000_STOP_COVERAGE','C072N20_P1000_PILOT_SIGNAL','C072N20_P1000_PILOT_NO_SIGNAL'}
+          if s['terminal']!='C072N20_P1000_STOP_COVERAGE':
+              assert s['target_join_rows']==1000 and s['target_labels_opened']==1000 and s['target_values_materialized']==2000
+              assert all(s['gates'].values()) == (s['terminal']=='C072N20_P1000_PILOT_SIGNAL')
+          print(json.dumps(s,ensure_ascii=False,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-c072n20-p1000-evaluation
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            ${{ runner.temp }}/out/consumed_n20_p1000_receipt.csv
+            football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md
