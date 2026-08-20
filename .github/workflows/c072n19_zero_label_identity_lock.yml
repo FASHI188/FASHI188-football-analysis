@@ -1,0 +1,40 @@
+name: football3 C072-N19 zero-label replication1000 lock
+on:
+  pull_request:
+    branches:
+      - football3/c072n18c-market-anchor-xgstate-development-20260820
+    paths:
+      - 'football-data/research/C072N19_CLOSING_ANCHOR_MOVEMENT_REPLICATION1000_CONTRACT.md'
+      - 'football-data/research/run_c072n19_zero_label_identity_lock.py'
+      - '.github/workflows/c072n19_zero_label_identity_lock.yml'
+permissions:
+  contents: read
+jobs:
+  zero-label-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Lock exactly 1000 identities without result columns
+        run: python football-data/research/run_c072n19_zero_label_identity_lock.py
+      - name: Assert no target values
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/_c072n19_zero_label/c072n19_zero_label_summary.json').read_text())
+          assert x['selected_n']==1000, x
+          assert x['result_columns_requested_or_materialized']==0, x
+          assert x['target_values_materialized']==0, x
+          assert x['model_fit']==0, x
+          print('C072N19_ZERO_LABEL_LOCK_PASS', x['identity_sha256'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n19-zero-label-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: football-data/research/_c072n19_zero_label/
+          retention-days: 30
