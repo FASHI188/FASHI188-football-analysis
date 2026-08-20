@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import re
 import subprocess
 from pathlib import Path
 
@@ -63,8 +62,8 @@ def main() -> int:
         if not p.exists():
             continue
         txt=p.read_text(encoding='utf-8')
-        # Existing historical scripts are not retroactively mutated just because a governance PR touches another file.
-        # But any changed/new scientific runner must migrate to the V1 execution standard.
+        # Existing historical scripts are not retroactively mutated just because an infrastructure PR touches another file.
+        # But any changed/new scientific runner must migrate to the V2 execution standard and V2 experiment contract.
         if 'football3_core' not in txt:
             blockers.append(f'{f}: changed scientific runner does not use football3_core')
             continue
@@ -76,7 +75,6 @@ def main() -> int:
         if not cpath.exists():
             blockers.append(f'{f}: declared contract does not exist: {cp}')
             continue
-        # Run exact contract/runner validator, not a second hand-written interpretation.
         r=subprocess.run([
             'python','football-data/research/validate_football3_experiment.py',
             '--contract',str(cpath),'--runner',str(p)
