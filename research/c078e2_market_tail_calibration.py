@@ -70,7 +70,7 @@ def main():
  scores,late_numeric,reports=load_scores(a.current_dir,set(early.identity_key),set(late.identity_key)); coverage=len(scores)/EARLY_N
  early=early[early.identity_key.isin(scores)].copy()
  early['T']=early.identity_key.map(lambda k:sum(scores[k])).astype(int)
- tail=early[early.T>=7].copy(); tail_n=len(tail)
+ tail=early[early['T']>=7].copy(); tail_n=len(tail)
  base={'early_valid_score_count':len(scores),'early_score_coverage':coverage,'early_tail_count':tail_n,'late_numeric_score_access_count':late_numeric}
  if coverage<0.995 or tail_n<35:
   s={'schema_version':'C078E2_MARKET_TAIL_CALIBRATION_V1','status':'STOP_CALIBRATION_COVERAGE',**base,'score_reports':reports,'formal_weight':0}
@@ -78,7 +78,7 @@ def main():
  lamb=[]
  for _,r in tail.iterrows():
   o=float(r['AvgC>2.5']); u=float(r['AvgC<2.5']); lamb.append(solve_lambda(devig(o,u)))
- lam=np.asarray(lamb); y=tail.T.to_numpy(int)
+ lam=np.asarray(lamb); y=tail['T'].to_numpy(int)
  obj=lambda g:float(np.mean(metrics(y,lam,float(g))['ll']))
  res=minimize_scalar(obj,bounds=(0.0,2.0),method='bounded',options={'xatol':1e-10,'maxiter':2000}); gamma=float(res.x)
  bm=metrics(y,lam,0.0); cm=metrics(y,lam,gamma)
