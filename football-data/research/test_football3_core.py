@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,6 +15,7 @@ from football3_core import (
     assert_feature_pit,
     assert_master_prediction_cutoff,
     assert_same_prediction_cutoff,
+    assert_scoring_identities_match_contract,
     assert_sealed_boundaries,
     assert_temporal_oos,
     classwise_ece,
@@ -34,6 +37,10 @@ from football3_core import (
     validate_probability_matrix,
     validate_target,
 )
+
+
+def _ids(n:int)->list[str]:
+    return [hashlib.sha256(f'id-{i}'.encode()).hexdigest() for i in range(n)]
 
 
 def test_ou_mapping_devig_shape_and_duplicate_line_guards():
@@ -94,10 +101,15 @@ def test_power_planning_parameter_guards():
     with pytest.raises(Football3ContractError): required_paired_n_from_observed_delta(d,conservative_multiplier=0.5)
 
 
-def test_identity_disjoint_and_exact_join():
+def test_identity_disjoint_exact_join_and_scoring_lock():
     assert_disjoint_identity_sets({'a':{'x','y'},'b':{'z'}})
     with pytest.raises(Football3ContractError): assert_disjoint_identity_sets({'a':{'x'},'b':{'x'}})
-    assert ordered_identity_sha256(['a','b'])==ordered_identity_sha256(['a','b'])
+    ids=_ids(2); digest=ordered_identity_sha256(ids)
+    assert digest==ordered_identity_sha256(ids)
+    with pytest.raises(Football3ContractError): ordered_identity_sha256(['not-a-sha'])
+    c={'data_plan':{'identity_count':2,'ordered_identity_sha256':digest}}
+    assert assert_scoring_identities_match_contract(ids,c,2)==digest
+    with pytest.raises(Football3ContractError): assert_scoring_identities_match_contract(list(reversed(ids)),c,2)
     left=pd.DataFrame({'id':['1','2'],'x':[3,4]}); right=pd.DataFrame({'id':['1','2'],'T':[1,2]})
     assert len(assert_exact_one_to_one_join(left,right,keys=['id'],expected_rows=2))==2
     with pytest.raises(Football3ContractError): assert_exact_one_to_one_join(left,right.iloc[:1],keys=['id'],expected_rows=2)
@@ -124,8 +136,10 @@ def test_temporal_pit_timezone_and_master_cutoff_fail_closed():
     with pytest.raises(Football3ContractError): assert_master_prediction_cutoff('T-60m')
 
 
-def _canonical_contract():
+def _canonical_contract(ids:list[str], minimum_n:int=120):
     return {
+      'data_plan':{'identity_count':len(ids),'ordered_identity_sha256':ordered_identity_sha256(ids)},
+      'sample_plan':{'development_minimum_n':minimum_n,'confirmation':False},
       'metrics':{'calibration':{'bins':5}},
       'bootstrap':{'resamples':500,'seed':123,'ci':0.90},
       'oos_design':{'minimum_test_rows_per_fold':20},
@@ -138,19 +152,25 @@ def _canonical_contract():
     }
 
 
-def test_canonical_evaluator_applies_frozen_gates():
-    n=120; y=np.arange(n)%4
+def test_canonical_evaluator_applies_frozen_gates_identity_and_sample_plan():
+    n=120; ids=_ids(n); y=np.arange(n)%4
     b=np.full((n,8),0.01); c=np.full((n,8),0.01)
     for i,yi in enumerate(y):
         b[i,yi]=0.84; c[i,yi]=0.88
         wb=(yi+1)%8; b[i,wb]+=1.0-b[i].sum(); c[i,wb]+=1.0-c[i].sum()
-    folds=np.repeat(['f1','f2','f3'],40); domains=np.tile(np.repeat(['L1','L2','L3'],40),1)
-    out=evaluate_frozen_experiment(b,c,y,fold_ids=folds,domain_ids=domains,contract=_canonical_contract())
+    folds=np.repeat(['f1','f2','f3'],40); domains=np.repeat(['L1','L2','L3'],40)
+    contract=_canonical_contract(ids)
+    out=evaluate_frozen_experiment(b,c,y,identity_sha256=ids,fold_ids=folds,domain_ids=domains,contract=contract)
     assert out['terminal']=='PASS' and out['all_gates_pass'] is True
+    assert out['scored_identity_sha256']==contract['data_plan']['ordered_identity_sha256']
+    assert out['frozen_minimum_n']==120
     assert set(out['bootstrap'])=={'LogLoss','Brier','RPS'}
-    bad=_canonical_contract(); bad['success_gates']['primary']['delta_max']=-1.0
-    out2=evaluate_frozen_experiment(b,c,y,fold_ids=folds,domain_ids=domains,contract=bad)
+    bad=_canonical_contract(ids); bad['success_gates']['primary']['delta_max']=-1.0
+    out2=evaluate_frozen_experiment(b,c,y,identity_sha256=ids,fold_ids=folds,domain_ids=domains,contract=bad)
     assert out2['terminal']=='PARK' and out2['gate_checks']['primary_delta'] is False
+    with pytest.raises(Football3ContractError): evaluate_frozen_experiment(b,c,y,identity_sha256=list(reversed(ids)),fold_ids=folds,domain_ids=domains,contract=contract)
+    too_large=_canonical_contract(ids,minimum_n=121)
+    with pytest.raises(Football3ContractError): evaluate_frozen_experiment(b,c,y,identity_sha256=ids,fold_ids=folds,domain_ids=domains,contract=too_large)
 
 
 def test_sealed_pool_guard():
