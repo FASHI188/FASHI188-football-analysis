@@ -31,10 +31,11 @@ jobs:
           python -m py_compile \
             football-data/research/football3_core.py \
             football-data/research/validate_football3_experiment.py \
+            football-data/research/validate_football3_research_policy_v3.py \
             football-data/research/audit_football3_execution_surface.py \
             football-data/research/audit_football3_changed_scientific_files.py \
             football-data/research/run_football3_synthetic_prelabel_smoke.py
-      - name: Unit-test canonical metrics, PIT, identity, bootstrap and contract guards
+      - name: Unit-test metrics calibration PIT identity bootstrap and V2 contract guards
         env:
           PYTHONPATH: football-data/research
         run: |
@@ -69,24 +70,38 @@ jobs:
           assert s['real_target_labels_opened']==0 and s['models_fit_or_scored']==0 and s['sealed_pools_opened']==0
           print('execution-surface audit: PASS')
           PY
-      - name: Validate machine-readable policy, registry and sealed boundaries
+      - name: Validate V3 policy V2 contract template audit receipt and single authority
         run: |
+          python football-data/research/validate_football3_research_policy_v3.py
           python - <<'PY'
           import json
           from pathlib import Path
           p=json.loads(Path('football-data/research/FOOTBALL3_RESEARCH_POLICY_V3.json').read_text())
           r=json.loads(Path('football-data/research/FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json').read_text())
-          t=json.loads(Path('football-data/research/FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json').read_text())
+          t=json.loads(Path('football-data/research/FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json').read_text())
+          a=json.loads(Path('football-data/research/FOOTBALL3_GLOBAL_CONSUMPTION_AUDIT_TEMPLATE_V1.json').read_text())
           assert p['project_id']=='football3'
           assert p['scientific_root']['sha']=='e3e73c998020beef585cc459a69ea5b73b44ddb3'
+          assert p['prediction_contract']['master_prediction_cutoff']=='T-15m'
           assert p['execution_core']['mandatory_proper_scores']==['LogLoss','Brier','RPS']
-          assert p['prediction_contract']['baseline_candidate_same_cutoff_required'] is True
-          assert p['prelabel_protocol']['synthetic_smoke_real_target_count']==0
+          assert p['execution_core']['mandatory_calibration_metrics']==['Top1ECE','ClasswiseECE']
           assert p['validation']['optional_stopping'] is False
           assert r['rules']['viewed_target_labels_are_globally_consumed'] is True
           assert all(x['authorized_access'] is False for x in r['sealed'])
-          assert t['scientific_question']['direct_draw_optimization'] is False
-          print('policy/registry/seals: PASS')
+          assert t['schema_version']==2
+          assert t['prediction_cutoff']['master']=='T-15m'
+          assert t['baseline']['market_anchor'] is True
+          assert t['metrics']['calibration']['required'] is True
+          assert 'success_gates' in t
+          assert a['real_target_values_read']==0
+          for stale in [
+            'football-data/research/FOOTBALL3_RESEARCH_POLICY_V2.json',
+            'football-data/research/validate_football3_research_policy_v2.py',
+            'football-data/research/FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json',
+            'football-data/research/FOOTBALL3_EXECUTION_STANDARD_V1.md',
+          ]:
+            assert not Path(stale).exists(), stale
+          print('policy/contract/audit/single-authority: PASS')
           PY
       - name: Enforce migration on any changed scientific runner
         if: github.event_name == 'pull_request'
