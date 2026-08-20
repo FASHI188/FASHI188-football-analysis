@@ -27,6 +27,11 @@ def _as_float_array(x) -> np.ndarray:
     return a
 
 
+def _require_same_shape(a: np.ndarray, b: np.ndarray, what: str) -> None:
+    if a.shape != b.shape:
+        raise Football3ContractError(f"{what} shape mismatch: {a.shape} vs {b.shape}")
+
+
 def clip_prob(x, eps: float = DEFAULT_EPS) -> np.ndarray:
     a = _as_float_array(x)
     if not (0 < eps < 0.5):
@@ -52,6 +57,7 @@ def inv_logit(x) -> np.ndarray:
 def devig_two_way(over_odds, under_odds) -> np.ndarray:
     o = _as_float_array(over_odds)
     u = _as_float_array(under_odds)
+    _require_same_shape(o, u, "Over/Under odds")
     if np.any(o <= 1.0) or np.any(u <= 1.0):
         raise Football3ContractError("decimal odds must be > 1.0")
     io, iu = 1.0 / o, 1.0 / u
@@ -68,7 +74,10 @@ def ou_tail_k(line: float) -> int:
 def validate_nested_ou_tails(lines: Sequence[float], probs: Sequence[float], tol: float = 1e-10) -> None:
     if len(lines) != len(probs) or not lines:
         raise Football3ContractError("line/probability length mismatch")
-    pairs = sorted((float(l), float(p)) for l, p in zip(lines, probs))
+    numeric_lines = [float(x) for x in lines]
+    if len(set(numeric_lines)) != len(numeric_lines):
+        raise Football3ContractError("duplicate O/U line")
+    pairs = sorted((l, float(p)) for l, p in zip(numeric_lines, probs))
     expected = [ou_tail_k(l) for l, _ in pairs]
     if expected != sorted(expected):
         raise Football3ContractError("O/U tail mapping is not increasing")
@@ -81,10 +90,12 @@ def validate_nested_ou_tails(lines: Sequence[float], probs: Sequence[float], tol
 
 
 def collapse_total_goals(total_goals: Iterable[int]) -> np.ndarray:
-    y = np.asarray(list(total_goals), dtype=int)
-    if y.ndim != 1 or np.any(y < 0):
+    raw = _as_float_array(list(total_goals))
+    if raw.ndim != 1:
+        raise Football3ContractError("total-goal targets must be one-dimensional")
+    if np.any(raw < 0) or not np.all(raw == np.floor(raw)):
         raise Football3ContractError("total-goal targets must be nonnegative integers")
-    return np.minimum(y, 7)
+    return np.minimum(raw.astype(int), 7)
 
 
 def validate_target(y, n_classes: int = 8) -> np.ndarray:
@@ -107,6 +118,8 @@ def validate_probability_matrix(p, n_classes: int = 8, atol: float = 1e-10) -> n
     a = _as_float_array(p)
     if a.ndim != 2 or a.shape[1] != n_classes:
         raise Football3ContractError(f"probability matrix must have shape (n,{n_classes})")
+    if a.shape[0] == 0:
+        raise Football3ContractError("probability matrix must contain at least one row")
     if np.any(a < -atol) or np.any(a > 1.0 + atol):
         raise Football3ContractError("probability outside [0,1]")
     sums = a.sum(axis=1)
@@ -117,12 +130,32 @@ def validate_probability_matrix(p, n_classes: int = 8, atol: float = 1e-10) -> n
     return a
 
 
-def per_match_logloss(p, y, eps: float = DEFAULT_EPS) -> np.ndarray:
+def _validate_scoring_inputs(p, y) -> tuple[np.ndarray, np.ndarray]:
     probs = validate_probability_matrix(p)
     target = validate_target(y, probs.shape[1])
     if len(target) != len(probs):
         raise Football3ContractError("target/probability row mismatch")
+    return probs, target
+
+
+def per_match_logloss(p, y, eps: float = DEFAULT_EPS) -> np.ndarray:
+    probs, target = _validate_scoring_inputs(p, y)
     return -np.log(np.clip(probs[np.arange(len(target)), target], eps, 1.0))
+
+
+def per_match_brier(p, y) -> np.ndarray:
+    probs, target = _validate_scoring_inputs(p, y)
+    onehot = np.eye(probs.shape[1], dtype=float)[target]
+    return np.sum((probs - onehot) ** 2, axis=1)
+
+
+def per_match_rps(p, y) -> np.ndarray:
+    probs, target = _validate_scoring_inputs(p, y)
+    k = probs.shape[1]
+    cdf_p = np.cumsum(probs[:, :-1], axis=1)
+    onehot = np.eye(k, dtype=float)[target]
+    cdf_y = np.cumsum(onehot[:, :-1], axis=1)
+    return np.sum((cdf_p - cdf_y) ** 2, axis=1) / (k - 1)
 
 
 def multiclass_logloss(p, y) -> float:
@@ -130,28 +163,15 @@ def multiclass_logloss(p, y) -> float:
 
 
 def multiclass_brier(p, y) -> float:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
-    if len(target) != len(probs):
-        raise Football3ContractError("target/probability row mismatch")
-    onehot = np.eye(probs.shape[1], dtype=float)[target]
-    return float(np.mean(np.sum((probs - onehot) ** 2, axis=1)))
+    return float(per_match_brier(p, y).mean())
 
 
 def normalized_rps(p, y) -> float:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
-    if len(target) != len(probs):
-        raise Football3ContractError("target/probability row mismatch")
-    k = probs.shape[1]
-    cdf_p = np.cumsum(probs[:, :-1], axis=1)
-    onehot = np.eye(k, dtype=float)[target]
-    cdf_y = np.cumsum(onehot[:, :-1], axis=1)
-    return float(np.mean(np.sum((cdf_p - cdf_y) ** 2, axis=1) / (k - 1)))
+    return float(per_match_rps(p, y).mean())
 
 
 def _binary_ece(prob: np.ndarray, outcome: np.ndarray, n_bins: int) -> float:
-    if not isinstance(n_bins, int) or n_bins < 2:
+    if isinstance(n_bins, bool) or not isinstance(n_bins, int) or n_bins < 2:
         raise Football3ContractError("calibration n_bins must be an integer >=2")
     p = _as_float_array(prob)
     y = _as_float_array(outcome)
@@ -173,8 +193,7 @@ def _binary_ece(prob: np.ndarray, outcome: np.ndarray, n_bins: int) -> float:
 
 
 def top1_ece(p, y, n_bins: int = 10) -> float:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
+    probs, target = _validate_scoring_inputs(p, y)
     pred = np.argmax(probs, axis=1)
     conf = probs[np.arange(len(probs)), pred]
     correct = (pred == target).astype(float)
@@ -182,26 +201,21 @@ def top1_ece(p, y, n_bins: int = 10) -> float:
 
 
 def classwise_ece(p, y, n_bins: int = 10) -> float:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
-    vals = []
-    for k in range(probs.shape[1]):
-        vals.append(_binary_ece(probs[:, k], (target == k).astype(float), n_bins))
+    probs, target = _validate_scoring_inputs(p, y)
+    vals = [_binary_ece(probs[:, k], (target == k).astype(float), n_bins) for k in range(probs.shape[1])]
     return float(np.mean(vals))
 
 
 def topk_accuracy(p, y, k: int) -> float:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
-    if not (1 <= k <= probs.shape[1]):
+    probs, target = _validate_scoring_inputs(p, y)
+    if isinstance(k, bool) or not isinstance(k, int) or not (1 <= k <= probs.shape[1]):
         raise Football3ContractError("invalid top-k")
     idx = np.argpartition(-probs, kth=k - 1, axis=1)[:, :k]
     return float(np.mean(np.any(idx == target[:, None], axis=1)))
 
 
 def score_bundle(p, y, *, calibration_bins: int = 10) -> dict[str, float]:
-    probs = validate_probability_matrix(p)
-    target = validate_target(y, probs.shape[1])
+    probs, target = _validate_scoring_inputs(p, y)
     return {
         "LogLoss": multiclass_logloss(probs, target),
         "Brier": multiclass_brier(probs, target),
@@ -214,39 +228,92 @@ def score_bundle(p, y, *, calibration_bins: int = 10) -> dict[str, float]:
     }
 
 
-def paired_bootstrap_delta_logloss(baseline_p, candidate_p, y, *, n_resamples: int, seed: int, ci: float = 0.90) -> dict[str, float]:
-    if n_resamples < 100:
-        raise Football3ContractError("bootstrap resamples too small")
-    if not (0.5 < ci < 1.0):
+def _validate_bootstrap_args(n_resamples: int, seed: int, ci: float) -> None:
+    if isinstance(n_resamples, bool) or not isinstance(n_resamples, int) or n_resamples < 100:
+        raise Football3ContractError("bootstrap resamples must be integer >=100")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise Football3ContractError("bootstrap seed must be integer")
+    if not isinstance(ci, (int, float)) or isinstance(ci, bool) or not math.isfinite(float(ci)) or not (0.5 < float(ci) < 1.0):
         raise Football3ContractError("invalid bootstrap CI")
-    b = per_match_logloss(baseline_p, y)
-    c = per_match_logloss(candidate_p, y)
-    if b.shape != c.shape:
-        raise Football3ContractError("paired bootstrap requires exact row pairing")
-    d = c - b
+
+
+def paired_bootstrap_proper_score_deltas(
+    baseline_p,
+    candidate_p,
+    y,
+    *,
+    n_resamples: int,
+    seed: int,
+    ci: float = 0.90,
+) -> dict[str, dict[str, float]]:
+    _validate_bootstrap_args(n_resamples, seed, ci)
+    b_probs, target = _validate_scoring_inputs(baseline_p, y)
+    c_probs, c_target = _validate_scoring_inputs(candidate_p, y)
+    _require_same_shape(b_probs, c_probs, "baseline/candidate probability matrix")
+    if not np.array_equal(target, c_target):
+        raise Football3ContractError("baseline/candidate target mismatch")
+    vectors = {
+        "LogLoss": (per_match_logloss(b_probs, target), per_match_logloss(c_probs, target)),
+        "Brier": (per_match_brier(b_probs, target), per_match_brier(c_probs, target)),
+        "RPS": (per_match_rps(b_probs, target), per_match_rps(c_probs, target)),
+    }
+    n = len(target)
+    if n <= 0:
+        raise Football3ContractError("paired bootstrap requires at least one match")
     rng = np.random.default_rng(seed)
-    n = len(d)
-    means = np.empty(n_resamples, dtype=float)
+    means = {name: np.empty(n_resamples, dtype=float) for name in vectors}
     for i in range(n_resamples):
         ix = rng.integers(0, n, size=n)
-        means[i] = float(np.mean(d[ix]))
-    alpha = (1.0 - ci) / 2.0
-    lo, hi = np.quantile(means, [alpha, 1.0 - alpha])
-    return {"delta": float(np.mean(d)), "ci_low": float(lo), "ci_high": float(hi), "p_delta_lt_0": float(np.mean(means < 0.0)), "n": int(n), "n_resamples": int(n_resamples), "seed": int(seed), "paired": True}
+        for name, (b, c) in vectors.items():
+            means[name][i] = float(np.mean((c - b)[ix]))
+    alpha = (1.0 - float(ci)) / 2.0
+    out: dict[str, dict[str, float]] = {}
+    for name, (b, c) in vectors.items():
+        d = c - b
+        lo, hi = np.quantile(means[name], [alpha, 1.0 - alpha])
+        out[name] = {
+            "delta": float(np.mean(d)),
+            "ci_low": float(lo),
+            "ci_high": float(hi),
+            "p_delta_lt_0": float(np.mean(means[name] < 0.0)),
+            "n": int(n),
+            "n_resamples": int(n_resamples),
+            "seed": int(seed),
+            "paired": True,
+        }
+    return out
 
 
-def required_paired_n_from_observed_delta(per_match_delta: Sequence[float], *, alpha: float = 0.10, power: float = 0.80, conservative_multiplier: float = 1.25) -> int:
+def paired_bootstrap_delta_logloss(baseline_p, candidate_p, y, *, n_resamples: int, seed: int, ci: float = 0.90) -> dict[str, float]:
+    return paired_bootstrap_proper_score_deltas(
+        baseline_p, candidate_p, y, n_resamples=n_resamples, seed=seed, ci=ci
+    )["LogLoss"]
+
+
+def required_paired_n_from_observed_delta(
+    per_match_delta: Sequence[float],
+    *,
+    alpha: float = 0.10,
+    power: float = 0.80,
+    conservative_multiplier: float = 1.25,
+) -> int:
     d = _as_float_array(per_match_delta)
     if d.ndim != 1 or len(d) < 30:
         raise Football3ContractError("power planning requires >=30 development paired deltas")
+    if not math.isfinite(float(alpha)) or not (0 < float(alpha) < 1):
+        raise Football3ContractError("power-planning alpha must be in (0,1)")
+    if not math.isfinite(float(power)) or not (0.5 < float(power) < 1):
+        raise Football3ContractError("power must be in (0.5,1)")
+    if not math.isfinite(float(conservative_multiplier)) or float(conservative_multiplier) < 1.0:
+        raise Football3ContractError("conservative multiplier must be finite and >=1")
     effect = abs(float(np.mean(d)))
     sd = float(np.std(d, ddof=1))
     if effect <= 0 or sd <= 0:
         raise Football3ContractError("nonpositive effect/variance for planning")
-    z_alpha = NormalDist().inv_cdf(1.0 - alpha / 2.0)
-    z_power = NormalDist().inv_cdf(power)
+    z_alpha = NormalDist().inv_cdf(1.0 - float(alpha) / 2.0)
+    z_power = NormalDist().inv_cdf(float(power))
     n = ((z_alpha + z_power) * sd / effect) ** 2
-    return int(math.ceil(n * conservative_multiplier))
+    return int(math.ceil(n * float(conservative_multiplier)))
 
 
 def canonical_identity_string(row: Mapping[str, object]) -> str:
@@ -279,6 +346,8 @@ def assert_disjoint_identity_sets(named_sets: Mapping[str, Iterable[str]]) -> No
 
 
 def assert_exact_one_to_one_join(left: pd.DataFrame, right: pd.DataFrame, *, keys: Sequence[str], expected_rows: int | None = None) -> pd.DataFrame:
+    if not keys:
+        raise Football3ContractError("exact join requires at least one key")
     for side, frame in (("left", left), ("right", right)):
         missing = [k for k in keys if k not in frame.columns]
         if missing:
@@ -287,25 +356,46 @@ def assert_exact_one_to_one_join(left: pd.DataFrame, right: pd.DataFrame, *, key
             raise Football3ContractError(f"{side} has duplicate join keys")
     out = left.merge(right, on=list(keys), how="inner", validate="one_to_one")
     wanted = len(left) if expected_rows is None else expected_rows
+    if not isinstance(wanted, int) or wanted < 0:
+        raise Football3ContractError("expected_rows must be nonnegative integer")
     if len(out) != wanted or len(left) != wanted:
         raise Football3ContractError(f"exact join coverage failed: left={len(left)} joined={len(out)} expected={wanted}")
     return out
 
 
-def parse_utc_or_naive_timestamp(x) -> pd.Timestamp:
-    t = pd.Timestamp(x)
+def parse_aware_utc_timestamp(x) -> pd.Timestamp:
+    try:
+        t = pd.Timestamp(x)
+    except Exception as e:
+        raise Football3ContractError(f"invalid timestamp: {x!r}") from e
     if pd.isna(t):
         raise Football3ContractError("invalid timestamp")
-    return t
+    if t.tzinfo is None:
+        raise Football3ContractError(f"timezone-naive timestamp forbidden: {x!r}")
+    return t.tz_convert("UTC")
+
+
+def parse_utc_or_naive_timestamp(x) -> pd.Timestamp:
+    """Compatibility name; new football3 science now rejects timezone-naive values."""
+    return parse_aware_utc_timestamp(x)
+
+
+def _strict_utc_series(values, name: str) -> pd.Series:
+    raw = list(values)
+    if not raw:
+        raise Football3ContractError(f"empty timestamp vector: {name}")
+    parsed = []
+    for i, value in enumerate(raw):
+        try:
+            parsed.append(parse_aware_utc_timestamp(value))
+        except Football3ContractError as e:
+            raise Football3ContractError(f"{name} row {i}: {e}") from e
+    return pd.Series(parsed, dtype="datetime64[ns, UTC]")
 
 
 def assert_temporal_oos(train_dates, test_dates) -> None:
-    tr = pd.to_datetime(pd.Series(train_dates), errors="raise", utc=True)
-    te = pd.to_datetime(pd.Series(test_dates), errors="raise", utc=True)
-    if tr.empty or te.empty:
-        raise Football3ContractError("empty train/test dates")
-    if tr.isna().any() or te.isna().any():
-        raise Football3ContractError("missing train/test timestamp")
+    tr = _strict_utc_series(train_dates, "train timestamp")
+    te = _strict_utc_series(test_dates, "test timestamp")
     if tr.max() >= te.min():
         raise Football3ContractError(f"temporal OOS violated: train_max={tr.max()} test_min={te.min()}")
 
@@ -313,15 +403,13 @@ def assert_temporal_oos(train_dates, test_dates) -> None:
 def assert_feature_pit(frame: pd.DataFrame, *, cutoff_col: str, feature_timestamp_cols: Sequence[str]) -> None:
     if cutoff_col not in frame.columns:
         raise Football3ContractError(f"missing cutoff column {cutoff_col}")
-    cutoff = pd.to_datetime(frame[cutoff_col], errors="coerce", utc=True)
-    if cutoff.isna().any():
-        raise Football3ContractError(f"missing/invalid cutoff timestamp: {int(cutoff.isna().sum())} rows")
+    if not feature_timestamp_cols:
+        raise Football3ContractError("PIT validation requires at least one feature timestamp column")
+    cutoff = _strict_utc_series(frame[cutoff_col].tolist(), cutoff_col)
     for col in feature_timestamp_cols:
         if col not in frame.columns:
             raise Football3ContractError(f"missing feature timestamp column {col}")
-        ts = pd.to_datetime(frame[col], errors="coerce", utc=True)
-        if ts.isna().any():
-            raise Football3ContractError(f"missing/invalid feature timestamp in {col}: {int(ts.isna().sum())} rows")
+        ts = _strict_utc_series(frame[col].tolist(), col)
         bad = ts > cutoff
         if bad.any():
             raise Football3ContractError(f"PIT violation in {col}: {int(bad.sum())} rows")
@@ -354,3 +442,115 @@ def assert_sealed_boundaries(access_counts: Mapping[str, int], sealed: Sequence[
         count = int(access_counts.get(p.name, 0))
         if count != 0:
             raise Football3ContractError(f"sealed pool accessed: {p.name} count={count}")
+
+
+def _clean_group_ids(values, name: str, n: int) -> np.ndarray:
+    a = np.asarray(values, dtype=object)
+    if a.ndim != 1 or len(a) != n:
+        raise Football3ContractError(f"{name} must be one-dimensional and match scoring rows")
+    cleaned = np.asarray([str(x).strip() if x is not None else "" for x in a], dtype=object)
+    if np.any(cleaned == ""):
+        raise Football3ContractError(f"{name} contains blank/missing group id")
+    return cleaned
+
+
+def _group_logloss_deltas(baseline_p: np.ndarray, candidate_p: np.ndarray, y: np.ndarray, groups: np.ndarray) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    for g in pd.unique(groups):
+        ix = groups == g
+        b = multiclass_logloss(baseline_p[ix], y[ix])
+        c = multiclass_logloss(candidate_p[ix], y[ix])
+        out[str(g)] = {"n": int(np.sum(ix)), "baseline_LogLoss": b, "candidate_LogLoss": c, "delta_LogLoss": c - b}
+    return out
+
+
+def evaluate_frozen_experiment(
+    baseline_p,
+    candidate_p,
+    y,
+    *,
+    fold_ids,
+    domain_ids,
+    contract: Mapping[str, object],
+) -> dict[str, object]:
+    """Canonical V2 football3 scoring/gating path for new scientific runners."""
+    b, target = _validate_scoring_inputs(baseline_p, y)
+    c, c_target = _validate_scoring_inputs(candidate_p, y)
+    _require_same_shape(b, c, "baseline/candidate probability matrix")
+    if not np.array_equal(target, c_target):
+        raise Football3ContractError("baseline/candidate target mismatch")
+    n = len(target)
+    folds = _clean_group_ids(fold_ids, "fold_ids", n)
+    domains = _clean_group_ids(domain_ids, "domain_ids", n)
+
+    try:
+        metrics_cfg = contract["metrics"]
+        calibration_bins = int(metrics_cfg["calibration"]["bins"])
+        boot_cfg = contract["bootstrap"]
+        gates = contract["success_gates"]
+        oos = contract["oos_design"]
+    except Exception as e:
+        raise Football3ContractError(f"incomplete canonical evaluation contract: {e}") from e
+
+    baseline = score_bundle(b, target, calibration_bins=calibration_bins)
+    candidate = score_bundle(c, target, calibration_bins=calibration_bins)
+    bootstrap = paired_bootstrap_proper_score_deltas(
+        b,
+        c,
+        target,
+        n_resamples=boot_cfg["resamples"],
+        seed=boot_cfg["seed"],
+        ci=boot_cfg["ci"],
+    )
+    deltas = {k: float(candidate[k] - baseline[k]) for k in ("LogLoss", "Brier", "RPS", "Top1ECE", "ClasswiseECE")}
+
+    fold_stats = _group_logloss_deltas(b, c, target, folds)
+    min_fold_n = oos["minimum_test_rows_per_fold"]
+    if isinstance(min_fold_n, bool) or not isinstance(min_fold_n, int) or min_fold_n <= 0:
+        raise Football3ContractError("minimum_test_rows_per_fold must be positive integer")
+    if any(v["n"] < min_fold_n for v in fold_stats.values()):
+        raise Football3ContractError("one or more temporal folds are below frozen minimum_test_rows_per_fold")
+    fold_win_fraction = float(np.mean([v["delta_LogLoss"] < 0 for v in fold_stats.values()]))
+
+    domain_stats = _group_logloss_deltas(b, c, target, domains)
+    domain_gate = gates["domain_consistency"]
+    min_domain_n = domain_gate["minimum_rows_per_domain"]
+    if isinstance(min_domain_n, bool) or not isinstance(min_domain_n, int) or min_domain_n <= 0:
+        raise Football3ContractError("minimum_rows_per_domain must be positive integer")
+    eligible_domains = {k: v for k, v in domain_stats.items() if v["n"] >= min_domain_n}
+    if len(eligible_domains) < int(domain_gate["minimum_domains"]):
+        raise Football3ContractError("insufficient domains meeting frozen minimum_rows_per_domain")
+    domain_win_fraction = float(np.mean([v["delta_LogLoss"] < 0 for v in eligible_domains.values()]))
+    max_domain_regression = float(max(v["delta_LogLoss"] for v in eligible_domains.values()))
+
+    primary = gates["primary"]
+    secondary = gates["secondary_noninferiority"]
+    temporal = gates["temporal_consistency"]
+    checks = {
+        "primary_delta": deltas["LogLoss"] <= float(primary["delta_max"]),
+        "primary_bootstrap_ci_high": bootstrap["LogLoss"]["ci_high"] <= float(primary["bootstrap_ci_high_max"]),
+        "Brier_noninferiority": deltas["Brier"] <= float(secondary["Brier_delta_max"]),
+        "RPS_noninferiority": deltas["RPS"] <= float(secondary["RPS_delta_max"]),
+        "Top1ECE_noninferiority": deltas["Top1ECE"] <= float(secondary["Top1ECE_delta_max"]),
+        "ClasswiseECE_noninferiority": deltas["ClasswiseECE"] <= float(secondary["ClasswiseECE_delta_max"]),
+        "temporal_consistency": fold_win_fraction >= float(temporal["minimum_fold_win_fraction"]),
+        "domain_win_fraction": domain_win_fraction >= float(domain_gate["minimum_win_fraction"]),
+        "domain_max_regression": max_domain_regression <= float(domain_gate["max_domain_logloss_regression"]),
+    }
+    terminal = "PASS" if all(checks.values()) else "PARK"
+    return {
+        "terminal": terminal,
+        "n": int(n),
+        "baseline": baseline,
+        "candidate": candidate,
+        "delta": deltas,
+        "bootstrap": bootstrap,
+        "folds": fold_stats,
+        "fold_win_fraction": fold_win_fraction,
+        "domains": domain_stats,
+        "eligible_domain_count": len(eligible_domains),
+        "domain_win_fraction": domain_win_fraction,
+        "max_domain_logloss_regression": max_domain_regression,
+        "gate_checks": checks,
+        "all_gates_pass": bool(all(checks.values())),
+    }
