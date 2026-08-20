@@ -43,6 +43,26 @@ jobs:
           set -euo pipefail
           python governance/validate_project_continuity.py --self-test
           python governance/validate_project_continuity.py --root .
+      - name: Assert required checks emit on every main PR
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          targets = {
+              '.github/workflows/football-repository-integrity-v471.yml': 'repository-integrity',
+              '.github/workflows/football-platform-integrity.yml': 'platform-integrity',
+              '.github/workflows/football-formal-core-v460.yml': 'validate-core',
+          }
+          for rel, context in targets.items():
+              text = Path(rel).read_text(encoding='utf-8')
+              pull = text.split('pull_request:', 1)[1].split('\n  push:', 1)[0]
+              if 'branches: [main]' not in pull:
+                  raise SystemExit(f'{rel}: main PR trigger missing')
+              if 'paths:' in pull or 'paths-ignore:' in pull:
+                  raise SystemExit(f'{rel}: required context {context} can be skipped by PR path filter')
+              print(f'PASS required-context-always-emitted {context}')
+          PY
       - name: Validate repository authority base policy
         shell: bash
         run: |
