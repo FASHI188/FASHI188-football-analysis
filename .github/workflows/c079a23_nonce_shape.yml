@@ -1,0 +1,40 @@
+name: C079-A2.3 Odds AJAX Request Shape Probe
+on:
+  push:
+    branches: [research/c079a2-footiqo-endpoint-audit-20260820]
+    paths:
+      - research/probe_c079a23_nonce_request_shape.py
+      - .github/workflows/c079a23_nonce_shape.yml
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install requests==2.32.5 beautifulsoup4==4.13.5 lxml==6.0.1
+      - run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python research/probe_c079a23_nonce_request_shape.py --out-dir "$RUNNER_TEMP/out"
+      - name: Enforce odds-only one-row boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['schema_version']=='C079A23_NONCE_SHAPE_V1'
+          b=s['hard_boundary']; assert b['requested_rows_per_odds_table']==1 and b['only_confirmed_odds_tables_requested'] is True
+          for k in ['odds_row_values_persisted','score_result_table_requested','score_values_parsed','result_targets_computed','authentication_attempted','premium_bypass_attempted','model_fit']:
+              assert b[k] is False,(k,b[k])
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c079a23-nonce-shape
+          retention-days: 90
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            research/probe_c079a23_nonce_request_shape.py
