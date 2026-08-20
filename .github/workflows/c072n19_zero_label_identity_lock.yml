@@ -1,17 +1,11 @@
-name: football3 C072-N19 zero-label replication1000 lock
+name: football3 C072-N19R1 zero-label replication1000 lock
 on:
-  push:
-    branches:
-      - football3/c072n19-closing-anchor-movement-replication1000-20260820
-    paths:
-      - 'football-data/research/C072N19_CLOSING_ANCHOR_MOVEMENT_REPLICATION1000_CONTRACT.md'
-      - 'football-data/research/run_c072n19_zero_label_identity_lock.py'
-      - '.github/workflows/c072n19_zero_label_identity_lock.yml'
   pull_request:
     branches:
-      - football3/c072n18c-market-anchor-xgstate-development-20260820
+      - football3/c072n19-runner-base-20260820
     paths:
       - 'football-data/research/C072N19_CLOSING_ANCHOR_MOVEMENT_REPLICATION1000_CONTRACT.md'
+      - 'football-data/research/C072N19R1_CLOSING_ANCHOR_MOVEMENT_REPLICATION1000_CONTRACT.md'
       - 'football-data/research/run_c072n19_zero_label_identity_lock.py'
       - '.github/workflows/c072n19_zero_label_identity_lock.yml'
 permissions:
@@ -26,22 +20,25 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Install zero-label dependency
+        run: pip install --disable-pip-version-check pandas==2.3.2
       - name: Lock exactly 1000 identities without result columns
         run: python football-data/research/run_c072n19_zero_label_identity_lock.py
-      - name: Assert no target values
+      - name: Assert zero-label boundary
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          x=json.loads(Path('football-data/research/_c072n19_zero_label/c072n19_zero_label_summary.json').read_text())
+          x=json.loads(Path('football-data/research/_c072n19_zero_label/c072n19r1_zero_label_summary.json').read_text())
           assert x['selected_n']==1000, x
-          assert x['result_columns_requested_or_materialized']==0, x
+          assert x['forbidden_result_columns_materialized']==0, x
           assert x['target_values_materialized']==0, x
           assert x['model_fit']==0, x
-          print('C072N19_ZERO_LABEL_LOCK_PASS', x['identity_sha256'])
+          assert x['mirror_revision']=='383d5277fdaed48fd2d909e073e047350e71cb7f', x
+          print('C072N19R1_ZERO_LABEL_LOCK_PASS', x['identity_sha256'])
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: football3-c072n19-zero-label-${{ github.sha }}-${{ github.run_id }}
+          name: football3-c072n19r1-zero-label-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
           path: football-data/research/_c072n19_zero_label/
           retention-days: 30
