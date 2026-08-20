@@ -3,23 +3,16 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass
-from datetime import datetime
 from statistics import NormalDist
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
-# Canonical football3 target representation. Class 7 means 7+.
 PT_CLASSES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7)
 PT_CLASS_NAMES: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6", "7+")
-OU_HALF_GOAL_TO_TAIL_K: Mapping[float, int] = {
-    0.5: 1,
-    1.5: 2,
-    2.5: 3,
-    3.5: 4,
-    4.5: 5,
-}
+OU_HALF_GOAL_TO_TAIL_K: Mapping[float, int] = {0.5: 1, 1.5: 2, 2.5: 3, 3.5: 4, 4.5: 5}
+MASTER_PREDICTION_CUTOFF = "T-15m"
 DEFAULT_EPS = 1e-12
 
 
@@ -57,7 +50,6 @@ def inv_logit(x) -> np.ndarray:
 
 
 def devig_two_way(over_odds, under_odds) -> np.ndarray:
-    """Return fair Over probability from two decimal odds. Both odds must be >1."""
     o = _as_float_array(over_odds)
     u = _as_float_array(under_odds)
     if np.any(o <= 1.0) or np.any(u <= 1.0):
@@ -100,7 +92,6 @@ def validate_target(y, n_classes: int = 8) -> np.ndarray:
     if arr.ndim != 1:
         raise Football3ContractError("target must be one-dimensional")
     if arr.dtype.kind not in "iu":
-        # Explicit conversion only after ensuring exact integer values.
         f = _as_float_array(arr)
         if not np.all(np.equal(f, np.floor(f))):
             raise Football3ContractError("target contains non-integer values")
@@ -121,7 +112,6 @@ def validate_probability_matrix(p, n_classes: int = 8, atol: float = 1e-10) -> n
     sums = a.sum(axis=1)
     if not np.allclose(sums, 1.0, atol=atol, rtol=0):
         raise Football3ContractError(f"probability rows do not sum to one; max residual={np.max(np.abs(sums-1))}")
-    # Normalize tiny floating residuals only after the fail-closed check.
     a = np.clip(a, 0.0, 1.0)
     a /= a.sum(axis=1, keepdims=True)
     return a
@@ -149,7 +139,6 @@ def multiclass_brier(p, y) -> float:
 
 
 def normalized_rps(p, y) -> float:
-    """Ranked Probability Score normalized by K-1 for canonical comparability."""
     probs = validate_probability_matrix(p)
     target = validate_target(y, probs.shape[1])
     if len(target) != len(probs):
@@ -161,6 +150,46 @@ def normalized_rps(p, y) -> float:
     return float(np.mean(np.sum((cdf_p - cdf_y) ** 2, axis=1) / (k - 1)))
 
 
+def _binary_ece(prob: np.ndarray, outcome: np.ndarray, n_bins: int) -> float:
+    if not isinstance(n_bins, int) or n_bins < 2:
+        raise Football3ContractError("calibration n_bins must be an integer >=2")
+    p = _as_float_array(prob)
+    y = _as_float_array(outcome)
+    if p.ndim != 1 or y.ndim != 1 or len(p) != len(y) or len(p) == 0:
+        raise Football3ContractError("invalid calibration vectors")
+    if np.any((p < 0) | (p > 1)) or np.any((y < 0) | (y > 1)):
+        raise Football3ContractError("calibration vectors outside [0,1]")
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bins = np.minimum(np.searchsorted(edges, p, side="right") - 1, n_bins - 1)
+    bins = np.maximum(bins, 0)
+    total = len(p)
+    ece = 0.0
+    for b in range(n_bins):
+        ix = bins == b
+        if not np.any(ix):
+            continue
+        ece += float(np.sum(ix) / total) * abs(float(np.mean(p[ix])) - float(np.mean(y[ix])))
+    return float(ece)
+
+
+def top1_ece(p, y, n_bins: int = 10) -> float:
+    probs = validate_probability_matrix(p)
+    target = validate_target(y, probs.shape[1])
+    pred = np.argmax(probs, axis=1)
+    conf = probs[np.arange(len(probs)), pred]
+    correct = (pred == target).astype(float)
+    return _binary_ece(conf, correct, n_bins)
+
+
+def classwise_ece(p, y, n_bins: int = 10) -> float:
+    probs = validate_probability_matrix(p)
+    target = validate_target(y, probs.shape[1])
+    vals = []
+    for k in range(probs.shape[1]):
+        vals.append(_binary_ece(probs[:, k], (target == k).astype(float), n_bins))
+    return float(np.mean(vals))
+
+
 def topk_accuracy(p, y, k: int) -> float:
     probs = validate_probability_matrix(p)
     target = validate_target(y, probs.shape[1])
@@ -170,28 +199,22 @@ def topk_accuracy(p, y, k: int) -> float:
     return float(np.mean(np.any(idx == target[:, None], axis=1)))
 
 
-def score_bundle(p, y) -> dict[str, float]:
+def score_bundle(p, y, *, calibration_bins: int = 10) -> dict[str, float]:
     probs = validate_probability_matrix(p)
     target = validate_target(y, probs.shape[1])
     return {
         "LogLoss": multiclass_logloss(probs, target),
         "Brier": multiclass_brier(probs, target),
         "RPS": normalized_rps(probs, target),
+        "Top1ECE": top1_ece(probs, target, calibration_bins),
+        "ClasswiseECE": classwise_ece(probs, target, calibration_bins),
         "Top1": topk_accuracy(probs, target, 1),
         "Top3": topk_accuracy(probs, target, min(3, probs.shape[1])),
         "probability_residual_max": float(np.max(np.abs(probs.sum(axis=1) - 1.0))),
     }
 
 
-def paired_bootstrap_delta_logloss(
-    baseline_p,
-    candidate_p,
-    y,
-    *,
-    n_resamples: int,
-    seed: int,
-    ci: float = 0.90,
-) -> dict[str, float]:
+def paired_bootstrap_delta_logloss(baseline_p, candidate_p, y, *, n_resamples: int, seed: int, ci: float = 0.90) -> dict[str, float]:
     if n_resamples < 100:
         raise Football3ContractError("bootstrap resamples too small")
     if not (0.5 < ci < 1.0):
@@ -209,26 +232,10 @@ def paired_bootstrap_delta_logloss(
         means[i] = float(np.mean(d[ix]))
     alpha = (1.0 - ci) / 2.0
     lo, hi = np.quantile(means, [alpha, 1.0 - alpha])
-    return {
-        "delta": float(np.mean(d)),
-        "ci_low": float(lo),
-        "ci_high": float(hi),
-        "p_delta_lt_0": float(np.mean(means < 0.0)),
-        "n": int(n),
-        "n_resamples": int(n_resamples),
-        "seed": int(seed),
-        "paired": True,
-    }
+    return {"delta": float(np.mean(d)), "ci_low": float(lo), "ci_high": float(hi), "p_delta_lt_0": float(np.mean(means < 0.0)), "n": int(n), "n_resamples": int(n_resamples), "seed": int(seed), "paired": True}
 
 
-def required_paired_n_from_observed_delta(
-    per_match_delta: Sequence[float],
-    *,
-    alpha: float = 0.10,
-    power: float = 0.80,
-    conservative_multiplier: float = 1.25,
-) -> int:
-    """Planning helper only; must be called on development deltas, never confirmation labels."""
+def required_paired_n_from_observed_delta(per_match_delta: Sequence[float], *, alpha: float = 0.10, power: float = 0.80, conservative_multiplier: float = 1.25) -> int:
     d = _as_float_array(per_match_delta)
     if d.ndim != 1 or len(d) < 30:
         raise Football3ContractError("power planning requires >=30 development paired deltas")
@@ -265,19 +272,13 @@ def assert_disjoint_identity_sets(named_sets: Mapping[str, Iterable[str]]) -> No
     materialized = {k: set(v) for k, v in named_sets.items()}
     names = list(materialized)
     for i, a in enumerate(names):
-        for b in names[i + 1 :]:
+        for b in names[i + 1:]:
             overlap = materialized[a] & materialized[b]
             if overlap:
                 raise Football3ContractError(f"identity overlap {a} vs {b}: {len(overlap)}")
 
 
-def assert_exact_one_to_one_join(
-    left: pd.DataFrame,
-    right: pd.DataFrame,
-    *,
-    keys: Sequence[str],
-    expected_rows: int | None = None,
-) -> pd.DataFrame:
+def assert_exact_one_to_one_join(left: pd.DataFrame, right: pd.DataFrame, *, keys: Sequence[str], expected_rows: int | None = None) -> pd.DataFrame:
     for side, frame in (("left", left), ("right", right)):
         missing = [k for k in keys if k not in frame.columns]
         if missing:
@@ -303,35 +304,43 @@ def assert_temporal_oos(train_dates, test_dates) -> None:
     te = pd.to_datetime(pd.Series(test_dates), errors="raise", utc=True)
     if tr.empty or te.empty:
         raise Football3ContractError("empty train/test dates")
+    if tr.isna().any() or te.isna().any():
+        raise Football3ContractError("missing train/test timestamp")
     if tr.max() >= te.min():
         raise Football3ContractError(f"temporal OOS violated: train_max={tr.max()} test_min={te.min()}")
 
 
-def assert_feature_pit(
-    frame: pd.DataFrame,
-    *,
-    cutoff_col: str,
-    feature_timestamp_cols: Sequence[str],
-) -> None:
+def assert_feature_pit(frame: pd.DataFrame, *, cutoff_col: str, feature_timestamp_cols: Sequence[str]) -> None:
     if cutoff_col not in frame.columns:
         raise Football3ContractError(f"missing cutoff column {cutoff_col}")
-    cutoff = pd.to_datetime(frame[cutoff_col], errors="raise", utc=True)
+    cutoff = pd.to_datetime(frame[cutoff_col], errors="coerce", utc=True)
+    if cutoff.isna().any():
+        raise Football3ContractError(f"missing/invalid cutoff timestamp: {int(cutoff.isna().sum())} rows")
     for col in feature_timestamp_cols:
         if col not in frame.columns:
             raise Football3ContractError(f"missing feature timestamp column {col}")
         ts = pd.to_datetime(frame[col], errors="coerce", utc=True)
-        bad = ts.notna() & (ts > cutoff)
+        if ts.isna().any():
+            raise Football3ContractError(f"missing/invalid feature timestamp in {col}: {int(ts.isna().sum())} rows")
+        bad = ts > cutoff
         if bad.any():
             raise Football3ContractError(f"PIT violation in {col}: {int(bad.sum())} rows")
 
 
+def _norm_cutoff(s: str) -> str:
+    return "".join(str(s).lower().split())
+
+
 def assert_same_prediction_cutoff(baseline_cutoff: str, candidate_cutoff: str) -> None:
-    def norm(s: str) -> str:
-        return "".join(str(s).lower().split())
-    if norm(baseline_cutoff) != norm(candidate_cutoff):
-        raise Football3ContractError(
-            f"baseline/candidate prediction cutoffs differ: {baseline_cutoff!r} vs {candidate_cutoff!r}"
-        )
+    if _norm_cutoff(baseline_cutoff) != _norm_cutoff(candidate_cutoff):
+        raise Football3ContractError(f"baseline/candidate prediction cutoffs differ: {baseline_cutoff!r} vs {candidate_cutoff!r}")
+
+
+def assert_master_prediction_cutoff(*cutoffs: str, master: str = MASTER_PREDICTION_CUTOFF) -> None:
+    expected = _norm_cutoff(master)
+    bad = [c for c in cutoffs if _norm_cutoff(c) != expected]
+    if bad:
+        raise Football3ContractError(f"football3 master prediction cutoff is {master}; got {bad}")
 
 
 @dataclass(frozen=True)
