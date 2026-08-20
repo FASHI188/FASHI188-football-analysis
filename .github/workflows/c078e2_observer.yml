@@ -1,0 +1,43 @@
+name: C078-E2 Calibration Observer
+
+on:
+  pull_request:
+    paths: [.github/workflows/c078e2_observer.yml]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: 92ae492566856ba0fb6e414d9d6ae2fd5848b8cb
+      TARGET_WORKFLOW_NAME: C078-E2 Fresh Market Tail Calibration
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Wait for unique frozen calibration run
+        run: |
+          set -euo pipefail; mkdir -p relay; found=0
+          for i in $(seq 1 120); do
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs?head_sha=$TARGET_SHA&event=push&per_page=100" -o relay/runs.json
+            count=$(jq --arg n "$TARGET_WORKFLOW_NAME" '[.workflow_runs[]|select(.name==$n)]|length' relay/runs.json)
+            if [ "$count" -gt 1 ]; then exit 2; fi
+            if [ "$count" -eq 1 ]; then jq --arg n "$TARGET_WORKFLOW_NAME" '.workflow_runs[]|select(.name==$n)' relay/runs.json > relay/run_meta.json; found=1; status=$(jq -r '.status' relay/run_meta.json); echo "target $(jq -r '.id' relay/run_meta.json) $status"; [ "$status" = completed ] && break; fi
+            sleep 10
+          done
+          test "$found" -eq 1; test "$(jq -r '.status' relay/run_meta.json)" = completed
+      - name: Relay artifact or logs
+        run: |
+          set -euo pipefail; run_id=$(jq -r '.id' relay/run_meta.json); conclusion=$(jq -r '.conclusion' relay/run_meta.json)
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs/$run_id/artifacts?per_page=100" -o relay/artifacts.json
+          if [ "$conclusion" = success ]; then
+            id=$(jq -r '.artifacts[]|select(.name=="c078e2-fresh-tail-calibration")|.id' relay/artifacts.json); test "$id" != null
+            curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip" -o relay/result.zip
+          else
+            curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPO/actions/runs/$run_id/logs" -o relay/failed_run_logs.zip || true
+          fi
+      - uses: actions/upload-artifact@v4
+        with: {name: c078e2-calibration-observer-relay, path: relay/, retention-days: 30}
