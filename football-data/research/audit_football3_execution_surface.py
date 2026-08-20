@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path('football-data/research')
+N20_WORKFLOW = Path('.github/workflows/football3-c072n20-p1000-evaluation.yml')
 REQUIRED = [
     ROOT / 'football3_core.py',
     ROOT / 'validate_football3_experiment.py',
@@ -13,6 +14,8 @@ REQUIRED = [
     ROOT / 'FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json',
     ROOT / 'run_football3_synthetic_prelabel_smoke.py',
     ROOT / 'FOOTBALL3_HISTORICAL_PASS_ENGINEERING_AUDIT_20260820.md',
+    ROOT / 'run_c072n20_p1000_evaluation_replay.py',
+    N20_WORKFLOW,
 ]
 
 KNOWN_HISTORICAL = {
@@ -20,7 +23,8 @@ KNOWN_HISTORICAL = {
     'I2_RAW': ROOT / 'evaluate_c072i2_dgiven_t_forward_confirm.py',
     'I2_WRAPPER': ROOT / 'run_c072i2_dgiven_t_forward_confirm.py',
     'K2': ROOT / 'evaluate_c072k2_joint_low_score_confirm.py',
-    'N20': ROOT / 'run_c072n20_p1000_evaluation.py',
+    'N20_RAW': ROOT / 'run_c072n20_p1000_evaluation.py',
+    'N20_REPLAY': ROOT / 'run_c072n20_p1000_evaluation_replay.py',
 }
 
 FORBIDDEN_SPLIT_NAMES = {
@@ -87,7 +91,7 @@ def main() -> int:
     else:
         warnings.append('F2 evaluator not present on current branch path')
 
-    # I2 raw contains the known pandas .T bug, but the historical workflow ran a committed wrapper fixing exactly it.
+    # I2 raw contains the known pandas .T bug, but its one-shot workflow executed a committed wrapper that fixed it first.
     raw=KNOWN_HISTORICAL['I2_RAW']; wrapper=KNOWN_HISTORICAL['I2_WRAPPER']
     if raw.exists() and wrapper.exists():
         raw_lines=attr_T_lines(raw)
@@ -113,19 +117,28 @@ def main() -> int:
     else:
         warnings.append('K2 evaluator not present on current branch path')
 
-    # N20 must preserve the engineering fix and may not reintroduce DataFrame.T.
-    n20=KNOWN_HISTORICAL['N20']
-    if n20.exists():
-        nt=text(n20)
-        if attr_T_lines(n20): blockers.append('N20 reintroduced .T')
-        if "test['T'].to_numpy(int)" not in nt and 'test["T"].to_numpy(int)' not in nt:
-            blockers.append('N20 corrected target-column access missing')
-        if forbidden_split_calls(n20): blockers.append('random/non-temporal split primitive in N20')
-        findings.append({'experiment':'C072-N20','status':'ENGINEERING_FIX_HELD'})
+    # N20 raw file is preserved as the immutable failed-precursor source for reproducibility.
+    # It must NOT be executed directly. The committed replay wrapper must make exactly the documented one-line substitution,
+    # and the workflow must execute only the replay wrapper. This fixes the executable path without falsifying history.
+    n20=KNOWN_HISTORICAL['N20_RAW']; replay=KNOWN_HISTORICAL['N20_REPLAY']
+    if n20.exists() and replay.exists():
+        raw_lines=attr_T_lines(n20)
+        nt=text(n20); rt=text(replay); wf=text(N20_WORKFLOW)
+        if 'y=test.T.to_numpy(int)' not in nt:
+            warnings.append('N20 raw precursor no longer contains historical failing expression; verify provenance if intentionally migrated')
+        if 'old="y=test.T.to_numpy(int)"' not in rt or 'new="y=test[\'T\'].to_numpy(int)"' not in rt:
+            blockers.append('N20 replay wrapper no longer proves exact one-line target-column correction')
+        if 'python football-data/research/run_c072n20_p1000_evaluation_replay.py' not in wf:
+            blockers.append('N20 workflow does not execute replay wrapper')
+        direct_command='python football-data/research/run_c072n20_p1000_evaluation.py \\\'
+        if direct_command in wf:
+            blockers.append('N20 workflow can still execute defective raw precursor directly')
+        if forbidden_split_calls(n20): blockers.append('random/non-temporal split primitive in N20 raw')
+        findings.append({'experiment':'C072-N20','status':'REMEDIATED_EXECUTION_PATH_RAW_FROZEN','raw_dot_T_lines':raw_lines,'reason':'raw precursor retained for audit; workflow executes exact one-line replay correction only'})
     else:
-        warnings.append('N20 runner not present')
+        warnings.append('N20 raw/replay files not both present')
 
-    # New mandatory core itself must never use DataFrame.T or random split primitives.
+    # New mandatory infrastructure itself must never use DataFrame.T or random split primitives.
     for p in [ROOT/'football3_core.py', ROOT/'validate_football3_experiment.py', ROOT/'run_football3_synthetic_prelabel_smoke.py']:
         if attr_T_lines(p): blockers.append(f'.T present in remediation infrastructure: {p}')
         if forbidden_split_calls(p): blockers.append(f'forbidden split primitive called in remediation infrastructure: {p}')
