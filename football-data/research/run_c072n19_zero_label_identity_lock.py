@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# N19R1 frozen zero-label source plan; this comment also emits PR synchronize after runner-base retarget.
 from __future__ import annotations
 import hashlib, json, math
 from pathlib import Path
