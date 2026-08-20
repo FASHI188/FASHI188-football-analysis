@@ -35,6 +35,10 @@ def all_research_refs()->list[str]:
     return [x.strip() for x in out.splitlines() if x.strip()]
 
 
+def ref_tip(ref:str)->str:
+    return git('rev-parse',ref)
+
+
 def changed_science_paths(sha:str)->list[str]:
     out=git('diff-tree','--no-commit-id','--name-only','-r',sha,'--',*SCIENCE_PATHS)
     return [x for x in out.splitlines() if x.strip()]
@@ -58,9 +62,16 @@ def commits_since(base:str,tip:str)->list[str]:
     return [x for x in out.splitlines() if x]
 
 
-def unique_since_root(ref:str)->set[str]:
-    base=git('merge-base',ROOT_SHA,ref)
-    return set(commits_since(base,ref))
+def commits_not_in_root(ref:str)->set[str]:
+    """Commits reachable from ref but not from the immutable football3 root.
+
+    This is the correct quarantine patch universe: it excludes legitimate shared
+    pre-root ancestry (for example C071) while retaining old-project commits that
+    are scientifically outside football3, even when the two branches forked before
+    C072-C.
+    """
+    out=git('rev-list',ref,f'^{ROOT_SHA}')
+    return {x for x in out.splitlines() if x}
 
 
 def main()->int:
@@ -75,34 +86,42 @@ def main()->int:
     if not seed_refs:
         blockers.append('C073-C077 seed refs unavailable; lineage audit cannot certify isolation')
 
-    seed_commits:set[str]=set()
-    for ref in seed_refs:
-        seed_commits.update(unique_since_root(ref))
+    seed_tips={ref:ref_tip(ref) for ref in seed_refs}
 
-    # Quarantine is lineage-based, not name-based. Every research/* branch carrying
-    # any C073-C077 seed-lineage commit is a derived quarantined branch. This catches
-    # C078/C079 and future renamed descendants without depending on their names.
-    derived_refs=[]
-    derived_commit_sets:dict[str,set[str]]={}
+    # A later research branch is quarantined only when a C073-C077 seed *tip* is
+    # genuinely its ancestor. Shared older ancestry is NOT sufficient. This keeps
+    # legitimate earlier football3 history such as C071 out of quarantine while
+    # still capturing true descendants such as C078/C079 and future renamed refs.
+    derived_parent_seeds:dict[str,list[str]]={}
     for ref in all_research_refs():
-        commits=unique_since_root(ref)
-        if ref in seed_refs or bool(commits & seed_commits):
-            derived_refs.append(ref)
-            derived_commit_sets[ref]=commits
-    derived_refs=sorted(set(derived_refs))
-    if not derived_refs:
+        if ref in seed_refs:
+            continue
+        parents=[sref for sref,stip in seed_tips.items() if is_ancestor(stip,ref)]
+        if parents:
+            derived_parent_seeds[ref]=sorted(parents)
+
+    derived_refs=sorted(derived_parent_seeds)
+    quarantined_refs=sorted(set(seed_refs)|set(derived_refs))
+    if not quarantined_refs:
         blockers.append('no quarantined/derived research refs resolved')
 
+    # Quarantine only commits that are not already part of the immutable football3
+    # root history. This prevents common ancestors from being mislabeled as isolated
+    # old-project science.
     quarantine_commits:set[str]=set()
-    for ref in derived_refs:
-        quarantine_commits.update(derived_commit_sets[ref])
-        for sha in derived_commit_sets[ref]:
-            if is_ancestor(sha,'HEAD'):
-                direct.append({'sha':sha,'ref':ref,'subject':git('show','-s','--format=%s',sha)})
-    direct=list({x['sha']:x for x in direct}.values())
+    commit_source_ref:dict[str,str]={}
+    for ref in quarantined_refs:
+        for sha in commits_not_in_root(ref):
+            quarantine_commits.add(sha)
+            commit_source_ref.setdefault(sha,ref)
+
+    for sha in sorted(quarantine_commits):
+        if is_ancestor(sha,'HEAD'):
+            direct.append({'sha':sha,'ref':commit_source_ref.get(sha,''),'subject':git('show','-s','--format=%s',sha)})
     if direct:
         blockers.append(f'quarantined/derived commit ancestry detected in HEAD: {len(direct)} commit(s)')
 
+    # Stable patch-id comparison catches cherry-picks/rebases whose SHA changed.
     qpatch:dict[str,list[str]]={}
     for sha in sorted(quarantine_commits):
         pid=patch_id(sha)
@@ -127,8 +146,11 @@ def main()->int:
         'status':'FOOTBALL3_LINEAGE_AUDIT_PASS' if not blockers else 'FOOTBALL3_LINEAGE_AUDIT_BLOCK',
         'root_sha':ROOT_SHA,
         'seed_quarantine_refs':seed_refs,
+        'seed_quarantine_ref_count':len(seed_refs),
         'derived_quarantine_refs':derived_refs,
         'derived_quarantine_ref_count':len(derived_refs),
+        'derived_parent_seed_refs':derived_parent_seeds,
+        'quarantined_unique_commit_count':len(quarantine_commits),
         'direct_quarantine_ancestry':direct,
         'quarantine_patch_matches':patch_matches,
         'blockers':blockers,
