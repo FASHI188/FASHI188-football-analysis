@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from dataclasses import dataclass
 from statistics import NormalDist
 from typing import Iterable, Mapping, Sequence
@@ -14,6 +15,7 @@ PT_CLASS_NAMES: tuple[str, ...] = ("0", "1", "2", "3", "4", "5", "6", "7+")
 OU_HALF_GOAL_TO_TAIL_K: Mapping[float, int] = {0.5: 1, 1.5: 2, 2.5: 3, 3.5: 4, 4.5: 5}
 MASTER_PREDICTION_CUTOFF = "T-15m"
 DEFAULT_EPS = 1e-12
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class Football3ContractError(RuntimeError):
@@ -329,10 +331,35 @@ def identity_sha256(row: Mapping[str, object]) -> str:
 
 
 def ordered_identity_sha256(ids: Sequence[str]) -> str:
-    if len(ids) != len(set(ids)):
+    vals = [str(x).strip() for x in ids]
+    if not vals:
+        raise Football3ContractError("identity hash vector must be nonempty")
+    if any(not HEX64.fullmatch(x) for x in vals):
+        raise Football3ContractError("identity hash vector contains non-sha256 value")
+    if len(vals) != len(set(vals)):
         raise Football3ContractError("duplicate identity hash")
-    raw = "\n".join(str(x) for x in ids) + ("\n" if ids else "")
+    raw = "\n".join(vals) + "\n"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def assert_scoring_identities_match_contract(ids: Sequence[str], contract: Mapping[str, object], expected_rows: int) -> str:
+    vals=[str(x).strip() for x in ids]
+    if len(vals) != expected_rows:
+        raise Football3ContractError(f"scoring identity row mismatch: identities={len(vals)} scoring_rows={expected_rows}")
+    digest=ordered_identity_sha256(vals)
+    try:
+        data=contract["data_plan"]
+        frozen_n=data["identity_count"]
+        frozen_digest=data["ordered_identity_sha256"]
+    except Exception as e:
+        raise Football3ContractError(f"contract missing frozen identity binding: {e}") from e
+    if isinstance(frozen_n,bool) or not isinstance(frozen_n,int) or frozen_n <= 0:
+        raise Football3ContractError("contract identity_count must be positive integer")
+    if expected_rows != frozen_n:
+        raise Football3ContractError(f"scored rows {expected_rows} do not equal frozen identity_count {frozen_n}")
+    if digest != frozen_digest:
+        raise Football3ContractError("scored identity order/digest does not equal frozen identity lock")
+    return digest
 
 
 def assert_disjoint_identity_sets(named_sets: Mapping[str, Iterable[str]]) -> None:
@@ -376,7 +403,7 @@ def parse_aware_utc_timestamp(x) -> pd.Timestamp:
 
 
 def parse_utc_or_naive_timestamp(x) -> pd.Timestamp:
-    """Compatibility name; new football3 science now rejects timezone-naive values."""
+    """Compatibility name; new football3 science rejects timezone-naive values."""
     return parse_aware_utc_timestamp(x)
 
 
@@ -405,6 +432,8 @@ def assert_feature_pit(frame: pd.DataFrame, *, cutoff_col: str, feature_timestam
         raise Football3ContractError(f"missing cutoff column {cutoff_col}")
     if not feature_timestamp_cols:
         raise Football3ContractError("PIT validation requires at least one feature timestamp column")
+    if len(feature_timestamp_cols) != len(set(feature_timestamp_cols)):
+        raise Football3ContractError("duplicate feature timestamp column")
     cutoff = _strict_utc_series(frame[cutoff_col].tolist(), cutoff_col)
     for col in feature_timestamp_cols:
         if col not in frame.columns:
@@ -464,11 +493,27 @@ def _group_logloss_deltas(baseline_p: np.ndarray, candidate_p: np.ndarray, y: np
     return out
 
 
+def _enforce_runtime_sample_plan(n: int, contract: Mapping[str, object]) -> tuple[str, int]:
+    try:
+        sample=contract["sample_plan"]
+    except Exception as e:
+        raise Football3ContractError(f"contract missing sample_plan: {e}") from e
+    confirmation=sample.get("confirmation") is True
+    key="minimum_n" if confirmation else "development_minimum_n"
+    minimum=sample.get(key)
+    if isinstance(minimum,bool) or not isinstance(minimum,int) or minimum <= 0:
+        raise Football3ContractError(f"{key} must be positive integer")
+    if n < minimum:
+        raise Football3ContractError(f"scoring rows {n} below frozen {key}={minimum}")
+    return ("CONFIRMATION" if confirmation else "DEVELOPMENT"), minimum
+
+
 def evaluate_frozen_experiment(
     baseline_p,
     candidate_p,
     y,
     *,
+    identity_sha256,
     fold_ids,
     domain_ids,
     contract: Mapping[str, object],
@@ -480,6 +525,8 @@ def evaluate_frozen_experiment(
     if not np.array_equal(target, c_target):
         raise Football3ContractError("baseline/candidate target mismatch")
     n = len(target)
+    scored_identity_digest=assert_scoring_identities_match_contract(identity_sha256,contract,n)
+    phase, frozen_minimum_n=_enforce_runtime_sample_plan(n,contract)
     folds = _clean_group_ids(fold_ids, "fold_ids", n)
     domains = _clean_group_ids(domain_ids, "domain_ids", n)
 
@@ -540,7 +587,10 @@ def evaluate_frozen_experiment(
     terminal = "PASS" if all(checks.values()) else "PARK"
     return {
         "terminal": terminal,
+        "phase": phase,
         "n": int(n),
+        "frozen_minimum_n": int(frozen_minimum_n),
+        "scored_identity_sha256": scored_identity_digest,
         "baseline": baseline,
         "candidate": candidate,
         "delta": deltas,
