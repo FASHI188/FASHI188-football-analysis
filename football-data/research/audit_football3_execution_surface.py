@@ -130,9 +130,9 @@ def main() -> int:
             blockers.append('N20 replay wrapper no longer proves exact one-line target-column correction')
         if 'python football-data/research/run_c072n20_p1000_evaluation_replay.py' not in wf:
             blockers.append('N20 workflow does not execute replay wrapper')
-        direct_command='python football-data/research/run_c072n20_p1000_evaluation.py \\\'
-        if direct_command in wf:
-            blockers.append('N20 workflow can still execute defective raw precursor directly')
+        for line in wf.splitlines():
+            if line.strip().startswith('python football-data/research/run_c072n20_p1000_evaluation.py '):
+                blockers.append('N20 workflow can still execute defective raw precursor directly')
         if forbidden_split_calls(n20): blockers.append('random/non-temporal split primitive in N20 raw')
         findings.append({'experiment':'C072-N20','status':'REMEDIATED_EXECUTION_PATH_RAW_FROZEN','raw_dot_T_lines':raw_lines,'reason':'raw precursor retained for audit; workflow executes exact one-line replay correction only'})
     else:
