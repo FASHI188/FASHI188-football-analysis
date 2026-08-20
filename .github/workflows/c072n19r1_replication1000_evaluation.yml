@@ -1,0 +1,47 @@
+name: football3 C072-N19R1 replication1000 evaluation
+on:
+  pull_request:
+    branches:
+      - football3/c072n19-runner-base-20260820
+    paths:
+      - 'football-data/research/C072N19R1_ZERO_LABEL_LOCK_RECEIPT.md'
+      - 'football-data/research/evaluate_c072n19r1_closing_anchor_movement_replication1000.py'
+      - '.github/workflows/c072n19r1_replication1000_evaluation.yml'
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install frozen evaluation dependencies
+        run: pip install --disable-pip-version-check numpy==2.3.2 scipy==1.16.1 pandas==2.3.2
+      - name: Execute one-shot replication1000 evaluation
+        run: python football-data/research/evaluate_c072n19r1_closing_anchor_movement_replication1000.py
+      - name: Assert terminal and sealed boundaries
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/_c072n19r1_evaluation/c072n19r1_summary.json').read_text())
+          assert x['terminal'] in ('C072N19R1_REPLICATION_PASS','C072N19R1_REPLICATION_PARK'), x
+          assert x['identity_sha256_reproduced']=='10f77a6b20502813c0ae8402c7dd45e80054dcc5b6b6546751fca736033cddce', x
+          assert x['target_rows_materialized']==1000, x
+          assert x['target_values_materialized']==2000, x
+          assert x['oos_n']==600, x
+          assert x['C070F_confirmation1597_opened'] is False, x
+          assert x['N17_reserve_opened'] is False, x
+          assert x['N18_confirmation150_opened'] is False, x
+          assert x['C073_C077_scientific_results_used'] is False, x
+          print(x['terminal'], x['pooled']['delta'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n19r1-replication1000-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: football-data/research/_c072n19r1_evaluation/
+          retention-days: 30
