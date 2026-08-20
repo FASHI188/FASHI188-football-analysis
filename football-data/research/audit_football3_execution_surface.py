@@ -9,13 +9,22 @@ N20_WORKFLOW = Path('.github/workflows/football3-c072n20-p1000-evaluation.yml')
 REQUIRED = [
     ROOT / 'football3_core.py',
     ROOT / 'validate_football3_experiment.py',
-    ROOT / 'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json',
+    ROOT / 'validate_football3_research_policy_v3.py',
+    ROOT / 'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json',
+    ROOT / 'FOOTBALL3_GLOBAL_CONSUMPTION_AUDIT_TEMPLATE_V1.json',
+    ROOT / 'FOOTBALL3_EXECUTION_STANDARD_V2.md',
     ROOT / 'FOOTBALL3_RESEARCH_POLICY_V3.json',
     ROOT / 'FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json',
     ROOT / 'run_football3_synthetic_prelabel_smoke.py',
     ROOT / 'FOOTBALL3_HISTORICAL_PASS_ENGINEERING_AUDIT_20260820.md',
     ROOT / 'run_c072n20_p1000_evaluation_replay.py',
     N20_WORKFLOW,
+]
+STALE_AUTHORITIES = [
+    ROOT / 'FOOTBALL3_RESEARCH_POLICY_V2.json',
+    ROOT / 'validate_football3_research_policy_v2.py',
+    ROOT / 'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json',
+    ROOT / 'FOOTBALL3_EXECUTION_STANDARD_V1.md',
 ]
 
 KNOWN_HISTORICAL = {
@@ -67,17 +76,34 @@ def main() -> int:
     for p in REQUIRED:
         if not p.exists():
             blockers.append(f'missing remediation file {p}')
+    stale=[str(p) for p in STALE_AUTHORITIES if p.exists()]
+    if stale:
+        blockers.append(f'stale football3 authority files present: {stale}')
     if blockers:
         raise SystemExit(json.dumps({'status':'BLOCK','blockers':blockers},indent=2))
 
     policy=json.loads(text(ROOT/'FOOTBALL3_RESEARCH_POLICY_V3.json'))
     registry=json.loads(text(ROOT/'FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json'))
-    template=json.loads(text(ROOT/'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json'))
+    template=json.loads(text(ROOT/'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json'))
+    audit_template=json.loads(text(ROOT/'FOOTBALL3_GLOBAL_CONSUMPTION_AUDIT_TEMPLATE_V1.json'))
     if policy.get('project_id')!='football3': blockers.append('policy project_id')
     if policy.get('scientific_root',{}).get('sha')!='e3e73c998020beef585cc459a69ea5b73b44ddb3': blockers.append('policy root sha')
+    if policy.get('prediction_contract',{}).get('master_prediction_cutoff')!='T-15m': blockers.append('policy master cutoff')
+    if policy.get('prediction_contract',{}).get('strong_same_cutoff_market_baseline_required') is not True: blockers.append('strong same-cutoff market baseline rule')
+    if policy.get('prediction_contract',{}).get('missing_or_invalid_feature_timestamp_fails_closed') is not True: blockers.append('strict PIT timestamp rule')
     if registry.get('rules',{}).get('viewed_target_labels_are_globally_consumed') is not True: blockers.append('global consumption rule')
-    if template.get('prediction_cutoff',{}).get('baseline') != template.get('prediction_cutoff',{}).get('candidate'):
-        blockers.append('template same-cutoff placeholder mismatch')
+    if template.get('schema_version')!=2: blockers.append('V2 experiment contract template schema')
+    pc=template.get('prediction_cutoff',{})
+    if not (pc.get('master')==pc.get('baseline')==pc.get('candidate')=='T-15m'):
+        blockers.append('template master/same-cutoff mismatch')
+    baseline=template.get('baseline',{})
+    for key in ('market_anchor','same_cutoff','latest_snapshot_at_or_before_cutoff','devigged','representation_frozen_before_labels'):
+        if baseline.get(key) is not True: blockers.append(f'template strong baseline gate missing: {key}')
+    if template.get('metrics',{}).get('calibration',{}).get('required') is not True: blockers.append('template calibration gate')
+    if 'success_gates' not in template: blockers.append('template numerical success gates')
+    if audit_template.get('real_target_values_read') != 0: blockers.append('consumption audit template must be zero-label')
+    for key in ('registry_checked','github_history_checked','airtable_history_checked'):
+        if audit_template.get(key) is not True: blockers.append(f'consumption audit template missing {key}')
 
     # F2: technically executable, but explicitly only coarse opening/closing PIT semantics.
     f2=KNOWN_HISTORICAL['F2']
@@ -87,7 +113,7 @@ def main() -> int:
         if forbidden_split_calls(f2): blockers.append('random/non-temporal split primitive in F2')
         if 'COARSE_OPEN_CLOSE_SEMANTICS_ONLY_NO_IMMUTABLE_QUOTE_TIMESTAMPS' not in f2t:
             warnings.append('F2 PIT limitation marker not found directly in evaluator; retained in audit document')
-        findings.append({'experiment':'C072-F2','status':'BOUND','reason':'opening->closing information; not same-cutoff alpha proof'})
+        findings.append({'experiment':'C072-F2','status':'BOUND','reason':'opening->closing information; not same-cutoff T-15m alpha proof'})
     else:
         warnings.append('F2 evaluator not present on current branch path')
 
@@ -111,15 +137,13 @@ def main() -> int:
         if attr_T_lines(k2): blockers.append('unexpected .T in K2')
         if forbidden_split_calls(k2): blockers.append('random/non-temporal split primitive in K2')
         has_rps='RPS' in kt or 'rps' in kt.lower()
-        findings.append({'experiment':'C072-K2','status':'BOUND','rps_in_script':has_rps,'reason':'historical LL/Brier evidence only under V3 if joint RPS was absent'})
+        findings.append({'experiment':'C072-K2','status':'BOUND','rps_in_script':has_rps,'reason':'historical LL/Brier evidence only under current contract if joint RPS was absent'})
         if has_rps:
             warnings.append('K2 now contains RPS token; historical audit should be manually reconciled if code changed')
     else:
         warnings.append('K2 evaluator not present on current branch path')
 
-    # N20 raw file is preserved as the immutable failed-precursor source for reproducibility.
-    # It must NOT be executed directly. The committed replay wrapper must make exactly the documented one-line substitution,
-    # and the workflow must execute only the replay wrapper. This fixes the executable path without falsifying history.
+    # N20 raw file is preserved as immutable failed-precursor provenance and must never execute directly.
     n20=KNOWN_HISTORICAL['N20_RAW']; replay=KNOWN_HISTORICAL['N20_REPLAY']
     if n20.exists() and replay.exists():
         raw_lines=attr_T_lines(n20)
@@ -149,6 +173,8 @@ def main() -> int:
         'blockers':blockers,
         'warnings':warnings,
         'findings':findings,
+        'master_prediction_cutoff':'T-15m',
+        'contract_schema_version':2,
         'real_target_labels_opened':0,
         'models_fit_or_scored':0,
         'sealed_pools_opened':0,
