@@ -11,10 +11,12 @@ from football3_core import (
     assert_disjoint_identity_sets,
     assert_exact_one_to_one_join,
     assert_feature_pit,
+    assert_master_prediction_cutoff,
     assert_same_prediction_cutoff,
     assert_sealed_boundaries,
     assert_temporal_oos,
     devig_two_way,
+    evaluate_frozen_experiment,
     paired_bootstrap_delta_logloss,
     score_bundle,
     validate_nested_ou_tails,
@@ -22,7 +24,6 @@ from football3_core import (
 
 
 def make_prob(q3: np.ndarray, shape_shift: np.ndarray | None = None) -> np.ndarray:
-    # Synthetic-only deterministic distribution. It is not a scientific model.
     q3 = np.asarray(q3, float)
     n = len(q3)
     p = np.zeros((n, 8), float)
@@ -33,7 +34,6 @@ def make_prob(q3: np.ndarray, shape_shift: np.ndarray | None = None) -> np.ndarr
     p[:, 3:] = q3[:, None] * tail[None, :]
     if shape_shift is not None:
         s = np.asarray(shape_shift, float)
-        # Move a tiny known amount between classes 2 and 3 while conserving probability.
         amt = np.minimum(np.maximum(s, -0.005), 0.005)
         p[:, 2] -= amt
         p[:, 3] += amt
@@ -41,6 +41,30 @@ def make_prob(q3: np.ndarray, shape_shift: np.ndarray | None = None) -> np.ndarr
         raise RuntimeError('synthetic probability construction invalid')
     p /= p.sum(axis=1, keepdims=True)
     return p
+
+
+def synthetic_contract() -> dict:
+    return {
+        'metrics': {'calibration': {'bins': 10}},
+        'bootstrap': {'resamples': 1000, 'seed': 72099, 'ci': 0.90},
+        'oos_design': {'minimum_test_rows_per_fold': 20},
+        'success_gates': {
+            'primary': {'delta_max': 0.0, 'bootstrap_ci_high_max': 0.0},
+            'secondary_noninferiority': {
+                'Brier_delta_max': 0.0,
+                'RPS_delta_max': 0.0,
+                'Top1ECE_delta_max': 0.0,
+                'ClasswiseECE_delta_max': 0.0,
+            },
+            'temporal_consistency': {'minimum_fold_win_fraction': 0.50},
+            'domain_consistency': {
+                'minimum_domains': 4,
+                'minimum_rows_per_domain': 20,
+                'minimum_win_fraction': 0.50,
+                'max_domain_logloss_regression': 0.01,
+            },
+        },
+    }
 
 
 def main() -> int:
@@ -54,6 +78,7 @@ def main() -> int:
         'U25': np.linspace(2.25, 1.70, n),
     })
     assert_same_prediction_cutoff('T-15m', 'T-15m')
+    assert_master_prediction_cutoff('T-15m', 'T-15m')
     assert_feature_pit(frame, cutoff_col='cutoff', feature_timestamp_cols=['odds_ts'])
     assert_temporal_oos(frame.cutoff.iloc[:100], frame.cutoff.iloc[100:])
     assert_disjoint_identity_sets({'development': ids[:100], 'evaluation': ids[100:]})
@@ -63,7 +88,6 @@ def main() -> int:
     )
 
     q3 = devig_two_way(frame.O25.to_numpy(), frame.U25.to_numpy())
-    # Check correct O/U direction on representative rows.
     for i in (0, n // 2, n - 1):
         validate_nested_ou_tails([2.5], [float(q3[i])])
 
@@ -77,21 +101,34 @@ def main() -> int:
     b = score_bundle(baseline, y)
     c = score_bundle(candidate, y)
     boot = paired_bootstrap_delta_logloss(baseline, candidate, y, n_resamples=1000, seed=72099)
+    folds = np.repeat(['fold1','fold2','fold3','fold4'], 40)
+    domains = np.repeat(['league1','league2','league3','league4'], 40)
+    canonical = evaluate_frozen_experiment(
+        baseline,
+        candidate,
+        y,
+        fold_ids=folds,
+        domain_ids=domains,
+        contract=synthetic_contract(),
+    )
 
     out = {
         'status': 'FOOTBALL3_SYNTHETIC_PRELABEL_SMOKE_PASS',
         'real_target_labels_opened': 0,
         'synthetic_rows': n,
         'same_cutoff_guard': True,
+        'master_cutoff_guard': True,
         'pit_guard': True,
         'temporal_oos_guard': True,
         'identity_join_guard': True,
         'sealed_boundary_guard': True,
         'ou_direction_guard': True,
+        'canonical_evaluator_guard': True,
         'metric_bundle_keys': sorted(b.keys()),
         'baseline': b,
         'candidate': c,
         'bootstrap': boot,
+        'canonical_evaluation': canonical,
     }
     Path('football-data/research/football3_synthetic_prelabel_smoke_summary.json').write_text(
         json.dumps(out, indent=2) + '\n', encoding='utf-8'
