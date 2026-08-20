@@ -1,0 +1,59 @@
+name: C079-B P1000 Market CMP Development
+
+on:
+  push:
+    branches: [research/c079b-p1000-market-cmp-development-20260820]
+    paths:
+      - research/C079B_P1000_MARKET_CMP_DEVELOPMENT_CONTRACT.md
+      - research/run_c079b_p1000_market_cmp.py
+      - .github/workflows/c079b_p1000_market_cmp_development.yml
+  pull_request:
+    branches: [research/c079p1000r1-public-page-expansion-20260820]
+    paths:
+      - research/C079B_P1000_MARKET_CMP_DEVELOPMENT_CONTRACT.md
+      - research/run_c079b_p1000_market_cmp.py
+      - .github/workflows/c079b_p1000_market_cmp_development.yml
+
+permissions:
+  contents: read
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install numpy==2.2.6 pandas==2.3.2 scipy==1.16.1 requests==2.32.5 beautifulsoup4==4.13.5 lxml==6.0.1
+      - name: Run frozen C079-B development
+        run: |
+          mkdir -p "$RUNNER_TEMP/c079b_out"
+          python research/run_c079b_p1000_market_cmp.py --out-dir "$RUNNER_TEMP/c079b_out" --workers 8
+      - name: Adjudicate frozen boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'c079b_out'/'summary.json').read_text())
+          assert s['schema_version']=='C079B_P1000_MARKET_CMP_V1'
+          assert s['status'] in {'STOP_IDENTITY_REPRODUCTION','STOP_COVERAGE','STOP_SUPPORT','PILOT_SIGNAL','PILOT_NO_SIGNAL'}
+          assert s['formal_gate_3000_unchanged'] is True
+          for k,v in s['hard_boundaries'].items():
+              if k not in {'CURRENT_change','unified_matrix_generated'}: assert v is False
+          if s['status'] in {'PILOT_SIGNAL','PILOT_NO_SIGNAL'}:
+              assert s['labels_opened']==1000 and s['model_scored'] is True
+              assert s['rebuilt_identity_sha256']==s['expected_identity_sha256']
+              if s['status']=='PILOT_SIGNAL': assert all(s['gates'].values()),s['gates']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c079b-p1000-market-cmp-development
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c079b_out/summary.json
+            ${{ runner.temp }}/c079b_out/consumed_development1000_receipt.csv
+            research/C079B_P1000_MARKET_CMP_DEVELOPMENT_CONTRACT.md
+            research/run_c079b_p1000_market_cmp.py
