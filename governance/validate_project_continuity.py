@@ -2,9 +2,9 @@
 """Repository-wide fail-closed governance topology guard.
 
 Airtable《当前状态》 is the only live dynamic project-state source. GitHub may
-contain stable policy/code/data and frozen historical evidence, but no active
-Markdown/JSON/TXT object may become a second live task-state, next-step, or
-authorization authority.
+contain stable policy/code/data and explicitly de-authorized historical evidence,
+but no active Markdown/JSON/TXT object may become a second live task-state,
+next-step, or authorization authority.
 """
 from __future__ import annotations
 
@@ -50,8 +50,7 @@ REQUIRED_BOUNDARY_FILES = (
 )
 TEXT_SUFFIXES = {".md", ".txt", ".json"}
 HISTORICAL_PREFIXES = ("governance/archive/", "evidence/manifests/")
-FROZEN_RECEIPT_PREFIXES = ("football-data/manifests/",)
-DATA_SEMANTIC_PATH_HINTS = ("current_season", "current_roster")
+MANIFEST_PREFIX = "football-data/manifests/"
 DATA_CONTENT_PREFIXES = (
     "football-data/data/",
     "football-data/raw/",
@@ -61,11 +60,11 @@ DATA_CONTENT_PREFIXES = (
     "football-data/cache/",
 )
 FORBIDDEN_NAME_PATTERNS = (
-    re.compile(r"(^|/)PROJECT_CURRENT\.md$", re.I),
+    re.compile(r"(^|/)PROJECT_CURRENT\.[^/]+$", re.I),
     re.compile(r"(^|/)[^/]*_START_HERE\.[^/]+$", re.I),
     re.compile(r"(^|/)[^/]*_HANDOFF\.[^/]+$", re.I),
     re.compile(r"(^|/)[^/]*_CHECKPOINT\.[^/]+$", re.I),
-    re.compile(r"(^|/)FOOTBALL3_INDEPENDENT_CURRENT\.md$", re.I),
+    re.compile(r"(^|/)FOOTBALL3_INDEPENDENT_CURRENT\.[^/]+$", re.I),
 )
 LIVE_AUTHORITY_PATTERNS = (
     re.compile(
@@ -80,14 +79,15 @@ LIVE_AUTHORITY_PATTERNS = (
         r"\s*[:=]\s*(?:true|yes|1|authoritative)\b",
         re.I,
     ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])project_state_authority\s*[:=]\s*(?:true|yes|1)\b",
-        re.I,
-    ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])task_selection_authority\s*[:=]\s*(?:true|yes|1)\b",
-        re.I,
-    ),
+    re.compile(r"(?<![A-Za-z0-9_])project_state_authority\s*[:=]\s*(?:true|yes|1)\b", re.I),
+    re.compile(r"(?<![A-Za-z0-9_])task_selection_authority\s*[:=]\s*(?:true|yes|1)\b", re.I),
+)
+LIVE_POINTER_TEXT_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?:current_pr|current_head|current_run|current_job|current_artifact|unique_next_step|next_step)"
+    r"\s*[:=]\s*(?!null\b|none\b|false\b|0\b|\[\s*\]|\{\s*\}|[\"']\s*[\"'])"
+    r"[^\r\n,}]+",
+    re.I,
 )
 HISTORICAL_REQUIRED_MARKERS = (
     "HISTORICAL_EVIDENCE_ONLY",
@@ -101,15 +101,22 @@ JSON_AUTHORITY_KEYS = {
     "authorization_authority",
     "next_step_authority",
 }
-JSON_LIVE_POINTER_KEYS = {
+JSON_CURRENT_POINTER_KEYS = {
     "current_pr",
     "current_head",
     "current_run",
     "current_job",
     "current_artifact",
-    "unique_next_step",
-    "next_step",
-    "authorization_source",
+}
+JSON_NEXT_STEP_KEYS = {"unique_next_step", "next_step"}
+SCIENTIFIC_MANIFEST_MARKERS = {
+    "formal_weight",
+    "formal_weight_change",
+    "probability_change",
+    "research_only",
+    "research_or_diagnostic_only",
+    "runtime_enabled",
+    "automatic_promotion",
 }
 
 
@@ -136,45 +143,64 @@ def _is_historical(rel: str) -> bool:
     return rel.startswith(HISTORICAL_PREFIXES)
 
 
-def _is_frozen_receipt(rel: str) -> bool:
-    return rel.startswith(FROZEN_RECEIPT_PREFIXES)
-
-
-def _is_data_semantic_whitelist(rel: str) -> bool:
-    low = rel.lower()
-    return any(hint in low for hint in DATA_SEMANTIC_PATH_HINTS)
+def _nonempty(value: Any) -> bool:
+    return value not in (None, "", False, 0, [], {})
 
 
 def _truthy_authority(value: Any) -> bool:
     return value in (True, 1, "true", "yes", "1", "authoritative")
 
 
+def _walk_json(payload: Any):
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            yield str(key).strip().lower(), value
+            yield from _walk_json(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _walk_json(item)
+
+
 def _json_claims_authority(payload: Any) -> bool:
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            key_norm = str(key).strip().lower()
-            if key_norm in JSON_AUTHORITY_KEYS and _truthy_authority(value):
-                return True
-            if _json_claims_authority(value):
-                return True
-    elif isinstance(payload, list):
-        return any(_json_claims_authority(item) for item in payload)
-    return False
+    return any(key in JSON_AUTHORITY_KEYS and _truthy_authority(value) for key, value in _walk_json(payload))
 
 
-def _json_claims_live_authority(payload: Any) -> bool:
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            key_norm = str(key).strip().lower()
-            if key_norm in JSON_AUTHORITY_KEYS and _truthy_authority(value):
-                return True
-            if key_norm in JSON_LIVE_POINTER_KEYS and value not in (None, "", False, 0, [], {}):
-                return True
-            if _json_claims_live_authority(value):
-                return True
-    elif isinstance(payload, list):
-        return any(_json_claims_live_authority(item) for item in payload)
-    return False
+def _json_current_pointer_keys(payload: Any) -> set[str]:
+    return {
+        key
+        for key, value in _walk_json(payload)
+        if key in JSON_CURRENT_POINTER_KEYS and _nonempty(value)
+    }
+
+
+def _json_next_step_keys(payload: Any) -> set[str]:
+    return {
+        key
+        for key, value in _walk_json(payload)
+        if key in JSON_NEXT_STEP_KEYS and _nonempty(value)
+    }
+
+
+def _json_contains_scientific_marker(payload: Any) -> bool:
+    return any(key in SCIENTIFIC_MANIFEST_MARKERS for key, _ in _walk_json(payload))
+
+
+def _has_historical_deauthority(text: str, suffix: str) -> bool:
+    if suffix == ".json":
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        historical = payload.get("HISTORICAL_EVIDENCE_ONLY")
+        return (
+            historical in (True, 1, "true", "yes", "HISTORICAL_EVIDENCE_ONLY")
+            and payload.get("project_state_authority") is False
+            and payload.get("task_selection_authority") is False
+            and payload.get("authorization_authority") is False
+        )
+    return all(marker in text for marker in HISTORICAL_REQUIRED_MARKERS)
 
 
 def _text_claims_live_authority(text: str, suffix: str) -> bool:
@@ -182,28 +208,42 @@ def _text_claims_live_authority(text: str, suffix: str) -> bool:
         try:
             payload = json.loads(text)
         except Exception:
-            return any(pattern.search(text) for pattern in LIVE_AUTHORITY_PATTERNS)
-        return _json_claims_live_authority(payload)
-    return any(pattern.search(text) for pattern in LIVE_AUTHORITY_PATTERNS)
+            return bool(LIVE_POINTER_TEXT_PATTERN.search(text)) or any(
+                pattern.search(text) for pattern in LIVE_AUTHORITY_PATTERNS
+            )
+        return (
+            _json_claims_authority(payload)
+            or bool(_json_current_pointer_keys(payload))
+            or bool(_json_next_step_keys(payload))
+        )
+    return bool(LIVE_POINTER_TEXT_PATTERN.search(text)) or any(
+        pattern.search(text) for pattern in LIVE_AUTHORITY_PATTERNS
+    )
 
 
-def _frozen_receipt_is_safe(rel: str, text: str) -> bool:
-    """Allow versioned receipt JSON to retain historical next-step/status fields.
+def _manifest_live_state_violation(text: str) -> str | None:
+    """Reject project-state pointers in football-data/manifests without schema shortcuts.
 
-    A receipt may describe what was current *at that historical checkpoint*; it
-    is not a live control plane unless it claims project/task/authorization
-    authority. Exact authority keys therefore remain fail-closed while ordinary
-    versioned receipt fields such as `next_step` are treated as evidence.
+    Scientific status receipts may contain a historical/research `next_step` note only
+    when the JSON is structurally a scientific receipt and contains no current PR/HEAD/
+    Run/Job/Artifact pointer and no project/task/authorization authority claim.
+    `schema_version` alone never creates an exemption.
     """
-    if not _is_frozen_receipt(rel) or not rel.lower().endswith(".json"):
-        return False
     try:
         payload = json.loads(text)
     except Exception:
-        return False
-    if not isinstance(payload, dict) or not payload.get("schema_version"):
-        return False
-    return not _json_claims_authority(payload)
+        if LIVE_POINTER_TEXT_PATTERN.search(text) or any(p.search(text) for p in LIVE_AUTHORITY_PATTERNS):
+            return "manifest text contains live project/task pointer or authority language"
+        return None
+    if _json_claims_authority(payload):
+        return "manifest JSON claims project/task/authorization authority"
+    current_keys = _json_current_pointer_keys(payload)
+    if current_keys:
+        return "manifest JSON contains non-empty live current pointer(s): " + ",".join(sorted(current_keys))
+    next_keys = _json_next_step_keys(payload)
+    if next_keys and not _json_contains_scientific_marker(payload):
+        return "manifest JSON contains non-empty next-step pointer without scientific-receipt structure"
+    return None
 
 
 def _scan_dynamic_mirrors(root: Path) -> list[str]:
@@ -214,33 +254,41 @@ def _scan_dynamic_mirrors(root: Path) -> list[str]:
         rel = path.relative_to(root).as_posix()
         if rel.startswith(".git/"):
             continue
-        historical = _is_historical(rel)
-        data_semantic = _is_data_semantic_whitelist(rel)
+
+        # Filename bans are unconditional and evaluated before every whitelist.
+        if any(pattern.search(rel) for pattern in FORBIDDEN_NAME_PATTERNS):
+            reasons.append(f"forbidden nested dynamic-state mirror path: {rel}")
+            continue
+
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except Exception as exc:
             reasons.append(f"unable to scan governance text {rel}: {exc}")
             continue
-        frozen_receipt = _frozen_receipt_is_safe(rel, text)
-        name_hit = any(pattern.search(rel) for pattern in FORBIDDEN_NAME_PATTERNS)
-        if name_hit and not (historical or frozen_receipt or data_semantic):
-            reasons.append(f"forbidden nested dynamic-state mirror path: {rel}")
+        suffix = path.suffix.lower()
+
+        if rel.startswith(MANIFEST_PREFIX) and suffix == ".json":
+            violation = _manifest_live_state_violation(text)
+            if violation:
+                reasons.append(f"{violation}: {rel}")
             continue
-        if data_semantic:
-            continue
-        if historical:
-            if _text_claims_live_authority(text, path.suffix.lower()) and not all(
-                marker in text for marker in HISTORICAL_REQUIRED_MARKERS
-            ):
+
+        if _is_historical(rel):
+            if _text_claims_live_authority(text, suffix) and not _has_historical_deauthority(text, suffix):
                 reasons.append(
-                    f"historical evidence with live-authority language lacks de-authorizing header: {rel}"
+                    f"historical evidence with live-authority language lacks de-authorizing markers: {rel}"
                 )
             continue
-        if frozen_receipt:
-            continue
+
+        # Data semantics are allowed only in explicit data directories and only
+        # after filename and authority/pointer checks above. There is deliberately
+        # no current_season/current_roster path-substring bypass.
         if rel.startswith(DATA_CONTENT_PREFIXES):
+            if _text_claims_live_authority(text, suffix):
+                reasons.append(f"data-content file contains live project/task/authorization pointer: {rel}")
             continue
-        if _text_claims_live_authority(text, path.suffix.lower()):
+
+        if _text_claims_live_authority(text, suffix):
             reasons.append(f"active text claims live project/task/authorization authority: {rel}")
     return reasons
 
@@ -354,12 +402,23 @@ def _write_fixture(root: Path) -> None:
     )
 
 
+def _expect_path(root: Path, rel: str, content: str, expected_status: str) -> bool:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    try:
+        return validate_root(root).status == expected_status
+    finally:
+        path.unlink()
+
+
 def run_self_test() -> int:
     checks: list[tuple[str, bool]] = []
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         _write_fixture(root)
         checks.append(("positive", validate_root(root).status == PASS))
+
         for rel in (
             "football-data/research/FOOTBALL3_INDEPENDENT_CURRENT.md",
             "nested/a/PROJECT_CURRENT.md",
@@ -367,55 +426,97 @@ def run_self_test() -> int:
             "nested/a/TEAM_HANDOFF.json",
             "nested/a/TEAM_CHECKPOINT.md",
         ):
-            p = root / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("legacy mirror\n", encoding="utf-8")
-            checks.append((f"reject:{rel}", validate_root(root).status == FAIL))
-            p.unlink()
-        live = root / "notes/live.json"
-        live.parent.mkdir(parents=True, exist_ok=True)
-        live.write_text('{"project_state_authority": true}', encoding="utf-8")
-        checks.append(("reject_live_authority_claim", validate_root(root).status == FAIL))
-        live.unlink()
-        live_pointer = root / "notes/task.json"
-        live_pointer.write_text('{"next_step": "run experiment"}', encoding="utf-8")
-        checks.append(("reject_live_next_step_pointer", validate_root(root).status == FAIL))
-        live_pointer.unlink()
-        no_authority = root / "notes/stable_profile.json"
-        no_authority.write_text(
-            '{"no_project_state_authority": true, "project_state_authority": false}',
-            encoding="utf-8",
+            checks.append((f"reject:{rel}", _expect_path(root, rel, "legacy mirror\n", FAIL)))
+
+        # Production bypass regressions required by the final independent review.
+        checks.append((
+            "reject_current_season_forbidden_name",
+            _expect_path(root, "notes/current_season/FOOTBALL3_INDEPENDENT_CURRENT.md", "legacy mirror\n", FAIL),
+        ))
+        checks.append((
+            "reject_current_roster_forbidden_name",
+            _expect_path(root, "notes/current_roster/PROJECT_CURRENT.md", "legacy mirror\n", FAIL),
+        ))
+        manifest_payload = json.dumps(
+            {"schema_version": "r1", "current_pr": 332, "current_head": "abc", "next_step": "run"}
         )
-        checks.append(("allow_explicit_deauthority_json", validate_root(root).status == PASS))
-        no_authority.unlink()
-        frozen_checkpoint = root / "football-data/manifests/V522_CHECKPOINT.json"
-        frozen_checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        frozen_checkpoint.write_text(
-            '{"schema_version":"V5.2.2-frozen-r1","project_current_version":"V5.0.0","next_step":"historical note","current_rule_change":false}',
-            encoding="utf-8",
-        )
-        checks.append(("allow_versioned_frozen_manifest_checkpoint", validate_root(root).status == PASS))
-        frozen_checkpoint.unlink()
-        bad_frozen_checkpoint = root / "football-data/manifests/BAD_CHECKPOINT.json"
-        bad_frozen_checkpoint.write_text(
-            '{"schema_version":"r1","project_state_authority":true}',
-            encoding="utf-8",
-        )
-        checks.append(("reject_authoritative_manifest_checkpoint", validate_root(root).status == FAIL))
-        bad_frozen_checkpoint.unlink()
-        for rel in ("data/current_season.csv", "data/current_roster.txt"):
-            p = root / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("current data snapshot\n", encoding="utf-8")
-            checks.append((f"allow_data_semantic:{rel}", validate_root(root).status == PASS))
-            p.unlink()
-        hist = root / "governance/archive/PROJECT_CURRENT.md"
-        hist.parent.mkdir(parents=True, exist_ok=True)
-        hist.write_text(
-            "\n".join(HISTORICAL_REQUIRED_MARKERS) + "\nproject_state_authority=true # quoted historical text\n",
-            encoding="utf-8",
-        )
-        checks.append(("allow_deauthorized_historical_evidence", validate_root(root).status == PASS))
+        checks.append((
+            "reject_manifest_live_checkpoint_schema_bypass",
+            _expect_path(root, "football-data/manifests/LIVE_CHECKPOINT.json", manifest_payload, FAIL),
+        ))
+        checks.append((
+            "reject_manifest_football3_current_schema_bypass",
+            _expect_path(
+                root,
+                "football-data/manifests/FOOTBALL3_INDEPENDENT_CURRENT.json",
+                manifest_payload,
+                FAIL,
+            ),
+        ))
+
+        checks.append((
+            "reject_generic_live_authority",
+            _expect_path(root, "notes/live.json", '{"project_state_authority": true}', FAIL),
+        ))
+        checks.append((
+            "reject_generic_next_step",
+            _expect_path(root, "notes/task.json", '{"next_step": "run experiment"}', FAIL),
+        ))
+        checks.append((
+            "allow_explicit_deauthority_json",
+            _expect_path(
+                root,
+                "notes/stable_profile.json",
+                '{"no_project_state_authority": true, "project_state_authority": false}',
+                PASS,
+            ),
+        ))
+        checks.append((
+            "allow_scientific_manifest_note_without_live_pointer",
+            _expect_path(
+                root,
+                "football-data/manifests/V624_STATUS.json",
+                '{"schema_version":"r1","formal_weight":0,"next_step":"historical scientific note"}',
+                PASS,
+            ),
+        ))
+        checks.append((
+            "reject_scientific_manifest_with_current_head",
+            _expect_path(
+                root,
+                "football-data/manifests/V624_STATUS.json",
+                '{"schema_version":"r1","formal_weight":0,"current_head":"abc","next_step":"run"}',
+                FAIL,
+            ),
+        ))
+        checks.append((
+            "allow_data_semantic_in_explicit_data_dir",
+            _expect_path(
+                root,
+                "football-data/data/snapshots/current_season.json",
+                '{"season":"2026","teams":[]}',
+                PASS,
+            ),
+        ))
+        checks.append((
+            "reject_data_semantic_live_pointer",
+            _expect_path(
+                root,
+                "football-data/data/snapshots/current_roster.json",
+                '{"current_head":"abc","teams":[]}',
+                FAIL,
+            ),
+        ))
+        historical = "\n".join(HISTORICAL_REQUIRED_MARKERS) + "\nproject_state_authority=true # quoted historical text\n"
+        checks.append((
+            "allow_renamed_deauthorized_archive_evidence",
+            _expect_path(root, "governance/archive/HISTORICAL_PROJECT_STATE_EVIDENCE.md", historical, PASS),
+        ))
+        checks.append((
+            "reject_forbidden_name_even_in_archive",
+            _expect_path(root, "governance/archive/PROJECT_CURRENT.md", historical, FAIL),
+        ))
+
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print(f"{'PASS' if ok else 'FAIL'} {name}")
