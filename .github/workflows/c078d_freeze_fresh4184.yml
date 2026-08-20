@@ -1,0 +1,82 @@
+name: C078-D Freeze Fresh4184 Market Snapshot
+
+on:
+  push:
+    branches: [research/c078d-freeze-fresh4184-snapshot-20260820]
+    paths:
+      - research/C078D_FREEZE_FRESH4184_CONTRACT.md
+      - research/audit_c078d_freeze_fresh4184.py
+      - .github/workflows/c078d_freeze_fresh4184.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c078d-freeze-fresh4184
+  cancel-in-progress: false
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install audit runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2
+      - name: Download fixed 12 sources as transient opaque bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c078d_source"
+          for code in E1 E2 E3 SC0 SC1 SC2 SC3 D2 I2 SP2 F2 P1; do
+            curl -L --fail --retry 5 --retry-delay 2 -o "$RUNNER_TEMP/c078d_source/${code}.csv" "https://www.football-data.co.uk/mmz4281/2526/${code}.csv"
+          done
+      - name: Freeze identity and market-only snapshot without result columns
+        id: gate
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/c078d_out"
+          python research/audit_c078d_freeze_fresh4184.py --source-dir "$RUNNER_TEMP/c078d_source" --out-dir "$RUNNER_TEMP/c078d_out"
+      - name: Enforce terminal and label sealing
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c078d_out'/'summary.json'
+          assert p.is_file(), 'missing summary'
+          s=json.loads(p.read_text())
+          assert s['schema_version']=='C078D_FREEZE_FRESH4184_V1'
+          assert s['status'] in {'PASS_FRESH4184_SNAPSHOT_FREEZE','STOP_SOURCE_DRIFT'}
+          b=s['label_boundary']
+          assert b['target_result_columns_materialized']==0
+          for k in ['FTHG_FTAG_numeric_conversion','FTHG_FTAG_values_stored','FTHG_FTAG_values_hashed','goal_totals_computed','goal_difference_computed','tail_membership_computed','model_fit']:
+              assert b[k] is False,(k,b[k])
+          assert b['durable_output_contains_only_identity_and_market_values'] is True
+          if s['status']=='PASS_FRESH4184_SNAPSHOT_FREEZE': assert all(s['gate'].values()),s['gate']
+          else: assert not all(s['gate'].values()),s['gate']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c078d-fresh4184-market-snapshot
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c078d_out/summary.json
+            ${{ runner.temp }}/c078d_out/market_snapshot.csv
+            research/C078D_FREEZE_FRESH4184_CONTRACT.md
+            research/audit_c078d_freeze_fresh4184.py
+      - name: Refuse persistence of raw score-bearing source bytes
+        if: always()
+        shell: bash
+        run: |
+          test ! -e "$GITHUB_WORKSPACE/c078d_source"
+          echo 'Raw source stayed runner-temp only and is not in artifact paths.'
+
+# trigger-only: 2026-08-20T08:27+08:00
