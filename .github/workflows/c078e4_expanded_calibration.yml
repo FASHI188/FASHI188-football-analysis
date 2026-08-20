@@ -1,0 +1,76 @@
+name: C078-E4 Expanded Tail Calibration
+
+on:
+  push:
+    branches: [research/c078e4-expanded-tail-calibration-20260820]
+    paths:
+      - research/C078E4_EXPANDED_TAIL_CALIBRATION_CONTRACT.md
+      - research/c078e4_expanded_tail_calibration.py
+      - .github/workflows/c078e4_expanded_calibration.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install numpy==2.2.6 pandas==2.3.2 scipy==1.16.1
+      - name: Download immutable market-only artifacts
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/base_art" "$RUNNER_TEMP/supp_art"
+          curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/9388656670/zip" -o "$RUNNER_TEMP/base.zip"
+          curl -fsSL -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/9388979273/zip" -o "$RUNNER_TEMP/supp.zip"
+          unzip -q "$RUNNER_TEMP/base.zip" -d "$RUNNER_TEMP/base_art"
+          unzip -q "$RUNNER_TEMP/supp.zip" -d "$RUNNER_TEMP/supp_art"
+          find "$RUNNER_TEMP/base_art" -name market_snapshot.csv -type f | head -n1 > "$RUNNER_TEMP/base_market.txt"
+          find "$RUNNER_TEMP/supp_art" -name supplemental_market_snapshot.csv -type f | head -n1 > "$RUNNER_TEMP/supp_market.txt"
+          test -s "$RUNNER_TEMP/base_market.txt"; test -s "$RUNNER_TEMP/supp_market.txt"
+      - name: Download current source bytes transiently
+        run: |
+          set -euo pipefail; mkdir -p "$RUNNER_TEMP/base_src" "$RUNNER_TEMP/supp_src"
+          for code in E1 E2 E3 SC0 SC1 SC2 SC3 D2 I2 SP2 F2 P1; do curl -L --fail --retry 5 --retry-delay 2 -o "$RUNNER_TEMP/base_src/${code}.csv" "https://www.football-data.co.uk/mmz4281/2526/${code}.csv"; done
+          for code in EC T1 G1; do curl -L --fail --retry 5 --retry-delay 2 -o "$RUNNER_TEMP/supp_src/${code}.csv" "https://www.football-data.co.uk/mmz4281/2526/${code}.csv"; done
+      - name: Execute frozen expanded calibration
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python research/c078e4_expanded_tail_calibration.py \
+            --base-market "$(cat "$RUNNER_TEMP/base_market.txt")" \
+            --supp-market "$(cat "$RUNNER_TEMP/supp_market.txt")" \
+            --base-current-dir "$RUNNER_TEMP/base_src" \
+            --supp-current-dir "$RUNNER_TEMP/supp_src" \
+            --out-dir "$RUNNER_TEMP/out"
+      - name: Enforce late confirmation seal
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['schema_version']=='C078E4_EXPANDED_CALIBRATION_V1'
+          assert s['status'] in {'STOP_EXPANDED_CALIBRATION_COVERAGE','EXPANDED_CALIBRATION_FAIL_PARK','EXPANDED_CALIBRATION_PASS_FREEZE_GAMMA'}
+          assert s['late_numeric_score_access_count']==0
+          if 'label_boundary' in s:
+              b=s['label_boundary']; assert b['late_numeric_score_access_count']==0 and b['late_score_values_stored'] is False and b['late_score_values_hashed'] is False and b['late_goal_totals_computed'] is False and b['late_metrics_computed'] is False
+          if s['status']=='EXPANDED_CALIBRATION_PASS_FREEZE_GAMMA': assert all(s['gate'].values()),s['gate']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c078e4-expanded-tail-calibration
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            ${{ runner.temp }}/out/frozen_gamma.json
+            ${{ runner.temp }}/out/calibration_tail_receipt.csv
+            research/C078E4_EXPANDED_TAIL_CALIBRATION_CONTRACT.md
+            research/c078e4_expanded_tail_calibration.py
+
+# trigger-only 2026-08-20T08:27+08:00
