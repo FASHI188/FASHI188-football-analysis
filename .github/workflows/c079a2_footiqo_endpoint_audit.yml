@@ -1,0 +1,49 @@
+name: C079-A2 Footiqo Endpoint Audit
+
+# trigger-only; diagnostic contract unchanged
+on:
+  push:
+    branches: [research/c079a2-footiqo-endpoint-audit-20260820]
+    paths:
+      - research/C079A2_FOOTIQO_ENDPOINT_AUDIT_CONTRACT.md
+      - research/audit_c079a2_footiqo_endpoint.py
+      - .github/workflows/c079a2_footiqo_endpoint_audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install requests==2.32.5 beautifulsoup4==4.13.5 lxml==6.0.1
+      - name: Inspect endpoint/config metadata only
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python research/audit_c079a2_footiqo_endpoint.py --out-dir "$RUNNER_TEMP/out"
+      - name: Enforce zero-row/zero-label boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['schema_version']=='C079A2_ENDPOINT_AUDIT_V1'
+          assert s['terminal'] in {'ENDPOINT_DISCOVERED','CLIENT_SIDE_FULL_DATA_INDICATED','NO_PROGRAMMATIC_ENDPOINT_FOUND','ENGINEERING_ERROR'}
+          b=s['hard_boundary']
+          for k in ['match_row_values_persisted','FTHG_FTAG_FTR_parsed','odds_rows_exported','result_targets_computed','model_fit','authentication_attempted','premium_bypass_attempted']:
+              assert b[k] is False,(k,b[k])
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c079a2-footiqo-endpoint-audit
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            research/C079A2_FOOTIQO_ENDPOINT_AUDIT_CONTRACT.md
+            research/audit_c079a2_footiqo_endpoint.py
