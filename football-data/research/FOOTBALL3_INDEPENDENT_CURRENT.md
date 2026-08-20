@@ -2,7 +2,7 @@
 
 Updated: 2026-08-20 Asia/Taipei
 Project: `football3`
-Status: `FULL_STACK_ROOT_CAUSE_REMEDIATION_COMPLETE_NO_NEW_SCIENCE`
+Status: `FULL_STACK_ROOT_CAUSE_REMEDIATION_V2_COMPLETE_NO_NEW_SCIENCE`
 
 ## 1. Independent lineage
 Football3 scientific root remains immutable:
@@ -11,26 +11,24 @@ Football3 scientific root remains immutable:
 - root SHA: `e3e73c998020beef585cc459a69ea5b73b44ddb3`
 - valid continuation: `C072-C -> football3/...`
 
-C073-C077 and descendants remain quarantined. Cross-project information may be used only for explicit comparison or global-consumption exclusion. This remediation does not merge their science into football3.
+C073-C077 and descendants remain quarantined. Cross-project information is allowed only for explicit comparison or global-consumption exclusion. No C073-C077 science is merged into football3.
 
-## 2. Binding scientific state before remediation
+## 2. Scientific state is unchanged by remediation
 Latest executed scientific experiment remains C072-N20, PR #330.
 
 N20 terminal: `C072N20_P1000_PILOT_NO_SIGNAL`.
 - exact cohort: 1000; ordered identity SHA `a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf`;
-- BR318 / GR121 / MLS313 / TR248;
-- exact target join 1000/1000;
 - dLogLoss `+0.0041598079`;
 - bootstrap90 `[-0.0003677775,+0.0086930374]`;
 - dBrier `+0.0008985958`;
 - dRPS `+0.0001791452`;
 - source LogLoss wins 1/4;
-- T=2 Top1 fraction 78.0% -> 62.7%, but proper probability quality worsened.
+- T=2 Top1 fraction 78.0% -> 62.7%, while proper probability quality worsened.
 
-N20 exact hypothesis is PARKed and its 1000 labels are globally consumed. No same-label rescue is allowed.
+N20 is PARKed. Its 1000 target labels are globally consumed. No same-label rescue is allowed.
 
 ## 3. Primary scientific target
-The primary target remains complete match-level pre-match total-goals probability quality:
+Primary target remains complete match-level pre-match total-goals probability quality:
 
 `P(T=0,1,2,3,4,5,6,7+)`.
 
@@ -38,130 +36,99 @@ Fixed chain:
 
 `P(T) -> P(home-goal allocation | T,X) -> joint P(H,A) -> derived Draw/1X2/exact-score diagnostics`.
 
-Draw Top1 is downstream. Manual Draw/0-0/1-1/T=2 boosts, post-hoc thresholds/class weights and proper-score sacrifice are forbidden.
+Draw Top1 is downstream. Manual Draw/0-0/1-1/T=2 boosts, post-hoc thresholds/class weights and sacrificing proper score for Top1 remain forbidden.
 
-## 4. Root-cause remediation completed after N20
-PR #331 / branch `football3/full-stack-root-cause-remediation-20260820` converts the previously identified research/process/engineering problems into executable fail-closed controls. No new real target labels, model fits or scientific scores were used for this remediation.
+## 4. Binding product contract
+Football3 now has one master prediction task for comparable final-prematch research:
 
-### Scientific-contract fixes
-- baseline and candidate must have the same frozen prediction cutoff;
-- opening-to-closing information gain may not be described as alpha beyond a same-cutoff closing baseline;
-- PIT definition is mandatory and immutable quote timestamps are preferred; coarse opening/closing semantics must be labeled as limited;
-- complete P(T) proper-score quality is primary; Top1/Top3 are diagnostics;
-- new experiments require a machine-readable frozen contract before target access;
-- direct Draw optimization is blocked as the next research route;
-- neighboring repairs of viewed PARKed hypotheses are blocked.
+`T-15m`.
 
-### Data/identity/consumption fixes
-- zero-label identity/PIT/coverage lock precedes labels;
-- exact one-to-one target join is a shared guard;
-- cross-project viewed labels remain globally consumed;
-- `FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json` is the minimum verified registry, while GitHub/Airtable historical search remains mandatory because the registry is not claimed exhaustive for pre-registry history;
-- a crash after numeric target materialization consumes those labels even when no scientific metric was emitted;
-- an engineering replay after such a crash is reproduction, not fresh confirmation.
+Baseline and candidate must both use information available no later than kickoff minus 15 minutes. Changing the master cutoff creates a different product contract and cannot be silently mixed into this research chain.
 
-### Execution-code fixes
-Canonical scientific primitives now live in `football3_core.py`:
-- P(T) class order 0,1,2,3,4,5,6,7+;
-- half-goal O/U tail mapping 0.5->T>=1, 1.5->T>=2, 2.5->T>=3, 3.5->T>=4, 4.5->T>=5;
-- two-way de-vig and nested-tail checks;
-- probability conservation;
+A fresh experiment must use a strong same-cutoff market anchor: latest available market snapshot at or before T-15m, de-vigged, with baseline representation frozen before target access.
+
+## 5. V2 execution hardening
+PR #331 / branch `football3/full-stack-root-cause-remediation-20260820` now uses:
+- `FOOTBALL3_EXECUTION_STANDARD_V2.md` as the single binding execution standard;
+- `FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json` for all new science;
+- `FOOTBALL3_RESEARCH_POLICY_V3.json` as the only live football3 policy;
+- `FOOTBALL3_GLOBAL_CONSUMPTION_AUDIT_TEMPLATE_V1.json` for zero-label cross-project consumption receipts.
+
+Stale authority files were physically removed:
+- `FOOTBALL3_RESEARCH_POLICY_V2.json`;
+- `validate_football3_research_policy_v2.py`;
+- `FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V1.json`;
+- `FOOTBALL3_EXECUTION_STANDARD_V1.md`.
+
+The V3 policy validator now fails if any of these stale authority files reappear.
+
+## 6. PIT and execution-core corrections
+Canonical primitives remain in `football3_core.py`, now additionally enforcing:
+- master cutoff `T-15m`;
+- missing or unparsable cutoff timestamps fail closed;
+- missing or unparsable feature/quote timestamps fail closed;
+- any feature timestamp later than cutoff fails closed;
 - LogLoss, multiclass Brier, normalized RPS;
+- Top1ECE and ClasswiseECE calibration metrics;
 - paired match bootstrap;
-- temporal OOS, feature PIT, same-cutoff and exact identity guards;
-- sealed-pool guards;
-- development-only sample-size planning helper.
+- temporal OOS;
+- exact one-to-one identity joins;
+- P(T) class order and O/U half-goal direction;
+- sealed-pool guards.
 
-New/changed football3 scientific runners must use the shared core and declare a machine-readable experiment contract. Random/shuffled scientific split primitives are rejected. pandas `DataFrame.T` attribute is rejected in changed scientific runners; target access must use explicit `frame['T']`, and matrix transpose must be explicit `.transpose()`.
+Changed/new scientific runners still reject pandas `.T`, random/shuffled split primitives and direct downstream Draw/score rescue patterns. Known sealed-pool tokens/paths are also rejected in new runners.
 
-### Pre-label execution fix
-Before real target access, a new experiment must pass:
-1. global-consumption/source-revision audit;
-2. zero-label identity/PIT/coverage lock;
-3. committed exact experiment contract;
-4. full synthetic end-to-end scoring smoke using zero real labels;
-5. fail-closed contract/runner preflight;
-6. explicit user target-access authorization;
-7. one-shot target execution.
+## 7. Global-consumption closure
+The minimum global registry remains `FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json`, but it is explicitly not treated as exhaustive for pre-registry history.
 
-This prevents a known code-path error from first appearing only after scarce labels have already been consumed.
+For fresh evidence, self-report such as `global_consumption_audit=true` is no longer sufficient. Before target access, a new experiment must provide:
+1. immutable zero-label identity lock and SHA256;
+2. immutable source revision;
+3. registry check;
+4. GitHub historical search receipt;
+5. Airtable historical search receipt;
+6. zero-label audit artifact and SHA256;
+7. exact consumed-overlap count;
+8. exact unresolved-historical-identity-gap count.
 
-### Sample-efficiency fix
-Arbitrary 100/200/300 confirmation packets are no longer the default. Confirmation requires a frozen power/precision/minimum-N plan derived only from development information or conservative assumptions. Optional stopping is forbidden.
+If target overlap > 0 **or** unresolved historical identity gaps > 0, the experiment cannot be classified fresh; it is REPLICATION/REPRODUCTION only. Fresh confirmation requires both counts to be zero.
 
-### Method-shopping fix
-After labels are viewed, the same labels cannot be rescued by changing hyperparameters, feature subsets, windows, O/U line subsets, smoothing, thresholds/classes, distribution family, source/league subsets, dispersion equation, neighboring transforms, model shell, metrics/gates or stopping rules.
+## 8. Validation and sample gates
+Before labels, numerical gates are frozen for:
+- primary LogLoss delta;
+- paired-bootstrap LogLoss upper CI;
+- Brier non-inferiority;
+- RPS non-inferiority;
+- ClasswiseECE non-inferiority;
+- temporal-fold win fraction;
+- domain win fraction and maximum tolerated domain LogLoss regression.
 
-## 5. Historical positive-result re-audit
-No historical labels were reopened or re-scored. The executed code/contracts were audited instead.
+Top1/Top3 remain diagnostics.
 
-### C072-F2
-Status: `TECHNICALLY_EXECUTED_AS_CONTRACTED_WITH_PIT_LIMITATION`.
-- season-forward execution, 8-class probabilities, LogLoss/Brier/RPS and paired bootstrap were technically present;
-- no N20-style `.T` scoring bug found;
-- source has coarse open/close semantics, not immutable quote timestamps;
-- opening reference + close-open movement can reconstruct closing level.
+Confirmation additionally requires a positive integer minimum N, planned power >=0.80 (or equivalent frozen precision plan represented by the contract), alpha, planning basis and immutable planning artifact/SHA. Optional stopping remains forbidden. Arbitrary 100/200/300 confirmation packets are not accepted merely because they are convenient.
 
-Binding interpretation: F2 supports later/closing market information versus opening market, not incremental same-cutoff closing-market alpha.
+## 9. Historical evidence interpretation remains unchanged
+No historical target labels were reopened or rescored in this remediation.
 
-### C072-I2
-Status: `TECHNICALLY_VALID_EXECUTION_WITH_PREEXECUTION_ENGINEERING_WRAPPER`.
-- the raw evaluator contained the same pandas `.T` ambiguity later seen in N20;
-- before the one-shot I2 execution, the committed wrapper corrected `scored.T` and `even.T` to explicit `['T']` access;
-- the workflow executed that wrapper;
-- temporal predict-before-update, proper scores, paired bootstrap, exact-T/division/half consistency and sealed boundaries remain valid.
+- C072-F2 remains evidence that later/closing market information improves over opening information, not proof of alpha beyond a same-cutoff T-15m market baseline.
+- C072-I2 `D|T` component evidence remains retained; its historical `.T` ambiguity had been corrected by the committed pre-execution wrapper.
+- C072-K2 remains historical LogLoss/Brier evidence, but it is not a full current-contract PASS because the old run lacked the present RPS/same-cutoff/calibration requirements.
+- C072-N20 remains `PILOT_NO_SIGNAL/PARK`.
 
-Binding interpretation: I2 component `D|T` evidence is retained. The formerly local `.T` repair is now a global preflight rule so the defect cannot silently recur in new runners.
-
-### C072-K2
-Status: `HISTORICAL_LL_BRIER_PASS_WITH_RPS_AND_SAME_CUTOFF_LIMITATIONS`.
-- identity/PIT ordering, joint probability conservation, paired bootstrap and chronological/domain checks were present;
-- no N20-style `.T` bug found;
-- original joint gate did not compute RPS;
-- P(T) path inherited opening-versus-opening+movement information.
-
-Binding interpretation: K2 remains historical LogLoss/Brier evidence, but it is not a full PASS under the corrected V3 mandatory LogLoss+Brier+RPS same-cutoff contract.
-
-## 6. N20 engineering provenance
-The raw failed-precursor N20 runner is intentionally retained as immutable historical source to preserve reproducibility of the failure. It contains the failing `test.T` expression. It is not the executable scientific path.
-
-The committed replay wrapper makes exactly the documented one-line correction to `test['T']`, and the N20 workflow executes the replay wrapper. The full-stack execution-surface audit verifies that the defective raw precursor is not directly executed. Future changed scientific runners cannot use `.T` at all.
-
-This is deliberate: preserve historical provenance while fixing the executable path and preventing recurrence.
-
-## 7. Sealed boundaries
+## 10. Sealed boundaries
 Remain sealed/unopened:
 - C070-F Confirmation1597;
 - N17 reserve266;
 - N18C confirmation150;
 - any other protected football3 pool not explicitly authorized.
 
-No sealed pool was opened by the full-stack remediation.
+No sealed pool was opened by either remediation pass.
 
-## 8. Validation receipt
-Final validated PR #331 head before this receipt-only commit: `68e9efb42787097905e92de7fc32885a856ae5e4`.
+## 11. Next scientific step
+The execution and governance defects are now separated from the scientific P(T) problem. This remediation does **not** claim that the prediction engine is solved.
 
-- `Football3 Research Policy Integrity` V3 run `32328227482`: SUCCESS;
-- `Football3 Full Stack Scientific Preflight` run `32328227470`: SUCCESS;
-- 16 unit tests: PASS;
-- synthetic end-to-end pre-label smoke: PASS, real target labels opened = 0;
-- execution-surface audit: PASS;
-- policy/registry/seal validation: PASS;
-- changed-scientific-runner migration guard: PASS;
-- remediation no-real-target/sealed-data proof: PASS;
-- repository-wide `Football Engineering Quality and Security` run `32328227478`: SUCCESS.
+The next scientific experiment, only under separate explicit authorization, must be a materially new P(T) information/measurement hypothesis, use the frozen T-15m product contract, produce the zero-label global-consumption audit receipt, freeze success/power/domain/calibration gates, pass synthetic/preflight, and only then access target labels once.
 
-Scientific activity during remediation:
-- new real target labels opened: 0;
-- model fits/scoring on real data: 0/0;
-- sealed pools opened: 0;
-- C073-C077 scientific evidence imported: 0.
-
-This commit changes only the receipt text in CURRENT. The same CI suites must remain green on the receipt commit before the remediation is considered closed.
-
-## 9. Current boundary and next step
-The engineering/process/root-cause remediation is complete. This does **not** convert N20 or any other failed scientific hypothesis into a PASS and does not imply that the P(T) scientific problem is solved.
-
-Football3 remains scientifically PARKED after N20. The next scientific experiment, only when explicitly authorized, must be a materially new P(T) information/measurement hypothesis with a new preregistered target plan and must pass the V3 pre-label protocol before any target access.
+A promising architecture remains latent `P(T)` plus a noisy market-measurement layer; that is a scientific hypothesis, not a remediation result and not yet a PASS.
 
 formal_weight remains 0. No downstream Draw optimization is the next step.
