@@ -5,7 +5,9 @@ on:
     branches: [football3/c072n20-latent-market-measurement-p1000-20260820]
     paths:
       - football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md
+      - football-data/research/C072N20_EXECUTION_CORRECTION_01.md
       - football-data/research/run_c072n20_p1000_evaluation.py
+      - football-data/research/run_c072n20_p1000_evaluation_replay.py
       - .github/workflows/football3-c072n20-p1000-evaluation.yml
   pull_request:
     branches: [football3/governance-root-cause-correction-20260820]
@@ -26,19 +28,23 @@ jobs:
         with: {python-version: '3.12'}
       - name: Install frozen dependencies
         run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 numpy==2.3.2 pandas==2.3.1 scipy==1.16.1 scikit-learn==1.7.1
-      - name: Guard frozen identity and scientific contract
+      - name: Guard frozen identity, science and engineering-only replay
         run: |
           python - <<'PY'
           from pathlib import Path
           c=Path('football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md').read_text()
+          e=Path('football-data/research/C072N20_EXECUTION_CORRECTION_01.md').read_text()
           r=Path('football-data/research/run_c072n20_p1000_evaluation.py').read_text()
+          w=Path('football-data/research/run_c072n20_p1000_evaluation_replay.py').read_text()
           sha='a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf'
           assert sha in c and sha in r
           assert '5,000 match resamples, seed `72020`' in c
           assert "EXPECTED_NEW_N=1000" in r
           assert "C072N20_P1000_PILOT_SIGNAL" in r and "C072N20_P1000_PILOT_NO_SIGNAL" in r
-          assert 'N17 reserve266' in c and 'C070-F1597' in c and 'N18 confirmation150' in c
-          print('N20 frozen identity/evaluation contract PASS')
+          assert '32326379971' in e and '96298363218' in e
+          assert "from: `y=test.T.to_numpy(int)`" in e
+          assert "old=\"y=test.T.to_numpy(int)\"" in w and "new=\"y=test['T'].to_numpy(int)\"" in w
+          print('N20 frozen contract + one-line replay correction PASS')
           PY
       - name: Download immutable N16R1, N17-consumed-training and N20-zero-label artifacts
         env:
@@ -51,9 +57,9 @@ jobs:
           unzip -q "$RUNNER_TEMP/n16.zip" -d "$RUNNER_TEMP/n16"
           unzip -q "$RUNNER_TEMP/n17.zip" -d "$RUNNER_TEMP/n17"
           unzip -q "$RUNNER_TEMP/n20.zip" -d "$RUNNER_TEMP/n20"
-      - name: Run frozen one-shot N20 evaluation
+      - name: Run exact frozen N20 with one-line engineering correction
         run: |
-          python football-data/research/run_c072n20_p1000_evaluation.py \
+          python football-data/research/run_c072n20_p1000_evaluation_replay.py \
             --n16-dir "$RUNNER_TEMP/n16" \
             --n17-dir "$RUNNER_TEMP/n17" \
             --n20-dir "$RUNNER_TEMP/n20" \
@@ -65,8 +71,7 @@ jobs:
           import json,os
           from pathlib import Path
           p=Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json'
-          if not p.exists():
-              raise SystemExit('N20 summary missing: engineering failure before adjudication')
+          if not p.exists(): raise SystemExit('N20 summary missing: engineering failure before adjudication')
           s=json.loads(p.read_text())
           assert s['classification']=='POST_VIEW_DEVELOPMENT_REPLICATION_PILOT'
           assert s['expected_new_identity_sha256']=='a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf'
@@ -88,3 +93,4 @@ jobs:
             ${{ runner.temp }}/out/summary.json
             ${{ runner.temp }}/out/consumed_n20_p1000_receipt.csv
             football-data/research/C072N20_P1000_IDENTITY_LOCK_AND_EVALUATION_CONTRACT.md
+            football-data/research/C072N20_EXECUTION_CORRECTION_01.md
