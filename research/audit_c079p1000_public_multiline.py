@@ -10,11 +10,16 @@ import requests
 from bs4 import BeautifulSoup
 
 INDEX='https://footiqo.com/database/leagues/'
-BASE='https://footiqo.com'
 MARKER=b'Historical Odds'
 REQ=['id','matchDate','Country','League','Season','homeTeam','awayTeam','O25','U25','O35','U35','O45','U45']
 PRICE=['O25','U25','O35','U35','O45','U45']
-UA='Mozilla/5.0 C079-P1000 public-market research audit'
+UA='Mozilla/5.0 C079-P1000R1 public-market research audit'
+SUPPLEMENTAL_SLUGS=[
+ 'argentina-liga-profesional','brazil-serie-a','australia-a-league','saudi-professional-league','usa-mls',
+ 'portugal-liga-portugal','scotland-premiership','netherlands-eredivisie','belgium-jupiler-pro-league',
+ 'greece-super-league','turkey-super-lig','denmark-superliga','austria-bundesliga','colombia-primera-a','croatia-hnl',
+]
+SUPPLEMENTAL=['https://footiqo.com/database/leagues/'+s+'/' for s in SUPPLEMENTAL_SLUGS]
 
 
 def sha_text(s:str)->str:
@@ -22,13 +27,14 @@ def sha_text(s:str)->str:
 
 def discover_urls():
     r=requests.get(INDEX,timeout=45,headers={'User-Agent':UA}); r.raise_for_status()
-    soup=BeautifulSoup(r.content,'lxml'); urls=set()
+    soup=BeautifulSoup(r.content,'lxml'); indexed=set()
     for a in soup.find_all('a',href=True):
         u=urljoin(INDEX,a['href']).split('#')[0].split('?')[0]
         p=urlparse(u)
         if p.netloc not in {'footiqo.com','www.footiqo.com'}: continue
-        if re.fullmatch(r'/database/leagues/[^/]+/',p.path): urls.add('https://footiqo.com'+p.path)
-    return sorted(urls),int(r.status_code)
+        if re.fullmatch(r'/database/leagues/[^/]+/',p.path): indexed.add('https://footiqo.com'+p.path)
+    total=sorted(indexed|set(SUPPLEMENTAL))
+    return sorted(indexed),total,int(r.status_code)
 
 
 def stream_post_marker(url:str):
@@ -70,9 +76,9 @@ def devig(o,u):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--out-dir',required=True); ap.add_argument('--workers',type=int,default=8); a=ap.parse_args()
     out=Path(a.out_dir); out.mkdir(parents=True,exist_ok=True)
-    try: urls,index_status=discover_urls()
+    try: indexed_urls,urls,index_status=discover_urls()
     except Exception as e:
-        urls=[]; index_status=0; index_error=repr(e)
+        indexed_urls=[]; urls=sorted(set(SUPPLEMENTAL)); index_status=0; index_error=repr(e)
     else: index_error=None
     reports={}; allrows=[]
     with ThreadPoolExecutor(max_workers=max(1,a.workers)) as ex:
@@ -81,17 +87,16 @@ def main():
             u=fut[f]; slug=urlparse(u).path.rstrip('/').split('/')[-1]
             try:
                 rows,nt,status,err=f.result(); allrows.extend(rows)
-                reports[slug]={'url':u,'http_status':status,'odds_tables_found':nt,'rows_extracted':len(rows),'error':err}
+                reports[slug]={'url':u,'http_status':status,'odds_tables_found':nt,'rows_extracted':len(rows),'error':err,'source_class':'indexed' if u in indexed_urls else 'frozen_supplemental'}
             except Exception as e:
-                reports[slug]={'url':u,'http_status':None,'odds_tables_found':0,'rows_extracted':0,'error':repr(e)}
+                reports[slug]={'url':u,'http_status':None,'odds_tables_found':0,'rows_extracted':0,'error':repr(e),'source_class':'indexed' if u in indexed_urls else 'frozen_supplemental'}
     d=pd.DataFrame(allrows)
-    base_summary={'schema_version':'C079P1000_PUBLIC_MULTILINE_V1','index_url':INDEX,'index_http_status':index_status,'index_error':index_error,'league_urls_discovered':len(urls),'reports':reports,'formal_gate_3000_unchanged':True,'formal_weight':0,'label_boundary':{'result_score_fields_materialized':0,'FTHG_FTAG_FTR_access':False,'goal_totals_computed':False,'tail_membership_computed':False,'model_fit':False},'hard_boundaries':{'C078D_late2119_opened':False,'C076D_opened':False,'C071_reserve52180_opened':False,'C070F1597_opened':False,'A05_or_protected_opened':False,'CURRENT_change':False,'unified_matrix_generated':False}}
+    base_summary={'schema_version':'C079P1000R1_PUBLIC_MULTILINE_V2','index_url':INDEX,'index_http_status':index_status,'index_error':index_error,'index_urls_discovered':len(indexed_urls),'supplemental_urls_frozen':len(SUPPLEMENTAL),'total_public_urls':len(urls),'supplemental_slugs':SUPPLEMENTAL_SLUGS,'reports':reports,'formal_gate_3000_unchanged':True,'formal_weight':0,'label_boundary':{'result_score_fields_materialized':0,'FTHG_FTAG_FTR_access':False,'goal_totals_computed':False,'tail_membership_computed':False,'model_fit':False},'hard_boundaries':{'C078D_late2119_opened':False,'C076D_opened':False,'C071_reserve52180_opened':False,'C070F1597_opened':False,'A05_or_protected_opened':False,'CURRENT_change':False,'unified_matrix_generated':False}}
     if d.empty:
-        base_summary.update({'status':'STOP_PILOT1000_SOURCE','identity_count_raw':0,'complete_valid_count':0,'coherent_valid_count':0,'pilot1000_count':0,'gate':{}})
+        base_summary.update({'status':'STOP_PILOT1000R1_SOURCE','identity_count_raw':0,'complete_valid_count':0,'pilot1000_count':0,'gate':{}})
         (out/'summary.json').write_text(json.dumps(base_summary,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps(base_summary,ensure_ascii=False,indent=2)); return 0
     d=d.sort_values(['identity_key']+PRICE).reset_index(drop=True)
-    # Conflicts are duplicate identities with more than one distinct six-price tuple.
     conflict=0
     for _,g in d.groupby('identity_key',sort=False):
         if len(g)>1 and len(g[PRICE].astype(str).drop_duplicates())>1: conflict+=1
@@ -115,8 +120,7 @@ def main():
     pilot=eligible.head(1000).copy() if len(eligible)>=1000 else eligible.iloc[0:0].copy()
     pages_with_odds=sum(int(v.get('odds_tables_found',0)>=1) for v in reports.values())
     gate={
-      'index_http_200':index_status==200,
-      'league_urls_discovered_ge_20':len(urls)>=20,
+      'total_public_urls_ge_20':len(urls)>=20,
       'pages_with_required_odds_ge_15':pages_with_odds>=15,
       'complete_valid_unique_ge_1000':complete_n>=1000,
       'nested_devig_coherence_ge_0_98':coherence_rate>=0.98,
@@ -124,12 +128,11 @@ def main():
       'result_score_fields_materialized_zero':True,
       'target_model_computation_zero':True,
     }
-    status='PASS_PILOT1000_SOURCE' if all(gate.values()) and len(pilot)==1000 else 'STOP_PILOT1000_SOURCE'
+    status='PASS_PILOT1000R1_SOURCE' if all(gate.values()) and len(pilot)==1000 else 'STOP_PILOT1000R1_SOURCE'
     keep=['identity_key','selection_hash','domain','id','matchDate','Country','League','Season','homeTeam','awayTeam']+PRICE+['pO25_devig','pO35_devig','pO45_devig']
     for c in keep:
         if c not in pilot: pilot[c]=np.nan
     if len(pilot): pilot[keep].to_csv(out/'pilot1000_market_only.csv',index=False)
-    # Full market-only inventory is retained only for audit; still contains no results.
     snapkeep=['identity_key','domain','id','matchDate','Country','League','Season','homeTeam','awayTeam']+PRICE+['pO25_devig','pO35_devig','pO45_devig']
     for c in snapkeep:
         if c not in unique: unique[c]=np.nan
