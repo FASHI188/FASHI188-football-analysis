@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from football3_core import (
     assert_temporal_oos,
     devig_two_way,
     evaluate_frozen_experiment,
+    ordered_identity_sha256,
     paired_bootstrap_delta_logloss,
     score_bundle,
     validate_nested_ou_tails,
@@ -43,8 +45,16 @@ def make_prob(q3: np.ndarray, shape_shift: np.ndarray | None = None) -> np.ndarr
     return p
 
 
-def synthetic_contract() -> dict:
+def synthetic_contract(identity_hashes: list[str]) -> dict:
     return {
+        'data_plan': {
+            'identity_count': len(identity_hashes),
+            'ordered_identity_sha256': ordered_identity_sha256(identity_hashes),
+        },
+        'sample_plan': {
+            'development_minimum_n': 160,
+            'confirmation': False,
+        },
         'metrics': {'calibration': {'bins': 10}},
         'bootstrap': {'resamples': 1000, 'seed': 72099, 'ci': 0.90},
         'oos_design': {'minimum_test_rows_per_fold': 20},
@@ -70,6 +80,7 @@ def synthetic_contract() -> dict:
 def main() -> int:
     n = 160
     ids = [f'synthetic-{i:04d}' for i in range(n)]
+    identity_hashes=[hashlib.sha256(x.encode('utf-8')).hexdigest() for x in ids]
     frame = pd.DataFrame({
         'id': ids,
         'cutoff': pd.date_range('2025-01-01', periods=n, freq='D', tz='UTC') + pd.Timedelta(hours=12),
@@ -107,9 +118,10 @@ def main() -> int:
         baseline,
         candidate,
         y,
+        identity_sha256=identity_hashes,
         fold_ids=folds,
         domain_ids=domains,
-        contract=synthetic_contract(),
+        contract=synthetic_contract(identity_hashes),
     )
 
     out = {
@@ -124,6 +136,8 @@ def main() -> int:
         'sealed_boundary_guard': True,
         'ou_direction_guard': True,
         'canonical_evaluator_guard': True,
+        'canonical_identity_binding_guard': canonical['scored_identity_sha256'] == ordered_identity_sha256(identity_hashes),
+        'canonical_sample_minimum_guard': canonical['n'] >= canonical['frozen_minimum_n'],
         'metric_bundle_keys': sorted(b.keys()),
         'baseline': b,
         'candidate': c,
