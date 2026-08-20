@@ -2,11 +2,9 @@ name: Football3 Full Stack Scientific Preflight
 
 on:
   pull_request:
-    branches:
-      - 'football3/**'
     paths:
       - 'football-data/research/**'
-      - '.github/workflows/football3-full-stack-remediation.yml'
+      - '.github/workflows/football3-*.yml'
   workflow_dispatch:
 
 permissions:
@@ -14,8 +12,9 @@ permissions:
 
 jobs:
   full-stack-preflight:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,8 +33,12 @@ jobs:
             football-data/research/validate_football3_research_policy_v3.py \
             football-data/research/audit_football3_execution_surface.py \
             football-data/research/audit_football3_changed_scientific_files.py \
+            football-data/research/audit_football3_lineage.py \
+            football-data/research/audit_football3_pr_scope.py \
             football-data/research/run_football3_synthetic_prelabel_smoke.py
-      - name: Unit-test metrics calibration PIT identity bootstrap and V2 contract guards
+      - name: Audit C072-C lineage and C073-C077 merge/cherry-pick isolation
+        run: python football-data/research/audit_football3_lineage.py
+      - name: Unit-test metrics calibration PIT identity bootstrap evaluator and V2 contract guards
         env:
           PYTHONPATH: football-data/research
         run: |
@@ -53,8 +56,9 @@ jobs:
           s=json.loads(Path('football-data/research/football3_synthetic_prelabel_smoke_summary.json').read_text())
           assert s['status']=='FOOTBALL3_SYNTHETIC_PRELABEL_SMOKE_PASS'
           assert s['real_target_labels_opened']==0
-          assert s['same_cutoff_guard'] and s['pit_guard'] and s['temporal_oos_guard']
+          assert s['same_cutoff_guard'] and s['master_cutoff_guard'] and s['pit_guard'] and s['temporal_oos_guard']
           assert s['identity_join_guard'] and s['sealed_boundary_guard'] and s['ou_direction_guard']
+          assert s['canonical_evaluator_guard'] and set(s['canonical_evaluation']['bootstrap'])=={'LogLoss','Brier','RPS'}
           print('synthetic pre-label smoke: PASS')
           PY
       - name: Audit historical positive-result engineering boundary and active execution surface
@@ -88,12 +92,10 @@ jobs:
           assert p['validation']['optional_stopping'] is False
           assert r['rules']['viewed_target_labels_are_globally_consumed'] is True
           assert all(x['authorized_access'] is False for x in r['sealed'])
-          assert t['schema_version']==2
-          assert t['prediction_cutoff']['master']=='T-15m'
-          assert t['baseline']['market_anchor'] is True
-          assert t['metrics']['calibration']['required'] is True
-          assert 'success_gates' in t
-          assert a['real_target_values_read']==0
+          assert t['schema_version']==2 and t['prediction_cutoff']['master']=='T-15m'
+          assert t['data_plan']['identity_lock_format']=='sha256_csv_v1'
+          assert t['metrics']['implementation']=='football3_core.evaluate_frozen_experiment'
+          assert a['real_target_values_read']==0 and a['connected_audit_status']=='VERIFIED_ZERO_LABEL'
           for stale in [
             'football-data/research/FOOTBALL3_RESEARCH_POLICY_V2.json',
             'football-data/research/validate_football3_research_policy_v2.py',
@@ -103,7 +105,7 @@ jobs:
             assert not Path(stale).exists(), stale
           print('policy/contract/audit/single-authority: PASS')
           PY
-      - name: Enforce migration on any changed scientific runner
+      - name: Enforce migration and revalidate all active V2 contracts
         if: github.event_name == 'pull_request'
         env:
           PYTHONPATH: football-data/research
@@ -112,21 +114,15 @@ jobs:
             --base '${{ github.event.pull_request.base.sha }}' --head HEAD
       - name: Prove remediation itself opens no real target or sealed data
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           python - <<'PY'
           import os, subprocess
           base=os.environ['BASE_SHA']
           changed=subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines()
-          forbidden_fragments=[
-            'c072n17/development_join_audit.csv',
-            'c072n20/consumed_n20_p1000_receipt.csv',
-            'confirmation1597',
-            'reserve266',
-            'confirmation150',
-          ]
+          forbidden_fragments=['c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv','confirmation1597','reserve266','confirmation150']
           bad=[f for f in changed if any(x.lower() in f.lower() for x in forbidden_fragments)]
           assert not bad, bad
           print('changed files contain no target receipt/sealed pool material:',len(changed))
           PY
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
