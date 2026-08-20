@@ -139,22 +139,25 @@ Remain sealed/unopened:
 No sealed pool was opened by the full-stack remediation.
 
 ## 8. Validation receipt
-PR #331 remediation CI:
-- `Football3 Full Stack Scientific Preflight` run `32328093077`: SUCCESS;
+Final validated PR #331 head before this receipt-only commit: `68e9efb42787097905e92de7fc32885a856ae5e4`.
+
+- `Football3 Research Policy Integrity` V3 run `32328227482`: SUCCESS;
+- `Football3 Full Stack Scientific Preflight` run `32328227470`: SUCCESS;
 - 16 unit tests: PASS;
 - synthetic end-to-end pre-label smoke: PASS, real target labels opened = 0;
 - execution-surface audit: PASS;
 - policy/registry/seal validation: PASS;
 - changed-scientific-runner migration guard: PASS;
-- remediation no-real-target/sealed-data proof: PASS.
-
-Repository-wide `Football Engineering Quality and Security` run `32328093059`: SUCCESS.
+- remediation no-real-target/sealed-data proof: PASS;
+- repository-wide `Football Engineering Quality and Security` run `32328227478`: SUCCESS.
 
 Scientific activity during remediation:
 - new real target labels opened: 0;
 - model fits/scoring on real data: 0/0;
 - sealed pools opened: 0;
 - C073-C077 scientific evidence imported: 0.
+
+This commit changes only the receipt text in CURRENT. The same CI suites must remain green on the receipt commit before the remediation is considered closed.
 
 ## 9. Current boundary and next step
 The engineering/process/root-cause remediation is complete. This does **not** convert N20 or any other failed scientific hypothesis into a PASS and does not imply that the P(T) scientific problem is solved.
