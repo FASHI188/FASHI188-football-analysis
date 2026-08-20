@@ -1,0 +1,61 @@
+name: Football3 C072-N20 P1000 Zero Label
+
+on:
+  push:
+    branches: [football3/c072n20-latent-market-measurement-p1000-20260820]
+    paths:
+      - football-data/research/C072N20_P1000_ZERO_LABEL_AND_HYPOTHESIS_CONTRACT.md
+      - football-data/research/select_c072n20_p1000_zero_label.py
+      - .github/workflows/football3-c072n20-p1000-zero-label.yml
+  pull_request:
+    branches: [football3/governance-root-cause-correction-20260820]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  zero-label-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install pandas==2.3.2
+      - name: Download exact zero-label source/exclusion artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/n16" "$RUNNER_TEMP/c079" "$RUNNER_TEMP/n20"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9368768296/zip" > "$RUNNER_TEMP/n16.zip"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/9390121069/zip" > "$RUNNER_TEMP/c079.zip"
+          unzip -q "$RUNNER_TEMP/n16.zip" -d "$RUNNER_TEMP/n16"
+          unzip -q "$RUNNER_TEMP/c079.zip" -d "$RUNNER_TEMP/c079"
+      - name: Lock new exact 1000 with zero labels
+        run: |
+          python football-data/research/select_c072n20_p1000_zero_label.py \
+            --n16-dir "$RUNNER_TEMP/n16" --c079-dir "$RUNNER_TEMP/c079" --out-dir "$RUNNER_TEMP/n20"
+      - name: Enforce zero-label boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'n20'/'summary.json'
+          s=json.loads(p.read_text())
+          assert s['terminal']=='C072N20_P1000_ZERO_LABEL_PASS',s
+          assert s['selected_rows']==1000
+          assert s['selected_overlap_old2000']==0 and s['selected_overlap_c079_consumed1000']==0
+          assert s['target_result_values_materialized']==0 and s['model_fit']==0 and s['model_score']==0
+          assert all(s['gates'].values()),s['gates']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n20-p1000-zero-label
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/n20/summary.json
+            ${{ runner.temp }}/n20/c072n20_p1000_zero_label.csv
+            football-data/research/C072N20_P1000_ZERO_LABEL_AND_HYPOTHESIS_CONTRACT.md
