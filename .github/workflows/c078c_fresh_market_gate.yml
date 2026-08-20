@@ -1,0 +1,93 @@
+name: C078-C Fresh Market Zero-Label Gate
+
+on:
+  push:
+    branches: [research/c078c-fresh-market-gate-20260820]
+    paths:
+      - research/C078C_FRESH_MARKET_GATE_CONTRACT.md
+      - research/audit_c078c_fresh_market_gate.py
+      - .github/workflows/c078c_fresh_market_gate.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c078c-fresh-market-zero-label-gate
+  cancel-in-progress: false
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install zero-label audit runtime
+        run: python -m pip install numpy==2.2.6 pandas==2.3.2
+      - name: Download frozen C076-D source files as opaque bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c078c_source"
+          for code in E1 E2 E3 SC0 SC1 SC2 SC3 D2 I2 SP2 F2 P1; do
+            curl -L --fail --retry 5 --retry-delay 2 \
+              -o "$RUNNER_TEMP/c078c_source/${code}.csv" \
+              "https://www.football-data.co.uk/mmz4281/2526/${code}.csv"
+          done
+      - name: Run frozen market-field audit without outcome columns
+        id: gate
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/c078c_result"
+          python research/audit_c078c_fresh_market_gate.py \
+            --source-dir "$RUNNER_TEMP/c078c_source" \
+            --out-dir "$RUNNER_TEMP/c078c_result"
+      - name: Enforce score-value sealing and terminal source decision
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'c078c_result'/'summary.json'
+          assert p.is_file(), 'audit did not emit summary.json'
+          s=json.loads(p.read_text())
+          assert s['schema_version']=='C078C_FRESH_MARKET_ZERO_LABEL_GATE_V1'
+          assert s['status'] in {'PASS_FRESH_MARKET_ZERO_LABEL_GATE','STOP_SOURCE_MARKET_COVERAGE'}
+          assert s['identity_count']==4567, s['identity_count']
+          assert s['identity_sha256']=='fea3360a19094337579f1348858c7298e0b1bce1a177174cafc8e31dfd12c710', s['identity_sha256']
+          assert s['duplicate_identity_count']==0
+          b=s['label_boundary']
+          assert b['target_result_columns_materialized']==0
+          for k in ['FTHG_FTAG_numeric_conversion','FTHG_FTAG_values_stored','FTHG_FTAG_values_hashed','goal_totals_computed','goal_difference_computed','tail_membership_computed','model_fit']:
+              assert b[k] is False, (k,b[k])
+          assert b['only_identity_date_and_market_price_values_used'] is True
+          h=s['hard_boundaries']
+          assert h['C076D_score_values_opened'] is False
+          assert h['C077B_labels_read'] is False
+          assert h['C071_reserve52180_opened'] is False
+          assert h['C070F1597_opened'] is False
+          assert h['A05_or_protected_opened'] is False
+          assert h['formal_weight']==0
+          assert h['CURRENT_change'] is False
+          assert h['unified_matrix_generated'] is False
+          if s['status']=='PASS_FRESH_MARKET_ZERO_LABEL_GATE':
+              assert all(s['gate'].values()), s['gate']
+          else:
+              assert not all(s['gate'].values()), s['gate']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c078c-fresh-market-zero-label-gate
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/c078c_result/summary.json
+            research/C078C_FRESH_MARKET_GATE_CONTRACT.md
+            research/audit_c078c_fresh_market_gate.py
+
+# trigger-only 2026-08-20: no scientific-contract or audit-logic change
