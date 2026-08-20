@@ -2,7 +2,7 @@
 
 Updated: 2026-08-20 Asia/Taipei
 Project: `football3`
-Status: `FULL_STACK_ROOT_CAUSE_REMEDIATION_V4_CROSS_LAYER_AUDIT_IN_PROGRESS_NO_NEW_SCIENCE`
+Status: `FULL_STACK_ROOT_CAUSE_REMEDIATION_V4_CROSS_LAYER_AUDIT_COMPLETE_NO_NEW_SCIENCE`
 
 ## 1. Independent lineage
 Football3 root remains immutable:
@@ -11,12 +11,12 @@ Football3 root remains immutable:
 - root SHA `e3e73c998020beef585cc459a69ea5b73b44ddb3`;
 - valid continuation `C072-C -> football3/...`.
 
-C073-C077 **and all later derived research** remain quarantined. The quarantine is lineage-based, not name-based. C078/C079 or future renamed `research/*` branches that inherit C073-C077 seed-lineage commits are quarantined as descendants. Cross-project information may be read only for explicit comparison/global-consumption exclusion and is not automatically inherited scientifically.
+C073-C077 **and all later derived research** remain quarantined. Quarantine is lineage-based, not name-based. The V4 lineage audit uses true seed-tip ancestry for descendant classification and excludes commits already reachable from the immutable football3 root. This correctly includes C078/C079 descendants without falsely quarantining earlier C071/C071B football3 history.
 
 ## 2. Scientific state is unchanged
 Latest executed football3 science remains C072-N20 / PR #330: `C072N20_P1000_PILOT_NO_SIGNAL` / PARK.
 
-N20 cohort 1000 remains globally consumed. No same-label rescue is allowed. This V4 audit opens no new real target labels and does not change any scientific result.
+N20 cohort 1000 remains globally consumed. No same-label rescue is allowed. V4 opened no new real target labels, fit/scored no real model, and changed no scientific result.
 
 ## 3. Primary scientific target
 Primary target remains full match-level pre-match total-goals probability quality:
@@ -32,77 +32,120 @@ Direct Draw/0-0/1-1/T=2 boosting, post-view thresholds/class weights and proper-
 ## 4. Product task
 Comparable final-prematch research remains frozen at **T-15m**. Baseline and candidate use only information observable by T-15m. A different cutoff is a different product contract.
 
-## 5. Why a V4 cross-layer audit was necessary
-After the V3 receipt was green, the original root-cause categories were reapplied one by one rather than trusting the prior CI result. That audit found remaining gaps:
+## 5. What the V4 cross-layer audit found after V3 had already gone green
+The original root-cause categories were reapplied one by one rather than treating prior green CI as proof. Ten remaining cross-layer defects were found:
 
-1. lineage audit enumerated branch names C073-C077 but did not dynamically include their C078/C079/later descendants;
-2. `audit_*` / `test_*` / `validate_*` filename prefixes were still broadly exempt from changed-code contract binding;
-3. the full-stack trigger concentrated on `football-data/research/**`, leaving potential moved execution under other `football-data/**`, `scripts/**` or differently named workflows;
-4. required canonical calls were detected anywhere in AST rather than only a reachable execution graph;
-5. the frozen identity-lock artifact was not bound to the rows actually scored by the canonical evaluator;
-6. frozen development/confirmation minimum N was not checked against actual scoring N at runtime;
-7. candidate PIT validation could omit a used feature because the contract did not freeze a complete feature-to-timestamp manifest;
-8. strong market-baseline semantics were partly self-declared rather than backed by a bound zero-label input-semantics artifact;
-9. global-consumption audit was too identity-centric and did not structurally require repository/revision/season/match/market-field/label/hypothesis history;
-10. confirmation power artifacts were hash-bound but the validator did not recompute required N from frozen effect/SD/alpha/power.
+1. C073-C077 branch-name enumeration did not cover later C078/C079/future descendants;
+2. broad `audit_*` / `test_*` / `validate_*` prefix exemptions could disguise scientific execution;
+3. scientific execution could potentially move outside `football-data/research/**` or into another workflow surface;
+4. mandatory canonical calls could exist only in unreachable code and still satisfy the old AST test;
+5. frozen identity lock was not bound to the rows actually scored;
+6. frozen development/confirmation minimum N was not checked against actual scoring N;
+7. candidate PIT could omit a used feature because no complete feature-to-timestamp manifest was frozen;
+8. same-cutoff market baseline semantics were partly self-declared rather than bound to a zero-label semantic audit;
+9. global consumption audit was too identity-centric and did not structurally require source/revision/season/match/market-field/label/hypothesis history;
+10. confirmation power artifacts were hash-bound but required N was not independently recomputed.
 
-These defects are being corrected in this V4 pass before any new science is authorized.
+During V4 validation, the first descendant algorithm also exposed an **overblocking bug**: shared ancestry caused C071/C071B to be falsely classified as quarantined. That implementation was rejected and replaced with true seed-tip ancestry before V4 closure.
 
-## 6. V4 runtime corrections now implemented pending CI
-The proposed V4 implementation now includes:
-- dynamic C073-C077 seed-lineage descendant quarantine across all `research/*` refs;
-- direct ancestry plus stable scientific patch-id checks for all derived quarantine branches;
-- exact infrastructure allow-list only; filename-prefix exemption removed;
-- full-stack PR triggers widened to `football-data/**`, `scripts/**`, and all `.github/workflows/**` changes;
-- football3 branches blocked from creating differently named workflows as an escape route;
-- complete candidate `feature_columns` + `feature_timestamp_map` frozen in the V2 contract;
-- zero-label `FOOTBALL3_INPUT_SEMANTICS_AUDIT_TEMPLATE_V1.json` for market semantics and complete PIT manifest binding;
-- canonical evaluator requires actual ordered scoring identity hashes and rejects any mismatch with the frozen identity lock;
-- canonical evaluator enforces actual development/confirmation N against the frozen minimum;
-- reachable-call analysis for runner preflight, with canonical evaluator requiring identity/fold/domain/contract runtime bindings;
-- mandatory exact one-to-one join and sealed-boundary runtime guards;
-- global consumption receipts expanded to repository/revision/season/match/market-field/label/scientific-hypothesis dimensions;
-- previously viewed same hypothesis or connected-audit replication condition forces REPLICATION/REPRODUCTION;
-- `football3_paired_power_plan_v1` required for confirmation and required N recomputed by validator.
+## 6. Rules/governance status after V4
+Rules are now represented by one active policy/standard/contract family and are backed by executable gates rather than only prose:
+- one master comparable product cutoff: T-15m;
+- P(T) remains upstream primary scientific target; Draw remains downstream;
+- no same-label rescue/method shopping;
+- no direct Draw/0-0/1-1 boost;
+- explicit user authorization remains required before new target access;
+- old authority files remain removed;
+- PR #331 remains Draft/Open/Unmerged and `formal_weight=0` until intentionally integrated.
 
-## 7. Honest machine-verification boundary
-V4 deliberately does **not** claim that static CI can mathematically prove arbitrary Python control flow or external data truth.
+## 7. Execution-engine status after V4
+New scoring runners must use a reachable execution path containing:
+- `assert_master_prediction_cutoff`;
+- `assert_feature_pit`;
+- `assert_temporal_oos`;
+- `assert_exact_one_to_one_join`;
+- `assert_sealed_boundaries`;
+- `evaluate_frozen_experiment`.
 
-CI can verify code structure, hashes, identity binding, sample N, metric/gate execution and semantic-audit artifact consistency. It cannot independently prove that an external provider's record was truly the latest available quote or that a connected historical search was exhaustive. Those facts require the connected zero-label audit evidence and code review that produced the immutable receipts.
+The canonical evaluator binds actual scoring identities to the frozen lock **before metrics**, enforces actual sample N, then applies LogLoss/Brier/RPS, Top1ECE/ClasswiseECE, paired bootstrap, temporal folds, domains and frozen promotion gates.
 
-This limitation is part of the scientific contract, not hidden behind a green CI badge.
+Changed Python is not trusted by filename prefix. Only an exact infrastructure allow-list is exempt. New execution under `football-data/**`, `scripts/**` or workflow changes is brought onto the football3 full-stack surface; alternate new notebook/shell/R/JS/TS/PowerShell/batch execution is fail-closed until an equivalent standard exists.
 
-## 8. Validation/sample boundary
-Primary score remains LogLoss, with Brier/RPS and Top1ECE/ClasswiseECE non-inferiority plus temporal/domain gates. Paired bootstrap remains mandatory.
+## 8. Data / PIT / market-semantics status after V4
+Every declared model feature is frozen in `feature_columns` and has an exact `feature_timestamp_map`. Runner PIT columns must match the frozen candidate timestamp manifest plus the baseline quote timestamp column. Missing/invalid/timezone-naive/post-cutoff timestamps fail closed.
 
-For confirmation, convenience packets are forbidden. Frozen effect magnitude, paired-delta SD, alpha, power, conservative multiplier and required N are stored in `football3_paired_power_plan_v1`; validator recomputes required N and runtime scoring rejects N below the frozen minimum. Optional stopping remains forbidden.
+`FOOTBALL3_INPUT_SEMANTICS_AUDIT_TEMPLATE_V1.json` now binds the zero-label cohort to the exact baseline representation, quote timestamp column, latest-snapshot/de-vig evidence, complete candidate feature manifest and zero missing/post-cutoff timestamp counts.
 
-## 9. Global consumption and sealed boundary
-Viewed labels remain globally consumed across football projects. A branch/project rename never restores freshness.
+Important limitation: CI validates structure, hashes and binding; it cannot independently prove that an external provider's record truly was the latest available quote or that every external-source semantic claim is true. Those facts still require the connected zero-label audit evidence that produced the immutable receipt.
 
-Remain sealed/unopened:
-- C070-F Confirmation1597;
-- N17 reserve266;
-- N18C confirmation150;
-- any other protected football3 pool not explicitly authorized.
+## 9. Identity / global consumption status after V4
+`sha256_csv_v1` remains the identity-lock format: exact header, one lowercase 64-hex identity per row, no duplicates/blanks, matching count/order digest/file SHA.
 
-## 10. Previous V3 receipt remains historical evidence only
-Previous receipt-only HEAD `51b5dc85d6b5b273236e15028b289c81de6c11a3` passed its then-current gates, but V4 found additional gaps not covered by those gates. Therefore it is not treated as the final execution-engine closure anymore.
+The lock now represents the **exact scored cohort**. The actual ordered scoring identity digest and row count must equal the frozen contract before scoring can proceed.
 
-No scientific result produced under V3 is newly opened or rescored by this audit.
+Global-consumption audit now structurally covers repository, revision, season, match identity, market fields, label definition and scientific hypothesis. Consumed overlap, unresolved historical identity gaps, a previously viewed same hypothesis, or a connected-audit replication/reproduction condition forbids a fresh classification.
 
-## 11. V4 validation state
-V4 implementation changes are committed on PR #331 but **not yet accepted as closed until the new HEAD itself passes all updated gates**.
+The external search itself cannot be cryptographically proven by local CI; fresh work still requires the real connected GitHub/Airtable zero-label audit.
 
-Scientific activity in V4 so far:
+## 10. Lineage isolation status after V4
+Implementation HEAD lineage receipt:
+- C073-C077 seed refs checked: **34**;
+- true derived quarantine refs: **12**, the C078/C079 descendant set;
+- earlier C071/C071B falsely flagged by the rejected interim algorithm: **0 in final derived set**;
+- quarantined commits unique from the football3 root: **225**;
+- direct quarantined ancestry in football3 HEAD: **0**;
+- stable scientific patch-id/cherry-pick matches: **0**;
+- lineage blockers: **0**.
+
+Classification is based on a seed tip actually being an ancestor of the later branch, not merely sharing an older ancestor.
+
+## 11. Validation and sample-efficiency status after V4
+Primary success remains LogLoss. Brier/RPS and Top1ECE/ClasswiseECE non-inferiority, paired bootstrap, temporal fold gates and domain gates are applied by the canonical evaluator.
+
+Arbitrary convenience confirmation packets are prohibited. A `football3_paired_power_plan_v1` freezes effect magnitude, paired-delta SD, alpha, planned power, conservative multiplier and required N. The validator independently recomputes required N, and the runtime evaluator rejects actual N below the frozen minimum. Optional stopping remains forbidden.
+
+## 12. Honest machine-verification boundary
+V4 does **not** claim that static CI is a theorem proving arbitrary Python behavior. Reachability analysis closes the old dead-code bypass for ordinary runners, but arbitrary dynamic Python/control-flow semantics still require code review/runtime evidence.
+
+Likewise, CI cannot prove external data truth or completeness of a GitHub/Airtable historical search. Those irreducible boundaries are now explicitly part of the contract instead of being hidden behind a green badge.
+
+## 13. V4 implementation validation receipt
+Validated implementation HEAD:
+
+`dfe6614d9c3d33d316df2f6f50b56e829314e195`
+
+GitHub Actions on that implementation head:
+- Football3 Research Policy Integrity run `32333509011`: **SUCCESS**;
+- Football3 Full Stack Scientific Preflight run `32333508996`: **SUCCESS**;
+- Football Engineering Quality and Security run `32333508980`: **SUCCESS**.
+
+Full-stack evidence:
+- compile: PASS;
+- cross-layer/core/contract negative + regression tests: **24/24 PASS**;
+- zero-real-label canonical evaluator smoke: PASS;
+- canonical identity binding: PASS;
+- canonical runtime sample minimum: PASS;
+- execution-surface audit: PASS, warnings = 0;
+- V4 policy/contract/PIT/consumption/sample/lineage validation: PASS;
+- repo-wide changed-code binding audit: PASS;
+- no-real-target/no-sealed-data proof: PASS.
+
+Scientific activity in V4:
 - new real target labels opened: 0;
 - real-data model fits/scoring: 0/0;
 - sealed pools opened: 0;
-- C073-C079 scientific evidence imported into football3: 0.
+- quarantined old-project scientific evidence imported into football3: 0.
 
-## 12. Next scientific step
-No new P(T) experiment starts until V4 cross-layer CI is green and the final receipt is published.
+This commit is receipt/current text only. The receipt-only HEAD must itself retain green CI; those run IDs are recorded in PR/Airtable rather than creating another receipt commit loop.
 
-After that, next science still requires separate user authorization and a materially new P(T) information/measurement hypothesis under the T-15m V2 contract. Latent `P(T)` plus noisy market measurement remains only a candidate hypothesis, not a result or PASS.
+## 14. What is and is not solved
+The previously listed **rules, execution engine, identity/PIT, validation, lineage, consumption and sample-planning defects now have substantially stronger executable closure** under V4, subject to the explicit external-data/dynamic-code verification boundary above.
+
+This does **not** mean the football prediction engine has solved P(T). Scientific state remains N20 PARK. Governance/execution correctness and predictive breakthrough are separate questions.
+
+## 15. Next scientific step
+After the receipt-only HEAD itself is green, the next science still requires separate explicit user authorization and a materially new P(T) information/measurement hypothesis under the T-15m V2 contract.
+
+Latent `P(T)` plus noisy market measurement remains only a candidate hypothesis, not a result or PASS.
 
 formal_weight remains 0.
