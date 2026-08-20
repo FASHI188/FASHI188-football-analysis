@@ -1,5 +1,6 @@
-# C072-N18C execution correction — zero-label gzip receipt only
+# C072-N18C execution corrections — transport/repro only
 
+## Correction 1 — gzip receipt nondeterminism
 The first N18C workflow attempt stopped before any DEVELOPMENT outcome request.
 
 Observed boundary at stop:
@@ -10,12 +11,28 @@ Observed boundary at stop:
 - target result values materialized = 0;
 - N18C model step was skipped.
 
-The sole failure was asserting the SHA256 of the gzip container `c072n18b_target550_zero_label.jsonl.gz`. The parent builder writes gzip with a runtime timestamp in the gzip header, so compressed-byte SHA is not reproducible even when the decompressed JSONL payload is identical. This is a transport-receipt defect, not a scientific/data change.
+The failure was asserting SHA256 of gzip-container bytes. Runtime gzip header timestamps make the compressed-byte SHA nondeterministic even when decompressed JSONL is identical.
 
 Correction:
-- do not use gzip-container bytes as the N18C zero-label reproducibility gate;
-- use SHA256 of the decompressed JSONL bytes instead;
-- authoritative decompressed semantic payload SHA256 from the already-frozen N18B2 artifact is `b72fd9225d51178db533bee129bc9406a794d127b511bdcaed4b65ffd2339b9a`;
-- keep dev400 and confirmation150 ID hashes as independent identity gates.
+- use SHA256 of decompressed JSONL bytes;
+- authoritative semantic payload SHA256 = `b72fd9225d51178db533bee129bc9406a794d127b511bdcaed4b65ffd2339b9a`;
+- retain dev400 and confirmation150 ID hashes as independent identity gates.
 
-No scientific term changes: same 400 DEVELOPMENT outcomes, same 150 sealed confirmation IDs, same market anchor, 16 features, NB2 family, folds, optimizer, lambda, metrics, PASS gates and stopping rule. No outcome labels were accessed before this correction.
+## Correction 2 — historical result-table resolver
+The next workflow reproduced the semantic zero-label payload and both split hashes exactly, then stopped before the first DEVELOPMENT result POST.
+
+Observed boundary:
+- semantic target550 SHA reproduced exactly;
+- confirmation requests = 0;
+- confirmation result values = 0;
+- DEVELOPMENT result values = 0;
+- model fit/score not reached.
+
+The failure was `result table resolution expected 1 got 0 season=2024/2025`. The implementation incorrectly required the server-side historical result table's first rendered HTML rows to directly contain the requested target season. Footiqo does not guarantee that for server-side tables.
+
+Correction:
+- use the already-established N17 table-resolution protocol: among exact `RESULT_HEADERS` tables, select the unique table whose visible sample has the earliest starting season;
+- after resolving that historical table, request the frozen season and one frozen DEVELOPMENT ID through server-side column filters;
+- every result POST remains single-ID target-only; confirmation IDs remain forbidden at request layer.
+
+No scientific term changes in either correction: same 400 DEVELOPMENT identities, same 150 sealed confirmation identities, same market anchor, 16 features, NB2 family, folds, optimizer, lambda, metrics, PASS gates and stopping rule. No DEVELOPMENT or confirmation outcome labels were accessed before these corrections.
