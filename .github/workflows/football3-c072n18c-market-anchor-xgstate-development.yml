@@ -1,0 +1,74 @@
+name: football3-c072n18c-market-anchor-xgstate-development
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/C072N18C_MARKET_ANCHOR_XGSTATE_DEVELOPMENT_CONTRACT.md'
+      - 'football-data/research/run_c072n18c_market_anchor_xgstate_development.py'
+      - '.github/workflows/football3-c072n18c-market-anchor-xgstate-development.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  n18c-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen dependencies
+        run: pip install --disable-pip-version-check requests==2.32.4 beautifulsoup4==4.13.4 rapidfuzz==3.14.1 numpy==2.3.2 scipy==1.16.1
+
+      - name: Rebuild and assert frozen N18B2 zero-label cohort
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python football-data/research/run_c072n18b2_zero_label_unique_fuzzy_team_map.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/_c072n18b_zero_label_join/c072n18b_summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS_N18B2_ZERO_LABEL_TARGET_MARKET_JOIN', x
+          assert x['target550_sha256']=='2d995990fcadcbdc14a2f9fadc07c8aba306433f53a174fcf2a55c513005a386', x
+          assert x['dev400_ids_sha256']=='55181a078d39d9ac53881aa0c377d6c6cb819c06053bd75609841a13caa1dbdf', x
+          assert x['confirmation150_ids_sha256']=='774be269e30254af29614210401b52c23b0f3a4e79a7945e98014d50590ea90f', x
+          assert x['target_result_values_materialized']==0, x
+          print('N18B2_FROZEN_ZERO_LABEL_REPRO_PASS')
+          PY
+
+      - name: Execute one-shot N18C development
+        run: python football-data/research/run_c072n18c_market_anchor_xgstate_development.py
+
+      - name: Assert confirmation boundary and completed scientific terminal
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/_c072n18c_development/c072n18c_summary.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['terminal'] in {'C072N18C_DEVELOPMENT_PASS','C072N18C_DEVELOPMENT_PARK'}, x
+          assert x['confirmation150_result_requests']==0, x
+          assert x['confirmation150_result_values_materialized']==0, x
+          assert x['C070F_confirmation1597_opened'] is False, x
+          assert x['C073_C077_scientific_results_used'] is False, x
+          print(x['terminal'])
+          PY
+
+      - name: Upload N18C development artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-c072n18c-development-${{ github.sha }}-${{ github.run_id }}
+          path: football-data/research/_c072n18c_development/
+          if-no-files-found: error
+          retention-days: 30
