@@ -1,0 +1,46 @@
+name: C079-A2.1 wpDataTables Request Config Audit
+
+on:
+  push:
+    branches: [research/c079a2-footiqo-endpoint-audit-20260820]
+    paths:
+      - research/audit_c079a21_wpdatatable_request_config.py
+      - .github/workflows/c079a21_wpdatatable_config.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install requests==2.32.5 beautifulsoup4==4.13.5 lxml==6.0.1
+      - name: Extract request config without requesting table data
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python research/audit_c079a21_wpdatatable_request_config.py --out-dir "$RUNNER_TEMP/out"
+      - name: Enforce zero-data-request boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['schema_version']=='C079A21_REQUEST_CONFIG_V1'
+          assert s['terminal'] in {'REQUEST_CONFIG_DISCOVERED','REQUEST_CONFIG_NOT_FOUND'}
+          b=s['hard_boundary']
+          for k in ['match_row_values_persisted','score_fields_parsed','odds_rows_requested','ajax_data_request_executed','authentication_attempted','premium_bypass_attempted','model_fit']:
+              assert b[k] is False,(k,b[k])
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c079a21-wpdatatable-request-config
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            research/audit_c079a21_wpdatatable_request_config.py
