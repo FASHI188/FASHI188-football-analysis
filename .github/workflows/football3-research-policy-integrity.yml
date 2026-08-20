@@ -1,0 +1,32 @@
+name: Football3 Research Policy Integrity
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/FOOTBALL3_INDEPENDENT_CURRENT.md'
+      - 'football-data/research/FOOTBALL3_RESEARCH_POLICY_V2.json'
+      - 'football-data/research/validate_football3_research_policy_v2.py'
+      - '.github/workflows/football3-research-policy-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate football3 independent research policy
+        run: python football-data/research/validate_football3_research_policy_v2.py
+      - name: Confirm governance-only correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only 0e088ee91ebd94a2b840b4fe673457f1c6b37193...HEAD | tee /tmp/changed.txt
+          if grep -Ev '^(football-data/research/FOOTBALL3_INDEPENDENT_CURRENT\.md|football-data/research/FOOTBALL3_RESEARCH_POLICY_V2\.json|football-data/research/validate_football3_research_policy_v2\.py|\.github/workflows/football3-research-policy-integrity\.yml|football-data/research/FOOTBALL3_ROOT_CAUSE_CORRECTION_20260820\.md)$' /tmp/changed.txt | grep -q .; then
+            echo 'Unexpected file outside governance correction scope' >&2
+            exit 1
+          fi
