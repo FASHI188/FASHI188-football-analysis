@@ -1,0 +1,54 @@
+name: C078-E3 Supplemental Calibration Source Gate
+
+on:
+  push:
+    branches: [research/c078e3-supplemental-calibration-source-gate-20260820]
+    paths:
+      - research/C078E3_SUPPLEMENTAL_CALIBRATION_SOURCE_GATE.md
+      - research/audit_c078e3_supplemental_source.py
+      - .github/workflows/c078e3_supplemental_source_gate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.11'}
+      - run: python -m pip install numpy==2.2.6 pandas==2.3.2
+      - name: Download fixed supplemental files as transient bytes
+        run: |
+          set -euo pipefail; mkdir -p "$RUNNER_TEMP/src"
+          for code in EC T1 G1; do curl -L --fail --retry 5 --retry-delay 2 -o "$RUNNER_TEMP/src/${code}.csv" "https://www.football-data.co.uk/mmz4281/2526/${code}.csv"; done
+      - name: Run zero-label audit
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python research/audit_c078e3_supplemental_source.py --source-dir "$RUNNER_TEMP/src" --out-dir "$RUNNER_TEMP/out"
+      - name: Enforce label boundary
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads((Path(os.environ['RUNNER_TEMP'])/'out'/'summary.json').read_text())
+          assert s['schema_version']=='C078E3_SUPPLEMENTAL_SOURCE_V1'
+          assert s['status'] in {'PASS_SUPPLEMENTAL_ZERO_LABEL_SOURCE','STOP_SUPPLEMENTAL_SOURCE'}
+          b=s['label_boundary']; assert b['numeric_FTHG_FTAG_access'] is False and b['numeric_result_storage'] is False and b['goal_totals_computed'] is False and b['tail_membership_computed'] is False and b['model_fit'] is False
+          if s['status']=='PASS_SUPPLEMENTAL_ZERO_LABEL_SOURCE': assert all(s['gate'].values()),s['gate']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c078e3-supplemental-market-snapshot
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/out/summary.json
+            ${{ runner.temp }}/out/supplemental_market_snapshot.csv
+            research/C078E3_SUPPLEMENTAL_CALIBRATION_SOURCE_GATE.md
+            research/audit_c078e3_supplemental_source.py
+
+# trigger-only 2026-08-20T08:27+08:00
