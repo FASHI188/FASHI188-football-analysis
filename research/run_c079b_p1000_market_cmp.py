@@ -33,10 +33,8 @@ BOUNDS=[(math.log(0.1),math.log(8.0)),(math.log(0.6),math.log(3.0))]
 
 def devig(o,u):
     io=1.0/o; iu=1.0/u; return io/(io+iu)
-
 def logit(x):
     x=np.clip(x,1e-8,1-1e-8); return np.log(x/(1-x))
-
 def ids_sha(keys):
     return hashlib.sha256(('\n'.join(sorted(map(str,keys)))+'\n').encode()).hexdigest()
 
@@ -82,7 +80,6 @@ def fetch_selected_results(slug:str, selected_by_id:dict):
             date=cells[pos['matchDate']].get_text(' ',strip=True)
             home=cells[pos['homeTeam']].get_text(' ',strip=True)
             away=cells[pos['awayTeam']].get_text(' ',strip=True)
-            # Numeric result values are decoded ONLY after selected-id membership passes.
             hg_txt=cells[pos['FTHG']].get_text(' ',strip=True)
             ag_txt=cells[pos['FTAG']].get_text(' ',strip=True)
             if not hg_txt or not ag_txt: continue
@@ -147,10 +144,8 @@ def fit_cmp(qs,mu0):
 
 def collapsed8_from_arr(p):
     first=np.asarray(p[:7],float); return np.r_[first,max(0.0,1.0-first.sum())]
-
 def onehot8(t):
     y=np.zeros(8); y[min(int(t),7)]=1.; return y
-
 def brier(P,Y): return float(np.mean(np.sum((P-Y)**2,axis=1)))
 def rps(P,Y): return float(np.mean(np.sum((np.cumsum(P,axis=1)[:,:-1]-np.cumsum(Y,axis=1)[:,:-1])**2,axis=1)/7.0))
 def llcat(P,Yidx): return float(np.mean(-np.log(np.clip(P[np.arange(len(P)),Yidx],1e-15,1))))
@@ -171,8 +166,8 @@ def main():
         (out/'summary.json').write_text(json.dumps(pre,ensure_ascii=False,indent=2)+'\n'); print(json.dumps(pre,ensure_ascii=False,indent=2)); return 0
     d=market.merge(results[['identity_key','FTHG','FTAG']],on='identity_key',how='inner',validate='one_to_one')
     d['T']=d.FTHG.astype(int)+d.FTAG.astype(int)
-    if int(d.T.max())>KMAX:
-        pre.update({'status':'STOP_SUPPORT','labels_opened':1000,'max_total':int(d.T.max()),'model_scored':False})
+    if int(d['T'].max())>KMAX:
+        pre.update({'status':'STOP_SUPPORT','labels_opened':1000,'max_total':int(d['T'].max()),'model_scored':False})
         (out/'summary.json').write_text(json.dumps(pre,ensure_ascii=False,indent=2)+'\n'); print(json.dumps(pre,ensure_ascii=False,indent=2)); return 0
     n=len(d); P0=np.zeros((n,8)); PC=np.zeros((n,8)); exact0=np.zeros(n); exactc=np.zeros(n); ev7_0=np.zeros(n); ev7_c=np.zeros(n); ev8_0=np.zeros(n); ev8_c=np.zeros(n); fitdiag=[]
     for i,r in d.iterrows():
@@ -180,12 +175,12 @@ def main():
         mu=solve_mu(q3)
         b=poisson.pmf(np.arange(KMAX+1),mu)
         c,fd=fit_cmp([q3,q4,q5],mu); fitdiag.append(fd)
-        t=int(r.T)
+        t=int(r['T'])
         exact0[i]=max(float(poisson.pmf(t,mu)),1e-300); exactc[i]=max(float(c[t]),1e-300)
         P0[i]=collapsed8_from_arr(b); PC[i]=collapsed8_from_arr(c)
         ev7_0[i]=float(poisson.sf(6,mu)); ev7_c[i]=float(1-c[:7].sum())
         ev8_0[i]=float(poisson.sf(7,mu)); ev8_c[i]=float(1-c[:8].sum())
-    T=d.T.to_numpy(int); yidx=np.minimum(T,7); Y=np.vstack([onehot8(t) for t in T])
+    T=d['T'].to_numpy(int); yidx=np.minimum(T,7); Y=np.vstack([onehot8(t) for t in T])
     exact_ll0=float(np.mean(-np.log(exact0))); exact_llc=float(np.mean(-np.log(exactc))); dll=exact_llc-exact_ll0
     lossdiff=(-np.log(exactc))-(-np.log(exact0))
     rng=np.random.default_rng(79001); boots=np.empty(3000)
