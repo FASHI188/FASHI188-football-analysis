@@ -78,7 +78,7 @@ Every declared model feature is frozen in `feature_columns` and has an exact `fe
 
 Important limitation: CI validates structure, hashes and binding; it cannot independently prove that an external provider's record truly was the latest available quote or that every external-source semantic claim is true. Those facts still require the connected zero-label audit evidence that produced the immutable receipt.
 
-## 9. Identity / global consumption status after V4
+## 9. Identity / global consumption / sealed status after V4
 `sha256_csv_v1` remains the identity-lock format: exact header, one lowercase 64-hex identity per row, no duplicates/blanks, matching count/order digest/file SHA.
 
 The lock now represents the **exact scored cohort**. The actual ordered scoring identity digest and row count must equal the frozen contract before scoring can proceed.
@@ -86,6 +86,12 @@ The lock now represents the **exact scored cohort**. The actual ordered scoring 
 Global-consumption audit now structurally covers repository, revision, season, match identity, market fields, label definition and scientific hypothesis. Consumed overlap, unresolved historical identity gaps, a previously viewed same hypothesis, or a connected-audit replication/reproduction condition forbids a fresh classification.
 
 The external search itself cannot be cryptographically proven by local CI; fresh work still requires the real connected GitHub/Airtable zero-label audit.
+
+Remain sealed/unopened unless the user explicitly authorizes access:
+- C070-F Confirmation1597;
+- N17 reserve266;
+- N18C confirmation150;
+- any other protected football3 pool.
 
 ## 10. Lineage isolation status after V4
 Implementation HEAD lineage receipt:
@@ -97,7 +103,7 @@ Implementation HEAD lineage receipt:
 - stable scientific patch-id/cherry-pick matches: **0**;
 - lineage blockers: **0**.
 
-Classification is based on a seed tip actually being an ancestor of the later branch, not merely sharing an older ancestor.
+Classification is based on a seed tip actually being an ancestor of the later branch, not merely sharing an older ancestor. For deleted/unreachable refs or arbitrary partial-history reconstruction, Git alone cannot prove facts that are no longer reachable; such uncertainty must fail closed in the connected lineage/consumption audit rather than be guessed.
 
 ## 11. Validation and sample-efficiency status after V4
 Primary success remains LogLoss. Brier/RPS and Top1ECE/ClasswiseECE non-inferiority, paired bootstrap, temporal fold gates and domain gates are applied by the canonical evaluator.
