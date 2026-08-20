@@ -125,8 +125,31 @@ Remain sealed/unopened:
 - N18C confirmation150;
 - any other protected football3 pool not explicitly authorized.
 
-## 13. Validation receipt state
-The third-pass implementation is committed on PR #331. Final third-pass Actions run IDs must be recorded only after the new head itself completes all gates. Until then, no new science is authorized from this remediation checkpoint.
+## 13. Third-pass validated implementation receipt
+Validated implementation HEAD before this receipt-only commit:
+
+`4eb094814a1d65151a0fc12b9692a1f835c450fb`
+
+GitHub Actions on that exact implementation head:
+- `Football3 Research Policy Integrity` run `32331727934`: **SUCCESS**;
+- `Football3 Full Stack Scientific Preflight` run `32331728253`: **SUCCESS**;
+- `Football Engineering Quality and Security` run `32331727927`: **SUCCESS**.
+
+Full-stack evidence:
+- compile: PASS;
+- canonical/core/contract regression tests: **22/22 PASS**;
+- zero-real-label canonical evaluator smoke: PASS;
+- semantic PIT/master-cutoff/identity/consumption/metric gates: PASS;
+- historical/active execution-surface audit: PASS, warnings = 0;
+- V3 policy + V2 runtime contract + single-authority audit: PASS;
+- changed-code binding and all-active-V2-contract revalidation: PASS;
+- no-real-target/no-sealed proof: PASS.
+
+Lineage isolation evidence:
+- C073-C077 quarantine refs checked: **34**;
+- direct quarantined ancestry detected: **0**;
+- stable scientific patch-id/cherry-pick matches detected: **0**;
+- lineage blockers: **0**.
 
 Scientific activity during this third-pass re-audit:
 - new real target labels opened: 0;
@@ -134,9 +157,11 @@ Scientific activity during this third-pass re-audit:
 - sealed pools opened: 0;
 - C073-C077 scientific evidence imported: 0.
 
+This commit changes the receipt/current text only. The receipt-only HEAD must itself retain green CI before this remediation checkpoint is treated as fully closed.
+
 ## 14. Next scientific step
 This re-audit repairs the research/execution engine. It does **not** solve the predictive P(T) problem.
 
-Only after the third-pass head is fully green may a separately authorized new experiment start. It must be a materially new P(T) information/measurement hypothesis under the T-15m V2 protocol. Latent `P(T)` plus a noisy market-measurement layer remains a candidate hypothesis, not a result or PASS.
+After the receipt-only HEAD is verified green, a separately authorized new experiment may start. It must be a materially new P(T) information/measurement hypothesis under the T-15m V2 protocol. Latent `P(T)` plus a noisy market-measurement layer remains a candidate hypothesis, not a result or PASS.
 
 formal_weight remains 0. No downstream Draw optimization is the next step.
