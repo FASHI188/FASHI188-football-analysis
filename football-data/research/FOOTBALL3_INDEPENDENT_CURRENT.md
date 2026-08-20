@@ -2,176 +2,119 @@
 
 Updated: 2026-08-20 Asia/Taipei
 Project: `football3`
-Status: `RESEARCH_PARKED_AWAITING_MATERIALLY_NEW_PT_HYPOTHESIS`
+Status: `RESEARCH_PARKED_AFTER_C072N20_P1000_NO_SIGNAL`
 
-## 1. Independent lineage
-
-Football3 has one scientific root:
-
-- root experiment: `C072-C`
+## Independent lineage
+- scientific root: C072-C
 - root branch: `research/c072c-xg-total-scalar-20260818`
 - root SHA: `e3e73c998020beef585cc459a69ea5b73b44ddb3`
 - valid continuation: `C072-C -> football3/...`
 
-C073-C077 and their descendants belong to the separate football project. They are quarantined from football3 scientific state, direction selection, feature/model selection, stopping rules, hyperparameters, source choice and confirmation claims unless the user explicitly orders a cross-project merge. A comparison is not a merge.
+C073-C077 and descendants remain quarantined. Cross-project information may be used only for explicit comparison or global-consumption exclusion, never silently imported as football3 scientific evidence/model-selection/stopping input.
 
-Latest legal football3 checkpoint before this governance correction:
+Latest executed football3 line:
+- PR #330
+- branch `football3/c072n20-latent-market-measurement-p1000-20260820`
+- N20 authoritative replay run `32326652798`
+- terminal `C072N20_P1000_PILOT_NO_SIGNAL`.
 
-- PR #328
-- branch `football3/c072n19-closing-anchor-movement-replication1000-20260820`
-- final branch HEAD `0e088ee91ebd94a2b840b4fe673457f1c6b37193`
-- scientific terminal `C072N19R1_REPLICATION_PARK`
-
-## 2. Primary scientific target
-
-The primary research target is match-level resolution of the complete pre-match total-goals distribution:
+## Primary scientific target
+Primary target remains match-level resolution and calibration of the complete pre-match total-goals distribution:
 
 `P(T=0,1,2,...)`.
 
-The scientific chain is fixed as:
+Fixed chain:
 
 `P(T) -> P(D=0 | T,X) / home-away allocation -> P(H,A) -> derived Draw/1X2/exact-score probabilities`.
 
-Draw Top1 is a downstream consequence, not a direct optimization target. Do not use manual Draw, 0-0 or 1-1 boosts; post-hoc thresholds; post-hoc class weights; or proper-score sacrifices to manufacture more Draw calls.
+Draw Top1 is downstream. No manual Draw/0-0/1-1/T=2 boosts, post-hoc thresholds/class weights or proper-score sacrifices are authorized.
 
-## 3. Football3 evidence retained
+## Retained football3 evidence
+- C070 duration: PARK.
+- C071 coarse shot/chance statistics: no stable exact-T LogLoss increment.
+- C072 true shot-level xG: ranking information exists.
+- C072-C scalar xG total-intensity: point improvement but bootstrap stability gate failed; PARK.
+- C072-I2 conditional D|T / score allocation: strong proper-score evidence.
+- C072-K2 joint low-score integration: proper-score improvement, Top1 concentration remained.
+- C072-L2: major Top1 concentration localized upstream to P(T).
+- C072-N10/N13/N15W: tested static/dynamic/structured multi-line O/U representations did not establish stable exact-T proper-score increment; no rescue shopping.
+- C072-N17: closing 1X2 composition increment worsened proper scores; PARK. Development1734 consumed; reserve266 sealed.
+- C072-N18C: last-10 historical shot/xG residual-mean correction over O/U2.5 market anchor worsened proper scores; PARK. Development400 consumed; confirmation150 sealed.
+- C072-N19R1: same-line opening->closing O/U2.5 movement conditional on closing O/U2.5 did not establish incremental P(T) information; REPLICATION/PARK; 1000 consumed.
+- C072-N20: new exact P1000 tested line-specific calibrated five-line O/U tails -> monotone PAVA -> Poisson tail continuation. It reduced T=2 Top1 concentration from 78.0% to 62.7%, but worsened LogLoss/Brier/RPS and won only 1/4 source leagues. Terminal PILOT_NO_SIGNAL; exact representation PARK.
 
-### Historical root evidence
+## N20 binding result
+Exact cohort:
+- 1000 rows; ordered identity SHA `a49e61df94d0f9c368b314829901f0d64d69ad25c51813551a298307e15e56cf`.
+- BR318 / GR121 / MLS313 / TR248.
+- 0 overlap with prior football3 N16 selected2000 and 0 overlap with explicitly excluded C079 consumed1000.
+- exact target join 1000/1000, identity mismatch 0.
+- all 1000 N20 labels are globally consumed.
 
-- C070 duration family: PARK.
-- C071 coarse shot/chance statistics: no stable exact-T LogLoss increment established.
-- C072 true shot-level xG: clear ranking information.
-- C072-C scalar total-intensity point estimate: point improvement, but bootstrap stability gate failed; PARK.
-- C070-F Confirmation 1597: SEALED; no target access authorized.
+Authoritative replay:
+- run `32326652798`, job `96299173818`.
+- HEAD at replay `b067f49972e0522512a5cbca5acc1576cd2f112f`.
+- artifact `9391656598`, digest `sha256:80d4e65a5c69e88ad6e71dff8f22cf988eefeb31849a2b6bebcd773c8e813db3`.
 
-### Post-recovery football3 evidence
+Metrics candidate minus same-training calibrated O/U2.5 Poisson baseline:
+- dLogLoss `+0.0041598079` (worse).
+- bootstrap90 `[-0.0003677775,+0.0086930374]`, P(dLL<0)=`0.0662`.
+- dBrier `+0.0008985958` (worse).
+- dRPS `+0.0001791452` (worse).
+- Top1 `24.0% -> 24.1%` diagnostic only.
+- Top3 `69.1% -> 68.0%`.
+- T=2 Top1 fraction `78.0% -> 62.7%`.
+- source dLL: BR +0.00345, GR +0.01459, MLS +0.01118, TR -0.00888; wins 1/4.
 
-- C072-D2: free O/U2.5 opening/closing source gate passed zero-label checks.
-- C072-E2 / C072-F2: movement/open-to-close construction improved P(T) versus the earlier/weaker reference, including forward evidence.
-- C072-H2 / C072-I2: conditional `D|T` / score allocation produced strong proper-score evidence on the football3 line.
-- C072-K2: low-score joint integration improved proper score, while Top1 remained concentrated.
-- C072-L2: post-view diagnosis localized major remaining concentration to P(T) match-level resolution.
-- C072-N10/N13/N15W family: multiple static/dynamic multi-line O/U representations did not establish a stable exact-T proper-score increment under their frozen contracts. These viewed implementations are closed; do not rescue them by transform/model/window shopping.
-- C072-N17: closing 1X2 composition coordinates added to the frozen P(T) setup worsened proper scores; PARK. Its 1734 development labels are globally consumed; reserve266 remains unread and is not valid rescue confirmation for the failed N17 hypothesis.
-- C072-N18C: last-10 historical shot/xG chance-state features used as a residual mean correction over the O/U2.5 market anchor strongly worsened proper scores; PARK. The 400 development labels are consumed; the 150 confirmation pool remains sealed and may not be opened to rescue N18C.
-- C072-N19R1: same-line opening->closing O/U2.5 movement, conditional on already knowing closing O/U2.5, did not establish incremental P(T) information. This result is REPLICATION / REPRODUCTION ONLY, not fresh confirmation. The 1000 labels are globally consumed.
+Interpretation: reducing mode concentration alone is not a valid P(T) breakthrough. Probability mass must move in the correct match-specific directions and improve proper score. N20's exact calibration+PAVA+Poisson-continuation implementation is closed on these labels.
 
-## 4. Corrected root-cause diagnosis
+## N20 engineering correction boundary
+First target-access run `32326379971` / job `96298363218` joined the exact 1000 but failed before scientific scoring because `test.T` invoked pandas transpose rather than the `T` column. The only correction was `test['T']`, documented in `C072N20_EXECUTION_CORRECTION_01.md`. No scientific contract changed. The authoritative replay is therefore an engineering reproduction on already-consumed labels, not fresh confirmation.
 
-The project is not primarily blocked by a weak optimizer or by strict validation rules.
+## Root-cause position after N20
+The primary blocker is still not optimizer sophistication or strict validation rules. The evidence is most consistent with:
+1. little orthogonal pre-match information beyond a strong same-cutoff market anchor; and/or
+2. inability of tested representations to infer the correct match-specific full P(T) shape from available market/non-market observations.
 
-The current scientific bottleneck is:
+N20 adds a sharper constraint: merely flattening/diversifying the T mode can look structurally attractive while degrading calibrated probability quality.
 
-1. insufficiently orthogonal pre-match information beyond a strong same-cutoff market anchor; and/or
-2. an inadequate representation/measurement layer for the full match-specific shape of `P(T)`.
+## Method-shopping prohibition
+The following exact hypotheses/target labels cannot be repaired by changing neighboring settings on the same viewed data: N17, N18C, N19R1, N20.
 
-A scalar total intensity or a small residual mean correction is not assumed sufficient. Future hypotheses must target the full distributional state, not merely `E[T|X]`.
+For N20 specifically forbidden on the consumed1000:
+- calibration C/family;
+- PAVA weights/projection;
+- O/U line subset;
+- tail continuation;
+- source/season subset;
+- baseline/model shell;
+- bootstrap/metric gates;
+- Top1/Draw/score thresholding.
 
-Strict OOS, proper-score gates, bootstrap, fold/domain consistency and sealed confirmation remain mandatory. They are protective controls, not failure causes.
+Any next experiment must be materially new and preregister a new target plan before label access.
 
-## 5. Research-priority correction
+## Global-consumption and sealed boundaries
+Any target labels viewed in any football project are globally consumed; reuse is REPLICATION/REPRODUCTION, never fresh confirmation.
 
-Until a new P(T) hypothesis passes its own preregistered development gate, football3 must not spend fresh labels on:
-
-- Draw selector/override/threshold families;
-- direct 0-0/1-1 boosting;
-- another downstream Top1 policy;
-- exact-tail work that displaces the P(T) bottleneck;
-- another neighboring transform of a viewed O/U representation;
-- another neighboring residual-mean xG aggregation on consumed N18C labels.
-
-The priority order is:
-
-1. materially new P(T) information or materially new P(T) measurement architecture;
-2. only after P(T) evidence is stable, revisit even-T `P(D=0|T,X)` if needed;
-3. joint score distribution;
-4. observe Draw/0-0/1-1 Top1 naturally.
-
-## 6. Admissible next-hypothesis class
-
-A next experiment must be materially different from the PARKed families and use a new preregistered data plan. Preferred classes are:
-
-- a genuine latent-distribution / market-measurement model in which synchronized market quotes are noisy observations of a latent full `P(T)`, rather than treating a single line as truth or treating all lines as ordinary flat features; or
-- a genuinely new, strictly PIT, globally unconsumed pre-match information family that can alter variance/skew/zero/tail or other shape aspects of P(T), not merely its mean.
-
-This is a post-view research hypothesis, not established evidence. It must be frozen before any new target labels are opened.
-
-## 7. Sample-efficiency correction
-
-Do not default to arbitrary 100/200/300-match confirmation packets.
-
-Before opening a confirmation pool, freeze a sample-size/power plan using only development information or conservative assumptions. The confirmation stopping rule, minimum N, time/domain structure and success gate must be fixed before confirmation target access. A small packet may be used only when the preregistered power/precision analysis supports it.
-
-Fresh evidence is scarce. Do not fragment it without a statistical reason.
-
-## 8. Method-shopping prohibition
-
-Once a development/OOS label set has been viewed, do not change on that same target set and relabel as confirmation:
-
-- C / regularization;
-- feature subset;
-- window length;
-- line subset;
-- smoothing;
-- threshold/class weight;
-- distribution family;
-- league subset/effect;
-- dispersion equation;
-- neighboring transforms;
-- model shell.
-
-A post-view hypothesis requires a materially new hypothesis plus a new preregistered target plan.
-
-## 9. Global-consumption rule
-
-If target labels for the same source/revision/matches/time window/scientific question have been viewed in any football project, those labels are GLOBALLY CONSUMED. Re-running them in football3 is `REPLICATION / REPRODUCTION`, never fresh/blind/pristine/independent confirmation.
-
-Before any new public source or revision is used, audit GitHub and Airtable for same repository, revision, season, matches, market fields, labels and scientific hypothesis.
-
-## 10. Sealed boundaries
-
-Without new explicit user authorization, do not open or score:
-
-- C070-F Confirmation 1597;
+Remain sealed/unopened:
+- C070-F Confirmation1597;
 - N17 reserve266;
-- N18C confirmation150;
-- any other protected/sealed football3 confirmation pool.
+- N18 confirmation150;
+- any other protected football3 confirmation pool not explicitly authorized.
 
-A failed development hypothesis cannot use its sealed reserve as a rescue experiment.
+A failed development/pilot cannot use its reserve as rescue confirmation.
 
-## 11. Engineering/governance correction
+## Sample-efficiency rule
+Do not default to arbitrary 100/200/300 confirmation packets. A future confirmation requires a frozen power/precision/sample-size plan based only on development information or conservative assumptions, with time/domain structure and stopping rule fixed before confirmation labels.
 
-Engineering work must serve the scientific bottleneck. Do not create large governance/workflow surfaces unless they enforce a concrete scientific boundary.
+## Unique next step
+Football3 is PARKED after N20. Do not rerun N20 variants.
 
-For football3 continuation:
+The only admissible next scientific step is:
+1. formulate one materially new P(T) information or measurement hypothesis that is not a neighboring N20 repair;
+2. audit global consumption/source revision;
+3. perform zero-label PIT/identity/coverage audit;
+4. freeze representation, same-cutoff strong baseline, folds/domains, proper-score metrics, bootstrap, power/precision and stopping gates;
+5. only then open a new development target cohort under explicit authorization.
 
-- identify `project_id=football3` first;
-- require a `football3/...` continuation branch;
-- verify merge-base against C072-C;
-- reject automatic continuation from the shared repository's highest state;
-- keep football-project C073-C077 results quarantined;
-- record consumed/sealed boundaries before label access.
-
-Airtable must maintain a football3-scoped active current-state record. A football-project active record must never substitute for football3 continuation.
-
-## 12. Current state after correction
-
-- scientific status: PARKED, not failed as a whole;
-- P(T) remains the primary bottleneck;
-- N17, N18C and N19R1 exact hypotheses are PARKed;
-- no sealed confirmation opened by this correction;
-- no model training/scoring performed by this correction;
-- formal_weight remains 0;
-- no C073-C077 evidence is inherited into football3.
-
-## 13. Unique next step
-
-Before any new target labels are opened:
-
-1. define one materially new P(T) hypothesis;
-2. perform global-consumption/source-revision audit;
-3. perform zero-label PIT/coverage/identity audit;
-4. freeze representation, baseline, metrics, folds/domains, sample-size/power plan and success/failure gates;
-5. only then request/execute development target access.
-
-No downstream Draw optimization is authorized as the next step.
+No downstream Draw optimization is the next step. formal_weight remains 0.
