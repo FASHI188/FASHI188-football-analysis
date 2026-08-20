@@ -152,11 +152,15 @@ def main()->int:
     payloads={'workflow_catalog.json':workflows,'open_pr_ledger.json':prs,'branch_ledger.json':branches,'large_files.json':big,'third_party_apps.json':apps}
     for n,obj in payloads.items(): (a.out/n).write_text(json.dumps(obj,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     changed_paths=[x for x in sh('git','diff','--name-only',f'{main_sha}...HEAD').splitlines() if x]
+    dynamic_mirror_pattern=r'(^|/)(?:[^/]*_START_HERE|[^/]*_HANDOFF|[^/]*_CHECKPOINT)\.'
     scope_diff={
       'model_diff':sum(p.startswith(('football-data/models/','models/')) for p in changed_paths),
       'formal_data_diff':sum(p.startswith(('football-data/data/','data/')) for p in changed_paths),
       'config_diff':sum(p.startswith('football-data/config/') for p in changed_paths),
-      'CURRENT_diff':sum(bool(re.search(r'(^|/)(?:PROJECT_CURRENT|FOOTBALL3_INDEPENDENT_CURRENT|[^/]*_START_HERE|[^/]*_HANDOFF|[^/]*_CHECKPOINT)\.',p,re.I)) for p in changed_paths),
+      # CURRENT_diff tracks actual CURRENT-named state objects. Legacy START_HERE/
+      # HANDOFF/CHECKPOINT retirement is governance cleanup and is reported separately.
+      'CURRENT_diff':sum(bool(re.search(r'(^|/)(?:PROJECT_CURRENT|FOOTBALL3_INDEPENDENT_CURRENT)\.',p,re.I)) for p in changed_paths),
+      'dynamic_mirror_governance_diff':sum(bool(re.search(dynamic_mirror_pattern,p,re.I)) for p in changed_paths),
       'changed_paths':changed_paths}
     summary={"status":PASS if not dup and not changed_big and not any(scope_diff[k] for k in ('model_diff','formal_data_diff','config_diff','CURRENT_diff')) else FAIL,"exact_head":head,"base_main_sha":main_sha,"workflow_count":len(workflows),"duplicate_workflow_names":dup,"open_pr_count":len(prs),"branch_count":len(branches),"large_file_count":len(big),"new_or_modified_oversize_files":changed_big,"scope_diff":scope_diff,"formal_weight":0,"repository_secret_access":0,"provider_requests":0,"training":0,"scoring":0,"new_target_label_access":0}
     (a.out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
