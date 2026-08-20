@@ -2,29 +2,43 @@ name: Football3 Research Policy Integrity
 
 on:
   pull_request:
-    branches:
-      - 'football3/**'
     paths:
-      - 'football-data/research/FOOTBALL3_INDEPENDENT_CURRENT.md'
-      - 'football-data/research/FOOTBALL3_RESEARCH_POLICY_V3.json'
-      - 'football-data/research/FOOTBALL3_EXECUTION_STANDARD_V2.md'
-      - 'football-data/research/FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json'
-      - 'football-data/research/FOOTBALL3_GLOBAL_CONSUMPTION_AUDIT_TEMPLATE_V1.json'
+      - 'football-data/research/FOOTBALL3_*'
       - 'football-data/research/FOOTBALL_GLOBAL_CONSUMPTION_REGISTRY_V1.json'
-      - 'football-data/research/validate_football3_research_policy_v3.py'
-      - '.github/workflows/football3-research-policy-integrity.yml'
+      - 'football-data/research/football3_core.py'
+      - 'football-data/research/validate_football3_*.py'
+      - 'football-data/research/audit_football3_*.py'
+      - 'football-data/research/run_football3_*.py'
+      - 'football-data/research/test_football3_*.py'
+      - '.github/workflows/football3-*.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  protect-football3-owned-scope:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Prevent non-football3 branches from mutating football3-owned authority surfaces
+        run: |
+          python football-data/research/audit_football3_pr_scope.py \
+            --base '${{ github.event.pull_request.base.sha }}' --head HEAD
+
+  validate-football3:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate C072-C lineage and quarantine isolation
+        run: python football-data/research/audit_football3_lineage.py
       - name: Validate football3 single authority T-15m V2 contract consumption and seals
         run: python football-data/research/validate_football3_research_policy_v3.py
