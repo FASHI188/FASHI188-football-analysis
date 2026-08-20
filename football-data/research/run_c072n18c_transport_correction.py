@@ -14,7 +14,7 @@ spec.loader.exec_module(m)
 
 def corrected_resolve_result_table(page_html):
     soup = m.BeautifulSoup(page_html, 'html.parser')
-    cand = []
+    exact = []
     for t in soup.find_all('table'):
         h = m.table_headers(t)
         if h != m.RESULT_HEADERS:
@@ -25,20 +25,22 @@ def corrected_resolve_result_table(page_html):
         seasons = m.visible_seasons(t, h)
         yrs = [m.start_year(s) for s in seasons]
         yrs = [y for y in yrs if y is not None]
-        cand.append((min(yrs) if yrs else None, t, int(tid), seasons))
+        exact.append((min(yrs) if yrs else None, t, int(tid), seasons))
 
-    # Protocol drift correction only. If the page exposes exactly one exact-schema
-    # result table, there is no ambiguity and it is selected directly. No result
-    # row or numeric score is read here.
-    if len(cand) == 1:
-        _, t, tid, seasons = cand[0]
+    if len(exact) == 1:
+        _, t, tid, seasons = exact[0]
         return t, tid, seasons
 
-    # If multiple exact-schema tables are present, retain the already-established
-    # historical-table rule: unique table with the earliest visible start season.
-    with_year = [x for x in cand if x[0] is not None]
+    # Preserve N17 semantics: only exact-schema tables carrying parseable Season
+    # metadata are candidates for historical resolution. Current Footiqo may leave
+    # the sibling/current server-side table without rendered Season rows.
+    with_year = [x for x in exact if x[0] is not None]
+    if len(with_year) == 1:
+        _, t, tid, seasons = with_year[0]
+        return t, tid, seasons
     if len(with_year) < 2:
-        raise RuntimeError(f'result table protocol ambiguous exact={len(cand)} with_year={len(with_year)}')
+        raise RuntimeError(f'result table protocol ambiguous exact={len(exact)} with_year={len(with_year)}')
+
     earliest = min(x[0] for x in with_year)
     hist = [x for x in with_year if x[0] == earliest]
     if len(hist) != 1:
