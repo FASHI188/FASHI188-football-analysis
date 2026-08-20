@@ -8,6 +8,8 @@ from pathlib import Path
 
 SCIENCE_DIR = Path('football-data/research')
 CONTRACT_TEMPLATE = SCIENCE_DIR / 'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json'
+# Exact allow-list only. Prefix-based exemptions are forbidden because a scientific
+# executable could otherwise be renamed audit_*/test_*/validate_* to bypass V2 binding.
 EXEMPT_EXACT = {
     'football-data/research/football3_core.py',
     'football-data/research/run_football3_synthetic_prelabel_smoke.py',
@@ -15,9 +17,13 @@ EXEMPT_EXACT = {
     'football-data/research/audit_football3_changed_scientific_files.py',
     'football-data/research/audit_football3_lineage.py',
     'football-data/research/audit_football3_pr_scope.py',
+    'football-data/research/validate_football3_experiment.py',
+    'football-data/research/validate_football3_research_policy_v3.py',
+    'football-data/research/test_football3_core.py',
+    'football-data/research/test_validate_football3_experiment.py',
 }
-EXEMPT_PREFIXES = ('test_', 'validate_', 'audit_')
-BLOCKED_EXECUTABLE_SUFFIXES = {'.ipynb', '.sh', '.r', '.R'}
+SCIENTIFIC_CODE_PREFIXES = ('football-data/', 'scripts/')
+BLOCKED_EXECUTABLE_SUFFIXES = {'.ipynb', '.sh', '.r', '.R', '.js', '.ts', '.ps1', '.bat', '.cmd'}
 
 
 class GuardError(RuntimeError):
@@ -56,10 +62,7 @@ def helper_contract_constant(path: Path) -> str | None:
 
 
 def is_infra_python(path: str) -> bool:
-    if path in EXEMPT_EXACT:
-        return True
-    name=Path(path).name
-    return path.startswith('football-data/research/') and any(name.startswith(x) for x in EXEMPT_PREFIXES)
+    return path in EXEMPT_EXACT
 
 
 def _safe_contract_path(raw: str) -> Path:
@@ -85,6 +88,7 @@ def active_v2_contracts() -> list[Path]:
 
 def all_contract_runners() -> dict[Path,list[Path]]:
     mapping: dict[Path,list[Path]]={}
+    # Scoring runners are authority-bearing and must live under football-data/research.
     for p in SCIENCE_DIR.rglob('*.py'):
         try:
             cp=contract_constant(p)
@@ -120,19 +124,26 @@ def main() -> int:
     active=set(active_v2_contracts())
     runner_map=all_contract_runners()
 
-    # Changed football3 research executable surfaces are fail-closed. A helper may exist,
-    # but it must explicitly bind itself to an active V2 contract.
     for f in files:
-        if not f.startswith('football-data/research/'):
-            continue
         p=Path(f)
         if not p.exists():
             continue
+
+        # A football3 branch may not create an alternate workflow name to execute
+        # science outside the football3 workflow audit surface.
+        if f.startswith('.github/workflows/'):
+            if not p.name.startswith('football3-'):
+                blockers.append(f'{f}: football3 branch may modify only football3-* workflows')
+            continue
+
+        if not f.startswith(SCIENTIFIC_CODE_PREFIXES):
+            continue
         if p.suffix in BLOCKED_EXECUTABLE_SUFFIXES:
-            blockers.append(f'{f}: alternate executable scientific surface is not allowed under V2; migrate to reviewed Python runner')
+            blockers.append(f'{f}: alternate executable scientific surface is not allowed under V2; migrate to reviewed Python')
             continue
         if p.suffix != '.py' or is_infra_python(f):
             continue
+
         try:
             cp=contract_constant(p)
             hp=helper_contract_constant(p)
@@ -143,6 +154,9 @@ def main() -> int:
             blockers.append(f'{f}: cannot be both scoring runner and experiment helper')
             continue
         if cp:
+            if not f.startswith('football-data/research/'):
+                blockers.append(f'{f}: scoring runner must live under football-data/research')
+                continue
             try:
                 cpath=_safe_contract_path(cp)
             except GuardError as e:
@@ -161,15 +175,17 @@ def main() -> int:
             else:
                 helpers.append({'helper':f,'contract':str(cpath)})
         else:
-            blockers.append(f'{f}: changed football3 research Python must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR')
+            blockers.append(f'{f}: changed executable Python under football-data/scripts must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR')
 
     # Revalidate every active V2 contract on every football3 scientific PR. This closes
-    # the contract-only/audit-artifact-only edit bypass: an unchanged runner is still checked.
+    # contract-only/audit-artifact-only edits even when the scoring runner is unchanged.
     for cpath in sorted(active):
         runners=runner_map.get(cpath,[])
         if not runners:
             blockers.append(f'{cpath}: active V2 contract has no runner declaring it')
             continue
+        if len(runners) != 1:
+            blockers.append(f'{cpath}: active V2 contract must have exactly one scoring runner, found {len(runners)}')
         for runner in runners:
             rc,msg=run_preflight(runner,cpath)
             checked.append({'runner':str(runner),'contract':str(cpath),'preflight_returncode':rc})
