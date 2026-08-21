@@ -1,0 +1,180 @@
+name: Football3 HDA Aggregation Engineering Zero Label
+
+on:
+  pull_request:
+    branches:
+      - football3/full-stack-root-cause-remediation-20260820
+    paths:
+      - 'football-data/research/football3_hda.py'
+      - 'football-data/research/test_football3_hda.py'
+      - 'football-data/research/run_football3_hda_zero_label_audit.py'
+      - 'football-data/research/audit_football3_changed_scientific_files.py'
+      - '.github/workflows/football3-hda-aggregation-engineering-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-hda-engineering-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  hda-linux:
+    name: hda-linux-zero-label
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile production HDA layer and zero-label tests
+        run: |
+          python -m py_compile \
+            football-data/research/football3_hda.py \
+            football-data/research/test_football3_hda.py \
+            football-data/research/run_football3_hda_zero_label_audit.py
+      - name: Run production module synthetic suite
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+      - name: Generate zero-label engineering audit artifact inputs
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/run_football3_hda_zero_label_audit.py \
+            --out-dir "${RUNNER_TEMP}/football3_hda_zero_label"
+      - name: Upload zero-label HDA engineering receipt only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-hda-zero-label-${{ github.event.pull_request.head.sha || github.sha }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/football3_hda_zero_label/file_manifest.json
+            ${{ runner.temp }}/football3_hda_zero_label/synthetic_test_results.json
+            ${{ runner.temp }}/football3_hda_zero_label/counterexample_results.json
+            ${{ runner.temp }}/football3_hda_zero_label/zero_label_receipt.json
+
+  hda-windows:
+    name: hda-windows-utf8-zero-label
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile HDA layer under Windows UTF-8
+        shell: pwsh
+        run: |
+          python -m py_compile football-data/research/football3_hda.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py
+      - name: Run HDA synthetic suite under Windows UTF-8
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+
+  repository-integrity:
+    name: hda-repository-integrity-read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile repository integrity auditors
+        run: |
+          python -m py_compile football-data/validation/repository_integrity_v471.py
+          python -m py_compile football-data/validation/repository_integrity_runtime_v473.py
+          python -m py_compile football-data/validation/repository_asset_topology_v472.py
+          python -m py_compile football-data/validation/workflow_stability_audit_v474.py
+      - name: Run fail-closed repository integrity gates
+        run: |
+          python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+          python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
+          python football-data/validation/workflow_stability_audit_v474.py --print-summary
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  platform-integrity:
+    name: hda-platform-integrity-read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+      - name: Run existing platform behavioral tests
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          python -m unittest discover -s football-data/tests -p "test_platform*.py" -v
+          python -m unittest discover -s football-data/tests -p "test_team_strengths.py" -v
+          python -m unittest discover -s football-data/tests -p "test_prediction_pipeline.py" -v
+      - name: Run static platform validator read-only
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/engine/validate_platform.py --check-only --print-summary
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  formal-core-zero-scoring:
+    name: hda-formal-core-zero-scoring
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+      - name: Run formal-core unit tests only
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m unittest football-data/tests/test_football_v460_engine.py -v
+          python -m unittest football-data/tests/test_nested_backtest_v460.py -v
+          python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
+          python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
+      - name: Assert engineering-only zero-scoring path
+        run: echo "NO_TRAINING_NO_REAL_SCORING_HDA_ENGINEERING_ONLY"
+      - name: Verify no repository persistence
+        run: git diff --exit-code

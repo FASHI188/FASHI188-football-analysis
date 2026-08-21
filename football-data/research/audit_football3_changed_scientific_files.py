@@ -21,6 +21,11 @@ EXEMPT_EXACT = {
     'football-data/research/validate_football3_research_policy_v3.py',
     'football-data/research/test_football3_core.py',
     'football-data/research/test_validate_football3_experiment.py',
+    # Pure engineering HDA aggregation layer: no experiment contract, target labels,
+    # training, or scoring runner. These paths are intentionally exact, not prefixes.
+    'football-data/research/football3_hda.py',
+    'football-data/research/test_football3_hda.py',
+    'football-data/research/run_football3_hda_zero_label_audit.py',
 }
 SCIENTIFIC_CODE_PREFIXES = ('football-data/', 'scripts/')
 BLOCKED_EXECUTABLE_SUFFIXES = {'.ipynb', '.sh', '.r', '.R', '.js', '.ts', '.ps1', '.bat', '.cmd'}
