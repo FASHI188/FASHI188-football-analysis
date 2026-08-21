@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -11,6 +12,8 @@ CONTRACT_TEMPLATE = SCIENCE_DIR / 'FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.jso
 ZERO_LABEL_HDA_PATH = 'football-data/research/football3_hda.py'
 HDA_SCORING_PATH = 'football-data/research/football3_hda_scoring.py'
 HDA_TEST_PATH = 'football-data/research/test_football3_hda.py'
+HDA_AUDIT_PATH = 'football-data/research/run_football3_hda_zero_label_audit.py'
+HDA_GUARD_PATH = 'football-data/research/audit_football3_changed_scientific_files.py'
 ZERO_LABEL_HDA_MARKER = 'HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING'
 HDA_SCORING_MARKER = 'PURE_HDA_PROBABILITY_SCORING_NO_IO_NO_TRAINING'
 HDA_SCORING_MODULE = 'football3_hda_scoring'
@@ -32,6 +35,19 @@ EXEMPT_EXACT = {
     HDA_TEST_PATH,
     'football-data/research/run_football3_hda_zero_label_audit.py',
 }
+DEDICATED_EXEMPT_PRODUCTION_CONTRACTS = {
+    'football-data/research/football3_hda.py',
+    'football-data/research/audit_football3_changed_scientific_files.py',
+    'football-data/research/run_football3_hda_zero_label_audit.py',
+}
+EXEMPT_TEST_ONLY_PATHS = {'football-data/research/test_football3_hda.py'}
+
+# Dedicated production module identity is not represented by unordered feature sets.
+# Full canonical AST structure is checked below; the canonical representation preserves
+# field order, tree position, identifiers, constants, call arguments, assignment values,
+# function-body ownership and duplicate occurrences while excluding only source-location
+# metadata such as lineno/col_offset/end_lineno/end_col_offset.
+CANONICAL_AST_SCHEMA = 'football3_canonical_ast_structure_v1'
 SCIENTIFIC_CODE_PREFIXES = ('football-data/', 'scripts/')
 BLOCKED_EXECUTABLE_SUFFIXES = {'.ipynb', '.sh', '.r', '.R', '.js', '.ts', '.ps1', '.bat', '.cmd'}
 
@@ -60,7 +76,7 @@ ZERO_LABEL_ALLOWED_FUNCTION_SIGNATURES = {
     '_validate_hda_probability_mapping': (('probabilities',), ('class_order', 'probability_tolerance')),
     'choose_hda_top1': (('probabilities',), ('class_order', 'probability_tolerance', 'tie_tolerance')),
     '_score_class': (('home_goals', 'away_goals'), ()),
-    '_max_specific_score': (('cells', 'tie_tolerance'), ()),
+    '_max_specific_score': (('cells', 'aggregated_tail_proxy_totals', 'unresolved_tail', 'tail_probability', 'tie_tolerance'), ()),
     'aggregate_score_matrix_to_hda': (('score_cells',), ('unresolved_tail', 'tail_probability', 'class_order', 'probability_tolerance', 'tie_tolerance', 'score_support_id', 'schema_version', 'required_score_cells')),
 }
 ZERO_LABEL_ALLOWED_PUBLIC_FUNCTIONS = {
@@ -487,159 +503,514 @@ def _static_string_bindings(tree: ast.Module) -> dict[str, str]:
     return bindings
 
 
-def references_hda_scoring(path: Path) -> bool:
-    """Fail closed on direct, reflective, or dynamically constructed scoring references.
 
-    Dynamic import/eval/exec/compile/getattr surfaces are authority-bearing because a static
-    guard cannot prove that their runtime target excludes HDA scoring.  This check happens
-    before EXEMPT_EXACT, so infrastructure files do not receive a caller-contract bypass.
-    """
+def _canonical_ast_value(value: object) -> object:
+    if isinstance(value, ast.AST):
+        return [
+            'node',
+            type(value).__name__,
+            [[field, _canonical_ast_value(field_value)] for field, field_value in ast.iter_fields(value)],
+        ]
+    if isinstance(value, list):
+        return ['list', [_canonical_ast_value(item) for item in value]]
+    if isinstance(value, tuple):
+        return ['tuple', [_canonical_ast_value(item) for item in value]]
+    return ['literal', type(value).__name__, repr(value)]
+
+
+def canonical_ast_structure(tree: ast.AST) -> str:
+    """Ordered semantic AST identity; location metadata is intentionally absent."""
+    payload = {
+        'schema': CANONICAL_AST_SCHEMA,
+        'tree': _canonical_ast_value(tree),
+    }
+    return json.dumps(payload, separators=(',', ':'), ensure_ascii=True)
+
+
+def canonical_ast_sha256(path: Path) -> str:
+    tree = _parse(path)
+    return hashlib.sha256(canonical_ast_structure(tree).encode('utf-8')).hexdigest()
+
+
+def _literal_top_level_assignment(tree: ast.Module, name: str) -> tuple[bool, object | None]:
+    matches: list[ast.AST] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name:
+                matches.append(node.value)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name and node.value is not None:
+                matches.append(node.value)
+    if len(matches) != 1:
+        return False, None
+    try:
+        return True, ast.literal_eval(matches[0])
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False, None
+
+
+def _guard_frozen_semantic_blockers(tree: ast.Module, path: Path) -> list[str]:
+    blockers: list[str] = []
+    expectations = {
+        'EXEMPT_TEST_ONLY_PATHS': {'football-data/research/test_football3_hda.py'},
+        'DEDICATED_EXEMPT_PRODUCTION_CONTRACTS': {
+            'football-data/research/football3_hda.py',
+            'football-data/research/audit_football3_changed_scientific_files.py',
+            'football-data/research/run_football3_hda_zero_label_audit.py',
+        },
+        'DYNAMIC_BUILTIN_CAPABILITIES': {'__import__', 'eval', 'exec', 'compile', 'getattr'},
+    }
+    for name, expected in expectations.items():
+        ok, actual = _literal_top_level_assignment(tree, name)
+        if not ok or actual != expected:
+            blockers.append(
+                f'{path}: FROZEN_SEMANTIC_ASSERTION_FAILED {name}; expected={sorted(expected)} actual={actual!r}'
+            )
+    return blockers
+
+
+def _audit_frozen_semantic_blockers(tree: ast.Module, path: Path) -> list[str]:
+    blockers: list[str] = []
+    expectations = {
+        'EXPECTED_TEST_COUNT': 93,
+        'EXPECTED_FAIL_CLOSED_COUNT': 62,
+        'STATUS': 'GPT_REMEDIATED_R5_PENDING_CODEX_RECHECK',
+    }
+    for name, expected in expectations.items():
+        ok, actual = _literal_top_level_assignment(tree, name)
+        if not ok or actual != expected:
+            blockers.append(
+                f'{path}: FROZEN_SEMANTIC_ASSERTION_FAILED {name}; expected={expected!r} actual={actual!r}'
+            )
+    return blockers
+
+
+def _strict_module_ast_contract_blockers(
+    path: Path,
+    *,
+    expected_canonical_ast_sha256: str,
+    contract_name: str,
+    semantic_checker: object,
+) -> list[str]:
+    try:
+        tree = _parse(path)
+    except SyntaxError as exc:
+        return [f'{path}: {contract_name} syntax error: {exc}']
+
+    actual_sha256 = hashlib.sha256(canonical_ast_structure(tree).encode('utf-8')).hexdigest()
+    blockers: list[str] = []
+    if actual_sha256 != expected_canonical_ast_sha256:
+        blockers.append(
+            f'{path}: {contract_name} CANONICAL_AST_SHA256_MISMATCH; '
+            f'expected={expected_canonical_ast_sha256} actual={actual_sha256}'
+        )
+    if semantic_checker is _guard_frozen_semantic_blockers:
+        blockers.extend(_guard_frozen_semantic_blockers(tree, path))
+    elif semantic_checker is _audit_frozen_semantic_blockers:
+        blockers.extend(_audit_frozen_semantic_blockers(tree, path))
+    else:
+        blockers.append(f'{path}: {contract_name} unknown semantic checker')
+    return blockers
+
+
+def _require_external_canonical_ast_sha256(raw: str, *, label: str) -> str:
+    if (
+        not isinstance(raw, str)
+        or len(raw) != 64
+        or any(ch not in '0123456789abcdef' for ch in raw)
+    ):
+        raise GuardError(f'{label} must be exactly 64 lowercase hexadecimal characters')
+    return raw
+
+
+def guard_module_blockers(
+    path: Path,
+    *,
+    expected_canonical_ast_sha256: str,
+) -> list[str]:
+    expected = _require_external_canonical_ast_sha256(
+        expected_canonical_ast_sha256,
+        label='expected guard canonical AST SHA-256',
+    )
+    return _strict_module_ast_contract_blockers(
+        path,
+        expected_canonical_ast_sha256=expected,
+        contract_name='FOOTBALL3_GUARD_DEDICATED_AST_CONTRACT_CANONICAL_V1',
+        semantic_checker=_guard_frozen_semantic_blockers,
+    )
+
+
+def hda_audit_module_blockers(
+    path: Path,
+    *,
+    expected_canonical_ast_sha256: str,
+) -> list[str]:
+    expected = _require_external_canonical_ast_sha256(
+        expected_canonical_ast_sha256,
+        label='expected audit canonical AST SHA-256',
+    )
+    return _strict_module_ast_contract_blockers(
+        path,
+        expected_canonical_ast_sha256=expected,
+        contract_name='FOOTBALL3_HDA_AUDIT_DEDICATED_AST_CONTRACT_CANONICAL_V1',
+        semantic_checker=_audit_frozen_semantic_blockers,
+    )
+
+
+AUTH_BUILTINS_MODULE = 'BUILTINS_MODULE'
+AUTH_IMPORTLIB_MODULE = 'IMPORTLIB_MODULE'
+AUTH_DYNAMIC_CAPABILITY = 'DYNAMIC_CAPABILITY'
+AUTH_DERIVED = 'AUTHORITY_DERIVED'
+AUTH_CONTAINER = 'AUTHORITY_CONTAINER'
+DYNAMIC_BUILTIN_CAPABILITIES = {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+AUTHORITY_KINDS = {
+    AUTH_BUILTINS_MODULE,
+    AUTH_IMPORTLIB_MODULE,
+    AUTH_DYNAMIC_CAPABILITY,
+    AUTH_DERIVED,
+    AUTH_CONTAINER,
+}
+
+
+def _assignment_target_names(target: ast.AST) -> list[str]:
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out: list[str] = []
+        for item in target.elts:
+            out.extend(_assignment_target_names(item))
+        return out
+    if isinstance(target, ast.Starred):
+        return _assignment_target_names(target.value)
+    return []
+
+
+def _merge_authority_kinds(kinds: list[str | None], *, container: bool = False) -> str | None:
+    live = [kind for kind in kinds if kind in AUTHORITY_KINDS]
+    if not live:
+        return None
+    if container:
+        return AUTH_CONTAINER
+    if all(kind == live[0] for kind in live) and live[0] in {AUTH_BUILTINS_MODULE, AUTH_IMPORTLIB_MODULE}:
+        return live[0]
+    return AUTH_DERIVED
+
+
+def _function_return_kinds(tree: ast.Module, kinds: dict[str, str], function_returns: dict[str, str]) -> dict[str, str]:
+    out = dict(function_returns)
+    for fn in (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
+        local_kinds = dict(kinds)
+
+        positional = list(fn.args.posonlyargs) + list(fn.args.args)
+        if fn.args.defaults:
+            for arg, default in zip(positional[-len(fn.args.defaults):], fn.args.defaults):
+                default_kind = _authority_expr_kind(default, kinds, out)
+                if default_kind in AUTHORITY_KINDS:
+                    local_kinds[arg.arg] = default_kind
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+            if default is None:
+                continue
+            default_kind = _authority_expr_kind(default, kinds, out)
+            if default_kind in AUTHORITY_KINDS:
+                local_kinds[arg.arg] = default_kind
+
+        local_assignments: list[tuple[list[str], ast.AST]] = []
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    names = _assignment_target_names(target)
+                    if names:
+                        local_assignments.append((names, node.value))
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                names = _assignment_target_names(node.target)
+                if names:
+                    local_assignments.append((names, node.value))
+            elif isinstance(node, ast.NamedExpr):
+                names = _assignment_target_names(node.target)
+                if names:
+                    local_assignments.append((names, node.value))
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                names = _assignment_target_names(node.target)
+                if names:
+                    local_assignments.append((names, node.iter))
+
+        for _ in range(len(local_assignments) + 2):
+            changed = False
+            for names, value in local_assignments:
+                kind = _authority_expr_kind(value, local_kinds, out)
+                if kind is None:
+                    continue
+                for name in names:
+                    if local_kinds.get(name) != kind:
+                        local_kinds[name] = kind
+                        changed = True
+            if not changed:
+                break
+
+        returned: list[str | None] = []
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Return) and node.value is not None:
+                returned.append(_authority_expr_kind(node.value, local_kinds, out))
+        merged = _merge_authority_kinds(returned)
+        if merged is not None:
+            out[fn.name] = merged
+    return out
+
+
+def _authority_expr_kind(
+    node: ast.AST,
+    kinds: dict[str, str],
+    function_returns: dict[str, str] | None = None,
+) -> str | None:
+    function_returns = function_returns or {}
+    if isinstance(node, ast.Name):
+        if node.id in kinds:
+            return kinds[node.id]
+        if node.id in DYNAMIC_BUILTIN_CAPABILITIES:
+            return AUTH_DYNAMIC_CAPABILITY
+        if node.id == '__builtins__':
+            return AUTH_BUILTINS_MODULE
+        return None
+    if isinstance(node, ast.Starred):
+        return _authority_expr_kind(node.value, kinds, function_returns)
+    if isinstance(node, ast.Attribute):
+        base = _authority_expr_kind(node.value, kinds, function_returns)
+        if base == AUTH_IMPORTLIB_MODULE:
+            return AUTH_DYNAMIC_CAPABILITY if node.attr == 'import_module' else AUTH_DERIVED
+        if base == AUTH_BUILTINS_MODULE:
+            return AUTH_DYNAMIC_CAPABILITY
+        if base in {AUTH_DYNAMIC_CAPABILITY, AUTH_DERIVED, AUTH_CONTAINER}:
+            return AUTH_DERIVED
+        return None
+    if isinstance(node, ast.Subscript):
+        base = _authority_expr_kind(node.value, kinds, function_returns)
+        if base in AUTHORITY_KINDS:
+            return AUTH_DYNAMIC_CAPABILITY
+        return None
+    if isinstance(node, ast.IfExp):
+        return _merge_authority_kinds([
+            _authority_expr_kind(node.body, kinds, function_returns),
+            _authority_expr_kind(node.orelse, kinds, function_returns),
+        ])
+    if isinstance(node, ast.BoolOp):
+        return _merge_authority_kinds([
+            _authority_expr_kind(value, kinds, function_returns) for value in node.values
+        ])
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return _merge_authority_kinds([
+            _authority_expr_kind(item, kinds, function_returns) for item in node.elts
+        ], container=True)
+    if isinstance(node, ast.Dict):
+        values = [item for item in node.values if item is not None]
+        keys = [item for item in node.keys if item is not None]
+        return _merge_authority_kinds([
+            _authority_expr_kind(item, kinds, function_returns) for item in values + keys
+        ], container=True)
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        parts: list[ast.AST] = [node.elt]
+        for generator in node.generators:
+            parts.append(generator.iter)
+            parts.extend(generator.ifs)
+        return _merge_authority_kinds([
+            _authority_expr_kind(item, kinds, function_returns) for item in parts
+        ], container=True)
+    if isinstance(node, ast.DictComp):
+        parts = [node.key, node.value]
+        for generator in node.generators:
+            parts.append(generator.iter)
+            parts.extend(generator.ifs)
+        return _merge_authority_kinds([
+            _authority_expr_kind(item, kinds, function_returns) for item in parts
+        ], container=True)
+    if isinstance(node, (ast.BinOp, ast.UnaryOp)):
+        children = [child for child in ast.iter_child_nodes(node) if isinstance(child, ast.expr)]
+        return _merge_authority_kinds([
+            _authority_expr_kind(child, kinds, function_returns) for child in children
+        ])
+    if isinstance(node, ast.Call):
+        func_kind = _authority_expr_kind(node.func, kinds, function_returns)
+        if func_kind in AUTHORITY_KINDS:
+            return AUTH_DERIVED
+        if isinstance(node.func, ast.Name) and node.func.id in function_returns:
+            return function_returns[node.func.id]
+        arg_kinds = [
+            _authority_expr_kind(arg, kinds, function_returns) for arg in node.args
+        ]
+        arg_kinds.extend(
+            _authority_expr_kind(keyword.value, kinds, function_returns)
+            for keyword in node.keywords
+        )
+        if any(kind in AUTHORITY_KINDS for kind in arg_kinds):
+            return AUTH_DERIVED
+        return None
+    return None
+
+
+def _authority_kinds(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
+    kinds: dict[str, str] = {'__builtins__': AUTH_BUILTINS_MODULE}
+    for name in DYNAMIC_BUILTIN_CAPABILITIES:
+        kinds[name] = AUTH_DYNAMIC_CAPABILITY
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split('.')[0]
+                if alias.name == 'builtins':
+                    kinds[bound] = AUTH_BUILTINS_MODULE
+                elif alias.name == 'importlib':
+                    kinds[bound] = AUTH_IMPORTLIB_MODULE
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == 'builtins':
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    if alias.name in DYNAMIC_BUILTIN_CAPABILITIES:
+                        kinds[bound] = AUTH_DYNAMIC_CAPABILITY
+            elif node.module == 'importlib':
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    if alias.name == 'import_module':
+                        kinds[bound] = AUTH_DYNAMIC_CAPABILITY
+
+    assignments: list[tuple[list[str], ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                names = _assignment_target_names(target)
+                if names:
+                    assignments.append((names, node.value))
+        elif isinstance(node, ast.AnnAssign):
+            names = _assignment_target_names(node.target)
+            if names and node.value is not None:
+                assignments.append((names, node.value))
+        elif isinstance(node, ast.NamedExpr):
+            names = _assignment_target_names(node.target)
+            if names:
+                assignments.append((names, node.value))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names = _assignment_target_names(node.target)
+            if names:
+                assignments.append((names, node.iter))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names = _assignment_target_names(item.optional_vars)
+                    if names:
+                        assignments.append((names, item.context_expr))
+
+    function_returns: dict[str, str] = {}
+    max_rounds = len(assignments) + sum(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in ast.walk(tree)
+    ) + 2
+    for _ in range(max_rounds):
+        changed = False
+        new_function_returns = _function_return_kinds(tree, kinds, function_returns)
+        if new_function_returns != function_returns:
+            function_returns = new_function_returns
+            changed = True
+        for names, value in assignments:
+            kind = _authority_expr_kind(value, kinds, function_returns)
+            if kind is None:
+                continue
+            for name in names:
+                if kinds.get(name) != kind:
+                    kinds[name] = kind
+                    changed = True
+        if not changed:
+            break
+    return kinds, function_returns
+
+
+def dynamic_authority_blockers(path: Path) -> list[str]:
+    """Reject dynamic execution/import/reflection authority by capability and data-flow closure."""
+    try:
+        tree = _parse(path)
+    except SyntaxError as exc:
+        return [f'syntax error blocks authority analysis: {exc}']
+    kinds, function_returns = _authority_kinds(tree)
+    blockers: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in {'builtins', 'importlib'}:
+            for alias in node.names:
+                bound = alias.asname or alias.name
+                if kinds.get(bound) == AUTH_DYNAMIC_CAPABILITY:
+                    blockers.append(
+                        f'dynamic execution/import/reflection authority imported at line {node.lineno}: {node.module}.{alias.name}'
+                    )
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            value = node.value
+            kind = _authority_expr_kind(value, kinds, function_returns) if value is not None else None
+            if kind in {AUTH_DYNAMIC_CAPABILITY, AUTH_DERIVED, AUTH_CONTAINER}:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority propagated at line {node.lineno}: {ast.dump(value, include_attributes=False)}'
+                )
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            kind = _authority_expr_kind(node.iter, kinds, function_returns)
+            if kind in AUTHORITY_KINDS:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority iteration denied at line {node.lineno}: {ast.dump(node.iter, include_attributes=False)}'
+                )
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                kind = _authority_expr_kind(item.context_expr, kinds, function_returns)
+                if kind in AUTHORITY_KINDS:
+                    blockers.append(
+                        f'dynamic execution/import/reflection authority context propagation denied at line {node.lineno}: {ast.dump(item.context_expr, include_attributes=False)}'
+                    )
+        if isinstance(node, ast.Return) and node.value is not None:
+            kind = _authority_expr_kind(node.value, kinds, function_returns)
+            if kind in AUTHORITY_KINDS:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority return denied at line {node.lineno}: {ast.dump(node.value, include_attributes=False)}'
+                )
+        if isinstance(node, ast.Call):
+            func_kind = _authority_expr_kind(node.func, kinds, function_returns)
+            call_kind = _authority_expr_kind(node, kinds, function_returns)
+            arg_kinds = [
+                _authority_expr_kind(arg, kinds, function_returns) for arg in node.args
+            ]
+            arg_kinds.extend(
+                _authority_expr_kind(keyword.value, kinds, function_returns)
+                for keyword in node.keywords
+            )
+            if func_kind in AUTHORITY_KINDS:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority call denied at line {node.lineno}: {ast.dump(node.func, include_attributes=False)}'
+                )
+            elif any(kind in AUTHORITY_KINDS for kind in arg_kinds):
+                blockers.append(
+                    f'dynamic execution/import/reflection authority argument propagation denied at line {node.lineno}: {ast.dump(node, include_attributes=False)}'
+                )
+            elif call_kind in AUTHORITY_KINDS:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority derivation denied at line {node.lineno}: {ast.dump(node, include_attributes=False)}'
+                )
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            kind = _authority_expr_kind(node, kinds, function_returns)
+            if kind in {AUTH_DYNAMIC_CAPABILITY, AUTH_DERIVED}:
+                blockers.append(
+                    f'dynamic execution/import/reflection authority access denied at line {node.lineno}: {ast.dump(node, include_attributes=False)}'
+                )
+    return sorted(set(blockers))
+
+
+def references_hda_scoring(path: Path) -> bool:
+    """Detect direct HDA-scoring references; dynamic authority is checked separately."""
     try:
         tree = _parse(path)
     except SyntaxError:
         return False
-
     bindings = _static_string_bindings(tree)
-    importlib_aliases = {'importlib'}
-    builtins_aliases = {'builtins', '__builtins__'}
-    dynamic_import_names = {'import_module', '__import__'}
-    reflective_names = {'eval', 'exec', 'compile', 'getattr'}
-
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == HDA_SCORING_MODULE:
-                    return True
-                if alias.name == 'importlib':
-                    importlib_aliases.add(alias.asname or alias.name)
-                if alias.name == 'builtins':
-                    builtins_aliases.add(alias.asname or alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module == HDA_SCORING_MODULE:
+            if any(alias.name == HDA_SCORING_MODULE for alias in node.names):
                 return True
-            if node.module == 'importlib':
-                for alias in node.names:
-                    if alias.name == 'import_module':
-                        dynamic_import_names.add(alias.asname or alias.name)
-            if node.module == 'builtins':
-                for alias in node.names:
-                    bound = alias.asname or alias.name
-                    if alias.name == '__import__':
-                        dynamic_import_names.add(bound)
-                    elif alias.name in {'eval', 'exec', 'compile', 'getattr'}:
-                        reflective_names.add(bound)
-
-    # Propagate simple callable aliases such as loader = load_module or loader = __import__.
-    alias_assignments: list[tuple[str, ast.AST]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name):
-                alias_assignments.append((target.id, node.value))
-    for _ in range(len(alias_assignments) + 1):
-        changed = False
-        for target, value in alias_assignments:
-            source: str | None = None
-            if isinstance(value, ast.Name) and value.id in importlib_aliases and target not in importlib_aliases:
-                importlib_aliases.add(target)
-                changed = True
-            if isinstance(value, ast.Name) and value.id in builtins_aliases and target not in builtins_aliases:
-                builtins_aliases.add(target)
-                changed = True
-            if isinstance(value, ast.Name) and value.id in dynamic_import_names | reflective_names:
-                source = value.id
-            elif (
-                isinstance(value, ast.Attribute)
-                and isinstance(value.value, ast.Name)
-                and value.value.id in importlib_aliases
-                and value.attr == 'import_module'
-            ):
-                source = 'import_module'
-            elif (
-                isinstance(value, ast.Attribute)
-                and isinstance(value.value, ast.Name)
-                and value.value.id in builtins_aliases
-                and value.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-            ):
-                source = value.attr
-            elif (
-                isinstance(value, ast.Subscript)
-                and isinstance(value.value, ast.Name)
-                and value.value.id in builtins_aliases
-                and isinstance(value.slice, ast.Constant)
-                and value.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-            ):
-                source = str(value.slice.value)
-            if source is not None and target not in dynamic_import_names and target not in reflective_names:
-                if source in reflective_names:
-                    reflective_names.add(target)
-                else:
-                    dynamic_import_names.add(target)
-                changed = True
-        if not changed:
-            break
-
-    # Any reference to a dynamic import or reflective built-in through a known
-    # module alias is authority-bearing, even when it is stored in a conditional
-    # expression or another callable container before invocation.
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and (
-                (node.value.id in importlib_aliases and node.attr == 'import_module')
-                or (
-                    node.value.id in builtins_aliases
-                    and node.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-                )
-            )
-        ):
+        elif isinstance(node, ast.ImportFrom) and node.module == HDA_SCORING_MODULE:
             return True
-        if (
-            isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in builtins_aliases
-            and isinstance(node.slice, ast.Constant)
-            and node.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-        ):
-            return True
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        is_dynamic_import = (
-            isinstance(func, ast.Name) and func.id in dynamic_import_names
-        ) or (
-            isinstance(func, ast.Attribute)
-            and isinstance(func.value, ast.Name)
-            and func.value.id in importlib_aliases
-            and func.attr == 'import_module'
-        )
-        if is_dynamic_import:
-            # Unresolved dynamic module names are authority-bearing too: fail closed.
-            return True
-        if isinstance(func, ast.Name) and func.id in reflective_names:
-            return True
-        if (
-            isinstance(func, ast.Attribute)
-            and isinstance(func.value, ast.Name)
-            and func.value.id in builtins_aliases
-            and func.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-        ):
-            return True
-        if (
-            isinstance(func, ast.Subscript)
-            and isinstance(func.value, ast.Name)
-            and func.value.id in builtins_aliases
-            and isinstance(func.slice, ast.Constant)
-            and func.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
-        ):
-            return True
+        elif isinstance(node, ast.Call):
+            for arg in node.args:
+                if _resolve_static_string(arg, bindings) == HDA_SCORING_MODULE:
+                    return True
     return False
-
 
 def is_infra_python(path: str) -> bool:
     return path in EXEMPT_EXACT
@@ -696,11 +1067,40 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--base', required=True)
     ap.add_argument('--head', default='HEAD')
+    ap.add_argument('--expected-guard-canonical-ast-sha256', required=True)
+    ap.add_argument('--expected-audit-canonical-ast-sha256', required=True)
     args = ap.parse_args()
+    try:
+        expected_guard_canonical_ast_sha256 = _require_external_canonical_ast_sha256(
+            args.expected_guard_canonical_ast_sha256,
+            label='expected guard canonical AST SHA-256',
+        )
+        expected_audit_canonical_ast_sha256 = _require_external_canonical_ast_sha256(
+            args.expected_audit_canonical_ast_sha256,
+            label='expected audit canonical AST SHA-256',
+        )
+    except GuardError as exc:
+        ap.error(str(exc))
+
     files = changed_files(args.base, args.head)
     checked = []
     blockers: list[str] = []
     helpers = []
+
+    # These expected identities are supplied by the independently reviewed workflow.
+    # There is deliberately no self-hash or repository-local fallback.
+    blockers.extend(
+        guard_module_blockers(
+            Path(HDA_GUARD_PATH),
+            expected_canonical_ast_sha256=expected_guard_canonical_ast_sha256,
+        )
+    )
+    blockers.extend(
+        hda_audit_module_blockers(
+            Path(HDA_AUDIT_PATH),
+            expected_canonical_ast_sha256=expected_audit_canonical_ast_sha256,
+        )
+    )
 
     active = set(active_v2_contracts())
     runner_map = all_contract_runners()
@@ -728,6 +1128,18 @@ def main() -> int:
         if path.suffix != '.py':
             continue
 
+        # A historical infrastructure exemption is never permission to change production
+        # code. Every changed exempt production module must have a dedicated executable
+        # AST contract; only the synthetic HDA test file may contain adversarial payloads.
+        if (
+            file_name in EXEMPT_EXACT
+            and file_name not in DEDICATED_EXEMPT_PRODUCTION_CONTRACTS
+            and file_name not in EXEMPT_TEST_ONLY_PATHS
+        ):
+            blockers.append(
+                f'{file_name}: EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT'
+            )
+
         try:
             cp = contract_constant(path)
             hp = helper_contract_constant(path)
@@ -735,8 +1147,14 @@ def main() -> int:
             blockers.append(f'{file_name}: syntax error: {exc}')
             continue
 
-        # Any scoring import path, alias, re-export, getattr route or dynamic import string
-        # is authority-bearing outside the audited pure scoring module and synthetic tests.
+        # Dynamic execution/import/reflection authority is a hard blocker before any
+        # infrastructure exemption. Synthetic tests are the only surface allowed to hold
+        # malicious examples, and those examples are parsed by the guard rather than executed.
+        if file_name != HDA_TEST_PATH:
+            for reason in dynamic_authority_blockers(path):
+                blockers.append(f'{file_name}: AST_DYNAMIC_AUTHORITY_DENIED: {reason}')
+
+        # Direct HDA-scoring references still require an explicit V2 caller/helper contract.
         scoring_ref = references_hda_scoring(path)
         if scoring_ref and file_name not in {HDA_SCORING_PATH, HDA_TEST_PATH} and not (cp or hp):
             blockers.append(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import hashlib
 import importlib
 import json
 import math
@@ -13,13 +15,19 @@ from unittest.mock import patch
 from pathlib import Path, PureWindowsPath
 
 from football3_hda import (
+    AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE,
     COMPLETE_HDA,
     DEFAULT_PROBABILITY_TOLERANCE,
     DEFAULT_TIE_TOLERANCE,
     HDA_CLASS_ORDER,
     HDA_SCHEMA_VERSION,
     HDAValidationError,
+    EXACT_SCORE_TOP1,
+    EXACT_SCORE_TOP1_PROXY_NOT_PHYSICAL,
+    EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL,
     PARTIAL_HDA_UNRESOLVED_TAIL,
+    PHYSICAL_EXACT_SCORE,
+    ROBUST_PARTIAL_EXACT_SCORE_TOP1,
     ROBUST_PARTIAL_TOP1,
     ScoreCell,
     TOP1_TIE,
@@ -31,7 +39,7 @@ from football3_hda import (
     validate_score_matrix,
 )
 from football3_hda_scoring import draw_classification_metrics, score_hda_probabilities
-from audit_football3_changed_scientific_files import scoring_module_blockers, zero_label_hda_blockers
+from audit_football3_changed_scientific_files import (canonical_ast_sha256, guard_module_blockers, hda_audit_module_blockers, scoring_module_blockers, zero_label_hda_blockers)
 from run_football3_hda_zero_label_audit import repo_path, scope_differences, validate_lineage
 
 FOOTBALL3_ZERO_LABEL_TEST_SURFACE = "HDA_SYNTHETIC_ZERO_LABEL_TESTS_ONLY"
@@ -42,6 +50,51 @@ COMPLETE_ID = "d71f02ab92ecece6ca5ccd682ed2e0b5455b19dea8f0659ef1c29a7b074b694e"
 PARTIAL_ID = "688b42ad005ea72c1b3b67f4fd5ff4525b77edf4a2d59cc7fac52c44cc77b7f5"
 RESEARCH_DIR = Path(__file__).resolve().parent
 GUARD_SOURCE = RESEARCH_DIR / "audit_football3_changed_scientific_files.py"
+AUDIT_SOURCE = RESEARCH_DIR / "run_football3_hda_zero_label_audit.py"
+WORKFLOW_SOURCE = RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml"
+CANONICAL_AST_SCHEMA = "football3_canonical_ast_structure_v1"
+
+
+def workflow_frozen_canonical_ast_hashes() -> tuple[str, str]:
+    text = WORKFLOW_SOURCE.read_text(encoding="utf-8")
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        for name in (
+            "HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256",
+            "HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256",
+        ):
+            prefix = name + ":"
+            if stripped.startswith(prefix):
+                raw = stripped[len(prefix):].strip()
+                if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+                    raw = raw[1:-1]
+                values[name] = raw
+    return (
+        values["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+        values["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+    )
+
+
+def trusted_test_canonical_ast_sha256_text(text: str, *, filename: str) -> str:
+    tree = ast.parse(text, filename=filename)
+
+    def canonical(value: object) -> object:
+        if isinstance(value, ast.AST):
+            return [
+                "node",
+                type(value).__name__,
+                [[field, canonical(item)] for field, item in ast.iter_fields(value)],
+            ]
+        if isinstance(value, list):
+            return ["list", [canonical(item) for item in value]]
+        if isinstance(value, tuple):
+            return ["tuple", [canonical(item) for item in value]]
+        return ["literal", type(value).__name__, repr(value)]
+
+    payload = {"schema": CANONICAL_AST_SCHEMA, "tree": canonical(tree)}
+    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def git_at(root: Path, *args: str) -> str:
@@ -177,13 +230,16 @@ class HDATest(unittest.TestCase):
         return aggregate_score_matrix_to_hda(score_arg, **kwargs)
 
     def run_guard_case(self, changed_path: str, base_text: str, changed_text: str) -> subprocess.CompletedProcess[str]:
+        expected_guard, expected_audit = workflow_frozen_canonical_ast_hashes()
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             target = root / changed_path
             guard = root / "football-data/research/audit_football3_changed_scientific_files.py"
+            audit = root / "football-data/research/run_football3_hda_zero_label_audit.py"
             target.parent.mkdir(parents=True, exist_ok=True)
             guard.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(GUARD_SOURCE, guard)
+            shutil.copy2(AUDIT_SOURCE, audit)
             target.write_text(base_text, encoding="utf-8", newline="\n")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             subprocess.run(["git", "config", "user.email", "zero-label@example.invalid"], cwd=root, check=True)
@@ -195,7 +251,18 @@ class HDATest(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "change"], cwd=root, check=True)
             return subprocess.run(
-                [sys.executable, str(guard.relative_to(root)), "--base", base, "--head", "HEAD"],
+                [
+                    sys.executable,
+                    str(guard.relative_to(root)),
+                    "--base",
+                    base,
+                    "--head",
+                    "HEAD",
+                    "--expected-guard-canonical-ast-sha256",
+                    expected_guard,
+                    "--expected-audit-canonical-ast-sha256",
+                    expected_audit,
+                ],
                 cwd=root,
                 text=True,
                 capture_output=True,
@@ -248,6 +315,90 @@ class HDATest(unittest.TestCase):
         r = agg_partial({(1, 0): 0.34, (0, 1): 0.30, (0, 0): 0.26}, 0.10)
         self.assertEqual(r["top1_status"], TOP1_UNRESOLVED_DUE_TO_TAIL)
         self.assertIsNone(r["top1_category"])
+
+    def test_partial_exact_score_tail_point_four_is_unresolved(self):
+        r = agg_partial({(0, 0): 0.25, (1, 0): 0.20, (0, 1): 0.15}, 0.40)
+        self.assertEqual(r["top1_status"], TOP1_UNRESOLVED_DUE_TO_TAIL)
+        self.assertEqual(tuple(r["max_known_specific_score"]), (0, 0))
+        self.assertEqual(r["max_known_specific_score_probability"], 0.25)
+        self.assertEqual(r["max_known_specific_score_cell_semantics"], PHYSICAL_EXACT_SCORE)
+        self.assertIsNone(r["max_specific_score"])
+        self.assertEqual(r["exact_score_top1_status"], EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL)
+        self.assertIsNone(r["exact_score_top1_category"])
+        self.assertIsNone(r["exact_score_top1_and_hda_top1_agree"])
+        self.assertEqual(r["unknown_tail_single_score_upper_bound"], 0.40)
+
+    def test_partial_exact_score_known_point_seven_tail_point_one_is_robust(self):
+        r = agg_partial({(1, 0): 0.70, (0, 1): 0.10, (0, 0): 0.10}, 0.10)
+        self.assertEqual(r["top1_status"], ROBUST_PARTIAL_TOP1)
+        self.assertEqual(r["top1_category"], "HOME")
+        self.assertEqual(tuple(r["max_specific_score"]), (1, 0))
+        self.assertEqual(r["exact_score_top1_status"], ROBUST_PARTIAL_EXACT_SCORE_TOP1)
+        self.assertEqual(r["exact_score_top1_category"], "HOME")
+        self.assertTrue(r["exact_score_top1_and_hda_top1_agree"])
+        self.assertGreater(r["exact_score_unknown_tail_margin"], TIE_TOL)
+        self.assertGreater(r["exact_score_known_runner_up_margin"], TIE_TOL)
+
+    def test_partial_exact_score_tail_equality_or_tolerance_is_unresolved(self):
+        cases = [
+            ({(1, 0): 0.40, (0, 1): 0.20}, 0.40),
+            ({(1, 0): 0.4000000000005, (0, 1): 0.1999999999995}, 0.40),
+        ]
+        for masses, tail in cases:
+            with self.subTest(masses=masses):
+                r = agg_partial(masses, tail)
+                self.assertIsNone(r["max_specific_score"])
+                self.assertEqual(r["exact_score_top1_status"], EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL)
+                self.assertLessEqual(r["exact_score_unknown_tail_margin"], TIE_TOL)
+                self.assertIsNone(r["exact_score_top1_and_hda_top1_agree"])
+
+    def test_complete_physical_exact_score_existing_behavior_unchanged(self):
+        r = agg_complete(ONE_ONE_SCORE_TOP1_HOME_HDA)
+        self.assertEqual(tuple(r["max_known_specific_score"]), (1, 1))
+        self.assertEqual(r["max_known_specific_score_cell_semantics"], PHYSICAL_EXACT_SCORE)
+        self.assertEqual(tuple(r["max_specific_score"]), (1, 1))
+        self.assertEqual(r["exact_score_top1_status"], EXACT_SCORE_TOP1)
+        self.assertEqual(r["exact_score_top1_category"], "DRAW")
+        self.assertFalse(r["exact_score_top1_and_hda_top1_agree"])
+
+    def test_proxy_row_max_never_claims_physical_exact_score_top1(self):
+        masses = {(13, 13): 0.60, (0, 0): 0.40}
+        r = self.complete_call(score_cells(COMPLETE_CELLS, masses))
+        self.assertEqual(tuple(r["max_known_specific_score"]), (13, 13))
+        self.assertEqual(
+            r["max_known_specific_score_cell_semantics"],
+            AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE,
+        )
+        self.assertIsNone(r["max_specific_score"])
+        self.assertEqual(r["exact_score_top1_status"], EXACT_SCORE_TOP1_PROXY_NOT_PHYSICAL)
+        self.assertIsNone(r["exact_score_top1_category"])
+        self.assertIsNone(r["exact_score_top1_and_hda_top1_agree"])
+        self.assertEqual(r["aggregated_tail_proxy_totals"], [26])
+        self.assertEqual(r["aggregated_tail_proxy_represents_total_goals_gte"], 26)
+
+    def test_r5_contract_support_registry_proxy_semantics_machine_readable(self):
+        registry = load_score_support_registry()
+        complete = registry[COMPLETE_ID]
+        partial = registry[PARTIAL_ID]
+        self.assertEqual(complete["default_exact_score_cell_semantics"], PHYSICAL_EXACT_SCORE)
+        self.assertEqual(complete["aggregated_tail_proxy_totals"], (26,))
+        self.assertEqual(
+            complete["aggregated_tail_proxy_cell_semantics"],
+            AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE,
+        )
+        self.assertEqual(complete["aggregated_tail_proxy_represents_total_goals_gte"], 26)
+        self.assertEqual(partial["aggregated_tail_proxy_totals"], ())
+        self.assertIsNone(partial["aggregated_tail_proxy_cell_semantics"])
+        self.assertIsNone(partial["aggregated_tail_proxy_represents_total_goals_gte"])
+
+    def test_partial_hda_bounds_and_robust_top1_behavior_not_regressed(self):
+        unresolved = agg_partial({(1, 0): 0.34, (0, 1): 0.30, (0, 0): 0.26}, 0.10)
+        self.assertEqual(unresolved["top1_status"], TOP1_UNRESOLVED_DUE_TO_TAIL)
+        self.assertAlmostEqual(unresolved["hda_bounds"]["HOME"]["lower"], 0.34)
+        self.assertAlmostEqual(unresolved["hda_bounds"]["HOME"]["upper"], 0.44)
+        robust = agg_partial({(1, 0): 0.70, (0, 1): 0.10, (0, 0): 0.10}, 0.10)
+        self.assertEqual(robust["top1_status"], ROBUST_PARTIAL_TOP1)
+        self.assertEqual(robust["top1_category"], "HOME")
 
     def test_floating_home_away_difference_5e_17_is_top1_tie(self):
         r = choose_hda_top1(
@@ -334,8 +485,215 @@ class HDATest(unittest.TestCase):
         )
 
     def test_production_ast_contracts_accept_current_modules(self):
+        expected_guard, expected_audit = workflow_frozen_canonical_ast_hashes()
         self.assertEqual(zero_label_hda_blockers(RESEARCH_DIR / "football3_hda.py"), [])
         self.assertEqual(scoring_module_blockers(RESEARCH_DIR / "football3_hda_scoring.py"), [])
+        self.assertEqual(
+            guard_module_blockers(
+                GUARD_SOURCE,
+                expected_canonical_ast_sha256=expected_guard,
+            ),
+            [],
+        )
+        self.assertEqual(
+            hda_audit_module_blockers(
+                AUDIT_SOURCE,
+                expected_canonical_ast_sha256=expected_audit,
+            ),
+            [],
+        )
+
+    def test_dedicated_production_module_contracts_reject_unknown_ast_shapes_fails_closed(self):
+        # The workflow is the independent production trust anchor. Target variants are
+        # parsed only; none is imported, runpy-loaded, exec'd, or launched as a subprocess.
+        expected_guard, expected_audit = workflow_frozen_canonical_ast_hashes()
+        guard_text = GUARD_SOURCE.read_text(encoding="utf-8")
+        audit_text = AUDIT_SOURCE.read_text(encoding="utf-8")
+        self.assertEqual(
+            trusted_test_canonical_ast_sha256_text(guard_text, filename=str(GUARD_SOURCE)),
+            expected_guard,
+        )
+        self.assertEqual(
+            trusted_test_canonical_ast_sha256_text(audit_text, filename=str(AUDIT_SOURCE)),
+            expected_audit,
+        )
+        self.assertNotIn("_RUNTIME_GUARD_CANONICAL_AST_SHA256", guard_text)
+        self.assertNotIn("_RUNTIME_AUDIT_CANONICAL_AST_SHA256", guard_text)
+
+        cases = [
+            (
+                "unknown_guard_ast",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text + '\nrogue_callable = lambda: 1\n',
+            ),
+            (
+                "unknown_audit_ast",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text + '\nrogue_callable = (lambda: 1)()\n',
+            ),
+            # Codex canonical-AST review: exact self-baseline bypass classes. Each
+            # variant reuses familiar syntax but changes semantic identity.
+            (
+                "self_baseline_guard_top_level_subprocess",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text + '\nsubprocess.run(["echo", "not-executed"], text=True)\n',
+            ),
+            (
+                "self_baseline_guard_disable_dynamic_authority",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text.replace(
+                    "        if file_name != HDA_TEST_PATH:\n",
+                    "        if False and file_name != HDA_TEST_PATH:\n",
+                    1,
+                ),
+            ),
+            (
+                "self_baseline_guard_disable_uncontracted_exempt_gate",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text.replace(
+                    "        if (\n            file_name in EXEMPT_EXACT\n",
+                    "        if False and (\n            file_name in EXEMPT_EXACT\n",
+                    1,
+                ),
+            ),
+            (
+                "self_baseline_guard_disable_scoring_contract_gate",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text.replace(
+                    "        if scoring_ref and file_name not in {HDA_SCORING_PATH, HDA_TEST_PATH} and not (cp or hp):\n",
+                    "        if False and scoring_ref and file_name not in {HDA_SCORING_PATH, HDA_TEST_PATH} and not (cp or hp):\n",
+                    1,
+                ),
+            ),
+            (
+                "self_baseline_audit_top_level_subprocess",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text + '\nsubprocess.run(["echo", "not-executed"], text=True)\n',
+            ),
+            (
+                "self_baseline_audit_disable_total_test_count",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text.replace(
+                    "    if len(records) != EXPECTED_TEST_COUNT:\n",
+                    "    if False and len(records) != EXPECTED_TEST_COUNT:\n",
+                    1,
+                ),
+            ),
+            (
+                "self_baseline_audit_disable_fail_closed_count",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text.replace(
+                    "    if len(fail_closed) != EXPECTED_FAIL_CLOSED_COUNT:\n",
+                    "    if False and len(fail_closed) != EXPECTED_FAIL_CLOSED_COUNT:\n",
+                    1,
+                ),
+            ),
+            (
+                "self_baseline_audit_disable_test_failure_exit",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text.replace(
+                    "    if not result.wasSuccessful():\n",
+                    "    if False and not result.wasSuccessful():\n",
+                    1,
+                ),
+            ),
+            # Frozen semantic identities remain explicit in addition to the full AST hash.
+            (
+                "meta_override_test_only_paths",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text + '\nEXEMPT_TEST_ONLY_PATHS = {"football-data/research/test_football3_hda.py", "football-data/research/football3_core.py"}\n',
+            ),
+            (
+                "meta_override_dedicated_contracts",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text + '\nDEDICATED_EXEMPT_PRODUCTION_CONTRACTS = set(EXEMPT_EXACT)\n',
+            ),
+            (
+                "meta_override_dynamic_capabilities",
+                GUARD_SOURCE,
+                expected_guard,
+                guard_text + '\nDYNAMIC_BUILTIN_CAPABILITIES = {"getattr"}\n',
+            ),
+            (
+                "audit_expected_test_count",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text + '\nEXPECTED_TEST_COUNT = 92\n',
+            ),
+            (
+                "audit_expected_fail_closed_count",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text + '\nEXPECTED_FAIL_CLOSED_COUNT = 61\n',
+            ),
+            (
+                "audit_status",
+                AUDIT_SOURCE,
+                expected_audit,
+                audit_text + '\nSTATUS = "CODEX_PASS"\n',
+            ),
+        ]
+        for name, source, expected, changed in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as td:
+                target = Path(td) / source.name
+                target.write_text(changed, encoding="utf-8", newline="\n")
+                # Parse-only independent checker: target code is never executed.
+                actual = trusted_test_canonical_ast_sha256_text(
+                    target.read_text(encoding="utf-8"),
+                    filename=str(target),
+                )
+                self.assertNotEqual(actual, expected, name)
+
+        # Required external anchors fail closed before any repository work. These execute
+        # only the reviewed current checker/runner, never a mutated target variant.
+        missing_guard = subprocess.run(
+            [sys.executable, str(GUARD_SOURCE), "--base", "deadbeef", "--head", "HEAD"],
+            cwd=RESEARCH_DIR.parent.parent,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(missing_guard.returncode, 2, missing_guard.stdout + missing_guard.stderr)
+        self.assertIn("--expected-guard-canonical-ast-sha256", missing_guard.stderr)
+        invalid_guard = subprocess.run(
+            [
+                sys.executable,
+                str(GUARD_SOURCE),
+                "--base",
+                "deadbeef",
+                "--head",
+                "HEAD",
+                "--expected-guard-canonical-ast-sha256",
+                "bad",
+                "--expected-audit-canonical-ast-sha256",
+                expected_audit,
+            ],
+            cwd=RESEARCH_DIR.parent.parent,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(invalid_guard.returncode, 2, invalid_guard.stdout + invalid_guard.stderr)
+        self.assertIn("64 lowercase hexadecimal", invalid_guard.stderr)
+        with tempfile.TemporaryDirectory() as td:
+            missing_runner = subprocess.run(
+                [sys.executable, str(AUDIT_SOURCE), "--out-dir", td],
+                cwd=RESEARCH_DIR.parent.parent,
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(missing_runner.returncode, 2, missing_runner.stdout + missing_runner.stderr)
+        self.assertIn("--expected-guard-canonical-ast-sha256", missing_runner.stderr)
 
     # Support-contract production counterexamples required by Codex.
     def test_fabricated_schema_version_fails_closed(self):
@@ -609,7 +967,7 @@ class HDATest(unittest.TestCase):
             with self.subTest(kind=kind):
                 r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-                self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+                self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
 
     def test_guard_rejects_builtins_dynamic_execution_aliases_in_exempt_core_fails_closed(self):
         base = 'def noop():\n    return 0\n'
@@ -657,7 +1015,212 @@ class HDATest(unittest.TestCase):
             with self.subTest(kind=kind):
                 r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-                self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+                self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_builtins_namespace_capability_routes_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        variants = {
+            "builtins_dict_exec": (
+                'import builtins as b\n\n'
+                'def load():\n'
+                '    payload = "raise AssertionError(\\\"payload executed\\\")"\n'
+                '    b.__dict__["exec"](payload)\n'
+            ),
+            "dunder_builtins_dict_eval": (
+                'def load():\n'
+                '    payload = "1 + 1"\n'
+                '    return __builtins__.__dict__["eval"](payload)\n'
+            ),
+            "builtins_getattribute_exec": (
+                'import builtins\n\n'
+                'def load():\n'
+                '    run = builtins.__getattribute__("exec")\n'
+                '    run("raise AssertionError(\\\"payload executed\\\")")\n'
+            ),
+            "vars_builtins_exec": (
+                'import builtins\n\n'
+                'def load():\n'
+                '    return vars(builtins)["exec"]("raise AssertionError(\\\"payload executed\\\")")\n'
+            ),
+        }
+        for kind, changed in variants.items():
+            with self.subTest(kind=kind):
+                r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_authority_alias_container_and_conditional_routes_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        variants = {
+            "namespace_alias_chain": (
+                'import builtins\n'
+                'd = builtins.__dict__\n'
+                'run = d["exec"]\n\n'
+                'def load():\n'
+                '    run("pass")\n'
+            ),
+            "conditional_storage": (
+                'import builtins as b\n'
+                'run = b.exec if __debug__ else print\n\n'
+                'def load():\n'
+                '    run("pass")\n'
+            ),
+            "container_storage": (
+                'import builtins as b\n'
+                'box = {"runner": b.exec}\n\n'
+                'def load():\n'
+                '    box["runner"]("pass")\n'
+            ),
+            "importlib_getattr_chain": (
+                'import importlib as il\n\n'
+                'def load():\n'
+                '    loader = getattr(il, "import_module")\n'
+                '    return loader("football3_hda_" + "scoring")\n'
+            ),
+        }
+        for kind, changed in variants.items():
+            with self.subTest(kind=kind):
+                r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+
+    def test_guard_rejects_type_descriptor_builtins_namespace_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'def load():\n'
+            '    d = type.__getattribute__(b, "__dict__")\n'
+            '    run = d["exec"]\n'
+            '    run("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_authority_through_function_parameter_return_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'def identity(x):\n'
+            '    return x\n\n'
+            'ns = identity(b)\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_authority_through_iter_next_container_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'ns = next(iter([b]))\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_authority_from_custom_function_return_r5_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'def authority():\n'
+            '    return b\n\n'
+            'ns = authority()\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("AST_DYNAMIC_AUTHORITY_DENIED", r.stdout)
+
+    def test_guard_rejects_lambda_closure_authority_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'def load():\n'
+            '    get_ns = lambda: b\n'
+            '    ns = get_ns()\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
+
+    def test_guard_rejects_lambda_default_authority_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n'
+            'get_ns = lambda x=b: x\n\n'
+            'def load():\n'
+            '    ns = get_ns()\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
+
+    def test_guard_rejects_generator_yield_authority_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'def authorities():\n'
+            '    yield b\n\n'
+            'ns = next(authorities())\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
+
+    def test_guard_rejects_subscript_target_authority_storage_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n'
+            'box = {}\n'
+            'box["ns"] = b\n'
+            'ns = box["ns"]\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
+
+    def test_guard_rejects_attribute_target_authority_storage_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n\n'
+            'class Box:\n'
+            '    pass\n\n'
+            'box = Box()\n'
+            'box.ns = b\n'
+            'ns = box.ns\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
+
+    def test_guard_rejects_match_capture_authority_in_uncontracted_exempt_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'import builtins as b\n'
+            'match {"ns": b}:\n'
+            '    case {"ns": ns}:\n'
+            '        pass\n\n'
+            'def load():\n'
+            '    ns.__dict__["exec"]("raise AssertionError(\\"payload executed\\")")\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("EXEMPT_PRODUCTION_CHANGE_REQUIRES_DEDICATED_AST_CONTRACT", r.stdout)
 
     def test_zero_label_ast_allowlist_rejects_subscript_callback_fails_closed(self):
         base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
@@ -681,8 +1244,7 @@ class HDATest(unittest.TestCase):
         )
 
     def test_continuous_ci_is_head_ref_based_not_fixed_base(self):
-        workflow = (RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml")
-        text = workflow.read_text(encoding="utf-8")
+        text = WORKFLOW_SOURCE.read_text(encoding="utf-8")
         pull_request_block = text.split("pull_request:", 1)[1].split("workflow_dispatch:", 1)[0]
         self.assertNotIn("branches:", pull_request_block)
         self.assertIn("football3_hda_scoring.py", pull_request_block)
@@ -690,12 +1252,52 @@ class HDATest(unittest.TestCase):
         self.assertIn("hda-continuous-structure-linux", text)
         self.assertIn("hda-continuous-structure-windows", text)
 
+        expected_guard, expected_audit = workflow_frozen_canonical_ast_hashes()
+        self.assertEqual(expected_guard, trusted_test_canonical_ast_sha256_text(GUARD_SOURCE.read_text(encoding="utf-8"), filename=str(GUARD_SOURCE)))
+        self.assertEqual(expected_audit, trusted_test_canonical_ast_sha256_text(AUDIT_SOURCE.read_text(encoding="utf-8"), filename=str(AUDIT_SOURCE)))
+        self.assertEqual(text.count(expected_guard), 1)
+        self.assertEqual(text.count(expected_audit), 1)
+        self.assertNotIn("_RUNTIME_GUARD_CANONICAL_AST_SHA256", text)
+        self.assertNotIn("_RUNTIME_AUDIT_CANONICAL_AST_SHA256", text)
+
+        job_markers = [
+            "  hda-structure-linux:",
+            "  hda-structure-windows:",
+            "  hda-pr334-exact-head-linux-artifact:",
+            "  hda-pr334-exact-head-windows-audit:",
+        ]
+        for index, marker in enumerate(job_markers):
+            start = text.index(marker)
+            later = [text.find(other, start + len(marker)) for other in job_markers[index + 1:]]
+            later += [text.find("  repository-integrity:", start + len(marker))]
+            ends = [position for position in later if position != -1]
+            end = min(ends) if ends else len(text)
+            block = text[start:end]
+            self.assertIn("Verify frozen canonical AST identities from workflow literals", block, marker)
+            self.assertIn("HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256", block, marker)
+            self.assertIn("HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256", block, marker)
+            if "structure" in marker:
+                self.assertIn("--expected-guard-canonical-ast-sha256", block, marker)
+                self.assertIn("--expected-audit-canonical-ast-sha256", block, marker)
+            else:
+                self.assertIn("run_football3_hda_zero_label_audit.py", block, marker)
+                self.assertIn("--expected-guard-canonical-ast-sha256", block, marker)
+                self.assertIn("--expected-audit-canonical-ast-sha256", block, marker)
+
     def test_windows_exact_job_runs_full_production_audit_entry(self):
-        workflow = (RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml")
-        text = workflow.read_text(encoding="utf-8")
+        text = WORKFLOW_SOURCE.read_text(encoding="utf-8")
         self.assertIn("hda-pr334-exact-head-windows-full-audit", text)
         self.assertIn("Run complete production audit entry under Windows", text)
         self.assertIn("run_football3_hda_zero_label_audit.py --out-dir", text)
+        self.assertIn("--expected-guard-canonical-ast-sha256", text)
+        self.assertIn("--expected-audit-canonical-ast-sha256", text)
+        runner_text = AUDIT_SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("def canonical_ast_sha256", runner_text)
+        self.assertNotIn("from audit_football3_changed_scientific_files import canonical_ast_sha256", runner_text)
+        self.assertIn('parser.add_argument("--expected-guard-canonical-ast-sha256", required=True)', runner_text)
+        self.assertIn('parser.add_argument("--expected-audit-canonical-ast-sha256", required=True)', runner_text)
+        self.assertIn('expected_guard_canonical_ast_sha256=args.expected_guard_canonical_ast_sha256', runner_text)
+        self.assertIn('expected_audit_canonical_ast_sha256=args.expected_audit_canonical_ast_sha256', runner_text)
 
     def test_windows_path_normalization_does_not_hide_extra_file_fails_closed(self):
         expected = {

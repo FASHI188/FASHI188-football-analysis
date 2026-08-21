@@ -21,6 +21,8 @@ concurrency:
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
+  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '60663cae3774c2b718b0f40e72d416f5183bc9b8d3adca969ed870108ea1bebf'
+  HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256: '2d04d229f0badc6533c83655a52ec26242dec7414ae8d65db6aac4b5ee5813db'
 
 jobs:
   # Reusable structural CI: follows football3/* HEAD refs across any PR base branch.
@@ -39,6 +41,46 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        run: |
+          python - <<'PY'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          PY
       - name: Compile HDA production, scoring, guard, audit, and tests
         run: |
           python -m py_compile \
@@ -65,7 +107,9 @@ jobs:
         run: |
           python football-data/research/audit_football3_changed_scientific_files.py \
             --base "${{ github.event.pull_request.base.sha }}" \
-            --head "${{ github.event.pull_request.head.sha }}"
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --expected-guard-canonical-ast-sha256 "${HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256}" \
+            --expected-audit-canonical-ast-sha256 "${HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256}"
       - name: Verify no repository persistence
         run: git diff --exit-code
 
@@ -87,6 +131,47 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          '@ | python -
       - name: Compile HDA production, scoring, guard, audit, and tests under Windows
         shell: pwsh
         run: |
@@ -103,7 +188,7 @@ jobs:
         run: python -c "from football3_hda import load_score_support_registry; r=load_score_support_registry(); assert len(r)==2; print(sorted(r))"
       - name: Run production football3 guard on actual PR scope under Windows
         shell: pwsh
-        run: python football-data/research/audit_football3_changed_scientific_files.py --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
+        run: python football-data/research/audit_football3_changed_scientific_files.py --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --expected-guard-canonical-ast-sha256 "$env:HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" --expected-audit-canonical-ast-sha256 "$env:HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
       - name: Verify no repository persistence
         shell: pwsh
         run: git diff --exit-code
@@ -124,13 +209,55 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        run: |
+          python - <<'PY'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          PY
       - name: Generate exact-head full zero-label audit receipt
         env:
           PYTHONPATH: football-data/research
           HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           python football-data/research/run_football3_hda_zero_label_audit.py \
-            --out-dir "${RUNNER_TEMP}/football3_hda_zero_label"
+            --out-dir "${RUNNER_TEMP}/football3_hda_zero_label" \
+            --expected-guard-canonical-ast-sha256 "${HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256}" \
+            --expected-audit-canonical-ast-sha256 "${HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256}"
       - name: Upload exact-head zero-label engineering receipt only
         uses: actions/upload-artifact@v4
         with:
@@ -161,12 +288,53 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          '@ | python -
       - name: Run complete production audit entry under Windows
         shell: pwsh
         env:
           PYTHONPATH: football-data/research
           HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python football-data/research/run_football3_hda_zero_label_audit.py --out-dir "$env:RUNNER_TEMP/football3_hda_zero_label_windows"
+        run: python football-data/research/run_football3_hda_zero_label_audit.py --out-dir "$env:RUNNER_TEMP/football3_hda_zero_label_windows" --expected-guard-canonical-ast-sha256 "$env:HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" --expected-audit-canonical-ast-sha256 "$env:HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
       - name: Assert Windows receipt set was generated
         shell: pwsh
         run: |

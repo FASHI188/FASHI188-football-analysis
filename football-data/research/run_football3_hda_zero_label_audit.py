@@ -11,14 +11,16 @@ from pathlib import Path, PurePath, PurePosixPath
 
 FOOTBALL3_ZERO_LABEL_AUDIT_SURFACE = "HDA_ZERO_LABEL_ARTIFACT_AUDIT_ONLY"
 
-STATUS = "GPT_REMEDIATED_R4_PENDING_CODEX_RECHECK"
+STATUS = "GPT_REMEDIATED_R5_PENDING_CODEX_RECHECK"
 K2_MARKER = "K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED"
 R2_FAILED_ANCESTOR = "bc43db3c7f4f7d76ca46387d0c9cca94f49f8611"
 PR_BASE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
 FROZEN_SCIENCE_ENGINE_HEAD = PR_BASE_HEAD
 GOVERNANCE_REFERENCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
-EXPECTED_TEST_COUNT = 73
-EXPECTED_FAIL_CLOSED_COUNT = 49
+EXPECTED_TEST_COUNT = 93
+EXPECTED_FAIL_CLOSED_COUNT = 62
+EXPECTED_CONTRACT_COUNT = 1
+EXPECTED_BEHAVIOR_COUNT = 30
 MODULE = Path("football-data/research/football3_hda.py")
 SCORING = Path("football-data/research/football3_hda_scoring.py")
 TEST = Path("football-data/research/test_football3_hda.py")
@@ -55,9 +57,15 @@ class RecordingResult(unittest.TextTestResult):
 
     def startTest(self, test):
         name = self._name(test)
+        if "fails_closed" in name:
+            expectation = "FAIL_CLOSED"
+        elif name.startswith("test_r5_contract_"):
+            expectation = "CONTRACT"
+        else:
+            expectation = "BEHAVIOR"
         self.records[name] = {
             "name": name,
-            "expectation": "FAIL_CLOSED" if "fails_closed" in name else "BEHAVIOR",
+            "expectation": expectation,
             "status": "RUNNING",
         }
         super().startTest(test)
@@ -268,9 +276,26 @@ def run_tests() -> tuple[RecordingResult, list[dict[str, object]]]:
     return result, [result.records[key] for key in sorted(result.records)]
 
 
-def run_production_guard(base: str, head: str) -> dict[str, object]:
+def run_production_guard(
+    base: str,
+    head: str,
+    *,
+    expected_guard_canonical_ast_sha256: str,
+    expected_audit_canonical_ast_sha256: str,
+) -> dict[str, object]:
     completed = subprocess.run(
-        [sys.executable, repo_path(GUARD), "--base", base, "--head", head],
+        [
+            sys.executable,
+            repo_path(GUARD),
+            "--base",
+            base,
+            "--head",
+            head,
+            "--expected-guard-canonical-ast-sha256",
+            expected_guard_canonical_ast_sha256,
+            "--expected-audit-canonical-ast-sha256",
+            expected_audit_canonical_ast_sha256,
+        ],
         text=True,
         capture_output=True,
     )
@@ -295,6 +320,8 @@ def write_json(path: Path, obj: object) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--expected-guard-canonical-ast-sha256", required=True)
+    parser.add_argument("--expected-audit-canonical-ast-sha256", required=True)
     args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -330,9 +357,15 @@ def main() -> int:
         raise RuntimeError(f"forbidden formal/model/data/config/CURRENT diff: {asset_diff}")
 
     support_receipt = validate_support_registry()
-    guard_receipt = run_production_guard(PR_BASE_HEAD, exact_head)
+    guard_receipt = run_production_guard(
+        PR_BASE_HEAD,
+        exact_head,
+        expected_guard_canonical_ast_sha256=args.expected_guard_canonical_ast_sha256,
+        expected_audit_canonical_ast_sha256=args.expected_audit_canonical_ast_sha256,
+    )
     result, records = run_tests()
     fail_closed = [record for record in records if record["expectation"] == "FAIL_CLOSED"]
+    contract = [record for record in records if record["expectation"] == "CONTRACT"]
     behavior = [record for record in records if record["expectation"] == "BEHAVIOR"]
     passed = [record for record in records if record["status"] == "PASS"]
 
@@ -340,6 +373,10 @@ def main() -> int:
         raise RuntimeError(f"expected exactly {EXPECTED_TEST_COUNT} synthetic/guard tests, got {len(records)}")
     if len(fail_closed) != EXPECTED_FAIL_CLOSED_COUNT:
         raise RuntimeError(f"expected exactly {EXPECTED_FAIL_CLOSED_COUNT} fail-closed counterexamples, got {len(fail_closed)}")
+    if len(contract) != EXPECTED_CONTRACT_COUNT:
+        raise RuntimeError(f"expected exactly {EXPECTED_CONTRACT_COUNT} contract tests, got {len(contract)}")
+    if len(behavior) != EXPECTED_BEHAVIOR_COUNT:
+        raise RuntimeError(f"expected exactly {EXPECTED_BEHAVIOR_COUNT} behavior tests, got {len(behavior)}")
 
     manifest = {
         "schema_version": "football3_hda_engineering_artifact_v4",
@@ -370,6 +407,7 @@ def main() -> int:
         "total_cases": len(records),
         "passed_cases": len(passed),
         "behavior_cases": len(behavior),
+        "contract_cases": len(contract),
         "fail_closed_cases": len(fail_closed),
         "tests": records,
     }
@@ -414,6 +452,8 @@ def main() -> int:
         "proper_scores_primary": True,
         "diagnostic_metrics_secondary": True,
         "synthetic_test_count": len(records),
+        "behavior_test_count": len(behavior),
+        "contract_test_count": len(contract),
         "fail_closed_counterexample_count": len(fail_closed),
         "k2_boundary": K2_MARKER,
         "C072_N20_status": "PILOT_NO_SIGNAL / PARK",
@@ -443,6 +483,8 @@ def main() -> int:
     print(json.dumps({
         "status": STATUS,
         "total_cases": len(records),
+        "behavior_cases": len(behavior),
+        "contract_cases": len(contract),
         "fail_closed_cases": len(fail_closed),
         "support_registry_entries": support_receipt["entry_count"],
         "real_labels": 0,

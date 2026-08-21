@@ -25,6 +25,13 @@ ROBUST_PARTIAL_TOP1 = "ROBUST_PARTIAL_TOP1"
 TOP1_UNRESOLVED_DUE_TO_TAIL = "TOP1_UNRESOLVED_DUE_TO_TAIL"
 TOP1_TIE = "TOP1_TIE"
 TOP1 = "TOP1"
+EXACT_SCORE_TOP1 = "EXACT_SCORE_TOP1"
+EXACT_SCORE_TOP1_TIE = "EXACT_SCORE_TOP1_TIE"
+ROBUST_PARTIAL_EXACT_SCORE_TOP1 = "ROBUST_PARTIAL_EXACT_SCORE_TOP1"
+EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL = "EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL"
+EXACT_SCORE_TOP1_PROXY_NOT_PHYSICAL = "EXACT_SCORE_TOP1_PROXY_NOT_PHYSICAL"
+PHYSICAL_EXACT_SCORE = "PHYSICAL_EXACT_SCORE"
+AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE = "AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE"
 COMPLETE_HDA = "COMPLETE_HDA"
 K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED = "K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED"
 
@@ -169,12 +176,38 @@ def load_score_support_registry(path: str | Path | None = None) -> dict[str, dic
             _fail("SUPPORT_REGISTRY_CELL_COUNT_MISMATCH", f"registry support {name} has wrong cell_count")
         unresolved = entry.get("unresolved_tail")
         policy = entry.get("tail_probability_policy")
+        default_exact_semantics = entry.get("default_exact_score_cell_semantics")
+        proxy_totals_raw = entry.get("aggregated_tail_proxy_totals")
+        proxy_semantics = entry.get("aggregated_tail_proxy_cell_semantics")
+        proxy_represents_gte = entry.get("aggregated_tail_proxy_represents_total_goals_gte")
+        if default_exact_semantics != PHYSICAL_EXACT_SCORE:
+            _fail("INVALID_EXACT_SCORE_CELL_SEMANTICS", f"support {name} must default to physical exact-score cells")
+        if not isinstance(proxy_totals_raw, list):
+            _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} must declare aggregated_tail_proxy_totals")
+        for proxy_total in proxy_totals_raw:
+            if type(proxy_total) is not int or proxy_total < 0:
+                _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} has invalid proxy total {proxy_total!r}")
+        proxy_totals = tuple(sorted(proxy_totals_raw))
+        if len(set(proxy_totals)) != len(proxy_totals):
+            _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} has duplicate proxy totals")
+        max_known_total = max(h + a for h, a in generated)
+        if any(proxy_total > max_known_total for proxy_total in proxy_totals):
+            _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} proxy total lies outside emitted support")
+        if proxy_totals:
+            if proxy_semantics != AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE:
+                _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} proxy cells must be explicitly non-physical")
+            if type(proxy_represents_gte) is not int or proxy_represents_gte != proxy_totals[0]:
+                _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} proxy physical-total boundary mismatch")
+        elif proxy_semantics is not None or proxy_represents_gte is not None:
+            _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"support {name} declares proxy semantics without proxy totals")
         if kind == COMPLETE_SUPPORT_KIND:
             if unresolved is not False or policy != "ZERO":
                 _fail("SUPPORT_REGISTRY_TAIL_POLICY_MISMATCH", f"complete support {name} has invalid tail policy")
         elif kind == PARTIAL_SUPPORT_KIND:
             if unresolved is not True or policy != "POSITIVE":
                 _fail("SUPPORT_REGISTRY_TAIL_POLICY_MISMATCH", f"partial support {name} has invalid tail policy")
+            if proxy_totals:
+                _fail("INVALID_AGGREGATED_TAIL_PROXY_CONTRACT", f"partial support {name} cannot declare emitted tail proxy cells")
             min_total = entry.get("unresolved_tail_min_total")
             max_known = max(h + a for h, a in generated)
             if type(min_total) is not int or min_total != max_known + 1:
@@ -183,6 +216,7 @@ def load_score_support_registry(path: str | Path | None = None) -> dict[str, dic
             _fail("UNKNOWN_SUPPORT_KIND", f"unknown support kind {kind!r}")
         enriched = dict(entry)
         enriched["required_score_cells"] = tuple(sorted(generated))
+        enriched["aggregated_tail_proxy_totals"] = proxy_totals
         by_id[support_id] = enriched
     return by_id
 
@@ -315,6 +349,10 @@ def validate_score_matrix(
         "support_kind": support["support_kind"],
         "support_name": support["name"],
         "support_contract_sha256": score_support_id,
+        "default_exact_score_cell_semantics": support["default_exact_score_cell_semantics"],
+        "aggregated_tail_proxy_totals": support["aggregated_tail_proxy_totals"],
+        "aggregated_tail_proxy_cell_semantics": support["aggregated_tail_proxy_cell_semantics"],
+        "aggregated_tail_proxy_represents_total_goals_gte": support["aggregated_tail_proxy_represents_total_goals_gte"],
         "unresolved_tail": unresolved_tail,
         "tail_probability": tail_probability,
         "raw_known_probability_sum": raw_known_sum,
@@ -370,14 +408,105 @@ def _score_class(home_goals: int, away_goals: int) -> str:
     return "AWAY"
 
 
-def _max_specific_score(cells: Sequence[ScoreCell], tie_tolerance: float) -> dict[str, object]:
+def _max_specific_score(
+    cells: Sequence[ScoreCell],
+    aggregated_tail_proxy_totals: Sequence[int],
+    unresolved_tail: bool,
+    tail_probability: float,
+    tie_tolerance: float,
+) -> dict[str, object]:
+    """Resolve a physical exact-score Top1 only when the support proves it globally."""
     max_p = max(cell.probability for cell in cells)
     maxima = sorted(cell.score for cell in cells if max_p - cell.probability <= tie_tolerance)
-    if len(maxima) != 1:
-        return {"max_specific_score": None, "max_specific_scores": maxima, "max_specific_score_probability": max_p, "max_specific_score_is_draw": None, "exact_score_top1_category": None, "exact_score_top1_status": "EXACT_SCORE_TOP1_TIE"}
-    score = maxima[0]
-    category = _score_class(*score)
-    return {"max_specific_score": score, "max_specific_scores": maxima, "max_specific_score_probability": max_p, "max_specific_score_is_draw": score[0] == score[1], "exact_score_top1_category": category, "exact_score_top1_status": "EXACT_SCORE_TOP1"}
+    proxy_totals = tuple(aggregated_tail_proxy_totals)
+    maxima_include_proxy = any(h + a in proxy_totals for h, a in maxima)
+    known_unique = len(maxima) == 1
+    known_score = maxima[0] if known_unique else None
+    known_semantics = None
+    if known_score is not None:
+        known_semantics = (
+            AGGREGATED_TAIL_PROXY_NOT_PHYSICAL_EXACT_SCORE
+            if known_score[0] + known_score[1] in proxy_totals
+            else PHYSICAL_EXACT_SCORE
+        )
+    diagnostic: dict[str, object] = {
+        "max_known_specific_score": known_score,
+        "max_known_specific_scores": maxima,
+        "max_known_specific_score_probability": max_p,
+        "max_known_specific_score_cell_semantics": known_semantics,
+        "unknown_tail_single_score_upper_bound": tail_probability if unresolved_tail else 0.0,
+    }
+
+    if maxima_include_proxy:
+        return {
+            **diagnostic,
+            "max_specific_score": None,
+            "max_specific_scores": [],
+            "max_specific_score_probability": None,
+            "max_specific_score_is_draw": None,
+            "exact_score_top1_category": None,
+            "exact_score_top1_status": EXACT_SCORE_TOP1_PROXY_NOT_PHYSICAL,
+        }
+
+    if unresolved_tail:
+        if not known_unique:
+            return {
+                **diagnostic,
+                "max_specific_score": None,
+                "max_specific_scores": [],
+                "max_specific_score_probability": None,
+                "max_specific_score_is_draw": None,
+                "exact_score_top1_category": None,
+                "exact_score_top1_status": EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL,
+            }
+        assert known_score is not None
+        second_p = max(cell.probability for cell in cells if cell.score != known_score)
+        known_margin = max_p - second_p
+        tail_margin = max_p - tail_probability
+        diagnostic["exact_score_known_runner_up_margin"] = known_margin
+        diagnostic["exact_score_unknown_tail_margin"] = tail_margin
+        if known_margin <= tie_tolerance or tail_margin <= tie_tolerance:
+            return {
+                **diagnostic,
+                "max_specific_score": None,
+                "max_specific_scores": [],
+                "max_specific_score_probability": None,
+                "max_specific_score_is_draw": None,
+                "exact_score_top1_category": None,
+                "exact_score_top1_status": EXACT_SCORE_TOP1_UNRESOLVED_DUE_TO_TAIL,
+            }
+        category = _score_class(*known_score)
+        return {
+            **diagnostic,
+            "max_specific_score": known_score,
+            "max_specific_scores": [known_score],
+            "max_specific_score_probability": max_p,
+            "max_specific_score_is_draw": known_score[0] == known_score[1],
+            "exact_score_top1_category": category,
+            "exact_score_top1_status": ROBUST_PARTIAL_EXACT_SCORE_TOP1,
+        }
+
+    if not known_unique:
+        return {
+            **diagnostic,
+            "max_specific_score": None,
+            "max_specific_scores": maxima,
+            "max_specific_score_probability": max_p,
+            "max_specific_score_is_draw": None,
+            "exact_score_top1_category": None,
+            "exact_score_top1_status": EXACT_SCORE_TOP1_TIE,
+        }
+    assert known_score is not None
+    category = _score_class(*known_score)
+    return {
+        **diagnostic,
+        "max_specific_score": known_score,
+        "max_specific_scores": [known_score],
+        "max_specific_score_probability": max_p,
+        "max_specific_score_is_draw": known_score[0] == known_score[1],
+        "exact_score_top1_category": category,
+        "exact_score_top1_status": EXACT_SCORE_TOP1,
+    }
 
 
 def aggregate_score_matrix_to_hda(
@@ -412,8 +541,10 @@ def aggregate_score_matrix_to_hda(
         known_values[_score_class(cell.home_goals, cell.away_goals)].append(cell.probability)
     known = {label: math.fsum(known_values[label]) for label in HDA_CLASS_ORDER}
 
-    exact = _max_specific_score(cells, tie_tol)
     tail = float(validation["tail_probability"])
+    proxy_totals = validation["aggregated_tail_proxy_totals"]
+    assert isinstance(proxy_totals, tuple)
+    exact = _max_specific_score(cells, proxy_totals, bool(validation["unresolved_tail"]), tail, tie_tol)
     base: dict[str, object] = {
         "class_order": list(HDA_CLASS_ORDER),
         "score_support_id": validation["score_support_id"],
@@ -421,6 +552,10 @@ def aggregate_score_matrix_to_hda(
         "support_kind": validation["support_kind"],
         "support_name": validation["support_name"],
         "support_contract_sha256": validation["support_contract_sha256"],
+        "default_exact_score_cell_semantics": validation["default_exact_score_cell_semantics"],
+        "aggregated_tail_proxy_totals": list(proxy_totals),
+        "aggregated_tail_proxy_cell_semantics": validation["aggregated_tail_proxy_cell_semantics"],
+        "aggregated_tail_proxy_represents_total_goals_gte": validation["aggregated_tail_proxy_represents_total_goals_gte"],
         "probability_tolerance": validation["probability_tolerance"],
         "tie_tolerance": tie_tol,
         "raw_known_probability_sum": validation["raw_known_probability_sum"],
