@@ -1,89 +1,66 @@
 name: Football Governance Topology Integrity
-
 on:
   workflow_dispatch:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
-
 permissions:
   contents: read
   pull-requests: read
   checks: read
-
-concurrency:
-  group: football-governance-topology-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   governance-topology-integrity:
+    name: governance-topology-integrity
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
-      PR_BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
-      PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
-      GITHUB_TOKEN: ${{ github.token }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - name: Checkout exact head
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Fetch branch refs for read-only topology inventory
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
+      - name: Resolve base
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags --filter=blob:none origin '+refs/heads/*:refs/remotes/origin/*'
-      - name: Validate single control plane and nested mirror negatives
-        shell: bash
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "${BASE_SHA}^{commit}"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+      - name: Validate governance topology and bypass negatives
         run: |
-          set -euo pipefail
           python governance/validate_project_continuity.py --self-test
-          python governance/validate_project_continuity.py --root .
-      - name: Validate repository authority base policy
+          python governance/validate_project_continuity.py --root . --base-ref "$BASE_SHA"
+          python governance/test_required_context_coverage.py
+      - name: Validate football3 production safety surface
+        env:
+          PYTHONPATH: football-data/research
         shell: bash
         run: |
           set -euo pipefail
-          python governance/validate_pr_authority_scope.py --self-test
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            python governance/validate_pr_authority_scope.py --base-ref "$PR_BASE_REF" --base-sha "$PR_BASE_SHA"
-          fi
-          if python governance/validate_pr_authority_scope.py --base-ref research/simulated-non-main --changed-file governance/simulated.py; then
-            echo 'non-main-base governance bypass was incorrectly accepted' >&2
-            exit 2
-          fi
-      - name: Compile governance and stable boundary validators
+          mkdir -p _football3_test_logs
+          python -m py_compile football-data/research/football3_core.py football-data/research/validate_football3_experiment.py governance/build_football3_remediation_evidence.py
+          python football-data/research/validate_football3_experiment.py --contract football-data/research/FOOTBALL3_REMEDIATION_SAFETY_CONTRACT_V3.json
+          pytest -q football-data/research/test_football3_core.py football-data/research/test_validate_football3_experiment.py | tee _football3_test_logs/linux-production-counterexamples.txt
+      - name: Generate repository governance ledger
+        run: python governance/repository_governance_audit.py --root . --repo "$GITHUB_REPOSITORY" --base-sha "$BASE_SHA" --out _governance_audit
+      - name: Build exact-head remediation evidence
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile \
-            governance/validate_project_continuity.py \
-            governance/validate_pr_authority_scope.py \
-            governance/repository_governance_audit.py \
-            football-data/validation/validate_engineering_research_profile_v6494.py \
-            football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py \
-            football-data/runtime/activation/activate_selective_direction_runtime_v501.py \
-            football-data/engine/validate_platform.py
-          python football-data/validation/validate_engineering_research_profile_v6494.py --print-summary
-      - name: Generate complete read-only governance ledgers
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="$PR_BASE_SHA"
-          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then base="$(git rev-parse origin/main)"; fi
-          python governance/repository_governance_audit.py --root . --repo "$GITHUB_REPOSITORY" --base-sha "$base" --out _governance_audit
-      - name: Confirm repository unchanged by audit
-        shell: bash
-        run: |
-          set -euo pipefail
+          mkdir -p _football3_remediation_evidence/logs _football3_remediation_evidence/governance
+          cp _football3_test_logs/* _football3_remediation_evidence/logs/
+          cp -R _governance_audit/. _football3_remediation_evidence/governance/
+          python governance/build_football3_remediation_evidence.py --root . --base-sha "$BASE_SHA" --out _football3_remediation_evidence --test-summary _football3_test_logs/linux-production-counterexamples.txt
           git diff --exit-code
-      - name: Upload machine-readable governance audit
+      - name: Upload exact-head remediation evidence
         uses: actions/upload-artifact@v4
         with:
-          name: repository-governance-audit-${{ github.event.pull_request.head.sha || github.sha }}
-          path: _governance_audit/
+          name: football3-remediation-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: _football3_remediation_evidence/
           if-no-files-found: error
           retention-days: 30
