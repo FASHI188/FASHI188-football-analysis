@@ -1,55 +1,29 @@
 name: Football Platform Integrity Read-Only
-
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    paths:
-      - "governance/**"
-      - "football-data/config/**"
-      - "football-data/schemas/**"
-      - "football-data/engine/**"
-      - "football-data/runtime/**"
-      - "football-data/validation/**"
-      - "football-data/tests/**"
-      - ".github/workflows/football-platform-integrity.yml"
   push:
     branches: [main]
-    paths:
-      - "governance/**"
-      - "football-data/config/**"
-      - "football-data/schemas/**"
-      - "football-data/engine/**"
-      - "football-data/runtime/**"
-      - "football-data/validation/**"
-      - "football-data/tests/**"
-      - ".github/workflows/football-platform-integrity.yml"
-  schedule:
-    - cron: "17 4 * * 1,4"
-
 permissions:
   contents: read
-
-concurrency:
-  group: football-platform-integrity-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  validate:
+  platform-integrity:
     name: platform-integrity
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
       - name: Repository-wide fail-closed preflight
         run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
       - name: Run behavioral platform tests without persistence
         env:
           PYTHONPATH: football-data/engine
-          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python -m unittest discover -s football-data/tests -p "test_platform*.py" -v
           python -m unittest discover -s football-data/tests -p "test_team_strengths.py" -v
