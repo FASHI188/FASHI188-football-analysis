@@ -350,10 +350,28 @@ def scoring_module_blockers(path: Path) -> list[str]:
 
 
 def references_hda_scoring(path: Path) -> bool:
+    """Detect executable references to HDA scoring, not audit-only string literals.
+
+    Literal module names are authority-bearing only when consumed by a dynamic import
+    call. This keeps import/import-from/alias/getattr/re-export routes fail-closed while
+    allowing the production guard to name the module it is structurally inspecting.
+    """
     try:
         tree = _parse(path)
     except SyntaxError:
         return False
+
+    module_string_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = node.value
+        if isinstance(value, ast.Constant) and value.value == HDA_SCORING_MODULE:
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    module_string_names.add(target.id)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(alias.name == HDA_SCORING_MODULE for alias in node.names):
@@ -361,8 +379,12 @@ def references_hda_scoring(path: Path) -> bool:
         elif isinstance(node, ast.ImportFrom):
             if node.module == HDA_SCORING_MODULE:
                 return True
-        elif isinstance(node, ast.Constant) and node.value == HDA_SCORING_MODULE:
-            return True
+        elif isinstance(node, ast.Call) and _call_name(node) in {'import_module', '__import__'} and node.args:
+            module_arg = node.args[0]
+            if isinstance(module_arg, ast.Constant) and module_arg.value == HDA_SCORING_MODULE:
+                return True
+            if isinstance(module_arg, ast.Name) and module_arg.id in module_string_names:
+                return True
     return False
 
 

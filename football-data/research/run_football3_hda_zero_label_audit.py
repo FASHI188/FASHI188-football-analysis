@@ -13,12 +13,12 @@ FOOTBALL3_ZERO_LABEL_AUDIT_SURFACE = "HDA_ZERO_LABEL_ARTIFACT_AUDIT_ONLY"
 
 STATUS = "GPT_REMEDIATED_R3_PENDING_CODEX_RECHECK"
 K2_MARKER = "K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED"
-EXPECTED_PARENT_HEAD = "bc43db3c7f4f7d76ca46387d0c9cca94f49f8611"
+R2_FAILED_ANCESTOR = "bc43db3c7f4f7d76ca46387d0c9cca94f49f8611"
 PR_BASE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
 FROZEN_SCIENCE_ENGINE_HEAD = PR_BASE_HEAD
 GOVERNANCE_REFERENCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
-EXPECTED_TEST_COUNT = 60
-EXPECTED_FAIL_CLOSED_COUNT = 38
+EXPECTED_TEST_COUNT = 66
+EXPECTED_FAIL_CLOSED_COUNT = 42
 MODULE = Path("football-data/research/football3_hda.py")
 SCORING = Path("football-data/research/football3_hda_scoring.py")
 TEST = Path("football-data/research/test_football3_hda.py")
@@ -93,12 +93,12 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def git(*args: str) -> str:
-    return subprocess.check_output(["git", *args], text=True, stderr=subprocess.STDOUT).strip()
+def git(*args: str, cwd: Path | None = None) -> str:
+    return subprocess.check_output(["git", *args], text=True, stderr=subprocess.STDOUT, cwd=cwd).strip()
 
 
-def changed_files(base: str, head: str) -> list[str]:
-    raw = git("diff", "--name-only", f"{base}..{head}")
+def changed_files(base: str, head: str, *, cwd: Path | None = None) -> list[str]:
+    raw = git("diff", "--name-only", f"{base}..{head}", cwd=cwd)
     return sorted(PurePosixPath(line.strip()).as_posix() for line in raw.splitlines() if line.strip())
 
 
@@ -114,6 +114,147 @@ def classify_asset_diff(paths: list[str]) -> dict[str, list[str]]:
         "formal_data_diff_paths": formal_data,
         "config_diff_paths": config,
         "CURRENT_diff_paths": current,
+    }
+
+
+def validate_lineage(
+    *,
+    expected_exact_head: str,
+    r2_failed_ancestor: str,
+    pr_base_head: str,
+    expected_changed_files: set[str],
+    cwd: Path | None = None,
+    claimed_direct_parent: str | None = None,
+) -> dict[str, object]:
+    """Fail closed on non-linear or scope-expanding R3 history.
+
+    The failed R2 commit is a historical ancestor, not a permanent direct parent.
+    The current direct parent is always derived from the checked-out exact HEAD.
+    Every commit after R2 is audited so an extra file cannot be added and later
+    removed to disappear from the final PR net diff.
+    """
+
+    exact_head = git("rev-parse", "HEAD", cwd=cwd)
+    if exact_head != expected_exact_head:
+        raise RuntimeError(f"exact HEAD mismatch: git={exact_head} workflow={expected_exact_head}")
+
+    try:
+        direct_parent = git("rev-parse", "HEAD^", cwd=cwd)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"exact HEAD has no resolvable direct parent: {exact_head}") from exc
+
+    if claimed_direct_parent is not None and claimed_direct_parent != direct_parent:
+        raise RuntimeError(
+            f"direct parent claim mismatch: claimed={claimed_direct_parent} git_HEAD^={direct_parent}"
+        )
+
+    ancestor_check = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", r2_failed_ancestor, exact_head],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+    )
+    if ancestor_check.returncode != 0:
+        raise RuntimeError(
+            f"R2 failed ancestor is not an ancestor of exact HEAD: "
+            f"ancestor={r2_failed_ancestor} exact_head={exact_head}"
+        )
+
+    lineage_raw = git(
+        "rev-list",
+        "--reverse",
+        "--parents",
+        f"{r2_failed_ancestor}..{exact_head}",
+        cwd=cwd,
+    )
+    lineage_rows = [line.split() for line in lineage_raw.splitlines() if line.strip()]
+    if not lineage_rows:
+        raise RuntimeError("R3 lineage must contain at least one commit after the R2 failed ancestor")
+
+    for fields in lineage_rows:
+        if len(fields[1:]) != 1:
+            raise RuntimeError(f"merge commit detected in R3 lineage: commit={fields[0]} parents={fields[1:]}")
+
+    lineage_commits: list[dict[str, object]] = []
+    touched_paths: set[str] = set()
+    previous = r2_failed_ancestor
+    for fields in lineage_rows:
+        commit = fields[0]
+        parents = fields[1:]
+        parent = parents[0]
+        if parent != previous:
+            raise RuntimeError(
+                f"non-linear R3 ancestry: commit={commit} expected_parent={previous} actual_parent={parent}"
+            )
+        commit_paths = changed_files(parent, commit, cwd=cwd)
+        unexpected_commit_paths = sorted(set(commit_paths) - expected_changed_files)
+        if unexpected_commit_paths:
+            raise RuntimeError(
+                f"unexpected file touched in R3 lineage commit {commit}: {unexpected_commit_paths}"
+            )
+        commit_asset_diff = classify_asset_diff(commit_paths)
+        if any(commit_asset_diff.values()):
+            raise RuntimeError(
+                f"forbidden formal/model/data/config/CURRENT diff in R3 lineage commit {commit}: {commit_asset_diff}"
+            )
+        touched_paths.update(commit_paths)
+        lineage_commits.append(
+            {
+                "commit": commit,
+                "direct_parent": parent,
+                "changed_files": commit_paths,
+            }
+        )
+        previous = commit
+
+    if previous != exact_head:
+        raise RuntimeError(f"linear R3 lineage does not terminate at exact HEAD: terminal={previous} head={exact_head}")
+    if lineage_commits[-1]["direct_parent"] != direct_parent:
+        raise RuntimeError(
+            f"direct parent mismatch against lineage terminal commit: "
+            f"git_HEAD^={direct_parent} lineage_parent={lineage_commits[-1]['direct_parent']}"
+        )
+
+    r2_direct_parent = git("rev-parse", f"{r2_failed_ancestor}^", cwd=cwd)
+    r2_failed_commit_paths = changed_files(r2_direct_parent, r2_failed_ancestor, cwd=cwd)
+    r2_lineage_scope = sorted(set(r2_failed_commit_paths) | touched_paths)
+    unexpected_r2_scope, missing_r2_scope = scope_differences(r2_lineage_scope, expected_changed_files)
+    if unexpected_r2_scope:
+        raise RuntimeError(f"unexpected file in R2-failed-plus-R3 lineage scope: {unexpected_r2_scope}")
+    if missing_r2_scope:
+        raise RuntimeError(f"expected HDA file missing from R2-failed-plus-R3 lineage scope: {missing_r2_scope}")
+    r2_asset_diff = classify_asset_diff(r2_failed_commit_paths)
+    if any(r2_asset_diff.values()):
+        raise RuntimeError(f"forbidden formal/model/data/config/CURRENT diff in R2 failed commit: {r2_asset_diff}")
+
+    pr_net_paths = changed_files(pr_base_head, exact_head, cwd=cwd)
+    unexpected_pr, missing_pr = scope_differences(pr_net_paths, expected_changed_files)
+    if unexpected_pr:
+        raise RuntimeError(f"unexpected final PR-scope files for HDA engineering remediation: {unexpected_pr}")
+    if missing_pr:
+        raise RuntimeError(f"expected HDA remediation files missing from final PR diff: {missing_pr}")
+    pr_asset_diff = classify_asset_diff(pr_net_paths)
+    if any(pr_asset_diff.values()):
+        raise RuntimeError(f"forbidden formal/model/data/config/CURRENT final PR diff: {pr_asset_diff}")
+
+    r2_incremental_net_paths = changed_files(r2_failed_ancestor, exact_head, cwd=cwd)
+    unexpected_r2_net = sorted(set(r2_incremental_net_paths) - expected_changed_files)
+    if unexpected_r2_net:
+        raise RuntimeError(f"unexpected R2-to-exact net files: {unexpected_r2_net}")
+
+    return {
+        "exact_head": exact_head,
+        "direct_parent": direct_parent,
+        "r2_failed_ancestor": r2_failed_ancestor,
+        "pr_base_head": pr_base_head,
+        "lineage_commit_count": len(lineage_commits),
+        "lineage_commits": lineage_commits,
+        "lineage_touched_files": sorted(touched_paths),
+        "r2_failed_commit_direct_parent": r2_direct_parent,
+        "r2_failed_commit_changed_files": r2_failed_commit_paths,
+        "r2_failed_plus_r3_scope_files": r2_lineage_scope,
+        "r2_incremental_net_changed_files": r2_incremental_net_paths,
+        "final_pr_net_changed_files": pr_net_paths,
     }
 
 
@@ -162,17 +303,18 @@ def main() -> int:
         if not path.is_file():
             raise RuntimeError(f"missing HDA engineering source file: {repo_path(path)}")
 
-    exact_head = git("rev-parse", "HEAD")
-    parent_head = git("rev-parse", "HEAD^")
     expected_head = os.environ.get("HDA_EXPECTED_HEAD", "").strip()
     if not expected_head:
         raise RuntimeError("HDA_EXPECTED_HEAD must be explicitly supplied by the exact-head workflow")
-    if exact_head != expected_head:
-        raise RuntimeError(f"exact HEAD mismatch: git={exact_head} workflow={expected_head}")
-    if parent_head != EXPECTED_PARENT_HEAD:
-        raise RuntimeError(f"parent HEAD mismatch: expected {EXPECTED_PARENT_HEAD}, got {parent_head}")
-    if git("merge-base", exact_head, PR_BASE_HEAD) != PR_BASE_HEAD:
-        raise RuntimeError(f"PR base {PR_BASE_HEAD} is not an ancestor of exact HEAD {exact_head}")
+
+    lineage_receipt = validate_lineage(
+        expected_exact_head=expected_head,
+        r2_failed_ancestor=R2_FAILED_ANCESTOR,
+        pr_base_head=PR_BASE_HEAD,
+        expected_changed_files=EXPECTED_CHANGED_FILES,
+    )
+    exact_head = str(lineage_receipt["exact_head"])
+    direct_parent = str(lineage_receipt["direct_parent"])
 
     run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
     run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
@@ -181,12 +323,7 @@ def main() -> int:
     if not run_attempt or not run_attempt.isdigit():
         raise RuntimeError("GITHUB_RUN_ATTEMPT missing or invalid")
 
-    paths = changed_files(PR_BASE_HEAD, exact_head)
-    unexpected, missing_expected = scope_differences(paths, EXPECTED_CHANGED_FILES)
-    if unexpected:
-        raise RuntimeError(f"unexpected PR-scope files for HDA engineering remediation: {unexpected}")
-    if missing_expected:
-        raise RuntimeError(f"expected HDA remediation files missing from PR diff: {missing_expected}")
+    paths = list(lineage_receipt["final_pr_net_changed_files"])
 
     asset_diff = classify_asset_diff(paths)
     if any(asset_diff.values()):
@@ -205,9 +342,10 @@ def main() -> int:
         raise RuntimeError(f"expected exactly {EXPECTED_FAIL_CLOSED_COUNT} fail-closed counterexamples, got {len(fail_closed)}")
 
     manifest = {
-        "schema_version": "football3_hda_engineering_artifact_v3",
+        "schema_version": "football3_hda_engineering_artifact_v4",
         "exact_head": exact_head,
-        "parent_head": parent_head,
+        "direct_parent": direct_parent,
+        "r2_failed_ancestor": R2_FAILED_ANCESTOR,
         "pr_base_head": PR_BASE_HEAD,
         "run_id": run_id,
         "run_attempt": run_attempt,
@@ -225,7 +363,8 @@ def main() -> int:
     synthetic = {
         "status": "PASS" if result.wasSuccessful() else "FAIL",
         "exact_head": exact_head,
-        "parent_head": parent_head,
+        "direct_parent": direct_parent,
+        "r2_failed_ancestor": R2_FAILED_ANCESTOR,
         "run_id": run_id,
         "run_attempt": run_attempt,
         "total_cases": len(records),
@@ -238,6 +377,11 @@ def main() -> int:
 
     counterexamples = {
         "status": "PASS" if result.wasSuccessful() and all(record["status"] == "PASS" for record in fail_closed) else "FAIL",
+        "exact_head": exact_head,
+        "direct_parent": direct_parent,
+        "r2_failed_ancestor": R2_FAILED_ANCESTOR,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
         "expected_fail_closed_cases": EXPECTED_FAIL_CLOSED_COUNT,
         "fail_closed_case_count": len(fail_closed),
         "all_fail_closed_cases_passed": all(record["status"] == "PASS" for record in fail_closed),
@@ -248,7 +392,8 @@ def main() -> int:
     zero_label = {
         "status": STATUS,
         "exact_head": exact_head,
-        "parent_head": parent_head,
+        "direct_parent": direct_parent,
+        "r2_failed_ancestor": R2_FAILED_ANCESTOR,
         "pr_base_head": PR_BASE_HEAD,
         "frozen_scientific_engine_reference_head": FROZEN_SCIENCE_ENGINE_HEAD,
         "governance_reference_head": GOVERNANCE_REFERENCE_HEAD,
@@ -261,6 +406,7 @@ def main() -> int:
         "support_registry_validation": support_receipt,
         "production_guard": guard_receipt,
         "changed_files": paths,
+        "lineage_validation": lineage_receipt,
         **asset_diff,
         "class_order": ["HOME", "DRAW", "AWAY"],
         "probability_tolerance": 1e-12,

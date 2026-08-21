@@ -31,7 +31,7 @@ from football3_hda import (
 )
 from football3_hda_scoring import draw_classification_metrics, score_hda_probabilities
 from audit_football3_changed_scientific_files import scoring_module_blockers, zero_label_hda_blockers
-from run_football3_hda_zero_label_audit import repo_path, scope_differences
+from run_football3_hda_zero_label_audit import repo_path, scope_differences, validate_lineage
 
 FOOTBALL3_ZERO_LABEL_TEST_SURFACE = "HDA_SYNTHETIC_ZERO_LABEL_TESTS_ONLY"
 
@@ -41,6 +41,44 @@ COMPLETE_ID = "d71f02ab92ecece6ca5ccd682ed2e0b5455b19dea8f0659ef1c29a7b074b694e"
 PARTIAL_ID = "688b42ad005ea72c1b3b67f4fd5ff4525b77edf4a2d59cc7fac52c44cc77b7f5"
 RESEARCH_DIR = Path(__file__).resolve().parent
 GUARD_SOURCE = RESEARCH_DIR / "audit_football3_changed_scientific_files.py"
+
+
+def git_at(root: Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def init_git_repo(root: Path, initial_files: dict[str, str]) -> str:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "lineage-test@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Lineage Test"], cwd=root, check=True)
+    for relative, content in initial_files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8", newline="\n")
+        subprocess.run(["git", "add", "--", relative], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    return git_at(root, "rev-parse", "HEAD")
+
+
+def commit_git_changes(root: Path, message: str, changes: dict[str, str | None]) -> str:
+    for relative, content in changes.items():
+        path = root / relative
+        if content is None:
+            subprocess.run(["git", "rm", "-q", "--", relative], cwd=root, check=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="\n")
+            subprocess.run(["git", "add", "--", relative], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=root, check=True)
+    return git_at(root, "rev-parse", "HEAD")
+
+
+def make_linear_lineage(root: Path) -> tuple[str, str, str, str]:
+    base = init_git_repo(root, {"allowed.txt": "base\n"})
+    r2 = commit_git_changes(root, "r2 failed", {"allowed.txt": "r2\n"})
+    first = commit_git_changes(root, "r3 first", {"allowed.txt": "r3-a\n"})
+    head = commit_git_changes(root, "r3 second", {"allowed.txt": "r3-b\n"})
+    return base, r2, first, head
 
 
 def total_leq(n: int) -> tuple[tuple[int, int], ...]:
@@ -455,10 +493,15 @@ class HDATest(unittest.TestCase):
 
     def test_guard_rejects_getattr_scoring_route_without_contract_fails_closed(self):
         base = 'def noop():\n    return 0\n'
-        changed = 'import football3_hda_scoring as scoring\n\ndef run(rows, labels):\n    f = getattr(scoring, "score_hda_probabilities")\n    return f(rows, labels)\n'
-        r = self.run_guard_case("football-data/research/future_hda_runner.py", base, changed)
-        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("HDA scoring reference must declare", r.stdout)
+        routes = [
+            'import football3_hda_scoring as scoring\n\ndef run(rows, labels):\n    f = getattr(scoring, "score_hda_probabilities")\n    return f(rows, labels)\n',
+            'import importlib\n\ndef run(rows, labels):\n    module_name = "football3_hda_scoring"\n    scoring = importlib.import_module(module_name)\n    return scoring.score_hda_probabilities(rows, labels, class_order=("HOME", "DRAW", "AWAY"), probability_tolerance=1e-12, tie_tolerance=1e-12)\n',
+        ]
+        for changed in routes:
+            with self.subTest(route=changed.splitlines()[0]):
+                r = self.run_guard_case("football-data/research/future_hda_runner.py", base, changed)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("HDA scoring reference must declare", r.stdout)
 
     def test_guard_rejects_reexport_of_scoring_from_zero_label_module_fails_closed(self):
         base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
@@ -540,6 +583,100 @@ class HDATest(unittest.TestCase):
         unexpected, missing = scope_differences(actual, expected)
         self.assertEqual(unexpected, ["football-data/research/extra_science.py"])
         self.assertEqual(missing, [])
+
+    # R3 lineage semantics: R2 is an ancestor, while direct parent follows exact HEAD.
+    def test_lineage_rejects_r2_that_is_not_ancestor_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = init_git_repo(root, {"allowed.txt": "base\n"})
+            r2 = commit_git_changes(root, "r2 failed", {"allowed.txt": "r2\n"})
+            subprocess.run(["git", "checkout", "-q", "-b", "independent", base], cwd=root, check=True)
+            head = commit_git_changes(root, "independent r3", {"allowed.txt": "other\n"})
+            with self.assertRaisesRegex(RuntimeError, "R2 failed ancestor is not an ancestor"):
+                validate_lineage(
+                    expected_exact_head=head,
+                    r2_failed_ancestor=r2,
+                    pr_base_head=base,
+                    expected_changed_files={"allowed.txt"},
+                    cwd=root,
+                )
+
+    def test_lineage_rejects_forged_direct_parent_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base, r2, _, head = make_linear_lineage(root)
+            with self.assertRaisesRegex(RuntimeError, "direct parent claim mismatch"):
+                validate_lineage(
+                    expected_exact_head=head,
+                    r2_failed_ancestor=r2,
+                    pr_base_head=base,
+                    expected_changed_files={"allowed.txt"},
+                    cwd=root,
+                    claimed_direct_parent="0" * 40,
+                )
+
+    def test_lineage_rejects_merge_commit_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = init_git_repo(root, {"a.txt": "a0\n", "b.txt": "b0\n"})
+            r2 = commit_git_changes(root, "r2 failed", {"a.txt": "a-r2\n"})
+            subprocess.run(["git", "checkout", "-q", "-b", "side", r2], cwd=root, check=True)
+            commit_git_changes(root, "side change", {"b.txt": "b-side\n"})
+            subprocess.run(["git", "checkout", "-q", "master"], cwd=root, check=True)
+            commit_git_changes(root, "main change", {"a.txt": "a-main\n"})
+            subprocess.run(["git", "merge", "--no-ff", "-qm", "merge side", "side"], cwd=root, check=True)
+            head = git_at(root, "rev-parse", "HEAD")
+            with self.assertRaisesRegex(RuntimeError, "merge commit detected in R3 lineage"):
+                validate_lineage(
+                    expected_exact_head=head,
+                    r2_failed_ancestor=r2,
+                    pr_base_head=base,
+                    expected_changed_files={"a.txt", "b.txt"},
+                    cwd=root,
+                )
+
+    def test_lineage_rejects_hidden_eighth_file_even_if_removed_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = init_git_repo(root, {"allowed.txt": "base\n"})
+            r2 = commit_git_changes(root, "r2 failed", {"allowed.txt": "r2\n"})
+            commit_git_changes(root, "r3 allowed", {"allowed.txt": "r3\n"})
+            commit_git_changes(root, "smuggle eighth", {"eighth.txt": "forbidden\n"})
+            head = commit_git_changes(root, "hide eighth", {"eighth.txt": None})
+            self.assertEqual(git_at(root, "diff", "--name-only", f"{base}..{head}"), "allowed.txt")
+            with self.assertRaisesRegex(RuntimeError, "unexpected file touched in R3 lineage commit"):
+                validate_lineage(
+                    expected_exact_head=head,
+                    r2_failed_ancestor=r2,
+                    pr_base_head=base,
+                    expected_changed_files={"allowed.txt"},
+                    cwd=root,
+                )
+
+    def test_lineage_accepts_normal_multi_commit_linear_r3_chain(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base, r2, first, head = make_linear_lineage(root)
+            receipt = validate_lineage(
+                expected_exact_head=head,
+                r2_failed_ancestor=r2,
+                pr_base_head=base,
+                expected_changed_files={"allowed.txt"},
+                cwd=root,
+            )
+            self.assertEqual(receipt["exact_head"], head)
+            self.assertEqual(receipt["direct_parent"], first)
+            self.assertEqual(receipt["r2_failed_ancestor"], r2)
+            self.assertEqual(receipt["lineage_commit_count"], 2)
+            self.assertEqual(receipt["r2_failed_plus_r3_scope_files"], ["allowed.txt"])
+            self.assertEqual(receipt["final_pr_net_changed_files"], ["allowed.txt"])
+
+    def test_artifact_lineage_fields_are_explicit_and_not_parent_head_alias(self):
+        audit_source = (RESEARCH_DIR / "run_football3_hda_zero_label_audit.py").read_text(encoding="utf-8")
+        self.assertIn('"exact_head"', audit_source)
+        self.assertIn('"direct_parent"', audit_source)
+        self.assertIn('"r2_failed_ancestor"', audit_source)
+        self.assertNotIn('"parent_head"', audit_source)
 
 
 if __name__ == "__main__":
