@@ -1,0 +1,433 @@
+name: Football3 HDA Aggregation Engineering Zero Label
+
+on:
+  pull_request:
+    paths:
+      - 'football-data/research/football3_hda.py'
+      - 'football-data/research/football3_hda_scoring.py'
+      - 'football-data/research/test_football3_hda.py'
+      - 'football-data/research/football3_hda_score_support_registry_v1.json'
+      - 'football-data/research/run_football3_hda_zero_label_audit.py'
+      - 'football-data/research/audit_football3_changed_scientific_files.py'
+      - '.github/workflows/football3-hda-aggregation-engineering-v1.yml'
+      - '.github/workflows/football3-full-stack-remediation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-hda-engineering-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '3cfe9302bac9abc8b9d1bfd678c4a38f4c79dd2c124dd6e2b3bfaa3d715c83dc'
+  HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256: 'c61d695eeb5601bb74a5b6a673b71c28d17959730732e476d4361563b3436b58'
+
+jobs:
+  # Reusable structural CI: follows football3/* HEAD refs across any PR base branch.
+  hda-structure-linux:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-continuous-structure-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        run: |
+          python - <<'PY'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          PY
+      - name: Compile HDA production, scoring, guard, audit, and tests
+        run: |
+          python -m py_compile \
+            football-data/research/football3_hda.py \
+            football-data/research/football3_hda_scoring.py \
+            football-data/research/test_football3_hda.py \
+            football-data/research/run_football3_hda_zero_label_audit.py \
+            football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run complete synthetic, scoring, AST-contract, and guard-counterexample suite
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+      - name: Validate frozen support registry directly
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python - <<'PY'
+          from football3_hda import load_score_support_registry
+          registry = load_score_support_registry()
+          assert len(registry) == 2, len(registry)
+          print(sorted(registry))
+          PY
+      - name: Run production football3 guard on actual PR scope
+        run: |
+          python football-data/research/audit_football3_changed_scientific_files.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --expected-guard-canonical-ast-sha256 "${HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256}" \
+            --expected-audit-canonical-ast-sha256 "${HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256}"
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  hda-structure-windows:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-continuous-structure-windows
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          '@ | python -
+      - name: Compile HDA production, scoring, guard, audit, and tests under Windows
+        shell: pwsh
+        run: |
+          python -m py_compile football-data/research/football3_hda.py football-data/research/football3_hda_scoring.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run complete synthetic and structural suite under Windows
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+      - name: Validate frozen support registry directly under Windows
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: python -c "from football3_hda import load_score_support_registry; r=load_score_support_registry(); assert len(r)==2; print(sorted(r))"
+      - name: Run production football3 guard on actual PR scope under Windows
+        shell: pwsh
+        run: python football-data/research/audit_football3_changed_scientific_files.py --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --expected-guard-canonical-ast-sha256 "$env:HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" --expected-audit-canonical-ast-sha256 "$env:HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
+      - name: Verify no repository persistence
+        shell: pwsh
+        run: git diff --exit-code
+
+  # PR #334 exact-head evidence is intentionally separate from reusable structural CI.
+  hda-pr334-exact-head-linux-artifact:
+    if: github.event.pull_request.number == 334 && github.event.pull_request.head.ref == 'football3/hda-aggregation-engineering-v1'
+    name: hda-pr334-exact-head-linux-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        run: |
+          python - <<'PY'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          PY
+      - name: Generate exact-head full zero-label audit receipt
+        env:
+          PYTHONPATH: football-data/research
+          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python football-data/research/run_football3_hda_zero_label_audit.py \
+            --out-dir "${RUNNER_TEMP}/football3_hda_zero_label" \
+            --expected-guard-canonical-ast-sha256 "${HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256}" \
+            --expected-audit-canonical-ast-sha256 "${HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256}"
+      - name: Upload exact-head zero-label engineering receipt only
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-hda-zero-label-${{ github.event.pull_request.head.sha }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/football3_hda_zero_label/file_manifest.json
+            ${{ runner.temp }}/football3_hda_zero_label/synthetic_test_results.json
+            ${{ runner.temp }}/football3_hda_zero_label/counterexample_results.json
+            ${{ runner.temp }}/football3_hda_zero_label/zero_label_receipt.json
+
+  hda-pr334-exact-head-windows-audit:
+    if: github.event.pull_request.number == 334 && github.event.pull_request.head.ref == 'football3/hda-aggregation-engineering-v1'
+    name: hda-pr334-exact-head-windows-full-audit
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify frozen canonical AST identities from workflow literals
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          SCHEMA = "football3_canonical_ast_structure_v1"
+          TARGETS = {
+              "football-data/research/audit_football3_changed_scientific_files.py": os.environ["HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256"],
+              "football-data/research/run_football3_hda_zero_label_audit.py": os.environ["HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"],
+          }
+
+          def canonical(value):
+              if isinstance(value, ast.AST):
+                  return ["node", type(value).__name__, [[field, canonical(item)] for field, item in ast.iter_fields(value)]]
+              if isinstance(value, list):
+                  return ["list", [canonical(item) for item in value]]
+              if isinstance(value, tuple):
+                  return ["tuple", [canonical(item) for item in value]]
+              return ["literal", type(value).__name__, repr(value)]
+
+          def canonical_sha256(path):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              payload = {"schema": SCHEMA, "tree": canonical(tree)}
+              encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+              return hashlib.sha256(encoded).hexdigest()
+
+          checked = {}
+          for path, expected in TARGETS.items():
+              if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+                  raise SystemExit(f"invalid frozen workflow SHA-256 for {path}: {expected!r}")
+              actual = canonical_sha256(path)
+              if actual != expected:
+                  raise SystemExit(f"canonical AST identity mismatch for {path}: expected={expected} actual={actual}")
+              checked[path] = actual
+          print(json.dumps(checked, sort_keys=True))
+          '@ | python -
+      - name: Run complete production audit entry under Windows
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python football-data/research/run_football3_hda_zero_label_audit.py --out-dir "$env:RUNNER_TEMP/football3_hda_zero_label_windows" --expected-guard-canonical-ast-sha256 "$env:HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" --expected-audit-canonical-ast-sha256 "$env:HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
+      - name: Assert Windows receipt set was generated
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP/football3_hda_zero_label_windows"
+          @("file_manifest.json","synthetic_test_results.json","counterexample_results.json","zero_label_receipt.json") | ForEach-Object { if (-not (Test-Path (Join-Path $d $_))) { throw "missing receipt $_" } }
+
+  repository-integrity:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-repository-integrity-read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile repository integrity auditors
+        run: |
+          python -m py_compile football-data/validation/repository_integrity_v471.py
+          python -m py_compile football-data/validation/repository_integrity_runtime_v473.py
+          python -m py_compile football-data/validation/repository_asset_topology_v472.py
+          python -m py_compile football-data/validation/workflow_stability_audit_v474.py
+      - name: Run fail-closed repository integrity gates
+        run: |
+          python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+          python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
+          python football-data/validation/workflow_stability_audit_v474.py --print-summary
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  platform-integrity:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-platform-integrity-read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+      - name: Run existing platform behavioral tests
+        env:
+          PYTHONPATH: football-data/engine
+        run: |
+          python -m unittest discover -s football-data/tests -p "test_platform*.py" -v
+          python -m unittest discover -s football-data/tests -p "test_team_strengths.py" -v
+          python -m unittest discover -s football-data/tests -p "test_prediction_pipeline.py" -v
+      - name: Run static platform validator read-only
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/engine/validate_platform.py --check-only --print-summary
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  formal-core-zero-scoring:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-formal-core-zero-scoring
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact engineering head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Repository-wide fail-closed preflight
+        run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
+      - name: Run formal-core unit tests only
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: |
+          python -m unittest football-data/tests/test_football_v460_engine.py -v
+          python -m unittest football-data/tests/test_nested_backtest_v460.py -v
+          python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
+          python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
+      - name: Assert engineering-only zero-scoring path
+        run: echo "NO_TRAINING_NO_REAL_SCORING_HDA_ENGINEERING_ONLY"
+      - name: Verify no repository persistence
+        run: git diff --exit-code
