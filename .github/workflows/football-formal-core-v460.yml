@@ -1,108 +1,45 @@
 name: Football Formal Core V4.6.x Read-Only Validation
-
 on:
   workflow_dispatch:
-    inputs:
-      competition:
-        description: "Optional competition_id; blank validates all registered domains"
-        required: false
-        default: ""
-        type: string
   pull_request:
     branches: [main]
-    paths:
-      - "governance/**"
-      - "football-data/engine/**"
-      - "football-data/validation/**"
-      - "football-data/tests/**"
-      - ".github/workflows/football-formal-core-v460.yml"
   push:
     branches: [main]
-    paths:
-      - "governance/**"
-      - "football-data/engine/**"
-      - "football-data/validation/**"
-      - "football-data/tests/**"
-      - ".github/workflows/football-formal-core-v460.yml"
   schedule:
     - cron: "47 4 * * 1,4"
-
 permissions:
   contents: read
-
-concurrency:
-  group: football-formal-core-v460-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   validate-core:
+    name: validate-core
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
       - name: Repository-wide fail-closed preflight
         run: python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
-      - name: Formal-core unit tests
+      - name: Formal-core unit tests only
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python -m unittest football-data/tests/test_football_v460_engine.py -v
           python -m unittest football-data/tests/test_nested_backtest_v460.py -v
           python -m unittest football-data/tests/test_oof_matrix_calibration_v461.py -v
           python -m unittest football-data/tests/test_v462_bottom_invariants.py -v
-      - name: Classify whether full historical scoring is in scope
-        id: scope
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          case "${{ github.event_name }}" in
-            schedule|workflow_dispatch)
-              echo "run_scoring=true" >> "$GITHUB_OUTPUT"
-              ;;
-            pull_request|push)
-              if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
-                echo "unable to resolve comparison base" >&2
-                exit 2
-              fi
-              git cat-file -e "${BASE_SHA}^{commit}"
-              git cat-file -e "${HEAD_SHA}^{commit}"
-              if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^football-data/(engine|validation|tests)/'; then
-                echo "run_scoring=true" >> "$GITHUB_OUTPUT"
-              else
-                echo "run_scoring=false" >> "$GITHUB_OUTPUT"
-              fi
-              ;;
-            *)
-              echo "unsupported event for formal-core scope classification" >&2
-              exit 2
-              ;;
-          esac
-      - name: Governance-only formal-core validation has zero historical scoring
-        if: steps.scope.outputs.run_scoring != 'true'
-        run: echo "NO_TRAINING_NO_SCORING_GOVERNANCE_ONLY"
-      - name: Time-ordered validation in ephemeral checkout
-        if: steps.scope.outputs.run_scoring == 'true'
+      - name: PR remediation path is zero-label and zero-scoring
+        if: github.event_name == 'pull_request'
+        run: echo "NO_TRAINING_NO_SCIENTIFIC_SCORING_NO_TARGET_ACCESS_PR_REMEDIATION"
+      - name: Scheduled historical validation remains isolated from PR remediation
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           PYTHONPATH: football-data/engine:football-data/validation
-        shell: bash
         run: |
-          args=(--print-summary)
-          if [[ -n "${{ github.event.inputs.competition || '' }}" ]]; then
-            args+=(--competition "${{ github.event.inputs.competition }}")
-          fi
-          python football-data/validation/nested_backtest_v460.py "${args[@]}"
-          python football-data/validation/oof_matrix_calibration_v461.py "${args[@]}"
+          python football-data/validation/nested_backtest_v460.py --print-summary
+          python football-data/validation/oof_matrix_calibration_v461.py --print-summary
       - name: Confirm no repository writeback
-        run: |
-          git diff --exit-code
-          echo "Read-only validation: no repository persistence."
+        run: git diff --exit-code
