@@ -21,7 +21,12 @@ ROOT_SHA = "e3e73c998020beef585cc459a69ea5b73b44ddb3"
 REQUIRED_METRICS = {"LogLoss", "Brier", "RPS"}
 REQUIRED_CALIBRATION = {"Top1ECE", "ClasswiseECE"}
 REQUIRED_EVALUATOR_KWARGS = {"identity_sha256", "fold_ids", "domain_ids", "scored_dates_utc", "cluster_ids", "temporal_manifest", "contract"}
-FORBIDDEN_DIRECT_IO_CALLS = {"open", "read_csv", "read_json", "read_parquet", "read_excel", "load"}
+REQUIRED_RUNNER_CALLS = {"evaluate_frozen_experiment", "load_labels_with_frozen_manifest", "validate_sealed_run_receipts"}
+FORBIDDEN_DIRECT_IO_CALLS = {
+    "open", "read", "read_bytes", "read_text", "readline", "readlines",
+    "read_csv", "read_json", "read_parquet", "read_excel", "load", "loads",
+    "ZipFile", "extract", "extractall", "urlopen", "request", "get", "post",
+}
 
 
 class PreflightError(RuntimeError):
@@ -56,9 +61,10 @@ def validate_contract(c: Mapping[str, object]) -> None:
     root = c.get("scientific_root", {})
     if not isinstance(root, Mapping) or root.get("experiment") != "C072-C" or root.get("sha") != ROOT_SHA:
         fail("scientific root mismatch")
-    if c.get("scientific_result_lock", {}).get("C072_N20") != "PILOT_NO_SIGNAL_PARK":
+    locked = c.get("scientific_result_lock", {})
+    if locked.get("C072_N20") != "PILOT_NO_SIGNAL_PARK":
         fail("C072-N20 historical verdict must remain PILOT_NO_SIGNAL_PARK")
-    if c.get("scientific_result_lock", {}).get("formal_weight") != 0:
+    if locked.get("formal_weight") != 0:
         fail("formal_weight must remain zero")
 
     cutoff = c.get("prediction_cutoff", {})
@@ -185,17 +191,29 @@ def _dotted_name(node: ast.AST) -> str:
 
 
 def validate_runner(path: str | Path) -> None:
+    """Static auxiliary guard. Runtime identity/time/label/sealed proofs remain mandatory."""
     p = Path(path)
     tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    call_names = {_dotted_name(n.func).split(".")[-1] for n in calls}
+    missing_calls = REQUIRED_RUNNER_CALLS - call_names
+    if missing_calls:
+        fail(f"runner missing canonical production calls: {sorted(missing_calls)}")
+
     evaluator_calls = [n for n in calls if _dotted_name(n.func).split(".")[-1] == "evaluate_frozen_experiment"]
-    if not evaluator_calls:
-        fail("runner must use canonical evaluate_frozen_experiment")
     for call in evaluator_calls:
         kwargs = {k.arg for k in call.keywords if k.arg}
         missing = REQUIRED_EVALUATOR_KWARGS - kwargs
         if missing:
             fail(f"canonical evaluator missing runtime bindings: {sorted(missing)}")
+
+    label_calls = [n for n in calls if _dotted_name(n.func).split(".")[-1] == "load_labels_with_frozen_manifest"]
+    for call in label_calls:
+        kwargs = {k.arg for k in call.keywords if k.arg}
+        required = {"expected_manifest_sha256", "keys", "target_columns", "expected_rows"}
+        if required - kwargs:
+            fail(f"label loader missing immutable pre-target bindings: {sorted(required-kwargs)}")
+
     for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom) and n.module == "football3_core":
             for alias in n.names:
@@ -204,7 +222,7 @@ def validate_runner(path: str | Path) -> None:
         if isinstance(n, ast.Call):
             name = _dotted_name(n.func).split(".")[-1]
             if name in FORBIDDEN_DIRECT_IO_CALLS:
-                fail(f"direct data IO call forbidden in football3 runner: {name}")
+                fail(f"direct file/network IO call forbidden in football3 scientific runner: {name}")
 
 
 def load_contract(path: str | Path) -> dict:
