@@ -17,8 +17,8 @@ R2_FAILED_ANCESTOR = "bc43db3c7f4f7d76ca46387d0c9cca94f49f8611"
 PR_BASE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
 FROZEN_SCIENCE_ENGINE_HEAD = PR_BASE_HEAD
 GOVERNANCE_REFERENCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
-EXPECTED_TEST_COUNT = 93
-EXPECTED_FAIL_CLOSED_COUNT = 62
+EXPECTED_TEST_COUNT = 94
+EXPECTED_FAIL_CLOSED_COUNT = 63
 EXPECTED_CONTRACT_COUNT = 1
 EXPECTED_BEHAVIOR_COUNT = 30
 MODULE = Path("football-data/research/football3_hda.py")
@@ -27,8 +27,9 @@ TEST = Path("football-data/research/test_football3_hda.py")
 SUPPORT_REGISTRY = Path("football-data/research/football3_hda_score_support_registry_v1.json")
 AUDIT = Path("football-data/research/run_football3_hda_zero_label_audit.py")
 WORKFLOW = Path(".github/workflows/football3-hda-aggregation-engineering-v1.yml")
+FULL_STACK_WORKFLOW = Path(".github/workflows/football3-full-stack-remediation.yml")
 GUARD = Path("football-data/research/audit_football3_changed_scientific_files.py")
-SOURCE_FILES = (MODULE, SCORING, TEST, SUPPORT_REGISTRY, AUDIT, WORKFLOW, GUARD)
+SOURCE_FILES = (MODULE, SCORING, TEST, SUPPORT_REGISTRY, AUDIT, WORKFLOW, FULL_STACK_WORKFLOW, GUARD)
 
 
 def repo_path(path: PurePath) -> str:

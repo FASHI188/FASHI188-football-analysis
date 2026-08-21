@@ -572,8 +572,8 @@ def _guard_frozen_semantic_blockers(tree: ast.Module, path: Path) -> list[str]:
 def _audit_frozen_semantic_blockers(tree: ast.Module, path: Path) -> list[str]:
     blockers: list[str] = []
     expectations = {
-        'EXPECTED_TEST_COUNT': 93,
-        'EXPECTED_FAIL_CLOSED_COUNT': 62,
+        'EXPECTED_TEST_COUNT': 94,
+        'EXPECTED_FAIL_CLOSED_COUNT': 63,
         'STATUS': 'GPT_REMEDIATED_R5_PENDING_CODEX_RECHECK',
     }
     for name, expected in expectations.items():

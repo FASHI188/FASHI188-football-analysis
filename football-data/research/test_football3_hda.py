@@ -6,6 +6,7 @@ import importlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,11 +53,13 @@ RESEARCH_DIR = Path(__file__).resolve().parent
 GUARD_SOURCE = RESEARCH_DIR / "audit_football3_changed_scientific_files.py"
 AUDIT_SOURCE = RESEARCH_DIR / "run_football3_hda_zero_label_audit.py"
 WORKFLOW_SOURCE = RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml"
+FULL_STACK_WORKFLOW_SOURCE = RESEARCH_DIR.parent.parent / ".github/workflows/football3-full-stack-remediation.yml"
+WORKFLOW_DIR = WORKFLOW_SOURCE.parent
 CANONICAL_AST_SCHEMA = "football3_canonical_ast_structure_v1"
 
 
-def workflow_frozen_canonical_ast_hashes() -> tuple[str, str]:
-    text = WORKFLOW_SOURCE.read_text(encoding="utf-8")
+def workflow_frozen_canonical_ast_hashes(path: Path = WORKFLOW_SOURCE) -> tuple[str, str]:
+    text = path.read_text(encoding="utf-8")
     values: dict[str, str] = {}
     for line in text.splitlines():
         stripped = line.strip()
@@ -630,13 +633,13 @@ class HDATest(unittest.TestCase):
                 "audit_expected_test_count",
                 AUDIT_SOURCE,
                 expected_audit,
-                audit_text + '\nEXPECTED_TEST_COUNT = 92\n',
+                audit_text + '\nEXPECTED_TEST_COUNT = 93\n',
             ),
             (
                 "audit_expected_fail_closed_count",
                 AUDIT_SOURCE,
                 expected_audit,
-                audit_text + '\nEXPECTED_FAIL_CLOSED_COUNT = 61\n',
+                audit_text + '\nEXPECTED_FAIL_CLOSED_COUNT = 62\n',
             ),
             (
                 "audit_status",
@@ -1283,6 +1286,46 @@ class HDATest(unittest.TestCase):
                 self.assertIn("run_football3_hda_zero_label_audit.py", block, marker)
                 self.assertIn("--expected-guard-canonical-ast-sha256", block, marker)
                 self.assertIn("--expected-audit-canonical-ast-sha256", block, marker)
+
+    def test_all_production_guard_callers_supply_external_anchors_fails_closed(self):
+        expected_hashes = workflow_frozen_canonical_ast_hashes()
+        self.assertEqual(
+            workflow_frozen_canonical_ast_hashes(FULL_STACK_WORKFLOW_SOURCE),
+            expected_hashes,
+        )
+
+        invocation = re.compile(
+            r"\bpython(?:3|\.exe)?\s+football-data/research/"
+            r"audit_football3_changed_scientific_files\.py\b"
+        )
+        callsites: list[tuple[Path, int, str]] = []
+        workflow_paths = sorted({*WORKFLOW_DIR.glob("*.yml"), *WORKFLOW_DIR.glob("*.yaml")})
+        for path in workflow_paths:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if not invocation.search(line):
+                    continue
+                command_indent = len(line) - len(line.lstrip())
+                end = len(lines)
+                for later in range(index + 1, len(lines)):
+                    stripped = lines[later].lstrip()
+                    later_indent = len(lines[later]) - len(stripped)
+                    if later_indent < command_indent and (
+                        stripped.startswith("- name:") or stripped.startswith("- uses:")
+                    ):
+                        end = later
+                        break
+                callsites.append((path, index + 1, "\n".join(lines[index:end])))
+
+        self.assertGreaterEqual(len(callsites), 3)
+        self.assertEqual(
+            {path for path, _, _ in callsites},
+            {WORKFLOW_SOURCE, FULL_STACK_WORKFLOW_SOURCE},
+        )
+        for path, line_number, command in callsites:
+            with self.subTest(path=str(path), line=line_number):
+                self.assertIn("--expected-guard-canonical-ast-sha256", command)
+                self.assertIn("--expected-audit-canonical-ast-sha256", command)
 
     def test_windows_exact_job_runs_full_production_audit_entry(self):
         text = WORKFLOW_SOURCE.read_text(encoding="utf-8")
