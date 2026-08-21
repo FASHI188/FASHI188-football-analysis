@@ -78,22 +78,27 @@ ZERO_LABEL_FORBIDDEN_METRIC_TOKENS = {
     'precision', 'precision_score', 'recall', 'recall_score', 'f1', 'f1_score',
     'confusion', 'confusion_matrix', 'accuracy', 'accuracy_score',
 }
-ZERO_LABEL_ALLOWED_CALLS = {
-    '_fail', 'isinstance', 'get', 'type', 'sorted', 'float', 'set', 'len', 'max',
-    'isfinite', 'tuple', 'fsum', 'list', 'values', 'append', 'abs',
-    'canonical_required_score_cells', 'canonical_support_sha256', 'ScoreCell',
-    '_require_fixed_probability_tolerance', '_validate_class_order', '_require_fixed_tie_tolerance',
-    '_score_class', 'Path', 'add', 'dict', 'update', 'range', 'with_name', 'dataclass',
-    'HDAValidationError', 'encode', 'hexdigest', 'load_score_support_registry',
-    '_validate_support_contract', '_validate_hda_probability_mapping', 'validate_score_matrix',
-    '_max_specific_score', 'bool', '__init__', 'any', 'is_file', 'loads', '_generated_cells',
-    '_coerce_cell', 'choose_hda_top1', 'dumps', 'sha256', 'read_text', 'super',
-    'canonical_support_bytes',
+ZERO_LABEL_ALLOWED_CALL_FORMS = {
+    'name:Path', 'callattr:name:Path.with_name', 'name:dataclass',
+    'name:HDAValidationError', 'name:float', 'name:tuple', 'name:set',
+    'name:canonical_required_score_cells', 'callattr:attr:json.dumps.encode',
+    'callattr:attr:hashlib.sha256.hexdigest', 'attr:generator.get', 'attr:obj.get',
+    'name:load_score_support_registry', 'name:canonical_support_sha256', 'name:isinstance',
+    'name:ScoreCell', 'name:_require_fixed_probability_tolerance', 'name:_validate_class_order',
+    'name:_validate_support_contract', 'name:sorted', 'attr:math.fsum',
+    'name:_validate_hda_probability_mapping', 'name:_require_fixed_tie_tolerance', 'name:max',
+    'name:_score_class', 'name:validate_score_matrix', 'name:_max_specific_score', 'name:bool',
+    'name:super', 'callattr:name:super.__init__', 'name:_fail', 'name:any',
+    'attr:seen.add', 'attr:out.append', 'attr:registry_path.is_file', 'attr:json.loads',
+    'attr:entry.get', 'attr:names.add', 'name:_generated_cells', 'name:dict', 'name:type',
+    'attr:math.isfinite', 'name:_coerce_cell', 'attr:cells.append', 'name:abs', 'name:list',
+    'name:len', 'attr:out.values', 'attr:probs.values',
+    'subscriptattr:known_values.append', 'attr:base.update', 'name:choose_hda_top1',
+    'attr:json.dumps', 'attr:hashlib.sha256', 'attr:registry_path.read_text', 'name:range',
+    'name:canonical_support_bytes',
 }
 ZERO_LABEL_FORBIDDEN_DATA_SUFFIXES = ('.csv', '.parquet', '.feather', '.arrow', '.sqlite', '.db', '.h5', '.hdf5')
-ZERO_LABEL_ALLOWED_TOP_LEVEL_CALLS = {'Path', 'with_name'}
-ZERO_LABEL_ALLOWED_CALLS = {name.lower() for name in ZERO_LABEL_ALLOWED_CALLS}
-ZERO_LABEL_ALLOWED_TOP_LEVEL_CALLS = {name.lower() for name in ZERO_LABEL_ALLOWED_TOP_LEVEL_CALLS}
+ZERO_LABEL_ALLOWED_TOP_LEVEL_CALL_FORMS = {'name:Path', 'callattr:name:Path.with_name'}
 
 ZERO_LABEL_FORBIDDEN_CALLS = {
     'open', 'read_csv', 'read_parquet', 'read_feather', 'read_sql', 'read_sql_query',
@@ -102,6 +107,7 @@ ZERO_LABEL_FORBIDDEN_CALLS = {
     'predict', 'predict_proba', 'score', 'accuracy_score', 'log_loss', 'precision_score',
     'recall_score', 'f1_score', 'confusion_matrix',
 }
+
 
 SCORING_ALLOWED_IMPORTS = {
     ('__future__', ('annotations',)),
@@ -124,11 +130,14 @@ SCORING_FORBIDDEN_IMPORT_PREFIXES = {
     'os', 'sys', 'subprocess', 'socket', 'urllib', 'http', 'requests', 'pandas', 'polars',
     'sqlite3', 'sqlalchemy', 'duckdb', 'psycopg', 'pymysql', 'sklearn', 'torch', 'tensorflow',
 }
-SCORING_FORBIDDEN_CALLS = {
-    'open', 'read_text', 'read_bytes', 'write_text', 'write_bytes', 'read_csv', 'read_parquet',
-    'read_feather', 'read_sql', 'connect', 'execute', 'urlopen', 'request', 'get', 'post',
-    'popen', 'run', 'call', 'check_call', 'check_output', 'fit', 'fit_transform', 'predict',
-    'predict_proba', 'load', 'loads_file',
+SCORING_ALLOWED_CALL_FORMS = {
+    'name:HDAValidationError', 'name:_require_contract_constants', 'name:enumerate',
+    'name:_validate_metric_inputs', 'name:len', 'name:sum', 'name:zip',
+    'name:draw_classification_metrics', 'attr:out.update', 'name:_fail', 'name:isinstance',
+    'attr:math.fsum', 'attr:rows.append', 'name:choose_hda_top1', 'name:max', 'name:list',
+    'name:tuple', 'name:float', 'name:set', 'attr:checked.values', 'name:abs',
+    'attr:predicted.append', 'name:int', 'attr:math.isfinite', 'attr:math.isinf',
+    'name:str', 'attr:math.log', 'attr:row.values',
 }
 
 
@@ -199,6 +208,32 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _call_form_from_func(func: ast.expr) -> str | None:
+    """Return a deliberately narrow structural identity for a call target.
+
+    Dynamic/subscript/lambda/call-returned callables remain unresolved unless an exact
+    production form is explicitly represented below.  None is therefore a blocker, not
+    an instruction to skip checking the call.
+    """
+    if isinstance(func, ast.Name):
+        return f'name:{func.id}'
+    if isinstance(func, ast.Attribute):
+        receiver = func.value
+        if isinstance(receiver, ast.Name):
+            return f'attr:{receiver.id}.{func.attr}'
+        if isinstance(receiver, ast.Call):
+            inner = _call_form_from_func(receiver.func)
+            if inner is not None:
+                return f'callattr:{inner}.{func.attr}'
+        if isinstance(receiver, ast.Subscript) and isinstance(receiver.value, ast.Name):
+            return f'subscriptattr:{receiver.value.id}.{func.attr}'
+    return None
+
+
+def _call_form(node: ast.Call) -> str | None:
+    return _call_form_from_func(node.func)
+
+
 def _dangerous_top_level_calls(tree: ast.Module, forbidden: set[str]) -> list[str]:
     blockers: list[str] = []
     for node in tree.body:
@@ -251,6 +286,25 @@ def zero_label_hda_blockers(path: Path) -> list[str]:
     if classes != ZERO_LABEL_ALLOWED_CLASSES:
         blockers.append(f'{path}: zero-label class set mismatch: expected={sorted(ZERO_LABEL_ALLOWED_CLASSES)} actual={sorted(classes)}')
 
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            allowed = False
+            if isinstance(node, ast.ClassDef) and node.name == 'ScoreCell' and isinstance(decorator, ast.Call):
+                allowed = (
+                    _call_form(decorator) == 'name:dataclass'
+                    and not decorator.args
+                    and len(decorator.keywords) == 1
+                    and decorator.keywords[0].arg == 'frozen'
+                    and isinstance(decorator.keywords[0].value, ast.Constant)
+                    and decorator.keywords[0].value.value is True
+                )
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == 'score':
+                allowed = isinstance(decorator, ast.Name) and decorator.id == 'property'
+            if not allowed:
+                blockers.append(f'{path}: decorator outside zero-label AST interface contract on {node.name}: {ast.dump(decorator, include_attributes=False)}')
+
     identifier_counts = {name: 0 for name in ZERO_LABEL_EXISTING_CATEGORY_IDENTIFIER_COUNTS}
     for node in ast.walk(tree):
         if isinstance(node, ast.arg) and node.arg.lower() in ZERO_LABEL_FORBIDDEN_IDENTIFIERS:
@@ -271,10 +325,15 @@ def zero_label_hda_blockers(path: Path) -> list[str]:
                 blockers.append(f'{path}: forbidden scoring attribute in zero-label module: {node.attr}')
         if isinstance(node, ast.Call):
             call = _call_name(node)
+            form = _call_form(node)
             if call in ZERO_LABEL_FORBIDDEN_CALLS:
                 blockers.append(f'{path}: forbidden I/O/network/model/scoring call in zero-label module: {call}')
-            if call is not None and call not in ZERO_LABEL_ALLOWED_CALLS:
-                blockers.append(f'{path}: call outside zero-label AST interface contract: {call}')
+            if form is None:
+                blockers.append(f'{path}: unresolved ast.Call target in zero-label module: {ast.dump(node.func, include_attributes=False)}')
+            elif form not in ZERO_LABEL_ALLOWED_CALL_FORMS:
+                blockers.append(f'{path}: call outside zero-label AST interface contract: {form}')
+        if isinstance(node, ast.Lambda):
+            blockers.append(f'{path}: lambda callable is outside zero-label AST interface contract')
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             lowered = node.value.lower()
             if lowered.endswith(ZERO_LABEL_FORBIDDEN_DATA_SUFFIXES):
@@ -294,9 +353,11 @@ def zero_label_hda_blockers(path: Path) -> list[str]:
             continue
         for child in ast.walk(node):
             if isinstance(child, ast.Call):
-                call = _call_name(child)
-                if call is not None and call not in ZERO_LABEL_ALLOWED_TOP_LEVEL_CALLS:
-                    blockers.append(f'{path}: top-level business-side-effect call outside contract: {call}')
+                form = _call_form(child)
+                if form is None:
+                    blockers.append(f'{path}: unresolved top-level ast.Call target in zero-label module: {ast.dump(child.func, include_attributes=False)}')
+                elif form not in ZERO_LABEL_ALLOWED_TOP_LEVEL_CALL_FORMS:
+                    blockers.append(f'{path}: top-level business-side-effect call outside contract: {form}')
 
     for detail in _dangerous_top_level_calls(tree, ZERO_LABEL_FORBIDDEN_CALLS):
         blockers.append(f'{path}: {detail}')
@@ -339,52 +400,244 @@ def scoring_module_blockers(path: Path) -> list[str]:
     if public != SCORING_ALLOWED_PUBLIC_FUNCTIONS:
         blockers.append(f'{path}: scoring public function set mismatch: {sorted(public)}')
 
+    classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    if classes:
+        blockers.append(f'{path}: scoring module class definitions are outside purity contract: {sorted(classes)}')
+
     for node in ast.walk(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.decorator_list:
+            blockers.append(f'{path}: scoring module decorators are outside purity contract on {node.name}')
+        if isinstance(node, ast.Lambda):
+            blockers.append(f'{path}: scoring module lambda callable is outside purity contract')
         if isinstance(node, ast.Call):
-            call = _call_name(node)
-            if call in SCORING_FORBIDDEN_CALLS:
-                blockers.append(f'{path}: pure scoring module forbidden I/O/network/model call: {call}')
-    for detail in _dangerous_top_level_calls(tree, SCORING_FORBIDDEN_CALLS):
-        blockers.append(f'{path}: {detail}')
+            form = _call_form(node)
+            if form is None:
+                blockers.append(f'{path}: unresolved ast.Call target in scoring module: {ast.dump(node.func, include_attributes=False)}')
+            elif form not in SCORING_ALLOWED_CALL_FORMS:
+                blockers.append(f'{path}: scoring call outside explicit purity contract: {form}')
     return sorted(set(blockers))
 
 
-def references_hda_scoring(path: Path) -> bool:
-    """Detect executable references to HDA scoring, not audit-only string literals.
+def _resolve_static_string(node: ast.AST, bindings: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _resolve_static_string(node.left, bindings)
+        right = _resolve_static_string(node.right, bindings)
+        return None if left is None or right is None else left + right
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            elif isinstance(value, ast.FormattedValue):
+                resolved = _resolve_static_string(value.value, bindings)
+                if resolved is None:
+                    return None
+                parts.append(resolved)
+            else:
+                return None
+        return ''.join(parts)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'join':
+        separator = _resolve_static_string(node.func.value, bindings)
+        if separator is None or len(node.args) != 1 or node.keywords:
+            return None
+        seq = node.args[0]
+        if not isinstance(seq, (ast.List, ast.Tuple)):
+            return None
+        items = [_resolve_static_string(item, bindings) for item in seq.elts]
+        if any(item is None for item in items):
+            return None
+        return separator.join(item for item in items if item is not None)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'format':
+        template = _resolve_static_string(node.func.value, bindings)
+        if template is None or node.keywords:
+            return None
+        args = [_resolve_static_string(arg, bindings) for arg in node.args]
+        if any(arg is None for arg in args):
+            return None
+        try:
+            return template.format(*(arg for arg in args if arg is not None))
+        except (IndexError, KeyError, ValueError):
+            return None
+    return None
 
-    Literal module names are authority-bearing only when consumed by a dynamic import
-    call. This keeps import/import-from/alias/getattr/re-export routes fail-closed while
-    allowing the production guard to name the module it is structurally inspecting.
+
+def _static_string_bindings(tree: ast.Module) -> dict[str, str]:
+    assignments: list[tuple[str, ast.AST]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                assignments.append((target.id, node.value))
+    bindings: dict[str, str] = {}
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for name, value in assignments:
+            resolved = _resolve_static_string(value, bindings)
+            if resolved is not None and bindings.get(name) != resolved:
+                bindings[name] = resolved
+                changed = True
+        if not changed:
+            break
+    return bindings
+
+
+def references_hda_scoring(path: Path) -> bool:
+    """Fail closed on direct, reflective, or dynamically constructed scoring references.
+
+    Dynamic import/eval/exec/compile/getattr surfaces are authority-bearing because a static
+    guard cannot prove that their runtime target excludes HDA scoring.  This check happens
+    before EXEMPT_EXACT, so infrastructure files do not receive a caller-contract bypass.
     """
     try:
         tree = _parse(path)
     except SyntaxError:
         return False
 
-    module_string_names: set[str] = set()
+    bindings = _static_string_bindings(tree)
+    importlib_aliases = {'importlib'}
+    builtins_aliases = {'builtins', '__builtins__'}
+    dynamic_import_names = {'import_module', '__import__'}
+    reflective_names = {'eval', 'exec', 'compile', 'getattr'}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == HDA_SCORING_MODULE:
+                    return True
+                if alias.name == 'importlib':
+                    importlib_aliases.add(alias.asname or alias.name)
+                if alias.name == 'builtins':
+                    builtins_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == HDA_SCORING_MODULE:
+                return True
+            if node.module == 'importlib':
+                for alias in node.names:
+                    if alias.name == 'import_module':
+                        dynamic_import_names.add(alias.asname or alias.name)
+            if node.module == 'builtins':
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    if alias.name == '__import__':
+                        dynamic_import_names.add(bound)
+                    elif alias.name in {'eval', 'exec', 'compile', 'getattr'}:
+                        reflective_names.add(bound)
+
+    # Propagate simple callable aliases such as loader = load_module or loader = __import__.
+    alias_assignments: list[tuple[str, ast.AST]] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        value = node.value
-        if isinstance(value, ast.Constant) and value.value == HDA_SCORING_MODULE:
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    module_string_names.add(target.id)
+        for target in targets:
+            if isinstance(target, ast.Name):
+                alias_assignments.append((target.id, node.value))
+    for _ in range(len(alias_assignments) + 1):
+        changed = False
+        for target, value in alias_assignments:
+            source: str | None = None
+            if isinstance(value, ast.Name) and value.id in importlib_aliases and target not in importlib_aliases:
+                importlib_aliases.add(target)
+                changed = True
+            if isinstance(value, ast.Name) and value.id in builtins_aliases and target not in builtins_aliases:
+                builtins_aliases.add(target)
+                changed = True
+            if isinstance(value, ast.Name) and value.id in dynamic_import_names | reflective_names:
+                source = value.id
+            elif (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id in importlib_aliases
+                and value.attr == 'import_module'
+            ):
+                source = 'import_module'
+            elif (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id in builtins_aliases
+                and value.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+            ):
+                source = value.attr
+            elif (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and value.value.id in builtins_aliases
+                and isinstance(value.slice, ast.Constant)
+                and value.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+            ):
+                source = str(value.slice.value)
+            if source is not None and target not in dynamic_import_names and target not in reflective_names:
+                if source in reflective_names:
+                    reflective_names.add(target)
+                else:
+                    dynamic_import_names.add(target)
+                changed = True
+        if not changed:
+            break
+
+    # Any reference to a dynamic import or reflective built-in through a known
+    # module alias is authority-bearing, even when it is stored in a conditional
+    # expression or another callable container before invocation.
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and (
+                (node.value.id in importlib_aliases and node.attr == 'import_module')
+                or (
+                    node.value.id in builtins_aliases
+                    and node.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+                )
+            )
+        ):
+            return True
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in builtins_aliases
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+        ):
+            return True
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            if any(alias.name == HDA_SCORING_MODULE for alias in node.names):
-                return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module == HDA_SCORING_MODULE:
-                return True
-        elif isinstance(node, ast.Call) and _call_name(node) in {'import_module', '__import__'} and node.args:
-            module_arg = node.args[0]
-            if isinstance(module_arg, ast.Constant) and module_arg.value == HDA_SCORING_MODULE:
-                return True
-            if isinstance(module_arg, ast.Name) and module_arg.id in module_string_names:
-                return True
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        is_dynamic_import = (
+            isinstance(func, ast.Name) and func.id in dynamic_import_names
+        ) or (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in importlib_aliases
+            and func.attr == 'import_module'
+        )
+        if is_dynamic_import:
+            # Unresolved dynamic module names are authority-bearing too: fail closed.
+            return True
+        if isinstance(func, ast.Name) and func.id in reflective_names:
+            return True
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in builtins_aliases
+            and func.attr in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+        ):
+            return True
+        if (
+            isinstance(func, ast.Subscript)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in builtins_aliases
+            and isinstance(func.slice, ast.Constant)
+            and func.slice.value in {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+        ):
+            return True
     return False
 
 

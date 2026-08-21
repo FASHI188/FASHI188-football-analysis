@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path, PureWindowsPath
 
 from football3_hda import (
@@ -540,6 +541,132 @@ class HDATest(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("forbidden scoring identifier in zero-label module: accuracy_score", r.stdout)
         self.assertIn("forbidden scoring identifier in zero-label module: log_loss", r.stdout)
+
+    def test_scoring_ast_allowlist_rejects_import_system_without_execution_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda_scoring.py").read_text(encoding="utf-8")
+        malicious = base + '\n__import__("os").system("never-execute")\n'
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "football3_hda_scoring.py"
+            path.write_text(malicious, encoding="utf-8", newline="\n")
+            with patch("os.system", side_effect=AssertionError("AST inspection executed malicious payload")):
+                blockers = scoring_module_blockers(path)
+        self.assertTrue(blockers)
+        self.assertTrue(any("scoring call outside explicit purity contract" in item for item in blockers), blockers)
+        self.assertTrue(any("__import__" in item for item in blockers), blockers)
+
+    def test_scoring_ast_allowlist_rejects_unresolved_subscript_callable_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda_scoring.py").read_text(encoding="utf-8")
+        needle = '    rows = _validate_metric_inputs(\n'
+        self.assertIn(needle, base)
+        malicious = base.replace(needle, '    callbacks["metric"]()\n' + needle, 1)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "football3_hda_scoring.py"
+            path.write_text(malicious, encoding="utf-8", newline="\n")
+            blockers = scoring_module_blockers(path)
+        self.assertTrue(any("unresolved ast.Call target in scoring module" in item for item in blockers), blockers)
+
+    def test_scoring_ast_allowlist_rejects_unknown_class_and_decorator_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda_scoring.py").read_text(encoding="utf-8")
+        variants = {
+            "class": base + "\nclass RogueCallable:\n    pass\n",
+            "decorator": base.replace(
+                "def score_hda_probabilities(\n",
+                "@staticmethod\ndef score_hda_probabilities(\n",
+                1,
+            ),
+        }
+        for kind, malicious in variants.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "football3_hda_scoring.py"
+                path.write_text(malicious, encoding="utf-8", newline="\n")
+                blockers = scoring_module_blockers(path)
+                self.assertTrue(blockers)
+                if kind == "class":
+                    self.assertTrue(any("class definitions are outside purity contract" in item for item in blockers), blockers)
+                else:
+                    self.assertTrue(any("decorators are outside purity contract" in item for item in blockers), blockers)
+
+    def test_guard_rejects_import_module_alias_derived_scoring_in_exempt_core_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = (
+            'from importlib import import_module as load_module\n\n'
+            'def load_scoring():\n'
+            '    module_name = "football3_hda_" + "scoring"\n'
+            '    return load_module(module_name)\n'
+        )
+        r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+
+    def test_guard_rejects_exec_eval_compile_scoring_construction_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        variants = {
+            "exec": 'def build():\n    payload = "import football3_hda_" + "scoring"\n    exec(payload)\n',
+            "eval": 'def build():\n    payload = "__import__(\\\"football3_hda_\\\" + \\\"scoring\\\")"\n    return eval(payload)\n',
+            "compile": 'def build():\n    payload = "import football3_hda_" + "scoring"\n    return compile(payload, "<dynamic>", "exec")\n',
+        }
+        for kind, changed in variants.items():
+            with self.subTest(kind=kind):
+                r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+
+    def test_guard_rejects_builtins_dynamic_execution_aliases_in_exempt_core_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        variants = {
+            "module_exec": (
+                'import builtins as b\n\n'
+                'def build():\n'
+                '    payload = "import football3_hda_" + "scoring"\n'
+                '    b.exec(payload)\n'
+            ),
+            "imported_exec_alias": (
+                'from builtins import exec as run_code\n\n'
+                'def build():\n'
+                '    payload = "import football3_hda_" + "scoring"\n'
+                '    run_code(payload)\n'
+            ),
+            "module_eval": (
+                'import builtins\n\n'
+                'def build():\n'
+                '    payload = "__import__(\\\"football3_hda_\\\" + \\\"scoring\\\")"\n'
+                '    return builtins.eval(payload)\n'
+            ),
+            "module_alias_chain": (
+                'import builtins as b\n'
+                'b2 = b\n'
+                'run_code = b2.exec\n\n'
+                'def build():\n'
+                '    payload = "import football3_hda_" + "scoring"\n'
+                '    run_code(payload)\n'
+            ),
+            "builtins_subscript": (
+                'def build():\n'
+                '    payload = "import football3_hda_" + "scoring"\n'
+                '    __builtins__["exec"](payload)\n'
+            ),
+            "conditional_callable": (
+                'import builtins as b\n'
+                'run_code = b.exec if __debug__ else print\n\n'
+                'def build():\n'
+                '    payload = "import football3_hda_" + "scoring"\n'
+                '    run_code(payload)\n'
+            ),
+        }
+        for kind, changed in variants.items():
+            with self.subTest(kind=kind):
+                r = self.run_guard_case("football-data/research/football3_core.py", base, changed)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+
+    def test_zero_label_ast_allowlist_rejects_subscript_callback_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        needle = '    if not isinstance(generator, dict) or generator.get("kind") != "total_leq":\n'
+        self.assertIn(needle, base)
+        changed = base.replace(needle, '    generator["callback"]()\n' + needle, 1)
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("unresolved ast.Call target in zero-label module", r.stdout)
 
     def test_zero_label_ast_contract_allows_comment_only_change(self):
         base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
