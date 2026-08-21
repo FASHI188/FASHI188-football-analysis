@@ -9,16 +9,24 @@ import sys
 import unittest
 from pathlib import Path
 
-STATUS = "HDA_ENGINEERING_LAYER_IMPLEMENTED_ZERO_LABEL_PENDING_CODEX_RECHECK"
+FOOTBALL3_ZERO_LABEL_AUDIT_SURFACE = "HDA_ZERO_LABEL_ARTIFACT_AUDIT_ONLY"
+
+STATUS = "GPT_REMEDIATED_PENDING_CODEX_RECHECK"
 K2_MARKER = "K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED"
-SCIENCE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
-GOVERNANCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
+EXPECTED_PARENT_HEAD = "4995168386f17208b0c176e15814bc010bdc5802"
+PR_BASE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
+FROZEN_SCIENCE_ENGINE_HEAD = PR_BASE_HEAD
+GOVERNANCE_REFERENCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
+EXPECTED_TEST_COUNT = 46
+EXPECTED_FAIL_CLOSED_COUNT = 31
 MODULE = Path("football-data/research/football3_hda.py")
 TEST = Path("football-data/research/test_football3_hda.py")
+SUPPORT_REGISTRY = Path("football-data/research/football3_hda_score_support_registry_v1.json")
 AUDIT = Path("football-data/research/run_football3_hda_zero_label_audit.py")
 WORKFLOW = Path(".github/workflows/football3-hda-aggregation-engineering-v1.yml")
 GUARD = Path("football-data/research/audit_football3_changed_scientific_files.py")
-SOURCE_FILES = (MODULE, TEST, AUDIT, WORKFLOW, GUARD)
+SOURCE_FILES = (MODULE, TEST, SUPPORT_REGISTRY, AUDIT, WORKFLOW, GUARD)
+EXPECTED_CHANGED_FILES = {str(p) for p in SOURCE_FILES}
 
 
 class RecordingResult(unittest.TextTestResult):
@@ -70,35 +78,42 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def git_sha(args: list[str], env_name: str) -> str:
-    try:
-        return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
-    except Exception:
-        value = os.environ.get(env_name, "").strip()
-        if value:
-            return value
-        raise RuntimeError(f"unable to resolve git {' '.join(args)} and {env_name} is unset")
+def git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], text=True, stderr=subprocess.STDOUT).strip()
+
+
+def changed_files(base: str, head: str) -> list[str]:
+    raw = git("diff", "--name-only", f"{base}..{head}")
+    return sorted(line.strip() for line in raw.splitlines() if line.strip())
+
+
+def classify_asset_diff(paths: list[str]) -> dict[str, list[str]]:
+    model_suffixes = (".pkl", ".pickle", ".joblib", ".onnx", ".pt", ".pth", ".ckpt", ".bin")
+    data_suffixes = (".csv", ".parquet", ".feather", ".arrow", ".h5", ".hdf5", ".sqlite", ".db")
+    model = [p for p in paths if p.startswith(("football-data/models/", "football-data/model/", "models/")) or p.lower().endswith(model_suffixes)]
+    formal_data = [p for p in paths if p.startswith(("football-data/data/", "football-data/datasets/", "data/", "datasets/")) or p.lower().endswith(data_suffixes)]
+    config = [p for p in paths if p.startswith("football-data/config/")]
+    current = [p for p in paths if Path(p).name.upper() == "CURRENT" or "CURRENT." in Path(p).name.upper() or "_CURRENT" in Path(p).name.upper()]
+    return {
+        "model_diff_paths": model,
+        "formal_data_diff_paths": formal_data,
+        "config_diff_paths": config,
+        "CURRENT_diff_paths": current,
+    }
 
 
 def run_tests() -> tuple[RecordingResult, list[dict[str, object]]]:
-    # Import from the production-test module itself so the audit executes the same
-    # cases as the platform jobs instead of maintaining a second shadow test suite.
     import test_football3_hda
 
     suite = unittest.defaultTestLoader.loadTestsFromModule(test_football3_hda)
-    runner = unittest.TextTestRunner(
-        stream=sys.stdout,
-        verbosity=2,
-        resultclass=RecordingResult,
-    )
+    runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2, resultclass=RecordingResult)
     result = runner.run(suite)
     assert isinstance(result, RecordingResult)
-    records = [result.records[k] for k in sorted(result.records)]
-    return result, records
+    return result, [result.records[k] for k in sorted(result.records)]
 
 
 def write_json(path: Path, obj: object) -> None:
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 
 
 def main() -> int:
@@ -112,21 +127,52 @@ def main() -> int:
         if not path.is_file():
             raise RuntimeError(f"missing HDA engineering source file: {path}")
 
-    exact_head = git_sha(["rev-parse", "HEAD"], "HDA_AUDIT_HEAD")
-    parent_head = git_sha(["rev-parse", "HEAD^"], "HDA_AUDIT_PARENT")
-    run_id = os.environ.get("GITHUB_RUN_ID", "LOCAL_ZERO_LABEL")
-    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "0")
+    exact_head = git("rev-parse", "HEAD")
+    parent_head = git("rev-parse", "HEAD^")
+    expected_head = os.environ.get("HDA_EXPECTED_HEAD", "").strip()
+    if not expected_head:
+        raise RuntimeError("HDA_EXPECTED_HEAD must be explicitly supplied by the exact-head workflow")
+    if exact_head != expected_head:
+        raise RuntimeError(f"exact HEAD mismatch: git={exact_head} workflow={expected_head}")
+    if parent_head != EXPECTED_PARENT_HEAD:
+        raise RuntimeError(f"parent HEAD mismatch: expected {EXPECTED_PARENT_HEAD}, got {parent_head}")
+    if git("merge-base", exact_head, PR_BASE_HEAD) != PR_BASE_HEAD:
+        raise RuntimeError(f"PR base {PR_BASE_HEAD} is not an ancestor of exact HEAD {exact_head}")
+
+    run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
+    if not run_id or not run_id.isdigit():
+        raise RuntimeError("GITHUB_RUN_ID missing or invalid")
+    if not run_attempt or not run_attempt.isdigit():
+        raise RuntimeError("GITHUB_RUN_ATTEMPT missing or invalid")
+
+    paths = changed_files(PR_BASE_HEAD, exact_head)
+    unexpected = sorted(set(paths) - EXPECTED_CHANGED_FILES)
+    missing_expected = sorted(EXPECTED_CHANGED_FILES - set(paths))
+    if unexpected:
+        raise RuntimeError(f"unexpected PR-scope files for HDA engineering remediation: {unexpected}")
+    if missing_expected:
+        raise RuntimeError(f"expected HDA remediation files missing from PR diff: {missing_expected}")
+    asset_diff = classify_asset_diff(paths)
+    if any(asset_diff.values()):
+        raise RuntimeError(f"forbidden formal/model/data/config/CURRENT diff: {asset_diff}")
 
     result, records = run_tests()
     fail_closed = [r for r in records if r["expectation"] == "FAIL_CLOSED"]
     behavior = [r for r in records if r["expectation"] == "BEHAVIOR"]
     passed = [r for r in records if r["status"] == "PASS"]
 
+    if len(records) != EXPECTED_TEST_COUNT:
+        raise RuntimeError(f"expected exactly {EXPECTED_TEST_COUNT} zero-label tests, got {len(records)}")
+    if len(fail_closed) != EXPECTED_FAIL_CLOSED_COUNT:
+        raise RuntimeError(f"expected exactly {EXPECTED_FAIL_CLOSED_COUNT} fail-closed counterexamples, got {len(fail_closed)}")
+
     manifest = {
-        "schema_version": "football3_hda_engineering_artifact_v1",
+        "schema_version": "football3_hda_engineering_artifact_v2",
         "exact_head": exact_head,
-        "run_id": str(run_id),
-        "run_attempt": str(run_attempt),
+        "parent_head": parent_head,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
         "files": [
             {
                 "path": str(path),
@@ -141,8 +187,8 @@ def main() -> int:
     synthetic = {
         "status": "PASS" if result.wasSuccessful() else "FAIL",
         "exact_head": exact_head,
-        "run_id": str(run_id),
-        "run_attempt": str(run_attempt),
+        "run_id": run_id,
+        "run_attempt": run_attempt,
         "total_cases": len(records),
         "passed_cases": len(passed),
         "behavior_cases": len(behavior),
@@ -152,8 +198,8 @@ def main() -> int:
     write_json(out / "synthetic_test_results.json", synthetic)
 
     counterexamples = {
-        "status": "PASS" if result.wasSuccessful() and len(fail_closed) >= 20 else "FAIL",
-        "minimum_required": 20,
+        "status": "PASS" if result.wasSuccessful() and all(r["status"] == "PASS" for r in fail_closed) else "FAIL",
+        "expected_fail_closed_cases": EXPECTED_FAIL_CLOSED_COUNT,
         "fail_closed_case_count": len(fail_closed),
         "all_fail_closed_cases_passed": all(r["status"] == "PASS" for r in fail_closed),
         "cases": fail_closed,
@@ -164,12 +210,16 @@ def main() -> int:
         "status": STATUS,
         "exact_head": exact_head,
         "parent_head": parent_head,
-        "frozen_scientific_engine_reference_head": SCIENCE_HEAD,
-        "governance_reference_head": GOVERNANCE_HEAD,
-        "run_id": str(run_id),
-        "run_attempt": str(run_attempt),
+        "pr_base_head": PR_BASE_HEAD,
+        "frozen_scientific_engine_reference_head": FROZEN_SCIENCE_ENGINE_HEAD,
+        "governance_reference_head": GOVERNANCE_REFERENCE_HEAD,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
         "module_sha256": sha256(MODULE),
         "test_sha256": sha256(TEST),
+        "support_registry_sha256": sha256(SUPPORT_REGISTRY),
+        "changed_files": paths,
+        **asset_diff,
         "class_order": ["HOME", "DRAW", "AWAY"],
         "probability_tolerance": 1e-12,
         "tie_tolerance": 1e-12,
@@ -178,10 +228,6 @@ def main() -> int:
         "k2_boundary": K2_MARKER,
         "C072_N20_status": "PILOT_NO_SIGNAL / PARK",
         "formal_weight": 0,
-        "model_diff": 0,
-        "formal_data_diff": 0,
-        "config_diff": 0,
-        "CURRENT_diff": 0,
         "training": 0,
         "real_scoring": 0,
         "new_target_label_access": 0,
@@ -201,8 +247,6 @@ def main() -> int:
 
     if not result.wasSuccessful():
         raise SystemExit(2)
-    if len(records) < 20 or len(fail_closed) < 20:
-        raise SystemExit("insufficient synthetic/fail-closed case coverage")
     if counterexamples["status"] != "PASS":
         raise SystemExit("counterexample audit failed")
     print(json.dumps({

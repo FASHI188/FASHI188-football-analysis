@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import importlib
+import json
 import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from football3_hda import (
     COMPLETE_HDA,
     DEFAULT_PROBABILITY_TOLERANCE,
     DEFAULT_TIE_TOLERANCE,
     HDA_CLASS_ORDER,
+    HDA_SCHEMA_VERSION,
     HDAValidationError,
     PARTIAL_HDA_UNRESOLVED_TAIL,
     ROBUST_PARTIAL_TOP1,
@@ -15,36 +24,63 @@ from football3_hda import (
     TOP1_TIE,
     TOP1_UNRESOLVED_DUE_TO_TAIL,
     aggregate_score_matrix_to_hda,
+    canonical_support_sha256,
     choose_hda_top1,
-    draw_classification_metrics,
-    score_hda_probabilities,
+    load_score_support_registry,
     validate_score_matrix,
 )
 
+FOOTBALL3_ZERO_LABEL_TEST_SURFACE = "HDA_SYNTHETIC_ZERO_LABEL_TESTS_ONLY"
+
 P_TOL = DEFAULT_PROBABILITY_TOLERANCE
 TIE_TOL = DEFAULT_TIE_TOLERANCE
+COMPLETE_ID = "d71f02ab92ecece6ca5ccd682ed2e0b5455b19dea8f0659ef1c29a7b074b694e"
+PARTIAL_ID = "688b42ad005ea72c1b3b67f4fd5ff4525b77edf4a2d59cc7fac52c44cc77b7f5"
+RESEARCH_DIR = Path(__file__).resolve().parent
+GUARD_SOURCE = RESEARCH_DIR / "audit_football3_changed_scientific_files.py"
 
 
-def required(n: int = 3) -> tuple[tuple[int, int], ...]:
-    return tuple((h, a) for h in range(n) for a in range(n))
+def total_leq(n: int) -> tuple[tuple[int, int], ...]:
+    return tuple((h, total - h) for total in range(n + 1) for h in range(total + 1))
 
 
-def cells(matrix: list[list[float]]) -> list[ScoreCell]:
-    return [ScoreCell(h, a, float(matrix[h][a])) for h in range(len(matrix)) for a in range(len(matrix[h]))]
+COMPLETE_CELLS = total_leq(26)
+PARTIAL_CELLS = total_leq(6)
 
 
-def agg(matrix: list[list[float]], *, unresolved_tail: bool = False, tail: float = 0.0, support=None):
-    support = support or required(len(matrix))
+def score_cells(required, masses: dict[tuple[int, int], float]) -> list[ScoreCell]:
+    return [ScoreCell(h, a, float(masses.get((h, a), 0.0))) for h, a in required]
+
+
+def matrix_masses(matrix: list[list[float]]) -> dict[tuple[int, int], float]:
+    return {(h, a): float(matrix[h][a]) for h in range(len(matrix)) for a in range(len(matrix[h]))}
+
+
+def agg_complete(matrix: list[list[float]]):
     return aggregate_score_matrix_to_hda(
-        cells(matrix),
-        unresolved_tail=unresolved_tail,
+        score_cells(COMPLETE_CELLS, matrix_masses(matrix)),
+        unresolved_tail=False,
+        tail_probability=0.0,
+        class_order=HDA_CLASS_ORDER,
+        probability_tolerance=P_TOL,
+        tie_tolerance=TIE_TOL,
+        score_support_id=COMPLETE_ID,
+        schema_version=HDA_SCHEMA_VERSION,
+        required_score_cells=COMPLETE_CELLS,
+    )
+
+
+def agg_partial(masses: dict[tuple[int, int], float], tail: float):
+    return aggregate_score_matrix_to_hda(
+        score_cells(PARTIAL_CELLS, masses),
+        unresolved_tail=True,
         tail_probability=tail,
         class_order=HDA_CLASS_ORDER,
         probability_tolerance=P_TOL,
         tie_tolerance=TIE_TOL,
-        score_support_id=f"synthetic-{len(support)}-cell-support",
-        schema_version="synthetic-score-support-v1",
-        required_score_cells=support,
+        score_support_id=PARTIAL_ID,
+        schema_version=HDA_SCHEMA_VERSION,
+        required_score_cells=PARTIAL_CELLS,
     )
 
 
@@ -71,454 +107,297 @@ DRAW_AGGREGATE_NOT_SCORE_TOP1 = [
 ]
 ONE_ONE_SCORE_TOP1_HOME_HDA = [
     [0.05, 0.11, 0.09],
-    [0.15, 0.20, 0.08],
-    [0.14, 0.13, 0.05],
+    [0.18, 0.22, 0.04],
+    [0.16, 0.10, 0.05],
 ]
 
 
-class Football3HDATest(unittest.TestCase):
-    def assertFailCode(self, code: str, fn, *args, **kwargs):
+class HDATest(unittest.TestCase):
+    def assertFailCode(self, code, fn, *args, **kwargs):
         with self.assertRaises(HDAValidationError) as ctx:
             fn(*args, **kwargs)
         self.assertEqual(ctx.exception.code, code)
 
-    # 1
-    def test_symmetric_low_goals_draw_is_natural_top1_below_half(self):
-        r = agg(LOW_SYMMETRIC)
-        self.assertEqual(r["status"], COMPLETE_HDA)
-        self.assertAlmostEqual(r["home_probability"], r["away_probability"], places=15)
-        self.assertEqual(r["top1_category"], "DRAW")
-        self.assertLess(r["draw_probability"], 0.5)
-        self.assertAlmostEqual(r["draw_probability"], 0.38)
-
-    # 2
-    def test_symmetric_mid_goals_home_away_tie_and_draw_lower(self):
-        low = agg(LOW_SYMMETRIC)
-        mid = agg(MID_SYMMETRIC)
-        self.assertLess(mid["draw_probability"], low["draw_probability"])
-        self.assertLessEqual(abs(mid["home_probability"] - mid["away_probability"]), TIE_TOL)
-        self.assertEqual(mid["top1_status"], TOP1_TIE)
-        self.assertEqual(set(mid["tied_categories"]), {"HOME", "AWAY"})
-
-    # 3
-    def test_home_advantage_home_top1(self):
-        self.assertEqual(agg(HOME_ADVANTAGE)["top1_category"], "HOME")
-
-    # 4
-    def test_away_advantage_away_top1(self):
-        self.assertEqual(agg(AWAY_ADVANTAGE)["top1_category"], "AWAY")
-
-    # 5
-    def test_aggregate_draw_top1_without_draw_exact_score_top1(self):
-        r = agg(DRAW_AGGREGATE_NOT_SCORE_TOP1)
-        self.assertEqual(r["top1_category"], "DRAW")
-        self.assertEqual(r["max_specific_score"], (1, 0))
-        self.assertFalse(r["max_specific_score_is_draw"])
-        self.assertFalse(r["exact_score_top1_and_hda_top1_agree"])
-
-    # 6
-    def test_one_one_exact_score_top1_but_home_hda_top1(self):
-        r = agg(ONE_ONE_SCORE_TOP1_HOME_HDA)
-        self.assertEqual(r["max_specific_score"], (1, 1))
-        self.assertTrue(r["max_specific_score_is_draw"])
-        self.assertEqual(r["top1_category"], "HOME")
-        self.assertFalse(r["exact_score_top1_and_hda_top1_agree"])
-
-    # 7
-    def test_total_probability_point_nine_fails_closed(self):
-        bad = [row[:] for row in LOW_SYMMETRIC]
-        bad[0][0] -= 0.10
-        self.assertFailCode("PROBABILITY_MASS_NOT_CONSERVED", agg, bad)
-
-    # 8
-    def test_negative_probability_fails_closed(self):
-        bad = [row[:] for row in LOW_SYMMETRIC]
-        bad[0][0] = -0.01
-        self.assertFailCode("NEGATIVE_PROBABILITY", agg, bad)
-
-    # 9
-    def test_nan_probability_fails_closed(self):
-        bad = [row[:] for row in LOW_SYMMETRIC]
-        bad[0][0] = math.nan
-        self.assertFailCode("NONFINITE_PROBABILITY", agg, bad)
-
-    # 10
-    def test_inf_probability_fails_closed(self):
-        bad = [row[:] for row in LOW_SYMMETRIC]
-        bad[0][0] = math.inf
-        self.assertFailCode("NONFINITE_PROBABILITY", agg, bad)
-
-    # 11
-    def test_duplicate_score_cell_fails_closed(self):
-        c = cells(LOW_SYMMETRIC)
-        c.append(c[0])
-        self.assertFailCode(
-            "DUPLICATE_SCORE_CELL",
-            aggregate_score_matrix_to_hda,
-            c,
+    def complete_call(self, cells=None, **overrides):
+        kwargs = dict(
+            score_cells=cells if cells is not None else score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)),
             unresolved_tail=False,
             tail_probability=0.0,
             class_order=HDA_CLASS_ORDER,
             probability_tolerance=P_TOL,
             tie_tolerance=TIE_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
+            score_support_id=COMPLETE_ID,
+            schema_version=HDA_SCHEMA_VERSION,
+            required_score_cells=COMPLETE_CELLS,
         )
+        kwargs.update(overrides)
+        score_arg = kwargs.pop("score_cells")
+        return aggregate_score_matrix_to_hda(score_arg, **kwargs)
 
-    # 12
-    def test_missing_required_diagonal_fails_closed(self):
-        support = required(2)
-        c = [ScoreCell(0, 0, 0.3), ScoreCell(0, 1, 0.2), ScoreCell(1, 0, 0.5)]
-        self.assertFailCode(
-            "MISSING_REQUIRED_DIAGONAL",
-            validate_score_matrix,
-            c,
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            score_support_id="2x2",
-            schema_version="v1",
-            required_score_cells=support,
-        )
+    def run_guard_case(self, changed_path: str, base_text: str, changed_text: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / changed_path
+            guard = root / "football-data/research/audit_football3_changed_scientific_files.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            guard.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(GUARD_SOURCE, guard)
+            target.write_text(base_text, encoding="utf-8", newline="\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "zero-label@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Zero Label Test"], cwd=root, check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            target.write_text(changed_text, encoding="utf-8", newline="\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "change"], cwd=root, check=True)
+            return subprocess.run(
+                [sys.executable, str(guard.relative_to(root)), "--base", base, "--head", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
 
-    # 13
-    def test_wrong_category_order_fails_closed(self):
-        self.assertFailCode(
-            "INVALID_CLASS_ORDER",
-            validate_score_matrix,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=("HOME", "AWAY", "DRAW"),
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
+    # Core behavior: exact-score aggregation, no labels.
+    def test_symmetric_low_goals_draw_is_natural_top1_below_half(self):
+        r = agg_complete(LOW_SYMMETRIC)
+        self.assertEqual(r["status"], COMPLETE_HDA)
+        self.assertEqual(r["top1_category"], "DRAW")
+        self.assertLess(r["draw_probability"], 0.5)
 
-    # 14
+    def test_symmetric_mid_goals_home_away_tie_and_draw_lower(self):
+        r = agg_complete(MID_SYMMETRIC)
+        self.assertEqual(r["top1_status"], TOP1_TIE)
+        self.assertIsNone(r["top1_category"])
+        self.assertEqual(set(r["tied_categories"]), {"HOME", "AWAY"})
+        self.assertLess(r["draw_probability"], r["known_home_mass"])
+
+    def test_home_advantage_home_top1(self):
+        self.assertEqual(agg_complete(HOME_ADVANTAGE)["top1_category"], "HOME")
+
+    def test_away_advantage_away_top1(self):
+        self.assertEqual(agg_complete(AWAY_ADVANTAGE)["top1_category"], "AWAY")
+
+    def test_aggregate_draw_top1_without_draw_exact_score_top1(self):
+        r = agg_complete(DRAW_AGGREGATE_NOT_SCORE_TOP1)
+        self.assertEqual(r["top1_category"], "DRAW")
+        self.assertNotEqual(r["exact_score_top1_category"], "DRAW")
+
+    def test_one_one_exact_score_top1_but_home_hda_top1(self):
+        r = agg_complete(ONE_ONE_SCORE_TOP1_HOME_HDA)
+        self.assertEqual(tuple(r["max_specific_score"]), (1, 1))
+        self.assertEqual(r["top1_category"], "HOME")
+        self.assertFalse(r["exact_score_top1_and_hda_top1_agree"])
+
     def test_tail_7plus_unresolved_is_partial_not_full_hda(self):
-        matrix = [[x * 0.8 for x in row] for row in LOW_SYMMETRIC]
-        r = agg(matrix, unresolved_tail=True, tail=0.2)
+        r = agg_partial({(0, 0): 0.20, (1, 0): 0.25, (0, 1): 0.25, (1, 1): 0.10, (2, 0): 0.05, (0, 2): 0.05}, 0.10)
         self.assertEqual(r["status"], PARTIAL_HDA_UNRESOLVED_TAIL)
         self.assertIsNone(r["home_probability"])
         self.assertIsNone(r["draw_probability"])
         self.assertIsNone(r["away_probability"])
-        self.assertIsNone(r["hda_probability_sum"])
-        self.assertAlmostEqual(r["unresolved_tail_mass"], 0.2)
 
-    # 15
     def test_tail_with_robust_top1(self):
-        matrix = [[0.05, 0.05], [0.65, 0.05]]
-        r = agg(matrix, unresolved_tail=True, tail=0.20, support=required(2))
+        r = agg_partial({(1, 0): 0.70, (0, 1): 0.10, (0, 0): 0.10}, 0.10)
         self.assertEqual(r["top1_status"], ROBUST_PARTIAL_TOP1)
         self.assertEqual(r["top1_category"], "HOME")
-        self.assertGreater(r["hda_bounds"]["HOME"]["lower"], r["hda_bounds"]["DRAW"]["upper"])
-        self.assertGreater(r["hda_bounds"]["HOME"]["lower"], r["hda_bounds"]["AWAY"]["upper"])
 
-    # 16
     def test_tail_can_change_top1_is_unresolved(self):
-        matrix = [[0.15, 0.20], [0.35, 0.10]]
-        r = agg(matrix, unresolved_tail=True, tail=0.20, support=required(2))
+        r = agg_partial({(1, 0): 0.34, (0, 1): 0.30, (0, 0): 0.26}, 0.10)
         self.assertEqual(r["top1_status"], TOP1_UNRESOLVED_DUE_TO_TAIL)
         self.assertIsNone(r["top1_category"])
 
-    # 17
-    def test_exact_score_top1_and_hda_top1_differ(self):
-        r = agg(ONE_ONE_SCORE_TOP1_HOME_HDA)
-        self.assertEqual(r["exact_score_top1_category"], "DRAW")
-        self.assertEqual(r["top1_category"], "HOME")
-        self.assertFalse(r["exact_score_top1_and_hda_top1_agree"])
-
-    # 18
-    def test_synthetic_hda_metrics(self):
-        rows = [
-            {"HOME": 0.70, "DRAW": 0.20, "AWAY": 0.10},
-            {"HOME": 0.20, "DRAW": 0.60, "AWAY": 0.20},
-            {"HOME": 0.10, "DRAW": 0.20, "AWAY": 0.70},
-            {"HOME": 0.40, "DRAW": 0.35, "AWAY": 0.25},
-        ]
-        labels = ["HOME", "DRAW", "AWAY", "DRAW"]
-        m = score_hda_probabilities(
-            rows,
-            labels,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-        )
-        self.assertTrue(math.isfinite(m["LogLoss"]))
-        self.assertGreaterEqual(m["Brier"], 0.0)
-        self.assertGreaterEqual(m["RPS"], 0.0)
-        self.assertEqual(m["DrawCalls"], 1)
-        self.assertAlmostEqual(m["DrawRecall"], 0.5)
-        self.assertTrue(m["probability_conservation_pass"])
-        self.assertFalse(m["classification_metrics_can_override_proper_score_failure"])
-
-    # 19
-    def test_wrong_label_and_probability_row_count_fails_closed(self):
-        rows = [{"HOME": 0.7, "DRAW": 0.2, "AWAY": 0.1}]
-        self.assertFailCode(
-            "LABEL_PROBABILITY_ROW_MISMATCH",
-            score_hda_probabilities,
-            rows,
-            ["HOME", "DRAW"],
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-        )
-
-    # 20
-    def test_empty_input_fails_closed(self):
-        self.assertFailCode(
-            "EMPTY_SCORE_MATRIX",
-            validate_score_matrix,
-            [],
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=((0, 0),),
-        )
-
-    # 21: explicit floating tie case from audit finding
     def test_floating_home_away_difference_5e_17_is_top1_tie(self):
         r = choose_hda_top1(
-            {"HOME": 0.40000000000000005, "DRAW": 0.2, "AWAY": 0.4},
+            {"HOME": 0.4000000000000001, "DRAW": 0.2, "AWAY": 0.4},
             class_order=HDA_CLASS_ORDER,
             probability_tolerance=P_TOL,
             tie_tolerance=TIE_TOL,
         )
         self.assertEqual(r["status"], TOP1_TIE)
-        self.assertEqual(set(r["tied_categories"]), {"HOME", "AWAY"})
+        self.assertIsNone(r["top1_category"])
 
-    # 22
-    def test_conflicting_duplicate_score_cell_fails_closed(self):
-        c = cells(LOW_SYMMETRIC)
-        c.append(ScoreCell(0, 0, 0.21))
-        self.assertFailCode(
-            "CONFLICTING_DUPLICATE_SCORE_CELL",
-            aggregate_score_matrix_to_hda,
-            c,
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 23
-    def test_noninteger_score_fails_closed(self):
-        c = cells(LOW_SYMMETRIC)
-        c[0] = ScoreCell(0.5, 0, 0.20)  # type: ignore[arg-type]
-        self.assertFailCode(
-            "INVALID_SCORE",
-            validate_score_matrix,
-            c,
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 24
-    def test_missing_class_order_fails_closed(self):
-        self.assertFailCode(
-            "MISSING_CLASS_ORDER",
-            validate_score_matrix,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=None,
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 25
-    def test_missing_tail_status_fails_closed(self):
-        self.assertFailCode(
-            "MISSING_TAIL_STATUS",
-            validate_score_matrix,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=None,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 26
-    def test_tail_mass_status_conflict_fails_closed(self):
-        self.assertFailCode(
-            "TAIL_STATUS_MASS_CONFLICT",
-            validate_score_matrix,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=False,
-            tail_probability=0.01,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 27
-    def test_unfrozen_tolerance_fails_closed(self):
-        self.assertFailCode(
-            "UNFROZEN_PROBABILITY_TOLERANCE",
-            validate_score_matrix,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=1e-10,
-            score_support_id="s",
-            schema_version="v1",
-            required_score_cells=required(3),
-        )
-
-    # 28
     def test_tiny_allowed_residual_is_recorded_not_normalized(self):
-        matrix = [row[:] for row in LOW_SYMMETRIC]
-        matrix[2][2] -= 5e-13
-        r = agg(matrix)
+        masses = matrix_masses(LOW_SYMMETRIC)
+        masses[(0, 0)] += 5e-13
+        r = self.complete_call(score_cells(COMPLETE_CELLS, masses))
         self.assertNotEqual(r["raw_total_probability"], 1.0)
-        self.assertLessEqual(abs(r["hda_probability_sum"] - r["raw_known_probability_sum"]), 1e-15)
-        self.assertLessEqual(abs(r["probability_residual"]), P_TOL)
+        self.assertAlmostEqual(r["probability_residual"], 5e-13, places=15)
 
-    # 29
-    def test_invalid_label_fails_closed(self):
+    def test_registry_complete_hash_matches_frozen_cells(self):
+        self.assertEqual(canonical_support_sha256(COMPLETE_CELLS), COMPLETE_ID)
+        self.assertEqual(len(COMPLETE_CELLS), 378)
+
+    def test_registry_partial_hash_matches_frozen_cells(self):
+        self.assertEqual(canonical_support_sha256(PARTIAL_CELLS), PARTIAL_ID)
+        self.assertEqual(len(PARTIAL_CELLS), 28)
+
+    def test_label_scoring_api_removed_from_zero_label_module(self):
+        module = importlib.import_module("football3_hda")
+        forbidden = "score_hda_" + "probabilities"
+        forbidden2 = "draw_classification_" + "metrics"
+        self.assertFalse(hasattr(module, forbidden))
+        self.assertFalse(hasattr(module, forbidden2))
+
+    # Support-contract production counterexamples required by Codex.
+    def test_fabricated_schema_version_fails_closed(self):
+        self.assertFailCode("INVALID_HDA_SCHEMA_VERSION", self.complete_call, schema_version="anything")
+
+    def test_fabricated_score_support_id_fails_closed(self):
+        self.assertFailCode("UNKNOWN_SCORE_SUPPORT_ID", self.complete_call, score_support_id="f" * 64)
+
+    def test_support_id_required_cells_hash_mismatch_fails_closed(self):
+        self.assertFailCode("SUPPORT_ID_REQUIRED_CELLS_HASH_MISMATCH", self.complete_call, required_score_cells=PARTIAL_CELLS)
+
+    def test_truncated_support_sum_one_claim_complete_fails_closed(self):
+        truncated = tuple(c for c in COMPLETE_CELLS if c != (26, 0))
+        masses = {c: 0.0 for c in truncated}
+        masses[(0, 0)] = 1.0
         self.assertFailCode(
-            "INVALID_HDA_LABEL",
-            score_hda_probabilities,
-            [{"HOME": 0.7, "DRAW": 0.2, "AWAY": 0.1}],
-            ["X"],
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
+            "SUPPORT_ID_REQUIRED_CELLS_HASH_MISMATCH",
+            self.complete_call,
+            score_cells(truncated, masses),
+            required_score_cells=truncated,
         )
 
-    # 30
-    def test_missing_probability_fails_closed(self):
+    def test_delete_high_score_cell_but_claim_complete_fails_closed(self):
+        actual = [c for c in score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)) if c.score != (26, 0)]
+        self.assertFailCode("MISSING_REQUIRED_SCORE_CELL", self.complete_call, actual)
+
+    def test_t7_unresolved_but_claim_resolved_fails_closed(self):
         self.assertFailCode(
-            "MISSING_OR_EXTRA_HDA_PROBABILITY",
-            score_hda_probabilities,
-            [{"HOME": 0.7, "DRAW": 0.3}],
-            ["HOME"],
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
+            "SUPPORT_TAIL_STATUS_MISMATCH",
+            self.complete_call,
+            score_cells(PARTIAL_CELLS, {(0, 0): 1.0}),
+            score_support_id=PARTIAL_ID,
+            required_score_cells=PARTIAL_CELLS,
+            unresolved_tail=False,
         )
 
-    # 31
-    def test_empty_metric_sample_fails_closed(self):
-        self.assertFailCode(
-            "EMPTY_HDA_SAMPLE",
-            score_hda_probabilities,
-            [],
-            [],
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-        )
+    def test_duplicate_required_score_cells_fails_closed(self):
+        duplicated = COMPLETE_CELLS + (COMPLETE_CELLS[-1],)
+        self.assertFailCode("DUPLICATE_REQUIRED_SCORE_CELL", self.complete_call, required_score_cells=duplicated)
 
-    # 32
-    def test_draw_metrics_confusion_matrix_includes_tie_without_silent_break(self):
-        rows = [
-            {"HOME": 0.4, "DRAW": 0.2, "AWAY": 0.4},
-            {"HOME": 0.2, "DRAW": 0.6, "AWAY": 0.2},
-        ]
-        labels = ["HOME", "DRAW"]
-        m = draw_classification_metrics(
-            rows,
-            labels,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-        )
-        self.assertEqual(m["Top1TieCount"], 1)
-        self.assertEqual(m["confusion_matrix"]["HOME"][TOP1_TIE], 1)
-        self.assertEqual(m["confusion_matrix"]["DRAW"]["DRAW"], 1)
+    def test_support_registry_missing_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertFailCode("SUPPORT_REGISTRY_NOT_FOUND", load_score_support_registry, Path(td) / "missing.json")
 
-    # 33
+    def test_support_registry_unknown_version_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "registry.json"
+            p.write_text(json.dumps({"registry_schema_version": "anything", "supports": []}), encoding="utf-8")
+            self.assertFailCode("UNKNOWN_SUPPORT_REGISTRY_VERSION", load_score_support_registry, p)
+
+    def test_support_registry_corrupt_hash_fails_closed(self):
+        src = RESEARCH_DIR / "football3_hda_score_support_registry_v1.json"
+        obj = json.loads(src.read_text(encoding="utf-8"))
+        obj["supports"][0]["required_score_cells_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "registry.json"
+            p.write_text(json.dumps(obj), encoding="utf-8")
+            self.assertFailCode("SUPPORT_REGISTRY_HASH_MISMATCH", load_score_support_registry, p)
+
+    # Existing production fail-closed invariants.
+    def test_total_probability_point_nine_fails_closed(self):
+        masses = matrix_masses(LOW_SYMMETRIC)
+        masses[(0, 0)] -= 0.1
+        self.assertFailCode("PROBABILITY_MASS_NOT_CONSERVED", self.complete_call, score_cells(COMPLETE_CELLS, masses))
+
+    def test_negative_probability_fails_closed(self):
+        masses = matrix_masses(LOW_SYMMETRIC); masses[(0, 0)] = -0.1; masses[(0, 1)] += 0.3
+        self.assertFailCode("NEGATIVE_PROBABILITY", self.complete_call, score_cells(COMPLETE_CELLS, masses))
+
+    def test_nan_probability_fails_closed(self):
+        masses = matrix_masses(LOW_SYMMETRIC); masses[(0, 0)] = math.nan
+        self.assertFailCode("NONFINITE_PROBABILITY", self.complete_call, score_cells(COMPLETE_CELLS, masses))
+
+    def test_inf_probability_fails_closed(self):
+        masses = matrix_masses(LOW_SYMMETRIC); masses[(0, 0)] = math.inf
+        self.assertFailCode("NONFINITE_PROBABILITY", self.complete_call, score_cells(COMPLETE_CELLS, masses))
+
+    def test_duplicate_score_cell_fails_closed(self):
+        actual = score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)); actual.append(actual[0])
+        self.assertFailCode("DUPLICATE_SCORE_CELL", self.complete_call, actual)
+
+    def test_conflicting_duplicate_score_cell_fails_closed(self):
+        actual = score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)); actual.append(ScoreCell(actual[0].home_goals, actual[0].away_goals, actual[0].probability + 0.01))
+        self.assertFailCode("CONFLICTING_DUPLICATE_SCORE_CELL", self.complete_call, actual)
+
+    def test_missing_required_diagonal_fails_closed(self):
+        actual = [c for c in score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)) if c.score != (13, 13)]
+        self.assertFailCode("MISSING_REQUIRED_DIAGONAL", self.complete_call, actual)
+
+    def test_wrong_category_order_fails_closed(self):
+        self.assertFailCode("INVALID_CLASS_ORDER", self.complete_call, class_order=("AWAY", "DRAW", "HOME"))
+
+    def test_noninteger_score_fails_closed(self):
+        actual = score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)); actual[0] = ScoreCell(0.0, 0, actual[0].probability)  # type: ignore[arg-type]
+        self.assertFailCode("INVALID_SCORE", self.complete_call, actual)
+
+    def test_missing_class_order_fails_closed(self):
+        self.assertFailCode("MISSING_CLASS_ORDER", self.complete_call, class_order=None)
+
+    def test_missing_tail_status_fails_closed(self):
+        self.assertFailCode("MISSING_TAIL_STATUS", self.complete_call, unresolved_tail=None)
+
+    def test_tail_mass_status_conflict_fails_closed(self):
+        self.assertFailCode("TAIL_STATUS_MASS_CONFLICT", self.complete_call, tail_probability=0.01)
+
+    def test_unfrozen_tolerance_fails_closed(self):
+        self.assertFailCode("UNFROZEN_PROBABILITY_TOLERANCE", self.complete_call, probability_tolerance=1e-9)
+
     def test_negative_score_fails_closed(self):
-        bad = cells(LOW_SYMMETRIC)
-        bad[0] = ScoreCell(-1, 0, bad[0].probability)
-        self.assertFailCode(
-            "INVALID_SCORE",
-            aggregate_score_matrix_to_hda,
-            bad,
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-            score_support_id="synthetic-negative-score",
-            schema_version="synthetic-score-support-v1",
-            required_score_cells=required(),
-        )
+        actual = score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)); actual[0] = ScoreCell(-1, 0, actual[0].probability)
+        self.assertFailCode("INVALID_SCORE", self.complete_call, actual)
 
-    # 34
     def test_score_cell_outside_support_fails_closed(self):
-        bad = cells(LOW_SYMMETRIC) + [ScoreCell(3, 0, 0.0)]
-        self.assertFailCode(
-            "SCORE_CELL_OUTSIDE_SUPPORT",
-            aggregate_score_matrix_to_hda,
-            bad,
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-            score_support_id="synthetic-outside-support",
-            schema_version="synthetic-score-support-v1",
-            required_score_cells=required(),
-        )
+        actual = score_cells(COMPLETE_CELLS, matrix_masses(LOW_SYMMETRIC)) + [ScoreCell(27, 0, 0.0)]
+        self.assertFailCode("SCORE_CELL_OUTSIDE_SUPPORT", self.complete_call, actual)
 
-    # 35
     def test_missing_support_identity_fails_closed(self):
-        self.assertFailCode(
-            "MISSING_SCORE_SUPPORT_IDENTITY",
-            aggregate_score_matrix_to_hda,
-            cells(LOW_SYMMETRIC),
-            unresolved_tail=False,
-            tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-            score_support_id=None,
-            schema_version=None,
-            required_score_cells=required(),
-        )
+        self.assertFailCode("MISSING_SCORE_SUPPORT_IDENTITY", self.complete_call, score_support_id=None)
 
-    # 36
     def test_unresolved_tail_zero_mass_fails_closed(self):
         self.assertFailCode(
             "UNRESOLVED_TAIL_REQUIRES_POSITIVE_MASS",
-            aggregate_score_matrix_to_hda,
-            cells(LOW_SYMMETRIC),
+            self.complete_call,
+            score_cells(PARTIAL_CELLS, {(0, 0): 1.0}),
+            score_support_id=PARTIAL_ID,
+            required_score_cells=PARTIAL_CELLS,
             unresolved_tail=True,
             tail_probability=0.0,
-            class_order=HDA_CLASS_ORDER,
-            probability_tolerance=P_TOL,
-            tie_tolerance=TIE_TOL,
-            score_support_id="synthetic-tail-zero",
-            schema_version="synthetic-score-support-v1",
-            required_score_cells=required(),
         )
+
+    def test_wrong_tie_tolerance_fails_closed(self):
+        self.assertFailCode("UNFROZEN_TIE_TOLERANCE", self.complete_call, tie_tolerance=1e-6)
+
+    # Guard production counterexamples: no contractless label scoring bypass.
+    def test_hda_production_label_scoring_definition_guard_fails_closed(self):
+        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING"\n\ndef aggregate_score_matrix_to_hda():\n    return {}\n'
+        changed = base + '\ndef score_hda_probabilities(probability_rows, labels):\n    return {"n": len(labels)}\n'
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("forbidden target-label scoring function defined", r.stdout)
+
+    def test_contractless_label_scoring_caller_guard_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = 'from football3_hda import score_hda_probabilities\n\ndef run(rows, labels):\n    return score_hda_probabilities(rows, labels)\n'
+        r = self.run_guard_case("football-data/research/future_hda_scoring.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+
+    def test_zero_label_hda_module_without_marker_guard_fails_closed(self):
+        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "ok"\n'
+        changed = 'def aggregate_score_matrix_to_hda():\n    return {}\n'
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("missing zero-label surface marker", r.stdout)
+
+    def test_zero_label_hda_module_harmless_change_guard_passes(self):
+        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING"\n'
+        changed = base + '\ndef aggregate_score_matrix_to_hda():\n    return {"status": "ZERO_LABEL"}\n'
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":

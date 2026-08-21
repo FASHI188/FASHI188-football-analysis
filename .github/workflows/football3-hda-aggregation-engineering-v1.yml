@@ -7,6 +7,7 @@ on:
     paths:
       - 'football-data/research/football3_hda.py'
       - 'football-data/research/test_football3_hda.py'
+      - 'football-data/research/football3_hda_score_support_registry_v1.json'
       - 'football-data/research/run_football3_hda_zero_label_audit.py'
       - 'football-data/research/audit_football3_changed_scientific_files.py'
       - '.github/workflows/football3-hda-aggregation-engineering-v1.yml'
@@ -37,19 +38,26 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Compile production HDA layer and zero-label tests
+      - name: Compile production HDA layer, guard, audit, and zero-label tests
         run: |
           python -m py_compile \
             football-data/research/football3_hda.py \
             football-data/research/test_football3_hda.py \
-            football-data/research/run_football3_hda_zero_label_audit.py
-      - name: Run production module synthetic suite
+            football-data/research/run_football3_hda_zero_label_audit.py \
+            football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run production module 46-case synthetic and guard-counterexample suite
         env:
           PYTHONPATH: football-data/research
         run: python -m unittest football-data/research/test_football3_hda.py -v
-      - name: Generate zero-label engineering audit artifact inputs
+      - name: Run football3 changed-scientific-file guard on exact PR scope
+        run: |
+          python football-data/research/audit_football3_changed_scientific_files.py \
+            --base 8de610c22d26ddeb00adcee2d0078b1cd909e60b \
+            --head HEAD
+      - name: Generate exact-head zero-label engineering audit artifact inputs
         env:
           PYTHONPATH: football-data/research
+          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           python football-data/research/run_football3_hda_zero_label_audit.py \
             --out-dir "${RUNNER_TEMP}/football3_hda_zero_label"
@@ -85,8 +93,8 @@ jobs:
       - name: Compile HDA layer under Windows UTF-8
         shell: pwsh
         run: |
-          python -m py_compile football-data/research/football3_hda.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py
-      - name: Run HDA synthetic suite under Windows UTF-8
+          python -m py_compile football-data/research/football3_hda.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run 46-case HDA synthetic suite under Windows UTF-8
         shell: pwsh
         env:
           PYTHONPATH: football-data/research
