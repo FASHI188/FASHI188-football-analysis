@@ -1,67 +1,75 @@
 name: Football Engineering Quality and Security
-
 on:
-  pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 permissions:
   contents: read
-
-concurrency:
-  group: football-engineering-quality-security-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  changed-file-guard:
-    name: Changed-file quality and security guard
+  linux-hardening:
+    name: linux-hardening
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
       - name: Resolve comparison range
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${BASE_SHA}" || "${BASE_SHA}" =~ ^0+$ ]]; then
-            BASE_SHA="$(git rev-parse "${HEAD_SHA}^")"
-            echo "BASE_SHA=${BASE_SHA}" >> "${GITHUB_ENV}"
-          fi
-          git cat-file -e "${BASE_SHA}^{commit}"
-          git cat-file -e "${HEAD_SHA}^{commit}"
-          echo "base=${BASE_SHA}"
-          echo "head=${HEAD_SHA}"
-
-      - name: Reject whitespace errors in changed lines
-        shell: bash
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+      - name: Changed-file quality and security scan
         run: |
-          set -euo pipefail
-          git diff --check "${BASE_SHA}" "${HEAD_SHA}"
-
-      - name: Run guard unit tests
-        shell: bash
-        run: |
-          set -euo pipefail
+          git diff --check "$BASE_SHA" "$HEAD_SHA"
           python scripts/governance/test_quality_security_guard.py
-
-      - name: Scan changed files
+          python scripts/governance/quality_security_guard.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Football3 production tests on Linux
+        env:
+          PYTHONPATH: football-data/research
+        run: pytest -q football-data/research/test_football3_core.py football-data/research/test_validate_football3_experiment.py
+      - name: Governance production negatives
+        run: |
+          python governance/validate_project_continuity.py --self-test
+          python governance/test_required_context_coverage.py
+  windows-hardening:
+    name: windows-utf8-path-hardening
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}"}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
+      - name: Football3 production tests on Windows UTF-8 paths
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          pytest -q football-data/research/test_football3_core.py football-data/research/test_validate_football3_experiment.py
+          python governance/validate_project_continuity.py --self-test
+  changed-file-guard:
+    name: Changed-file quality and security guard
+    if: always()
+    needs: [linux-hardening, windows-hardening]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate required context
         shell: bash
         run: |
-          set -euo pipefail
-          python scripts/governance/quality_security_guard.py \
-            --base "${BASE_SHA}" \
-            --head "${HEAD_SHA}"
+          test "${{ needs.linux-hardening.result }}" = "success"
+          test "${{ needs.windows-hardening.result }}" = "success"
+          echo "Linux and Windows hardening checks succeeded."
