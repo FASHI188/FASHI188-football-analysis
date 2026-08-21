@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from football3_hda import (
     COMPLETE_HDA,
@@ -29,6 +29,9 @@ from football3_hda import (
     load_score_support_registry,
     validate_score_matrix,
 )
+from football3_hda_scoring import draw_classification_metrics, score_hda_probabilities
+from audit_football3_changed_scientific_files import scoring_module_blockers, zero_label_hda_blockers
+from run_football3_hda_zero_label_audit import repo_path, scope_differences
 
 FOOTBALL3_ZERO_LABEL_TEST_SURFACE = "HDA_SYNTHETIC_ZERO_LABEL_TESTS_ONLY"
 
@@ -234,10 +237,66 @@ class HDATest(unittest.TestCase):
 
     def test_label_scoring_api_removed_from_zero_label_module(self):
         module = importlib.import_module("football3_hda")
+        scoring = importlib.import_module("football3_hda_scoring")
         forbidden = "score_hda_" + "probabilities"
         forbidden2 = "draw_classification_" + "metrics"
         self.assertFalse(hasattr(module, forbidden))
         self.assertFalse(hasattr(module, forbidden2))
+        self.assertTrue(hasattr(scoring, forbidden))
+        self.assertTrue(hasattr(scoring, forbidden2))
+
+    def test_synthetic_hda_scoring_restores_proper_scores_and_diagnostics(self):
+        rows = [
+            {"HOME": 0.6, "DRAW": 0.2, "AWAY": 0.2},
+            {"HOME": 0.2, "DRAW": 0.5, "AWAY": 0.3},
+            {"HOME": 0.4, "DRAW": 0.2, "AWAY": 0.4},
+        ]
+        labels = ["HOME", "DRAW", "AWAY"]
+        result = score_hda_probabilities(
+            rows, labels, class_order=HDA_CLASS_ORDER, probability_tolerance=P_TOL, tie_tolerance=TIE_TOL
+        )
+        self.assertAlmostEqual(result["LogLoss"], (-math.log(0.6) - math.log(0.5) - math.log(0.4)) / 3.0)
+        self.assertGreaterEqual(result["Brier"], 0.0)
+        self.assertGreaterEqual(result["RPS"], 0.0)
+        self.assertTrue(result["proper_scores_primary"])
+        self.assertFalse(result["classification_metrics_can_override_proper_score_failure"])
+        self.assertEqual(result["Top1TieCount"], 1)
+        self.assertAlmostEqual(result["Accuracy"], 2 / 3)
+        self.assertEqual(result["confusion_matrix"]["AWAY"][TOP1_TIE], 1)
+
+    def test_synthetic_draw_diagnostics_are_diagnostic_only(self):
+        rows = [
+            {"HOME": 0.2, "DRAW": 0.6, "AWAY": 0.2},
+            {"HOME": 0.6, "DRAW": 0.2, "AWAY": 0.2},
+        ]
+        labels = ["DRAW", "HOME"]
+        result = draw_classification_metrics(
+            rows, labels, class_order=HDA_CLASS_ORDER, probability_tolerance=P_TOL, tie_tolerance=TIE_TOL
+        )
+        self.assertTrue(result["classification_metrics_diagnostic_only"])
+        self.assertEqual(result["DrawPrecision"], 1.0)
+        self.assertEqual(result["DrawRecall"], 1.0)
+        self.assertEqual(result["DrawF1"], 1.0)
+
+    def test_synthetic_scoring_zero_truth_probability_is_infinite_logloss(self):
+        rows = [{"HOME": 0.0, "DRAW": 0.4, "AWAY": 0.6}]
+        result = score_hda_probabilities(
+            rows, ["HOME"], class_order=HDA_CLASS_ORDER, probability_tolerance=P_TOL, tie_tolerance=TIE_TOL
+        )
+        self.assertTrue(math.isinf(result["LogLoss"]))
+
+    def test_synthetic_scoring_invalid_label_fails_closed(self):
+        rows = [{"HOME": 0.3, "DRAW": 0.3, "AWAY": 0.4}]
+        self.assertFailCode(
+            "INVALID_HDA_LABEL",
+            score_hda_probabilities,
+            rows, ["INVALID"],
+            class_order=HDA_CLASS_ORDER, probability_tolerance=P_TOL, tie_tolerance=TIE_TOL,
+        )
+
+    def test_production_ast_contracts_accept_current_modules(self):
+        self.assertEqual(zero_label_hda_blockers(RESEARCH_DIR / "football3_hda.py"), [])
+        self.assertEqual(scoring_module_blockers(RESEARCH_DIR / "football3_hda_scoring.py"), [])
 
     # Support-contract production counterexamples required by Codex.
     def test_fabricated_schema_version_fails_closed(self):
@@ -371,33 +430,116 @@ class HDATest(unittest.TestCase):
     def test_wrong_tie_tolerance_fails_closed(self):
         self.assertFailCode("UNFROZEN_TIE_TOLERANCE", self.complete_call, tie_tolerance=1e-6)
 
-    # Guard production counterexamples: no contractless label scoring bypass.
-    def test_hda_production_label_scoring_definition_guard_fails_closed(self):
-        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING"\n\ndef aggregate_score_matrix_to_hda():\n    return {}\n'
-        changed = base + '\ndef score_hda_probabilities(probability_rows, labels):\n    return {"n": len(labels)}\n'
+    # Guard production counterexamples required by Codex R2.
+    def test_guard_rejects_evaluate_hda_rows_labels_in_zero_label_module_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        changed = base + '\ndef evaluate_hda(probability_rows, labels):\n    return {"LogLoss": 0.0}\n'
         r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("forbidden target-label scoring function defined", r.stdout)
+        self.assertIn("zero-label function set mismatch", r.stdout)
+        self.assertIn("forbidden target-value parameter identifier: labels", r.stdout)
 
-    def test_contractless_label_scoring_caller_guard_fails_closed(self):
+    def test_guard_rejects_calculate_metrics_rows_truth_in_zero_label_module_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        changed = base + '\ndef calculate_metrics(rows, truth):\n    return 0.0\n'
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("forbidden target-value parameter identifier: truth", r.stdout)
+
+    def test_guard_rejects_alias_import_of_scoring_without_contract_fails_closed(self):
         base = 'def noop():\n    return 0\n'
-        changed = 'from football3_hda import score_hda_probabilities\n\ndef run(rows, labels):\n    return score_hda_probabilities(rows, labels)\n'
-        r = self.run_guard_case("football-data/research/future_hda_scoring.py", base, changed)
+        changed = 'from football3_hda_scoring import score_hda_probabilities as f\n\ndef run(rows, labels):\n    return f(rows, labels)\n'
+        r = self.run_guard_case("football-data/research/future_hda_runner.py", base, changed)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
+        self.assertIn("HDA scoring reference must declare FOOTBALL3_EXPERIMENT_CONTRACT or FOOTBALL3_EXPERIMENT_HELPER_FOR", r.stdout)
 
-    def test_zero_label_hda_module_without_marker_guard_fails_closed(self):
-        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "ok"\n'
-        changed = 'def aggregate_score_matrix_to_hda():\n    return {}\n'
+    def test_guard_rejects_getattr_scoring_route_without_contract_fails_closed(self):
+        base = 'def noop():\n    return 0\n'
+        changed = 'import football3_hda_scoring as scoring\n\ndef run(rows, labels):\n    f = getattr(scoring, "score_hda_probabilities")\n    return f(rows, labels)\n'
+        r = self.run_guard_case("football-data/research/future_hda_runner.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("HDA scoring reference must declare", r.stdout)
+
+    def test_guard_rejects_reexport_of_scoring_from_zero_label_module_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        changed = base.replace(
+            'from __future__ import annotations\n',
+            'from __future__ import annotations\nfrom football3_hda_scoring import score_hda_probabilities\n',
+            1,
+        )
         r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("missing zero-label surface marker", r.stdout)
+        self.assertIn("imports outside AST contract", r.stdout)
 
-    def test_zero_label_hda_module_harmless_change_guard_passes(self):
-        base = 'FOOTBALL3_ZERO_LABEL_ENGINEERING_SURFACE = "HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING"\n'
-        changed = base + '\ndef aggregate_score_matrix_to_hda():\n    return {"status": "ZERO_LABEL"}\n'
+    def test_guard_rejects_labels_parameter_added_to_allowed_aggregate_function_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        needle = '    required_score_cells: Iterable[tuple[int, int]] | None,\n) -> dict[str, object]:\n    """Aggregate a registered score matrix into H/D/A without labels, fitting or I/O."""'
+        replacement = '    required_score_cells: Iterable[tuple[int, int]] | None,\n    labels: Sequence[str] | None = None,\n) -> dict[str, object]:\n    """Aggregate a registered score matrix into H/D/A without labels, fitting or I/O."""'
+        self.assertIn(needle, base)
+        changed = base.replace(needle, replacement, 1)
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("function signature mismatch for aggregate_score_matrix_to_hda", r.stdout)
+        self.assertIn("forbidden target-value parameter identifier: labels", r.stdout)
+
+    def test_guard_rejects_top_level_results_file_read_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        changed = base + '\nRESULTS = open("results.csv").read()\n'
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("forbidden I/O/network/model/scoring call in zero-label module: open", r.stdout)
+
+    def test_guard_rejects_accuracy_score_and_log_loss_in_zero_label_module_fails_closed(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        needle = '    """Aggregate a registered score matrix into H/D/A without labels, fitting or I/O."""\n'
+        changed = base.replace(needle, needle + '    accuracy_score([], [])\n    log_loss([], [])\n', 1)
+        r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("forbidden scoring identifier in zero-label module: accuracy_score", r.stdout)
+        self.assertIn("forbidden scoring identifier in zero-label module: log_loss", r.stdout)
+
+    def test_zero_label_ast_contract_allows_comment_only_change(self):
+        base = (RESEARCH_DIR / "football3_hda.py").read_text(encoding="utf-8")
+        changed = base + '\n# harmless zero-label documentation-only change\n'
         r = self.run_guard_case("football-data/research/football3_hda.py", base, changed)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_windows_repo_identity_path_is_posix(self):
+        self.assertEqual(
+            repo_path(PureWindowsPath(r"football-data\research\football3_hda.py")),
+            "football-data/research/football3_hda.py",
+        )
+
+    def test_continuous_ci_is_head_ref_based_not_fixed_base(self):
+        workflow = (RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml")
+        text = workflow.read_text(encoding="utf-8")
+        pull_request_block = text.split("pull_request:", 1)[1].split("workflow_dispatch:", 1)[0]
+        self.assertNotIn("branches:", pull_request_block)
+        self.assertIn("football3_hda_scoring.py", pull_request_block)
+        self.assertIn("startsWith(github.head_ref, 'football3/')", text)
+        self.assertIn("hda-continuous-structure-linux", text)
+        self.assertIn("hda-continuous-structure-windows", text)
+
+    def test_windows_exact_job_runs_full_production_audit_entry(self):
+        workflow = (RESEARCH_DIR.parent.parent / ".github/workflows/football3-hda-aggregation-engineering-v1.yml")
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn("hda-pr334-exact-head-windows-full-audit", text)
+        self.assertIn("Run complete production audit entry under Windows", text)
+        self.assertIn("run_football3_hda_zero_label_audit.py --out-dir", text)
+
+    def test_windows_path_normalization_does_not_hide_extra_file_fails_closed(self):
+        expected = {
+            "football-data/research/football3_hda.py",
+            "football-data/research/football3_hda_scoring.py",
+        }
+        actual = [
+            "football-data/research/football3_hda.py",
+            "football-data/research/football3_hda_scoring.py",
+            "football-data/research/extra_science.py",
+        ]
+        unexpected, missing = scope_differences(actual, expected)
+        self.assertEqual(unexpected, ["football-data/research/extra_science.py"])
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

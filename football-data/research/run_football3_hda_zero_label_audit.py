@@ -7,26 +7,41 @@ import os
 import subprocess
 import sys
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 
 FOOTBALL3_ZERO_LABEL_AUDIT_SURFACE = "HDA_ZERO_LABEL_ARTIFACT_AUDIT_ONLY"
 
-STATUS = "GPT_REMEDIATED_PENDING_CODEX_RECHECK"
+STATUS = "GPT_REMEDIATED_R3_PENDING_CODEX_RECHECK"
 K2_MARKER = "K2_PER_ROW_HDA_RECOMPUTATION_NOT_AUTHORIZED"
-EXPECTED_PARENT_HEAD = "4995168386f17208b0c176e15814bc010bdc5802"
+EXPECTED_PARENT_HEAD = "bc43db3c7f4f7d76ca46387d0c9cca94f49f8611"
 PR_BASE_HEAD = "8de610c22d26ddeb00adcee2d0078b1cd909e60b"
 FROZEN_SCIENCE_ENGINE_HEAD = PR_BASE_HEAD
 GOVERNANCE_REFERENCE_HEAD = "bb24896b29a649ecabe4da71a134b0e3014165d5"
-EXPECTED_TEST_COUNT = 46
-EXPECTED_FAIL_CLOSED_COUNT = 31
+EXPECTED_TEST_COUNT = 60
+EXPECTED_FAIL_CLOSED_COUNT = 38
 MODULE = Path("football-data/research/football3_hda.py")
+SCORING = Path("football-data/research/football3_hda_scoring.py")
 TEST = Path("football-data/research/test_football3_hda.py")
 SUPPORT_REGISTRY = Path("football-data/research/football3_hda_score_support_registry_v1.json")
 AUDIT = Path("football-data/research/run_football3_hda_zero_label_audit.py")
 WORKFLOW = Path(".github/workflows/football3-hda-aggregation-engineering-v1.yml")
 GUARD = Path("football-data/research/audit_football3_changed_scientific_files.py")
-SOURCE_FILES = (MODULE, TEST, SUPPORT_REGISTRY, AUDIT, WORKFLOW, GUARD)
-EXPECTED_CHANGED_FILES = {str(p) for p in SOURCE_FILES}
+SOURCE_FILES = (MODULE, SCORING, TEST, SUPPORT_REGISTRY, AUDIT, WORKFLOW, GUARD)
+
+
+def repo_path(path: PurePath) -> str:
+    """Canonical repository identity path, independent of host path separator."""
+    return path.as_posix()
+
+
+EXPECTED_CHANGED_FILES = {repo_path(path) for path in SOURCE_FILES}
+
+
+def scope_differences(actual_paths: list[str], expected_paths: set[str]) -> tuple[list[str], list[str]]:
+    # git diff --name-only emits repository POSIX paths. PurePosixPath normalizes only
+    # redundant POSIX separators/dots; it does not reinterpret backslashes or hide names.
+    actual = {PurePosixPath(path).as_posix() for path in actual_paths}
+    return sorted(actual - expected_paths), sorted(expected_paths - actual)
 
 
 class RecordingResult(unittest.TextTestResult):
@@ -71,11 +86,11 @@ class RecordingResult(unittest.TextTestResult):
 
 
 def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def git(*args: str) -> str:
@@ -84,7 +99,7 @@ def git(*args: str) -> str:
 
 def changed_files(base: str, head: str) -> list[str]:
     raw = git("diff", "--name-only", f"{base}..{head}")
-    return sorted(line.strip() for line in raw.splitlines() if line.strip())
+    return sorted(PurePosixPath(line.strip()).as_posix() for line in raw.splitlines() if line.strip())
 
 
 def classify_asset_diff(paths: list[str]) -> dict[str, list[str]]:
@@ -93,7 +108,7 @@ def classify_asset_diff(paths: list[str]) -> dict[str, list[str]]:
     model = [p for p in paths if p.startswith(("football-data/models/", "football-data/model/", "models/")) or p.lower().endswith(model_suffixes)]
     formal_data = [p for p in paths if p.startswith(("football-data/data/", "football-data/datasets/", "data/", "datasets/")) or p.lower().endswith(data_suffixes)]
     config = [p for p in paths if p.startswith("football-data/config/")]
-    current = [p for p in paths if Path(p).name.upper() == "CURRENT" or "CURRENT." in Path(p).name.upper() or "_CURRENT" in Path(p).name.upper()]
+    current = [p for p in paths if PurePosixPath(p).name.upper() == "CURRENT" or "CURRENT." in PurePosixPath(p).name.upper() or "_CURRENT" in PurePosixPath(p).name.upper()]
     return {
         "model_diff_paths": model,
         "formal_data_diff_paths": formal_data,
@@ -109,7 +124,27 @@ def run_tests() -> tuple[RecordingResult, list[dict[str, object]]]:
     runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2, resultclass=RecordingResult)
     result = runner.run(suite)
     assert isinstance(result, RecordingResult)
-    return result, [result.records[k] for k in sorted(result.records)]
+    return result, [result.records[key] for key in sorted(result.records)]
+
+
+def run_production_guard(base: str, head: str) -> dict[str, object]:
+    completed = subprocess.run(
+        [sys.executable, repo_path(GUARD), "--base", base, "--head", head],
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"football3 production guard failed: {(completed.stdout + completed.stderr)[-3000:]}")
+    return {"returncode": completed.returncode, "stdout_tail": completed.stdout[-2000:]}
+
+
+def validate_support_registry() -> dict[str, object]:
+    from football3_hda import load_score_support_registry
+
+    registry = load_score_support_registry(SUPPORT_REGISTRY)
+    if len(registry) != 2:
+        raise RuntimeError(f"unexpected frozen support registry entry count: {len(registry)}")
+    return {"entry_count": len(registry), "support_ids": sorted(registry)}
 
 
 def write_json(path: Path, obj: object) -> None:
@@ -117,15 +152,15 @@ def write_json(path: Path, obj: object) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out-dir", required=True)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out-dir", required=True)
+    args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     for path in SOURCE_FILES:
         if not path.is_file():
-            raise RuntimeError(f"missing HDA engineering source file: {path}")
+            raise RuntimeError(f"missing HDA engineering source file: {repo_path(path)}")
 
     exact_head = git("rev-parse", "HEAD")
     parent_head = git("rev-parse", "HEAD^")
@@ -147,35 +182,38 @@ def main() -> int:
         raise RuntimeError("GITHUB_RUN_ATTEMPT missing or invalid")
 
     paths = changed_files(PR_BASE_HEAD, exact_head)
-    unexpected = sorted(set(paths) - EXPECTED_CHANGED_FILES)
-    missing_expected = sorted(EXPECTED_CHANGED_FILES - set(paths))
+    unexpected, missing_expected = scope_differences(paths, EXPECTED_CHANGED_FILES)
     if unexpected:
         raise RuntimeError(f"unexpected PR-scope files for HDA engineering remediation: {unexpected}")
     if missing_expected:
         raise RuntimeError(f"expected HDA remediation files missing from PR diff: {missing_expected}")
+
     asset_diff = classify_asset_diff(paths)
     if any(asset_diff.values()):
         raise RuntimeError(f"forbidden formal/model/data/config/CURRENT diff: {asset_diff}")
 
+    support_receipt = validate_support_registry()
+    guard_receipt = run_production_guard(PR_BASE_HEAD, exact_head)
     result, records = run_tests()
-    fail_closed = [r for r in records if r["expectation"] == "FAIL_CLOSED"]
-    behavior = [r for r in records if r["expectation"] == "BEHAVIOR"]
-    passed = [r for r in records if r["status"] == "PASS"]
+    fail_closed = [record for record in records if record["expectation"] == "FAIL_CLOSED"]
+    behavior = [record for record in records if record["expectation"] == "BEHAVIOR"]
+    passed = [record for record in records if record["status"] == "PASS"]
 
     if len(records) != EXPECTED_TEST_COUNT:
-        raise RuntimeError(f"expected exactly {EXPECTED_TEST_COUNT} zero-label tests, got {len(records)}")
+        raise RuntimeError(f"expected exactly {EXPECTED_TEST_COUNT} synthetic/guard tests, got {len(records)}")
     if len(fail_closed) != EXPECTED_FAIL_CLOSED_COUNT:
         raise RuntimeError(f"expected exactly {EXPECTED_FAIL_CLOSED_COUNT} fail-closed counterexamples, got {len(fail_closed)}")
 
     manifest = {
-        "schema_version": "football3_hda_engineering_artifact_v2",
+        "schema_version": "football3_hda_engineering_artifact_v3",
         "exact_head": exact_head,
         "parent_head": parent_head,
+        "pr_base_head": PR_BASE_HEAD,
         "run_id": run_id,
         "run_attempt": run_attempt,
         "files": [
             {
-                "path": str(path),
+                "path": repo_path(path),
                 "size_bytes": path.stat().st_size,
                 "sha256": sha256(path),
             }
@@ -187,6 +225,7 @@ def main() -> int:
     synthetic = {
         "status": "PASS" if result.wasSuccessful() else "FAIL",
         "exact_head": exact_head,
+        "parent_head": parent_head,
         "run_id": run_id,
         "run_attempt": run_attempt,
         "total_cases": len(records),
@@ -198,10 +237,10 @@ def main() -> int:
     write_json(out / "synthetic_test_results.json", synthetic)
 
     counterexamples = {
-        "status": "PASS" if result.wasSuccessful() and all(r["status"] == "PASS" for r in fail_closed) else "FAIL",
+        "status": "PASS" if result.wasSuccessful() and all(record["status"] == "PASS" for record in fail_closed) else "FAIL",
         "expected_fail_closed_cases": EXPECTED_FAIL_CLOSED_COUNT,
         "fail_closed_case_count": len(fail_closed),
-        "all_fail_closed_cases_passed": all(r["status"] == "PASS" for r in fail_closed),
+        "all_fail_closed_cases_passed": all(record["status"] == "PASS" for record in fail_closed),
         "cases": fail_closed,
     }
     write_json(out / "counterexample_results.json", counterexamples)
@@ -216,13 +255,18 @@ def main() -> int:
         "run_id": run_id,
         "run_attempt": run_attempt,
         "module_sha256": sha256(MODULE),
+        "scoring_module_sha256": sha256(SCORING),
         "test_sha256": sha256(TEST),
         "support_registry_sha256": sha256(SUPPORT_REGISTRY),
+        "support_registry_validation": support_receipt,
+        "production_guard": guard_receipt,
         "changed_files": paths,
         **asset_diff,
         "class_order": ["HOME", "DRAW", "AWAY"],
         "probability_tolerance": 1e-12,
         "tie_tolerance": 1e-12,
+        "proper_scores_primary": True,
+        "diagnostic_metrics_secondary": True,
         "synthetic_test_count": len(records),
         "fail_closed_counterexample_count": len(fail_closed),
         "k2_boundary": K2_MARKER,
@@ -240,6 +284,7 @@ def main() -> int:
         "artifact_contains_real_labels": False,
         "scientific_pass_claimed": False,
         "draw_solved_claimed": False,
+        "model_improved_claimed": False,
         "formal_promotion_claimed": False,
         "ready_to_merge_claimed": False,
     }
@@ -253,6 +298,7 @@ def main() -> int:
         "status": STATUS,
         "total_cases": len(records),
         "fail_closed_cases": len(fail_closed),
+        "support_registry_entries": support_receipt["entry_count"],
         "real_labels": 0,
         "training": 0,
         "real_scoring": 0,

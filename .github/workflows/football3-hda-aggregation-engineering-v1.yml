@@ -2,10 +2,9 @@ name: Football3 HDA Aggregation Engineering Zero Label
 
 on:
   pull_request:
-    branches:
-      - football3/full-stack-root-cause-remediation-20260820
     paths:
       - 'football-data/research/football3_hda.py'
+      - 'football-data/research/football3_hda_scoring.py'
       - 'football-data/research/test_football3_hda.py'
       - 'football-data/research/football3_hda_score_support_registry_v1.json'
       - 'football-data/research/run_football3_hda_zero_label_audit.py'
@@ -24,47 +23,118 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
 
 jobs:
-  hda-linux:
-    name: hda-linux-zero-label
+  # Reusable structural CI: follows football3/* HEAD refs across any PR base branch.
+  hda-structure-linux:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-continuous-structure-linux
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile HDA production, scoring, guard, audit, and tests
+        run: |
+          python -m py_compile \
+            football-data/research/football3_hda.py \
+            football-data/research/football3_hda_scoring.py \
+            football-data/research/test_football3_hda.py \
+            football-data/research/run_football3_hda_zero_label_audit.py \
+            football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run complete synthetic, scoring, AST-contract, and guard-counterexample suite
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+      - name: Validate frozen support registry directly
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python - <<'PY'
+          from football3_hda import load_score_support_registry
+          registry = load_score_support_registry()
+          assert len(registry) == 2, len(registry)
+          print(sorted(registry))
+          PY
+      - name: Run production football3 guard on actual PR scope
+        run: |
+          python football-data/research/audit_football3_changed_scientific_files.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+      - name: Verify no repository persistence
+        run: git diff --exit-code
+
+  hda-structure-windows:
+    if: startsWith(github.head_ref, 'football3/')
+    name: hda-continuous-structure-windows
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile HDA production, scoring, guard, audit, and tests under Windows
+        shell: pwsh
+        run: |
+          python -m py_compile football-data/research/football3_hda.py football-data/research/football3_hda_scoring.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py football-data/research/audit_football3_changed_scientific_files.py
+      - name: Run complete synthetic and structural suite under Windows
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: python -m unittest football-data/research/test_football3_hda.py -v
+      - name: Validate frozen support registry directly under Windows
+        shell: pwsh
+        env:
+          PYTHONPATH: football-data/research
+        run: python -c "from football3_hda import load_score_support_registry; r=load_score_support_registry(); assert len(r)==2; print(sorted(r))"
+      - name: Run production football3 guard on actual PR scope under Windows
+        shell: pwsh
+        run: python football-data/research/audit_football3_changed_scientific_files.py --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
+      - name: Verify no repository persistence
+        shell: pwsh
+        run: git diff --exit-code
+
+  # PR #334 exact-head evidence is intentionally separate from reusable structural CI.
+  hda-pr334-exact-head-linux-artifact:
+    if: github.event.pull_request.number == 334 && github.event.pull_request.head.ref == 'football3/hda-aggregation-engineering-v1'
+    name: hda-pr334-exact-head-linux-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout exact engineering head
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Compile production HDA layer, guard, audit, and zero-label tests
-        run: |
-          python -m py_compile \
-            football-data/research/football3_hda.py \
-            football-data/research/test_football3_hda.py \
-            football-data/research/run_football3_hda_zero_label_audit.py \
-            football-data/research/audit_football3_changed_scientific_files.py
-      - name: Run production module 46-case synthetic and guard-counterexample suite
+      - name: Generate exact-head full zero-label audit receipt
         env:
           PYTHONPATH: football-data/research
-        run: python -m unittest football-data/research/test_football3_hda.py -v
-      - name: Run football3 changed-scientific-file guard on exact PR scope
-        run: |
-          python football-data/research/audit_football3_changed_scientific_files.py \
-            --base 8de610c22d26ddeb00adcee2d0078b1cd909e60b \
-            --head HEAD
-      - name: Generate exact-head zero-label engineering audit artifact inputs
-        env:
-          PYTHONPATH: football-data/research
-          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           python football-data/research/run_football3_hda_zero_label_audit.py \
             --out-dir "${RUNNER_TEMP}/football3_hda_zero_label"
-      - name: Upload zero-label HDA engineering receipt only
+      - name: Upload exact-head zero-label engineering receipt only
         uses: actions/upload-artifact@v4
         with:
-          name: football3-hda-zero-label-${{ github.event.pull_request.head.sha || github.sha }}
+          name: football3-hda-zero-label-${{ github.event.pull_request.head.sha }}
           retention-days: 30
           if-no-files-found: error
           path: |
@@ -73,10 +143,11 @@ jobs:
             ${{ runner.temp }}/football3_hda_zero_label/counterexample_results.json
             ${{ runner.temp }}/football3_hda_zero_label/zero_label_receipt.json
 
-  hda-windows:
-    name: hda-windows-utf8-zero-label
+  hda-pr334-exact-head-windows-audit:
+    if: github.event.pull_request.number == 334 && github.event.pull_request.head.ref == 'football3/hda-aggregation-engineering-v1'
+    name: hda-pr334-exact-head-windows-full-audit
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: 'utf-8'
@@ -86,21 +157,24 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Compile HDA layer under Windows UTF-8
-        shell: pwsh
-        run: |
-          python -m py_compile football-data/research/football3_hda.py football-data/research/test_football3_hda.py football-data/research/run_football3_hda_zero_label_audit.py football-data/research/audit_football3_changed_scientific_files.py
-      - name: Run 46-case HDA synthetic suite under Windows UTF-8
+      - name: Run complete production audit entry under Windows
         shell: pwsh
         env:
           PYTHONPATH: football-data/research
-        run: python -m unittest football-data/research/test_football3_hda.py -v
+          HDA_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python football-data/research/run_football3_hda_zero_label_audit.py --out-dir "$env:RUNNER_TEMP/football3_hda_zero_label_windows"
+      - name: Assert Windows receipt set was generated
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP/football3_hda_zero_label_windows"
+          @("file_manifest.json","synthetic_test_results.json","counterexample_results.json","zero_label_receipt.json") | ForEach-Object { if (-not (Test-Path (Join-Path $d $_))) { throw "missing receipt $_" } }
 
   repository-integrity:
+    if: startsWith(github.head_ref, 'football3/')
     name: hda-repository-integrity-read-only
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -110,7 +184,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
@@ -129,6 +203,7 @@ jobs:
         run: git diff --exit-code
 
   platform-integrity:
+    if: startsWith(github.head_ref, 'football3/')
     name: hda-platform-integrity-read-only
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -138,7 +213,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
@@ -159,6 +234,7 @@ jobs:
         run: git diff --exit-code
 
   formal-core-zero-scoring:
+    if: startsWith(github.head_ref, 'football3/')
     name: hda-formal-core-zero-scoring
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -168,7 +244,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
