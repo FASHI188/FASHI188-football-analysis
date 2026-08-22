@@ -15,10 +15,12 @@ from formal_cold_start_candidate_v1 import (
     GENERIC_VALIDATED_FALLBACK,
     PRIOR_SEASON_SHRINKAGE,
     STABLE_CURRENT_SEASON,
+    UNINFORMED_GLOBAL_BASELINE,
     load_candidate_config,
     predict_cold_start_from_history,
 )
 from platform_core import MatchRow, PlatformError, sha256_json
+from run_universal_prediction_candidate_v1 import predict_universal
 
 
 class FormalColdStartCandidateV1Tests(unittest.TestCase):
@@ -166,9 +168,41 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
         self.assertEqual(result["cold_start_candidate"]["state"], GENERIC_VALIDATED_FALLBACK)
         self.assertEqual(result["cold_start_candidate"]["prior_weight"], 1.0)
 
-    def test_missing_evidence_hard_fails(self):
-        with self.assertRaisesRegex(PlatformError, "HARD_FAIL"):
-            predict_cold_start_from_history([], "TEST", "2026-27", "A", "B", self.cutoff)
+    def test_missing_evidence_uses_explicit_universal_baseline(self):
+        result = predict_cold_start_from_history([], "TEST", "2026-27", "A", "B", self.cutoff)
+        audit = result["cold_start_candidate"]
+        self.assertEqual(audit["state"], UNINFORMED_GLOBAL_BASELINE)
+        self.assertTrue(audit["coverage_only"])
+        self.assertEqual(audit["confidence"], "VERY_LOW")
+        self.assertFalse(audit["team_strength_evidence"])
+        self.assertEqual(audit["formal_weight"], 0.0)
+        self.assertAlmostEqual(sum(result["probabilities"]["one_x_two"].values()), 1.0, places=10)
+
+    def test_universal_router_covers_unknown_competition(self):
+        result = predict_universal({
+            "competition_id": "NO_SUCH_COMPETITION",
+            "season": "2026-27",
+            "home_team": "Home",
+            "away_team": "Away",
+            "cutoff_utc": self.cutoff.isoformat(),
+        })
+        self.assertEqual(result["universal_router"]["route"], UNINFORMED_GLOBAL_BASELINE)
+        self.assertTrue(result["universal_router"]["downgraded"])
+        self.assertTrue(result["universal_router"]["coverage_guarantee"])
+
+    def test_universal_router_does_not_downgrade_integrity_failure(self):
+        from unittest.mock import patch
+
+        integrity_error = PlatformError("formal-core artifact engine hash does not match current engine")
+        with patch("run_universal_prediction_candidate_v1.predict_joint_distribution", side_effect=integrity_error):
+            with self.assertRaisesRegex(PlatformError, "hash does not match"):
+                predict_universal({
+                    "competition_id": "TEST",
+                    "season": "2026-27",
+                    "home_team": "A",
+                    "away_team": "B",
+                    "cutoff_utc": self.cutoff.isoformat(),
+                })
 
     def test_unvalidated_and_hash_mismatch_hard_fail_without_downgrade(self):
         prior, receipt = self.prior()
@@ -272,4 +306,3 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

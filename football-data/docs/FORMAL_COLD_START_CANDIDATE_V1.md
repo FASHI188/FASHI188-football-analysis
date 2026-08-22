@@ -24,12 +24,22 @@ domain artifacts, and all routine formal entrypoints remain unchanged.
   explicit competition/season-scoped generic artifact plus PASS receipt is
   supplied. Both teams must be present in its validated identity scope. It uses
   a neutral competition baseline and does not invent team strength.
+- `UNINFORMED_GLOBAL_BASELINE`: when neither a validated prior nor a validated
+  generic artifact exists, an explicit versioned global baseline still returns
+  one internally coherent score distribution. It contains no competition or
+  team-strength evidence, is always VERY_LOW confidence, and is coverage-only.
 - `HARD_FAIL`: missing evidence, partial artifact/receipt pairs, invalid status,
   hash/version/scope/time mismatch, unknown team, future/same-day row, wrong
   season/competition, malformed input, or an unvalidated parameter set.
 
-An invalid prior is never silently downgraded to the generic fallback. Callers
+An invalid prior is never silently downgraded to the generic or global fallback. Callers
 must omit the prior entirely before the generic route can be considered.
+
+The default CLI/router is `engine/run_universal_prediction_candidate_v1.py`.
+It attempts the unchanged formal V460 route first. Ordinary coverage gaps may
+downgrade, but hash, receipt, schema, validation-report and other integrity
+failures remain hard errors. Therefore “all matches receive a distribution” does
+not turn corrupted formal assets into apparently valid predictions.
 
 ## Artifact boundary
 
@@ -46,6 +56,10 @@ Artifacts are explicit in-memory inputs. Their independent receipt binds:
 
 Tests use synthetic artifacts only. This change does not create, validate, or
 promote any real prior or generic production artifact.
+
+The global baseline values are explicit in the candidate config and are not
+claimed to be trained or competition-specific. They solve output coverage only;
+they do not establish useful accuracy for an unseen league or team.
 
 ## Continuity and output labels
 

@@ -44,6 +44,7 @@ ENGINE_PATH = Path(__file__).resolve()
 STABLE_CURRENT_SEASON = "STABLE_CURRENT_SEASON"
 PRIOR_SEASON_SHRINKAGE = "PRIOR_SEASON_SHRINKAGE"
 GENERIC_VALIDATED_FALLBACK = "GENERIC_VALIDATED_FALLBACK"
+UNINFORMED_GLOBAL_BASELINE = "UNINFORMED_GLOBAL_BASELINE"
 HARD_FAIL = "HARD_FAIL"
 
 
@@ -611,6 +612,80 @@ def _generic_output(
     )
 
 
+def _universal_output(
+    *,
+    history: list[MatchRow],
+    competition_id: str,
+    season: str,
+    home_team: str,
+    away_team: str,
+    cutoff: datetime,
+    formal_config: dict[str, Any],
+    candidate_config: dict[str, Any],
+) -> dict[str, Any]:
+    universal = candidate_config.get("universal_default")
+    if not isinstance(universal, dict):
+        _fail("versioned universal default configuration missing")
+    payload = {
+        "selected_parameters": universal.get("selected_parameters"),
+        "league_home_goals": universal.get("league_home_goals"),
+        "league_away_goals": universal.get("league_away_goals"),
+        "nb_dispersion_k": universal.get("nb_dispersion_k"),
+    }
+    params = _validated_parameters(payload, formal_config)
+    baseline_home, baseline_away, baseline_k = _artifact_baseline(payload, candidate_config)
+    state = _partial_state(history, cutoff, params, formal_config)
+    threshold = int(candidate_config["stable_current_season"]["minimum_competition_history_matches"])
+    fallback_weight = _competition_prior_weight(len(history), threshold)
+    if state is None:
+        league_home, league_away, dispersion = baseline_home, baseline_away, baseline_k
+    else:
+        league_home = _blend(state["league_home_goals"], baseline_home, fallback_weight)
+        league_away = _blend(state["league_away_goals"], baseline_away, fallback_weight)
+        dispersion = _blend(state["nb_dispersion_k"], baseline_k, fallback_weight)
+    league_total = league_home + league_away
+    means = {
+        "mu_home": league_home,
+        "mu_away": league_away,
+        "mu_total": league_total,
+        "allocation_home_share": league_home / league_total,
+        "home_score_signal": league_home,
+        "away_score_signal": league_away,
+        "home_direct_total_rate": league_total,
+        "away_direct_total_rate": league_total,
+        "direct_total_method": "versioned_uninformed_global_coverage_baseline",
+        "home_raw_matches": 0.0,
+        "away_raw_matches": 0.0,
+        "ess": 0.0,
+    }
+    components = {"competition": fallback_weight, "home_venue": 0.0, "away_venue": 0.0}
+    output = _candidate_output(
+        state_name=UNINFORMED_GLOBAL_BASELINE,
+        competition_id=competition_id,
+        season=season,
+        cutoff=cutoff,
+        history=history,
+        means=means,
+        params=params,
+        dispersion=dispersion,
+        factors={cell: 1.0 for cell in LOW_SCORE_CELLS},
+        prior_weight=fallback_weight,
+        prior_components=components,
+        artifact_audit=None,
+        formal_config=formal_config,
+        candidate_config=candidate_config,
+    )
+    output["cold_start_candidate"].update({
+        "coverage_only": True,
+        "confidence": universal.get("confidence"),
+        "baseline_label": universal.get("label"),
+        "team_strength_evidence": False,
+        "competition_specific_artifact": False,
+        "universal_config_sha256": sha256_json(universal),
+    })
+    return output
+
+
 def predict_cold_start_from_history(
     history: Iterable[MatchRow],
     competition_id: str,
@@ -682,5 +757,13 @@ def predict_cold_start_from_history(
             candidate_config=candidate_config,
         )
 
-    _fail("cold-start evidence unavailable; no validated prior or generic fallback supplied")
-
+    return _universal_output(
+        history=rows,
+        competition_id=competition_id,
+        season=season,
+        home_team=home_team,
+        away_team=away_team,
+        cutoff=cutoff,
+        formal_config=formal_config,
+        candidate_config=candidate_config,
+    )
