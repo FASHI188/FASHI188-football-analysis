@@ -2,10 +2,10 @@
 """Research-only PIT observation adapter for football3 adaptive latent strength.
 
 No file, network, Provider, market, label-dataset, secret, or CURRENT access occurs
-here. Callers must supply already-collected completed-match intensity evidence and
-its provenance. The adapter derives the provable availability timestamp according
-to the V5.3.0 PIT rule and normalizes non-negative intensities with a fixed log1p
-difference against explicit positive references.
+here. Callers supply already-collected completed-match intensity evidence plus
+provenance. Attack is positive for above-reference attacking intensity. Defence is
+positive for stronger defensive resistance, so concession intensity is normalized
+with the inverse log1p difference: reference - observed concession intensity.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any
 
 
 class ObservationAdapterError(ValueError):
-    """Raised when evidence violates the frozen PIT/typing contract."""
+    pass
 
 
 def _aware(value: datetime, field: str) -> datetime:
@@ -93,9 +93,10 @@ ALLOWED_SOURCE_KINDS = frozenset({
 def adapt_completed_match_intensity(evidence: PITIntensityEvidence) -> dict[str, Any]:
     """Normalize one completed-match PIT observation for latent-state update.
 
-    Defence orientation is concession propensity: positive means weaker defence
-    (more conceded relative to reference), matching the latent core's
-    attack-minus-opponent-defence comparison.
+    `defence_intensity` is concession intensity (GA/xGA/npxGA). The returned
+    defence observation has the opposite orientation: positive means stronger
+    defensive resistance, which is the orientation required by the latent core's
+    `attack - opponent_defence` equation.
     """
     if not isinstance(evidence, PITIntensityEvidence):
         raise ObservationAdapterError("evidence must be PITIntensityEvidence")
@@ -143,14 +144,14 @@ def adapt_completed_match_intensity(evidence: PITIntensityEvidence) -> dict[str,
         raise ObservationAdapterError("provable_available_at must be strictly before prediction_cutoff")
 
     attack = _nonnegative(evidence.attack_intensity, "attack_intensity")
-    defence = _nonnegative(evidence.defence_intensity, "defence_intensity")
+    concession = _nonnegative(evidence.defence_intensity, "defence_intensity")
     attack_ref = _positive(evidence.attack_reference, "attack_reference")
     defence_ref = _positive(evidence.defence_reference, "defence_reference")
     attack_var = _positive(evidence.attack_observation_variance, "attack_observation_variance")
     defence_var = _positive(evidence.defence_observation_variance, "defence_observation_variance")
 
     attack_observation = math.log1p(attack) - math.log1p(attack_ref)
-    defence_observation = math.log1p(defence) - math.log1p(defence_ref)
+    defence_observation = math.log1p(defence_ref) - math.log1p(concession)
     if not math.isfinite(attack_observation) or not math.isfinite(defence_observation):
         raise ObservationAdapterError("normalized observations must be finite")
 
@@ -175,6 +176,8 @@ def adapt_completed_match_intensity(evidence: PITIntensityEvidence) -> dict[str,
         "prediction_cutoff": cutoff.isoformat(),
         "attack_observation": attack_observation,
         "defence_observation": defence_observation,
+        "defence_orientation": "positive_is_stronger_defensive_resistance",
+        "defence_intensity_semantics": "concession_intensity_ga_xga_or_npxga",
         "attack_observation_variance": attack_var,
         "defence_observation_variance": defence_var,
         "market_input_used": False,
