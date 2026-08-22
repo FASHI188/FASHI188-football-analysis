@@ -4,9 +4,11 @@
 
 ## 与项目权威链的边界
 
-- 实时施工状态只在 Airtable《当前状态》唯一激活记录中；GitHub 不保存第二份动态 current state。
 - 用户当前明确指令决定是否允许产生副作用。
-- 正式科学规则只保存在项目作用域内唯一 `CURRENT_唯一正式规则`；GitHub 不得复制或替代它。
+- GitHub repository / branch / exact HEAD / PR / run / Artifact 决定仓库事实。
+- 正式科学规则只认 GitHub 唯一路径 `football-data/governance/CURRENT_唯一正式规则.md`；工作树内候选数量必须恰好为 1。
+- `football-data/governance/FOOTBALL3_GPT_FACT_GATE_V1.md` 约束 GPT 事实表述与证据分类。
+- 本机文件、聊天、Airtable 和历史报告仅作非权威审计参考，不得覆盖 GitHub。
 - 本仓库提供可复现输入、研究/运行代码、硬门控、冻结和审计；工程可用不自动等于科学晋级。
 - 历史 manifest/config 即使文件名含 `current` / `active` / `runtime_truth`，也不能因此获得当前任务或授权权威。
 
@@ -60,7 +62,7 @@
 - `config/`：赛事注册表、身份/来源 registry 和工程研究 profile。config 不得充当动态项目状态。
 - `schemas/`：输入、市场、计算输出、冻结和审计契约。
 - `manifests/`：构建/运行 receipt 和历史评估证据；manifest 证明事实，不决定当前项目任务。
-- `governance/`：football-data 内部治理/审计资产；不替代根目录 `AGENTS.md` 或 Airtable《当前状态》。
+- `governance/`：唯一正式 CURRENT、GPT 事实核验硬门及内部治理/审计资产；与根目录 `AGENTS.md` 共同构成 GitHub 正式治理。
 - `docs/`：运行说明与限制；资产生命周期见 `docs/ASSET_LIFECYCLE.md`。
 - `control/`：历史/显式触发类控制资产；不得作为项目动态施工状态源。
 
