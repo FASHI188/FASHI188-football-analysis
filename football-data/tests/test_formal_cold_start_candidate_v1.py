@@ -156,12 +156,16 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
                 self.assertEqual(result["cold_start_candidate"]["formal_weight"], 0.0)
                 self.assertFalse(result["cold_start_candidate"]["exact_gate"])
                 self.assertEqual(result["cold_start_candidate"]["ev_decision"], "No Bet")
+                self.assertTrue(result["cold_start_candidate"]["local_default_activation"])
+                self.assertFalse(result["cold_start_candidate"]["production_activation"])
                 self.assertAlmostEqual(
                     sum(result["probabilities"]["one_x_two"].values()), 1.0, places=10
                 )
         stable = self.predict_with_prior(30)
         self.assertEqual(stable["cold_start_candidate"]["state"], STABLE_CURRENT_SEASON)
         self.assertEqual(stable["cold_start_candidate"]["prior_weight"], 0.0)
+        self.assertTrue(stable["cold_start_candidate"]["local_default_activation"])
+        self.assertFalse(stable["cold_start_candidate"]["production_activation"])
 
     def test_prior_weight_is_monotonic(self):
         weights = [self.predict_with_prior(count)["cold_start_candidate"]["prior_weight"] for count in (0, 1, 2, 29, 30)]
@@ -199,6 +203,8 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
         self.assertEqual(audit["confidence"], "VERY_LOW")
         self.assertFalse(audit["team_strength_evidence"])
         self.assertEqual(audit["formal_weight"], 0.0)
+        self.assertTrue(audit["local_default_activation"])
+        self.assertFalse(audit["production_activation"])
         self.assertAlmostEqual(sum(result["probabilities"]["one_x_two"].values()), 1.0, places=10)
 
     def test_universal_router_covers_unknown_competition(self):
@@ -242,6 +248,8 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
             self.assertFalse(audit["same_market_ev_allowed"])
             self.assertEqual(result["cold_start_candidate"]["ev_decision"], "No Bet")
             self.assertEqual(result["cold_start_candidate"]["formal_weight"], 0.0)
+            self.assertTrue(result["cold_start_candidate"]["local_default_activation"])
+            self.assertFalse(result["cold_start_candidate"]["production_activation"])
 
     def test_market_anchor_rejects_future_snapshot(self):
         request = self.market_request(home_odds=1.8, draw_odds=3.6, away_odds=4.5, ah_line=-0.5)

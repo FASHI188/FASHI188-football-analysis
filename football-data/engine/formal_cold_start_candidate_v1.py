@@ -379,7 +379,8 @@ def _candidate_output(
             "exact_gate": policy["exact_gate"],
             "ev_decision": policy["ev_decision"],
             "scientific_status": policy["scientific_status"],
-            "production_activation": False,
+            "local_default_activation": policy["local_default_activation"],
+            "production_activation": policy["production_activation"],
             "historical_odds_read": False,
         },
     }
@@ -419,7 +420,8 @@ def _stable_output(
         "exact_gate": policy["exact_gate"],
         "ev_decision": policy["ev_decision"],
         "scientific_status": policy["scientific_status"],
-        "production_activation": False,
+        "local_default_activation": policy["local_default_activation"],
+        "production_activation": policy["production_activation"],
         "historical_odds_read": False,
         "delegated_to_unchanged_formal_history_engine": True,
     }

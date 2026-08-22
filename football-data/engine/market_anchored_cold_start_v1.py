@@ -122,7 +122,8 @@ def apply_market_anchor(
         "exact_gate": market_config["exact_gate"],
         "ev_decision": market_config["ev_decision"],
         "same_market_ev_allowed": market_config["same_market_ev_allowed"],
-        "production_activation": False,
+        "local_default_activation": market_config["local_default_activation"],
+        "production_activation": market_config["production_activation"],
     })
     output["market_anchor_audit"] = {
         "status": "通过",
