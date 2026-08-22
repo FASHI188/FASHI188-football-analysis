@@ -6,6 +6,11 @@ on:
       - football3/formal-cold-start-v1
     paths:
       - .github/workflows/football3-formal-cold-start-v1.yml
+      - AGENTS.md
+      - EXECUTION_LITE.md
+      - README.md
+      - governance/validate_project_continuity.py
+      - football-data/README.md
       - football-data/config/formal_cold_start_candidate_v1.json
       - football-data/docs/FORMAL_COLD_START_CANDIDATE_V1.md
       - football-data/docs/FORMAL_COLD_START_FROZEN_OOS_PLAN_V1.md
@@ -13,6 +18,8 @@ on:
       - football-data/engine/formal_cold_start_candidate_v1.py
       - football-data/engine/market_anchored_cold_start_v1.py
       - football-data/engine/run_universal_prediction_candidate_v1.py
+      - football-data/governance/CURRENT_唯一正式规则.md
+      - football-data/governance/FOOTBALL3_GPT_FACT_GATE_V1.md
       - football-data/governance/formal_cold_start_candidate_v1_scope.json
       - football-data/tests/test_formal_cold_start_candidate_v1.py
   workflow_dispatch:
@@ -62,6 +69,32 @@ jobs:
       - name: Run 94 football3 HDA regressions
         run: python football-data/research/test_football3_hda.py
 
+      - name: Validate GitHub-only governance and exact scope
+        run: |
+          python governance/validate_project_continuity.py --self-test
+          python governance/validate_project_continuity.py --root .
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          scope = json.loads(Path("football-data/governance/formal_cold_start_candidate_v1_scope.json").read_text(encoding="utf-8"))
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only", scope["base_head"] + "..HEAD"],
+              text=True,
+          ).splitlines())
+          allowed = set(scope["allowed_paths"])
+          assert changed == allowed, {"missing": sorted(allowed - changed), "unexpected": sorted(changed - allowed)}
+          assert len(changed) == scope["maximum_changed_files"] == 17
+          authority = scope["governance_authority"]
+          assert authority["mode"] == "GITHUB_ONLY"
+          assert subprocess.check_output(["git", "hash-object", authority["unique_current_path"]], text=True).strip() == authority["unique_current_blob_sha"]
+          assert subprocess.check_output(["git", "hash-object", authority["fact_gate_path"]], text=True).strip() == authority["fact_gate_blob_sha"]
+          candidates = sorted(p.as_posix() for p in Path(".").rglob("CURRENT_唯一正式规则.md") if ".git" not in p.parts)
+          assert candidates == [authority["unique_current_path"]]
+          print("github-only governance and exact 17-file scope: PASS")
+          PY
+
       - name: Assert activation contract
         run: |
           python - <<'PY'
@@ -71,6 +104,11 @@ jobs:
           config = json.loads(
               Path("football-data/config/formal_cold_start_candidate_v1.json").read_text(encoding="utf-8")
           )
+          assert config["status"] == "GITHUB_BRANCH_DEFAULT_ROUTER_ACTIVE_FORMAL_WEIGHT_0"
+          authority = config["governance_authority"]
+          assert authority["mode"] == "GITHUB_ONLY"
+          assert authority["local_files_authoritative"] is False
+          assert authority["airtable_authoritative"] is False
           policy = config["output_policy"]
           assert policy["local_default_activation"] is True
           assert policy["production_activation"] is False
