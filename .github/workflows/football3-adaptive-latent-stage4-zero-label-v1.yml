@@ -1,0 +1,88 @@
+name: football3-adaptive-latent-stage4-zero-label-v1
+
+on:
+  push:
+    branches:
+      - football3/adaptive-latent-strength-v1
+    paths:
+      - "football-data/research/adaptive_latent_stage4_zero_label_core_v1.py"
+      - "football-data/research/adaptive_latent_stage4_zero_label_acquisition_v1.py"
+      - "football-data/research/test_adaptive_latent_stage4_zero_label_acquisition_v1.py"
+      - "football-data/research/adaptive_latent_stage4_zero_label_contract_v1.json"
+      - ".github/workflows/football3-adaptive-latent-stage4-zero-label-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-adaptive-latent-stage4-zero-label-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zero-label-target-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile Stage4 collector and contracts
+        run: |
+          python -m py_compile \
+            football-data/research/adaptive_latent_identity_lock_v1.py \
+            football-data/research/adaptive_latent_stage4_zero_label_core_v1.py \
+            football-data/research/adaptive_latent_stage4_zero_label_acquisition_v1.py \
+            football-data/research/test_adaptive_latent_stage4_zero_label_acquisition_v1.py
+          python -m json.tool football-data/research/adaptive_latent_stage4_zero_label_contract_v1.json > /dev/null
+
+      - name: Zero-label behavior and fail-closed tests
+        run: python football-data/research/test_adaptive_latent_stage4_zero_label_acquisition_v1.py
+
+      - name: Acquire future zero-label target identities
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          rm -rf football-data/research/evidence/adaptive_latent_stage4
+          python football-data/research/adaptive_latent_stage4_zero_label_acquisition_v1.py \
+            --output-root football-data/research/evidence/adaptive_latent_stage4
+
+      - name: Audit generated evidence surface
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('football-data/research/evidence/adaptive_latent_stage4')
+          expected={
+            'target_inventory_v1.json',
+            'target_identity_sha256_v1.csv',
+            'stage4_acquisition_status_v1.json',
+          }
+          actual={p.name for p in root.iterdir() if p.is_file()}
+          if actual != expected:
+              raise SystemExit(f'evidence file set mismatch: {sorted(actual)}')
+          inv=json.loads((root/'target_inventory_v1.json').read_text(encoding='utf-8'))
+          status=json.loads((root/'stage4_acquisition_status_v1.json').read_text(encoding='utf-8'))
+          if inv.get('label_fields_persisted') != 0 or inv.get('real_target_values_read') != 0:
+              raise SystemExit('zero-label receipt violated')
+          if inv.get('raw_provider_payload_persisted') is not False:
+              raise SystemExit('raw provider payload persistence violated')
+          if status.get('xg_live_provider_call_performed') is not False:
+              raise SystemExit('xG live-call boundary violated')
+          if status.get('real_labels_read') != 0:
+              raise SystemExit('real-label boundary violated')
+          print(json.dumps({'target_row_count': inv['target_row_count'], 'identity_lock_sha256': inv['identity_lock_sha256']}, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-zero-label-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4
+          if-no-files-found: error
+          retention-days: 90
