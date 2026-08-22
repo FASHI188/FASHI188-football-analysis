@@ -1,0 +1,79 @@
+name: football3 universal cold-start acceptance
+
+on:
+  push:
+    branches:
+      - football3/formal-cold-start-v1
+    paths:
+      - .github/workflows/football3-formal-cold-start-v1.yml
+      - football-data/config/formal_cold_start_candidate_v1.json
+      - football-data/docs/FORMAL_COLD_START_CANDIDATE_V1.md
+      - football-data/engine/formal_cold_start_candidate_v1.py
+      - football-data/engine/market_anchored_cold_start_v1.py
+      - football-data/engine/run_universal_prediction_candidate_v1.py
+      - football-data/governance/formal_cold_start_candidate_v1_scope.json
+      - football-data/tests/test_formal_cold_start_candidate_v1.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-formal-cold-start-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: 123-test acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: football-data/engine
+    steps:
+      - name: Checkout exact branch commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile cold-start engines
+        run: |
+          python -m py_compile \
+            football-data/engine/formal_cold_start_candidate_v1.py \
+            football-data/engine/market_anchored_cold_start_v1.py \
+            football-data/engine/run_universal_prediction_candidate_v1.py
+
+      - name: Run 15 cold-start tests
+        run: python football-data/tests/test_formal_cold_start_candidate_v1.py
+
+      - name: Run 14 unchanged platform regressions
+        run: |
+          python football-data/tests/test_football_v460_engine.py
+          python football-data/tests/test_nested_backtest_v460.py
+          python football-data/tests/test_platform_core.py
+          python football-data/tests/test_prediction_pipeline.py
+
+      - name: Run 94 football3 HDA regressions
+        run: python football-data/research/test_football3_hda.py
+
+      - name: Assert activation contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(
+              Path("football-data/config/formal_cold_start_candidate_v1.json").read_text(encoding="utf-8")
+          )
+          policy = config["output_policy"]
+          assert policy["local_default_activation"] is True
+          assert policy["production_activation"] is False
+          assert policy["formal_weight"] == 0.0
+          assert policy["exact_gate"] is False
+          assert policy["ev_decision"] == "No Bet"
+          print("activation contract: PASS")
+          PY
