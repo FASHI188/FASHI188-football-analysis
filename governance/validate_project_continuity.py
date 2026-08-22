@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Static guard for the football project's simplified governance topology.
 
-GitHub is the football project's only formal persistence source. This guard
-requires one exact CURRENT path, the active GPT fact gate, GitHub-only authority
-markers, and prevents legacy checkpoint/control mirrors.
+Airtable《当前状态》 is the only live dynamic project-state source. GitHub keeps
+stable policy, code, data and factual evidence. This guard also prevents deeper
+engineering folders from recreating a second `current`/checkpoint/activation
+control surface.
 """
 from __future__ import annotations
 
@@ -17,12 +18,11 @@ from tempfile import TemporaryDirectory
 PASS = "GOVERNANCE_TOPOLOGY_INTEGRITY_PASS"
 FAIL = "BLOCKED_GOVERNANCE_TOPOLOGY_INTEGRITY"
 
-GITHUB_MARKER = "CONTROL_MARKER: GITHUB_FORMAL_GOVERNANCE_ONLY"
-FORMAL_MARKER = "FORMAL_MARKER: GITHUB_UNIQUE_CURRENT_REQUIRED"
+AIRTABLE_MARKER = "CONTROL_MARKER: AIRTABLE_CURRENT_STATE_ONLY"
+FORMAL_MARKER = "FORMAL_MARKER: FORMAL_CURRENT_WHEN_REQUIRED"
 AUTH_MARKER = "AUTH_MARKER: CURRENT_USER_COMMAND_REQUIRED"
-MIRROR_MARKER = "MIRROR_MARKER: LOCAL_NON_AUTHORITATIVE"
-CURRENT_PATH = "football-data/governance/CURRENT_唯一正式规则.md"
-FACT_GATE_PATH = "football-data/governance/FOOTBALL3_GPT_FACT_GATE_V1.md"
+MIRROR_MARKER = "MIRROR_MARKER: NO_DYNAMIC_STATE_MIRRORS"
+CURRENT_STATE_TEXT = "Airtable《当前状态》"
 
 FORBIDDEN_ROOT_FILES = (
     "ACTIVE_CHECKPOINT.md",
@@ -47,8 +47,6 @@ REQUIRED_BOUNDARY_FILES = (
     "football-data/config/v6_engineering_research_profile_v6494.json",
     "football-data/validation/validate_engineering_research_profile_v6494.py",
     "football-data/docs/ASSET_LIFECYCLE.md",
-    CURRENT_PATH,
-    FACT_GATE_PATH,
 )
 
 
@@ -79,7 +77,7 @@ def validate_root(root: Path) -> Decision:
         reasons.append(error)
     else:
         assert agents is not None
-        for marker in (GITHUB_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, f"CURRENT_PATH: {CURRENT_PATH}"):
+        for marker in (AIRTABLE_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, CURRENT_STATE_TEXT):
             if marker not in agents:
                 reasons.append(f"AGENTS.md: missing {marker}")
 
@@ -88,30 +86,11 @@ def validate_root(root: Path) -> Decision:
         reasons.append(error)
     else:
         assert execution is not None
-        for marker in (GITHUB_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, f"CURRENT_PATH: {CURRENT_PATH}"):
+        for marker in (AIRTABLE_MARKER, AUTH_MARKER, MIRROR_MARKER, CURRENT_STATE_TEXT):
             if marker not in execution:
                 reasons.append(f"EXECUTION_LITE.md: missing {marker}")
         if "讨论不等于执行" not in execution:
             reasons.append("EXECUTION_LITE.md: missing explicit discussion/execution boundary")
-
-
-    current_candidates = sorted(
-        path.relative_to(root).as_posix()
-        for path in root.rglob("CURRENT_唯一正式规则.md")
-        if ".git" not in path.parts
-    )
-    if current_candidates != [CURRENT_PATH]:
-        reasons.append(f"CURRENT uniqueness/path mismatch: {current_candidates}")
-    current_text, error = _read_required(root, CURRENT_PATH)
-    if error:
-        reasons.append(error)
-    elif "ACTIVE / CURRENT / UNIQUE FORMAL RULE" not in current_text or "GitHub 是足球3唯一正式持久化来源" not in current_text:
-        reasons.append("formal CURRENT missing active GitHub-only markers")
-    fact_text, error = _read_required(root, FACT_GATE_PATH)
-    if error:
-        reasons.append(error)
-    elif "ACTIVE_GPT_FACT_BOUNDARY" not in fact_text or "GitHub-only 边界" not in fact_text:
-        reasons.append("GPT fact gate missing active GitHub-only markers")
 
     for rel in FORBIDDEN_ROOT_FILES:
         if (root / rel).exists():
@@ -169,17 +148,13 @@ def validate_root(root: Path) -> Decision:
 
 
 def _write_fixture(root: Path) -> None:
-    (root / "AGENTS.md").write_text("\n".join((GITHUB_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, f"CURRENT_PATH: {CURRENT_PATH}")) + "\n", encoding="utf-8")
-    (root / "EXECUTION_LITE.md").write_text("\n".join((GITHUB_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, f"CURRENT_PATH: {CURRENT_PATH}", "讨论不等于执行")) + "\n", encoding="utf-8")
+    (root / "AGENTS.md").write_text("\n".join((AIRTABLE_MARKER, FORMAL_MARKER, AUTH_MARKER, MIRROR_MARKER, CURRENT_STATE_TEXT)) + "\n", encoding="utf-8")
+    (root / "EXECUTION_LITE.md").write_text("\n".join((AIRTABLE_MARKER, AUTH_MARKER, MIRROR_MARKER, CURRENT_STATE_TEXT, "讨论不等于执行")) + "\n", encoding="utf-8")
     for rel in REQUIRED_BOUNDARY_FILES:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         if rel.endswith("v6_engineering_research_profile_v6494.json"):
             path.write_text(json.dumps({"project_state_authority": False, "execution_authority": "EXPLICIT_DISPATCH_ONLY"}), encoding="utf-8")
-        elif rel == CURRENT_PATH:
-            path.write_text("ACTIVE / CURRENT / UNIQUE FORMAL RULE\nGitHub 是足球3唯一正式持久化来源\n", encoding="utf-8")
-        elif rel == FACT_GATE_PATH:
-            path.write_text("ACTIVE_GPT_FACT_BOUNDARY\nGitHub-only 边界\n", encoding="utf-8")
         else:
             path.write_text("boundary\n", encoding="utf-8")
     runtime = root / "football-data" / "runtime" / "activation"
@@ -201,11 +176,6 @@ def run_self_test() -> int:
         (root / "PROJECT_CURRENT.md").write_text("legacy mirror\n", encoding="utf-8")
         checks.append(("legacy_root_mirror_rejected", validate_root(root).status == FAIL))
         (root / "PROJECT_CURRENT.md").unlink()
-
-        duplicate = root / "CURRENT_唯一正式规则.md"
-        duplicate.write_text("duplicate\n", encoding="utf-8")
-        checks.append(("duplicate_current_rejected", validate_root(root).status == FAIL))
-        duplicate.unlink()
 
         bad = root / "football-data" / "validation" / "activate_bad.py"
         bad.write_text("bad\n", encoding="utf-8")

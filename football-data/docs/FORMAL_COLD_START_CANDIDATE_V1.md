@@ -2,11 +2,10 @@
 
 ## Status
 
-`GITHUB_BRANCH_DEFAULT_ROUTER_ACTIVE_FORMAL_WEIGHT_0`
+`LOCAL_DEFAULT_ROUTER_ACTIVE_FORMAL_WEIGHT_0`
 
-This is the GitHub-branch default coverage router authorized on 2026-08-22. GitHub
-is its only formal persistence and governance source. It is not a published
-production artifact or scientific promotion. The
+This is the locally active default coverage router authorized on 2026-08-22. It
+is not a published production artifact or scientific promotion. The
 hash-bound `football_v460_engine.py`, its formal configuration, the 17 existing
 domain artifacts, and all routine formal entrypoints remain unchanged.
 
@@ -87,14 +86,10 @@ Every result from this candidate is labeled:
 - `exact_gate = false`;
 - `ev_decision = No Bet`;
 - `scientific_status = NOT_VALIDATED_NOT_PROMOTED`;
-- `local_default_activation = true` (legacy CLI compatibility field; it grants no local governance authority);
+- `local_default_activation = true`;
 - `production_activation = false`.
 
 Engineering tests cannot establish improved accuracy. Real chronological OOS
 validation, frozen real artifacts, independent replay, promotion receipts, and a
 separate user decision would still be required before production publication or
 scientific promotion.
-
-## GitHub-only governance
-
-The unique formal CURRENT is `football-data/governance/CURRENT_唯一正式规则.md`, and the active fact gate is `football-data/governance/FOOTBALL3_GPT_FACT_GATE_V1.md`. Local files, chat copies and Airtable records cannot activate or override this candidate. A web GPT may claim football3 output only after a real execution interface invokes the exact GitHub version.
