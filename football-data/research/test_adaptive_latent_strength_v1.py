@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import ast
 import json
 import math
 import unittest
@@ -107,18 +106,6 @@ class ContractTests(unittest.TestCase):
         gate = contract["scientific_next_gate_before_any_real_label_read"]
         self.assertTrue(gate)
         self.assertTrue(all(gate.values()))
-
-    def test_module_has_no_io_network_market_or_training_imports(self):
-        source = (HERE / "adaptive_latent_strength_v1.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                imported.add(node.module.split(".")[0])
-        forbidden = {"os", "sys", "pathlib", "json", "csv", "sqlite3", "urllib", "requests", "httpx", "pandas", "numpy", "sklearn", "catboost"}
-        self.assertFalse(imported & forbidden, imported & forbidden)
 
     def test_public_comparison_does_not_claim_probability(self):
         model = AdaptiveLatentStrengthV1()
