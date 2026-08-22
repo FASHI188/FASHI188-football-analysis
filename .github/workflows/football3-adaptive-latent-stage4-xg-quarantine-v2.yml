@@ -1,0 +1,112 @@
+name: football3-adaptive-latent-stage4-xg-quarantine-v2
+
+on:
+  push:
+    branches:
+      - football3/adaptive-latent-strength-v1
+    paths:
+      - "football-data/research/adaptive_latent_stage4_xg_quarantine_v2.py"
+      - "football-data/research/adaptive_latent_stage4_xg_quarantine_contract_v2.json"
+      - "football-data/research/test_adaptive_latent_stage4_xg_quarantine_v2.py"
+      - "football-data/research/test_adaptive_latent_stage4_xg_quarantine_adversarial_v2.py"
+      - ".github/workflows/football3-adaptive-latent-stage4-xg-quarantine-v2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quarantine-exact-whitelist-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile quarantine contract surface
+        run: |
+          python -m py_compile \
+            football-data/research/adaptive_latent_identity_lock_v1.py \
+            football-data/research/adaptive_latent_stage4_xg_quarantine_v2.py \
+            football-data/research/test_adaptive_latent_stage4_xg_quarantine_v2.py \
+            football-data/research/test_adaptive_latent_stage4_xg_quarantine_adversarial_v2.py
+          python -m json.tool \
+            football-data/research/adaptive_latent_stage4_xg_quarantine_contract_v2.json \
+            > /dev/null
+
+      - name: Behavior contract and fail-closed tests
+        run: python football-data/research/test_adaptive_latent_stage4_xg_quarantine_v2.py
+
+      - name: Independent adversarial exact-whitelist tests
+        run: python football-data/research/test_adaptive_latent_stage4_xg_quarantine_adversarial_v2.py
+
+      - name: Emit research-only quarantine guard evidence
+        env:
+          FOOTBALL3_HEAD_SHA: ${{ github.sha }}
+        run: |
+          rm -rf football-data/research/evidence/adaptive_latent_stage4_xg_quarantine
+          mkdir -p football-data/research/evidence/adaptive_latent_stage4_xg_quarantine
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("football-data/research/evidence/adaptive_latent_stage4_xg_quarantine")
+          status = {
+              "schema": "football3_adaptive_latent_stage4_xg_quarantine_status_v2",
+              "status": "ENGINEERING_GUARD_PASS_SOURCE_PROJECTION_UNRESOLVED",
+              "head_sha": os.environ["FOOTBALL3_HEAD_SHA"],
+              "guard": "EXACT_FIELD_WHITELIST_PLUS_DEFAULT_DENY",
+              "source_producer": "UNRESOLVED_PENDING_SAFE_TRANSPORT_AND_SCHEMA_CONTRACT",
+              "live_provider_call_performed": False,
+              "raw_provider_payload_parsed": False,
+              "real_labels_read": 0,
+              "completed_match_xg_row_count": 0,
+              "completion_witness_count": 0,
+              "formal_pit_eligible_row_count": 0,
+              "eligible_for_latent_update_row_count": 0,
+              "training": False,
+              "tuning": False,
+              "real_scoring": False,
+              "secret_access": False,
+              "formal_weight": 0.0,
+              "current_change": False,
+              "ready": False,
+              "merge": False,
+          }
+          (root / "xg_quarantine_status_v2.json").write_text(
+              json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("football-data/research/evidence/adaptive_latent_stage4_xg_quarantine")
+          actual = {p.name for p in root.iterdir() if p.is_file()}
+          if actual != {"xg_quarantine_status_v2.json"}:
+              raise SystemExit(f"unexpected evidence files: {sorted(actual)}")
+          s = json.loads((root / "xg_quarantine_status_v2.json").read_text(encoding="utf-8"))
+          assert s["status"] == "ENGINEERING_GUARD_PASS_SOURCE_PROJECTION_UNRESOLVED"
+          assert s["live_provider_call_performed"] is False
+          assert s["raw_provider_payload_parsed"] is False
+          assert s["real_labels_read"] == 0
+          assert s["completed_match_xg_row_count"] == 0
+          assert s["formal_pit_eligible_row_count"] == 0
+          assert s["eligible_for_latent_update_row_count"] == 0
+          assert s["training"] is False
+          assert s["real_scoring"] is False
+          assert s["formal_weight"] == 0.0
+          print(json.dumps(s, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-xg-quarantine-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4_xg_quarantine
+          if-no-files-found: error
+          retention-days: 90
