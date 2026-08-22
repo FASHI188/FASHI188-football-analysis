@@ -15,7 +15,10 @@ from typing import Any
 
 from football_v460_engine import current_season_history, predict_joint_distribution
 from formal_cold_start_candidate_v1 import predict_cold_start_from_history
-from platform_core import PlatformError, atomic_write_json, parse_iso_datetime, read_processed_matches
+from market_anchored_cold_start_v1 import apply_market_anchor
+from platform_core import PlatformError, ROOT, atomic_write_json, load_json, parse_iso_datetime, read_processed_matches
+
+CANDIDATE_CONFIG_PATH = ROOT / "config" / "formal_cold_start_candidate_v1.json"
 
 ALLOWED_COVERAGE_GAPS = (
     "processed competition directory missing:",
@@ -99,6 +102,14 @@ def predict_universal(payload: dict[str, Any]) -> dict[str, Any]:
         away_team,
         cutoff,
     )
+    if payload.get("market_snapshot") is not None:
+        candidate_config = load_json(CANDIDATE_CONFIG_PATH)
+        output = apply_market_anchor(
+            output,
+            payload,
+            cutoff,
+            candidate_config["market_anchored_cold_start"],
+        )
     output["universal_router"] = {
         "route": output["cold_start_candidate"]["state"],
         "downgraded": True,

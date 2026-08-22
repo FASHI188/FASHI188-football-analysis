@@ -21,6 +21,7 @@ from formal_cold_start_candidate_v1 import (
 )
 from platform_core import MatchRow, PlatformError, sha256_json
 from run_universal_prediction_candidate_v1 import predict_universal
+from market_anchored_cold_start_v1 import MARKET_ANCHORED_COLD_START
 
 
 class FormalColdStartCandidateV1Tests(unittest.TestCase):
@@ -110,6 +111,28 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
             },
         }
         return artifact, self._receipt(artifact)
+
+    def market_request(self, *, home_odds: float, draw_odds: float, away_odds: float, ah_line: float) -> dict:
+        observed = self.cutoff - timedelta(minutes=10)
+        return {
+            "competition_id": "NO_SUCH_COMPETITION",
+            "season": "2026-27",
+            "home_team": "Home",
+            "away_team": "Away",
+            "cutoff_utc": self.cutoff.isoformat(),
+            "freeze_time_utc": self.cutoff.isoformat(),
+            "kickoff_utc": (self.cutoff + timedelta(hours=2)).isoformat(),
+            "market_snapshot": {
+                "observed_at_utc": observed.isoformat(),
+                "sources": [
+                    {"name": "Book A", "group": "A", "observed_at_utc": observed.isoformat(), "tradable": True},
+                    {"name": "Book B", "group": "B", "observed_at_utc": (observed + timedelta(minutes=2)).isoformat(), "tradable": True},
+                ],
+                "one_x_two": {"home": home_odds, "draw": draw_odds, "away": away_odds},
+                "asian_handicap": {"line": ah_line, "home": 1.92, "away": 1.94},
+                "total_goals": {"line": 2.5, "over": 1.93, "under": 1.93},
+            },
+        }
 
     def predict_with_prior(self, count: int) -> dict:
         artifact, receipt = self.prior()
@@ -203,6 +226,38 @@ class FormalColdStartCandidateV1Tests(unittest.TestCase):
                     "away_team": "B",
                     "cutoff_utc": self.cutoff.isoformat(),
                 })
+
+    def test_market_anchor_differentiates_unknown_teams(self):
+        strong = predict_universal(self.market_request(home_odds=1.55, draw_odds=4.2, away_odds=6.0, ah_line=-1.0))
+        weak = predict_universal(self.market_request(home_odds=6.0, draw_odds=4.2, away_odds=1.55, ah_line=1.0))
+        self.assertEqual(strong["universal_router"]["route"], MARKET_ANCHORED_COLD_START)
+        self.assertEqual(weak["universal_router"]["route"], MARKET_ANCHORED_COLD_START)
+        self.assertGreater(strong["probabilities"]["one_x_two"]["home"], weak["probabilities"]["one_x_two"]["home"])
+        self.assertNotEqual(strong["probabilities"]["one_x_two"], weak["probabilities"]["one_x_two"])
+        for result in (strong, weak):
+            audit = result["market_anchor_audit"]
+            self.assertEqual(audit["status"], "通过")
+            self.assertAlmostEqual(audit["probability_sum"], 1.0, places=10)
+            self.assertLessEqual(audit["solver"]["max_constraint_residual"], 1e-8)
+            self.assertFalse(audit["same_market_ev_allowed"])
+            self.assertEqual(result["cold_start_candidate"]["ev_decision"], "No Bet")
+            self.assertEqual(result["cold_start_candidate"]["formal_weight"], 0.0)
+
+    def test_market_anchor_rejects_future_snapshot(self):
+        request = self.market_request(home_odds=1.8, draw_odds=3.6, away_odds=4.5, ah_line=-0.5)
+        future = self.cutoff + timedelta(minutes=1)
+        request["market_snapshot"]["observed_at_utc"] = future.isoformat()
+        request["market_snapshot"]["sources"][0]["observed_at_utc"] = future.isoformat()
+        with self.assertRaisesRegex(PlatformError, "PIT/source integrity failure"):
+            predict_universal(request)
+
+    def test_incomplete_market_retains_global_baseline(self):
+        request = self.market_request(home_odds=1.8, draw_odds=3.6, away_odds=4.5, ah_line=-0.5)
+        del request["market_snapshot"]["asian_handicap"]
+        result = predict_universal(request)
+        self.assertEqual(result["universal_router"]["route"], UNINFORMED_GLOBAL_BASELINE)
+        self.assertEqual(result["market_anchor_audit"]["status"], "不可用")
+        self.assertFalse(result["market_anchor_audit"]["probability_mutation"])
 
     def test_unvalidated_and_hash_mismatch_hard_fail_without_downgrade(self):
         prior, receipt = self.prior()

@@ -28,6 +28,10 @@ domain artifacts, and all routine formal entrypoints remain unchanged.
   generic artifact exists, an explicit versioned global baseline still returns
   one internally coherent score distribution. It contains no competition or
   team-strength evidence, is always VERY_LOW confidence, and is coverage-only.
+- `MARKET_ANCHORED_COLD_START`: when the formal route is unavailable but a
+  complete synchronized question-time 1X2/AH/OU snapshot passes the PIT/source
+  gate, the existing non-redundant KL projection reshapes the global baseline
+  into a match-specific coverage matrix. It remains formal_weight=0 and No Bet.
 - `HARD_FAIL`: missing evidence, partial artifact/receipt pairs, invalid status,
   hash/version/scope/time mismatch, unknown team, future/same-day row, wrong
   season/competition, malformed input, or an unvalidated parameter set.
@@ -40,6 +44,14 @@ It attempts the unchanged formal V460 route first. Ordinary coverage gaps may
 downgrade, but hash, receipt, schema, validation-report and other integrity
 failures remain hard errors. Therefore “all matches receive a distribution” does
 not turn corrupted formal assets into apparently valid predictions.
+
+When a market snapshot is supplied, `freeze_time_utc` must exactly equal the
+prediction cutoff and kickoff must be later. Future/asynchronous or falsely
+independent sources hard fail. An incomplete but otherwise non-conflicting
+snapshot retains the global baseline. A complete snapshot uses the constraint
+basis `1X2_DRAW + AH_FAIR_SETTLEMENT + OU_FAIR_SETTLEMENT` and records de-vigged
+targets, input/output matrix hashes, KL objective, iterations and residuals.
+Because these same prices shape the candidate, they cannot also establish EV.
 
 ## Artifact boundary
 
