@@ -1,0 +1,158 @@
+name: football3-adaptive-latent-stage4-official-schedule-v1
+
+on:
+  push:
+    branches:
+      - football3/adaptive-latent-strength-v1
+    paths:
+      - "football-data/research/adaptive_latent_stage4_official_schedule_source_v1.py"
+      - "football-data/research/adaptive_latent_stage4_official_schedule_contract_v1.json"
+      - "football-data/research/official_schedule_projection_candidate_v1.json"
+      - "football-data/research/target_inventory_candidate_v3.json"
+      - "football-data/research/target_identity_candidate_v3.csv"
+      - "football-data/research/test_adaptive_latent_stage4_official_schedule_source_v1.py"
+      - "football-data/research/test_adaptive_latent_stage4_official_schedule_adversarial_v1.py"
+      - ".github/workflows/football3-adaptive-latent-stage4-official-schedule-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  official-schedule-zero-label-identity-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile exact-whitelist surface
+        run: |
+          python -m py_compile \
+            football-data/research/adaptive_latent_identity_lock_v1.py \
+            football-data/research/adaptive_latent_stage4_official_schedule_source_v1.py \
+            football-data/research/test_adaptive_latent_stage4_official_schedule_source_v1.py \
+            football-data/research/test_adaptive_latent_stage4_official_schedule_adversarial_v1.py
+          python -m json.tool \
+            football-data/research/adaptive_latent_stage4_official_schedule_contract_v1.json \
+            > /dev/null
+          python -m json.tool \
+            football-data/research/official_schedule_projection_candidate_v1.json \
+            > /dev/null
+          python -m json.tool \
+            football-data/research/target_inventory_candidate_v3.json \
+            > /dev/null
+
+      - name: Behavior contract and fail-closed tests
+        run: python football-data/research/test_adaptive_latent_stage4_official_schedule_source_v1.py
+
+      - name: Independent adversarial AST and schema probes
+        run: python football-data/research/test_adaptive_latent_stage4_official_schedule_adversarial_v1.py
+
+      - name: Rebuild and byte-compare frozen identity evidence
+        run: |
+          tmpdir="$(mktemp -d)"
+          FOOTBALL3_TMPDIR="$tmpdir" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          root = Path("football-data/research")
+          sys.path.insert(0, str(root.resolve()))
+          from adaptive_latent_stage4_official_schedule_source_v1 import materialize_target_inventory
+
+          sources = json.loads((root / "official_schedule_projection_candidate_v1.json").read_text(encoding="utf-8"))
+          inventory, identity_csv, _ = materialize_target_inventory(sources)
+          out = Path(os.environ["FOOTBALL3_TMPDIR"])
+          (out / "target_inventory_candidate_v3.json").write_text(
+              json.dumps(inventory, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          (out / "target_identity_candidate_v3.csv").write_text(identity_csv, encoding="utf-8")
+          PY
+          cmp "$tmpdir/target_inventory_candidate_v3.json" football-data/research/target_inventory_candidate_v3.json
+          cmp "$tmpdir/target_identity_candidate_v3.csv" football-data/research/target_identity_candidate_v3.csv
+          rm -rf "$tmpdir"
+
+      - name: Emit research-only identity evidence
+        env:
+          FOOTBALL3_HEAD_SHA: ${{ github.sha }}
+        run: |
+          rm -rf football-data/research/evidence/adaptive_latent_stage4_official_schedule
+          mkdir -p football-data/research/evidence/adaptive_latent_stage4_official_schedule
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("football-data/research")
+          inventory = json.loads((root / "target_inventory_candidate_v3.json").read_text(encoding="utf-8"))
+          status = {
+              "schema": "football3_adaptive_latent_stage4_official_schedule_status_v1",
+              "status": "ENGINEERING_IDENTITY_LOCK_PASS_FORMAL_PIT_PENDING_PROVIDER_MAPPING_UNRESOLVED",
+              "head_sha": os.environ["FOOTBALL3_HEAD_SHA"],
+              "guard": "EXACT_FIELD_WHITELIST_PLUS_DEFAULT_DENY",
+              "source_projection_count": 5,
+              "target_row_count": inventory["target_row_count"],
+              "identity_lock_sha256": inventory["identity_lock_sha256"],
+              "ordered_identity_sha256": inventory["ordered_identity_sha256"],
+              "source_revision_status": inventory["source_revision_status"],
+              "availability_proof_status": inventory["availability_proof_status"],
+              "provider_event_id_present": False,
+              "provider_mapping_status": "UNRESOLVED_SEPARATE_GATE",
+              "provider_event_payload_dependency": False,
+              "result_endpoint_dependency": False,
+              "real_labels_read": 0,
+              "formal_pit_eligible": False,
+              "training": False,
+              "tuning": False,
+              "real_scoring": False,
+              "secret_access": False,
+              "formal_weight": 0.0,
+              "current_change": False,
+              "ready": False,
+              "merge": False,
+          }
+          evidence = root / "evidence/adaptive_latent_stage4_official_schedule"
+          (evidence / "official_schedule_status_v1.json").write_text(
+              json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          cp football-data/research/target_inventory_candidate_v3.json \
+            football-data/research/evidence/adaptive_latent_stage4_official_schedule/
+          cp football-data/research/target_identity_candidate_v3.csv \
+            football-data/research/evidence/adaptive_latent_stage4_official_schedule/
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("football-data/research/evidence/adaptive_latent_stage4_official_schedule")
+          actual = {p.name for p in root.iterdir() if p.is_file()}
+          expected = {
+              "official_schedule_status_v1.json",
+              "target_inventory_candidate_v3.json",
+              "target_identity_candidate_v3.csv",
+          }
+          if actual != expected:
+              raise SystemExit(f"unexpected evidence files: {sorted(actual)}")
+          s = json.loads((root / "official_schedule_status_v1.json").read_text(encoding="utf-8"))
+          assert s["real_labels_read"] == 0
+          assert s["formal_pit_eligible"] is False
+          assert s["provider_event_id_present"] is False
+          assert s["training"] is False
+          assert s["real_scoring"] is False
+          assert s["formal_weight"] == 0.0
+          print(json.dumps(s, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-official-schedule-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4_official_schedule
+          if-no-files-found: error
+          retention-days: 90
