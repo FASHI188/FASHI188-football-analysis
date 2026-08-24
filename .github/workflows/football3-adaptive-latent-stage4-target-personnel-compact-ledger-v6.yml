@@ -1,0 +1,41 @@
+name: football3-adaptive-latent-stage4-target-personnel-compact-ledger-v6
+on:
+  push:
+    branches: [football3/adaptive-latent-strength-v1]
+    paths:
+      - "football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_guard_v6.py"
+      - "football-data/research/test_adaptive_latent_stage4_target_personnel_compact_ledger_v6.py"
+      - "football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_index_v6.json"
+      - "football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_*_part*_v6.tsv"
+      - ".github/workflows/football3-adaptive-latent-stage4-target-personnel-compact-ledger-v6.yml"
+permissions: {contents: read}
+jobs:
+  target-personnel-ledger-zero-label-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Validate compact 38-team 1097-person ledger
+        run: |
+          python -m py_compile football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_guard_v6.py football-data/research/test_adaptive_latent_stage4_target_personnel_compact_ledger_v6.py
+          python -m json.tool football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_index_v6.json >/dev/null
+          python football-data/research/test_adaptive_latent_stage4_target_personnel_compact_ledger_v6.py
+      - name: Emit engineering evidence
+        env: {FOOTBALL3_HEAD_SHA: "${{ github.sha }}"}
+        run: |
+          mkdir -p football-data/research/evidence/adaptive_latent_stage4_target_personnel_compact_ledger_v6
+          FOOTBALL3_PARENT_SHA="$(git rev-parse HEAD^)" python - <<'PY'
+          import json,os
+          from pathlib import Path
+          root=Path('football-data/research'); idx=json.loads((root/'adaptive_latent_stage4_target_personnel_compact_ledger_index_v6.json').read_text())
+          out={'schema':'football3_adaptive_latent_stage4_target_personnel_ledger_status_v6','status':'ENGINEERING_TARGET_PERSONNEL_LEDGER_PASS_FORMAL_PIT_FALSE','head_sha':os.environ['FOOTBALL3_HEAD_SHA'],'direct_parent_sha':os.environ['FOOTBALL3_PARENT_SHA'],'target_count':21,'target_team_count':38,'person_row_count':1097,'compact_file_count':sum(len(v) for v in idx['files'].values()),'competition_person_row_counts':idx['competition_person_row_counts'],'evidence_team_counts':idx['evidence_team_counts'],'identity_lock_sha256':idx['identity_lock_sha256'],'ordered_identity_sha256':idx['ordered_identity_sha256'],'real_labels_read':0,'real_match_rows_read':0,'training':False,'tuning':False,'real_scoring':False,'provider_api':False,'secret_access':False,'CURRENT_change':False,'formal_pit_eligible':False,'formal_weight':0.0,'merge':False}
+          p=root/'evidence/adaptive_latent_stage4_target_personnel_compact_ledger_v6'; (p/'target_personnel_ledger_status_v6.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-target-personnel-compact-ledger-v6-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4_target_personnel_compact_ledger_v6
+          if-no-files-found: error
+          retention-days: 90
