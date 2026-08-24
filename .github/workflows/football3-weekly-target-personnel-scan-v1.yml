@@ -1,0 +1,76 @@
+name: football3-weekly-target-personnel-scan-v1
+
+on:
+  push:
+    branches: [football3/adaptive-latent-strength-v1]
+    paths:
+      - "football-data/research/football3_weekly_personnel_scan_v1.py"
+      - "football-data/research/test_football3_weekly_personnel_scan_v1.py"
+      - "football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_index_v6.json"
+      - "football-data/research/adaptive_latent_stage4_target_personnel_compact_ledger_*_part*_v6.tsv"
+      - ".github/workflows/football3-weekly-target-personnel-scan-v1.yml"
+  schedule:
+    - cron: "15 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-weekly-personnel-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  weekly-personnel-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact event ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile scanner and tests
+        run: |
+          python -m py_compile \
+            football-data/research/football3_weekly_personnel_scan_v1.py \
+            football-data/research/test_football3_weekly_personnel_scan_v1.py
+
+      - name: Run zero-label synthetic and baseline tests
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/test_football3_weekly_personnel_scan_v1.py
+
+      - name: Scan 38 target teams from official personnel sources
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          rm -rf football-data/research/evidence/weekly_personnel_scan_v1
+          python football-data/research/football3_weekly_personnel_scan_v1.py \
+            --output-dir football-data/research/evidence/weekly_personnel_scan_v1 \
+            --timeout 20 \
+            --max-bytes 4000000
+
+      - name: Publish scan summary
+        if: always()
+        run: |
+          if [ -f football-data/research/evidence/weekly_personnel_scan_v1/weekly_personnel_scan.md ]; then
+            cat football-data/research/evidence/weekly_personnel_scan_v1/weekly_personnel_scan.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "weekly personnel scan produced no markdown report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload weekly scan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-weekly-personnel-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: football-data/research/evidence/weekly_personnel_scan_v1
+          if-no-files-found: warn
+          retention-days: 90
