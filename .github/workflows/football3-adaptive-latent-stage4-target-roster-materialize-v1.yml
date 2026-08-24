@@ -1,0 +1,85 @@
+name: football3-adaptive-latent-stage4-target-roster-materialize-v1
+on:
+  push:
+    branches: [football3/adaptive-latent-strength-v1]
+    paths:
+      - "football-data/research/adaptive_latent_stage4_target_roster_materialize_v1.py"
+      - "football-data/research/test_adaptive_latent_stage4_target_roster_materialize_v1.py"
+      - "football-data/research/adaptive_latent_stage4_target_roster_sources_*_v1.json"
+      - ".github/workflows/football3-adaptive-latent-stage4-target-roster-materialize-v1.yml"
+permissions:
+  contents: read
+jobs:
+  target-roster-materialization-zero-label-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 2}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Compile and validate source manifests
+        run: |
+          python -m py_compile \
+            football-data/research/adaptive_latent_stage4_target_roster_materialize_v1.py \
+            football-data/research/test_adaptive_latent_stage4_target_roster_materialize_v1.py
+          for f in football-data/research/adaptive_latent_stage4_target_roster_sources_*_v1.json; do python -m json.tool "$f" >/dev/null; done
+      - name: Target source coverage materialization and as-of fail-closed tests
+        run: python football-data/research/test_adaptive_latent_stage4_target_roster_materialize_v1.py
+      - name: Prove frozen identity and zero-label boundaries
+        run: |
+          cd football-data/research
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from adaptive_latent_stage4_target_roster_materialize_v1 import validate_sources
+          comps=['ENG_PremierLeague','ESP_LaLiga','GER_Bundesliga','ITA_SerieA','FRA_Ligue1']
+          root=Path('.')
+          index=json.loads((root/'adaptive_latent_stage4_target_roster_sources_index_v1.json').read_text())
+          shards=[json.loads((root/f'adaptive_latent_stage4_target_roster_sources_{c}_v1.json').read_text()) for c in comps]
+          inventory=json.loads((root/'target_inventory_candidate_v3.json').read_text())
+          s=validate_sources(index,shards,inventory)
+          assert len(s['teams'])==38
+          assert sum(t['current_complete_source_verified'] for t in s['teams'].values())==30
+          assert sum(not t['current_complete_source_verified'] for t in s['teams'].values())==8
+          assert index['identity_lock_sha256']=='8bfa3c98c1895085d94c1e6f1b5b7b80b5d56d6e1eefd615b137126604d45b11'
+          assert index['ordered_identity_sha256']=='499e462f6cce50f05e575a0232c73c8d8b5234ad06c70551cf49b09353bbca76'
+          assert len(index['schedule_revision_conflicts'])==1
+          h=index['hard_boundaries']
+          assert h['real_labels_read']==0 and h['real_match_rows_read']==0
+          assert h['training'] is False and h['tuning'] is False and h['real_scoring'] is False
+          assert h['provider_api'] is False and h['secret_access'] is False
+          assert h['CURRENT_change'] is False and h['formal_pit_eligible'] is False
+          assert h['formal_weight']==0.0 and h['merge'] is False
+          print('PASS 21 targets / 38 teams / zero-label source coverage')
+          PY
+      - name: Emit engineering evidence
+        env:
+          FOOTBALL3_HEAD_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p football-data/research/evidence/adaptive_latent_stage4_target_roster_materialize
+          FOOTBALL3_PARENT_SHA="$(git rev-parse HEAD^)" python - <<'PY'
+          import json,os
+          from pathlib import Path
+          out={
+            'schema':'football3_adaptive_latent_stage4_target_roster_materialization_status_v1',
+            'status':'ENGINEERING_TARGET_ROSTER_SOURCE_MATERIALIZATION_PASS_FORMAL_PIT_FALSE',
+            'head_sha':os.environ['FOOTBALL3_HEAD_SHA'],
+            'direct_parent_sha':os.environ['FOOTBALL3_PARENT_SHA'],
+            'target_count':21,'target_team_count':38,'current_complete_source_team_count':30,
+            'event_chain_only_team_count':8,'historical_complete_pit_team_count':0,
+            'schedule_revision_conflict_count':1,'real_labels_read':0,'real_match_rows_read':0,
+            'training':False,'tuning':False,'real_scoring':False,'provider_api':False,
+            'secret_access':False,'CURRENT_change':False,'formal_pit_eligible':False,
+            'formal_weight':0.0,'merge':False,
+          }
+          p=Path('football-data/research/evidence/adaptive_latent_stage4_target_roster_materialize')
+          (p/'target_roster_materialization_status_v1.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+          PY
+          cp football-data/research/adaptive_latent_stage4_target_roster_sources_*_v1.json football-data/research/evidence/adaptive_latent_stage4_target_roster_materialize/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-target-roster-materialize-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4_target_roster_materialize
+          if-no-files-found: error
+          retention-days: 90
