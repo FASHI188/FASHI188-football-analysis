@@ -1,0 +1,132 @@
+name: football3-adaptive-latent-stage4-roster-provenance-v1
+
+on:
+  push:
+    branches:
+      - football3/adaptive-latent-strength-v1
+    paths:
+      - "football-data/research/adaptive_latent_stage4_roster_provenance_v1.py"
+      - "football-data/research/adaptive_latent_stage4_roster_provenance_contract_v1.json"
+      - "football-data/research/test_adaptive_latent_stage4_roster_provenance_v1.py"
+      - "football-data/research/target_inventory_candidate_v3.json"
+      - "football-data/research/target_identity_candidate_v3.csv"
+      - ".github/workflows/football3-adaptive-latent-stage4-roster-provenance-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  roster-provenance-zero-label-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile and validate static contracts
+        run: |
+          python -m py_compile \
+            football-data/research/adaptive_latent_stage4_roster_provenance_v1.py \
+            football-data/research/test_adaptive_latent_stage4_roster_provenance_v1.py
+          python -m json.tool \
+            football-data/research/adaptive_latent_stage4_roster_provenance_contract_v1.json \
+            > /dev/null
+
+      - name: Behavior contract fail-closed and adversarial tests
+        run: python football-data/research/test_adaptive_latent_stage4_roster_provenance_v1.py
+
+      - name: Prove frozen fixture identity and scientific isolation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          root = Path("football-data/research")
+          contract = json.loads((root / "adaptive_latent_stage4_roster_provenance_contract_v1.json").read_text(encoding="utf-8"))
+          inventory = json.loads((root / "target_inventory_candidate_v3.json").read_text(encoding="utf-8"))
+          sys.path.insert(0, str(root.resolve()))
+          import adaptive_latent_stage4_roster_provenance_v1 as roster
+
+          frozen = contract["frozen_fixture_identity"]
+          assert inventory["target_row_count"] == frozen["target_row_count"] == 21
+          assert inventory["identity_lock_sha256"] == frozen["identity_lock_sha256"] == roster.IDENTITY
+          assert inventory["ordered_identity_sha256"] == frozen["ordered_identity_sha256"] == roster.ORDERED_IDENTITY
+          assert frozen["fixture_identity_mutation"] is False
+          assert len(contract["required_competitions"]) == len(roster.POLICY) == 12
+          assert set(contract["required_competitions"]) == set(roster.POLICY)
+          assert inventory["real_target_values_read"] == 0
+          assert inventory["formal_pit_eligible"] is False
+          assert inventory["formal_weight"] == 0.0
+          hard = contract["hard_boundaries"]
+          assert hard["real_labels_read"] == 0
+          assert hard["real_match_rows_read"] == 0
+          assert hard["training"] is False
+          assert hard["tuning"] is False
+          assert hard["real_scoring"] is False
+          assert hard["provider_api"] is False
+          assert hard["secret_access"] is False
+          assert hard["CURRENT_change"] is False
+          assert hard["formal_weight"] == 0.0
+          assert hard["Ready"] is False
+          assert hard["merge"] is False
+          print("PASS frozen identity + zero-label scientific isolation")
+          PY
+
+      - name: Emit engineering evidence
+        env:
+          FOOTBALL3_HEAD_SHA: ${{ github.sha }}
+        run: |
+          evidence="football-data/research/evidence/adaptive_latent_stage4_roster_provenance"
+          rm -rf "$evidence"
+          mkdir -p "$evidence"
+          FOOTBALL3_PARENT_SHA="$(git rev-parse HEAD^)" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("football-data/research")
+          contract = json.loads((root / "adaptive_latent_stage4_roster_provenance_contract_v1.json").read_text(encoding="utf-8"))
+          frozen = contract["frozen_fixture_identity"]
+          out = {
+              "schema": "football3_adaptive_latent_stage4_roster_provenance_status_v1",
+              "status": "ENGINEERING_ROSTER_PROVENANCE_GUARD_PASS_FORMAL_PIT_FALSE",
+              "head_sha": os.environ["FOOTBALL3_HEAD_SHA"],
+              "direct_parent_sha": os.environ["FOOTBALL3_PARENT_SHA"],
+              "target_row_count": frozen["target_row_count"],
+              "identity_lock_sha256": frozen["identity_lock_sha256"],
+              "ordered_identity_sha256": frozen["ordered_identity_sha256"],
+              "competition_count": len(contract["required_competitions"]),
+              "guard": contract["guard"],
+              "real_labels_read": 0,
+              "real_match_rows_read": 0,
+              "training": False,
+              "tuning": False,
+              "real_scoring": False,
+              "provider_api": False,
+              "secret_access": False,
+              "formal_pit_eligible": False,
+              "formal_weight": 0.0,
+              "current_change": False,
+              "ready": False,
+              "merge": False
+          }
+          evidence = root / "evidence/adaptive_latent_stage4_roster_provenance"
+          (evidence / "roster_provenance_status_v1.json").write_text(
+              json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          cp football-data/research/adaptive_latent_stage4_roster_provenance_contract_v1.json "$evidence/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-adaptive-latent-stage4-roster-provenance-${{ github.sha }}
+          path: football-data/research/evidence/adaptive_latent_stage4_roster_provenance
+          if-no-files-found: error
+          retention-days: 90
