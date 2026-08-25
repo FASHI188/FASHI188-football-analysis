@@ -1,0 +1,74 @@
+name: football3 one-off Jeju SK vs Pohang frozen inference
+
+on:
+  push:
+    branches:
+      - football3/once-jeju-pohang-20260825
+    paths:
+      - .github/workflows/football3-once-jeju-pohang-20260825.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: football-data/engine
+    steps:
+      - name: Checkout exact execution commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write strictly pre-kickoff input
+        run: |
+          cat > /tmp/jeju_pohang_input.json <<'JSON'
+          {
+            "competition_id": "KOR_KLeague1",
+            "season": "2026",
+            "home_team": "Jeju SK",
+            "away_team": "Pohang Steelers",
+            "cutoff_utc": "2026-08-25T10:25:00Z"
+          }
+          JSON
+          cat /tmp/jeju_pohang_input.json
+
+      - name: Run CURRENT universal router
+        run: |
+          python football-data/engine/run_universal_prediction_candidate_v1.py \
+            --input /tmp/jeju_pohang_input.json \
+            --output /tmp/jeju_pohang_output.json
+          cat /tmp/jeju_pohang_output.json
+
+      - name: Assert frozen identity and 1X2 availability
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('/tmp/jeju_pohang_output.json').read_text(encoding='utf-8'))
+          print('top-level keys:', sorted(p))
+          print('route:', p.get('universal_router'))
+          probs = p.get('probabilities') or {}
+          one = probs.get('one_x_two') or p.get('one_x_two')
+          if one is None:
+              raise SystemExit('1X2 missing from model output')
+          print('MODEL_1X2=', json.dumps(one, ensure_ascii=False, sort_keys=True))
+          PY
+
+      - name: Upload immutable inference output
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-jeju-pohang-20260825-frozen-inference
+          path: |
+            /tmp/jeju_pohang_input.json
+            /tmp/jeju_pohang_output.json
+          if-no-files-found: error
+          retention-days: 30
