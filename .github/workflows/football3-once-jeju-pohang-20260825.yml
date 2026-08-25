@@ -34,8 +34,8 @@ jobs:
           {
             "competition_id": "KOR_KLeague1",
             "season": "2026",
-            "home_team": "Jeju United",
-            "away_team": "Pohang Steelers",
+            "home_team": "제주",
+            "away_team": "포항",
             "cutoff_utc": "2026-08-25T10:25:00Z"
           }
           JSON
@@ -48,25 +48,32 @@ jobs:
             --output /tmp/jeju_pohang_output.json
           cat /tmp/jeju_pohang_output.json
 
-      - name: Assert frozen identity and 1X2 availability
+      - name: Assert formal route and 1X2 availability
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           p = json.loads(Path('/tmp/jeju_pohang_output.json').read_text(encoding='utf-8'))
+          route = p.get('universal_router') or {}
           print('top-level keys:', sorted(p))
-          print('route:', p.get('universal_router'))
+          print('route:', route)
+          if route.get('route') != 'FORMAL_V460' or route.get('downgraded'):
+              raise SystemExit(f'formal route not reached: {route}')
           probs = p.get('probabilities') or {}
           one = probs.get('one_x_two') or p.get('one_x_two')
           if one is None:
               raise SystemExit('1X2 missing from model output')
+          team_sample = p.get('team_sample') or {}
+          if float(team_sample.get('home_raw_matches', 0)) <= 0 or float(team_sample.get('away_raw_matches', 0)) <= 0:
+              raise SystemExit(f'team sample missing: {team_sample}')
           print('MODEL_1X2=', json.dumps(one, ensure_ascii=False, sort_keys=True))
+          print('TEAM_SAMPLE=', json.dumps(team_sample, ensure_ascii=False, sort_keys=True))
           PY
 
       - name: Upload immutable inference output
         uses: actions/upload-artifact@v4
         with:
-          name: football3-jeju-pohang-20260825-frozen-inference
+          name: football3-jeju-pohang-20260825-formal-frozen-inference
           path: |
             /tmp/jeju_pohang_input.json
             /tmp/jeju_pohang_output.json
