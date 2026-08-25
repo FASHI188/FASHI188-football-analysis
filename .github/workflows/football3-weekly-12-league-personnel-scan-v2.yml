@@ -7,8 +7,10 @@ on:
   push:
     branches:
       - football3/adaptive-latent-strength-v1
+      - main
     paths:
       - football-data/research/football3_weekly_12_league_personnel_scan_v2.py
+      - football-data/research/football3_weekly_12_league_personnel_scan_v3.py
       - .github/workflows/football3-weekly-12-league-personnel-scan-v2.yml
 
 permissions:
@@ -31,8 +33,10 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Verify 12-league 218-club scope
         run: |
-          python -m py_compile football-data/research/football3_weekly_12_league_personnel_scan_v2.py
-          python football-data/research/football3_weekly_12_league_personnel_scan_v2.py --self-test
+          python -m py_compile \
+            football-data/research/football3_weekly_12_league_personnel_scan_v2.py \
+            football-data/research/football3_weekly_12_league_personnel_scan_v3.py
+          PYTHONPATH=football-data/research python football-data/research/football3_weekly_12_league_personnel_scan_v3.py --self-test
       - name: Restore previous fingerprint
         uses: actions/cache/restore@v4
         with:
@@ -42,16 +46,23 @@ jobs:
       - name: Scan official personnel sources
         run: |
           rm -rf football-data/research/evidence/weekly_12_league_personnel_scan_v2
-          python football-data/research/football3_weekly_12_league_personnel_scan_v2.py --output-dir football-data/research/evidence/weekly_12_league_personnel_scan_v2 --cache-file .football3-cache/weekly-12-league-personnel/current_snapshot.json
+          PYTHONPATH=football-data/research python football-data/research/football3_weekly_12_league_personnel_scan_v3.py \
+            --output-dir football-data/research/evidence/weekly_12_league_personnel_scan_v2 \
+            --cache-file .football3-cache/weekly-12-league-personnel/current_snapshot.json
       - name: Publish summary
         if: always()
         run: |
-          if [ -f football-data/research/evidence/weekly_12_league_personnel_scan_v2/scan_report.md ]; then cat football-data/research/evidence/weekly_12_league_personnel_scan_v2/scan_report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f football-data/research/evidence/weekly_12_league_personnel_scan_v2/scan_report.md ]; then
+            cat football-data/research/evidence/weekly_12_league_personnel_scan_v2/scan_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Refresh cache
         if: always()
         run: |
           mkdir -p .football3-cache/weekly-12-league-personnel
-          if [ -f football-data/research/evidence/weekly_12_league_personnel_scan_v2/current_snapshot.json ]; then cp football-data/research/evidence/weekly_12_league_personnel_scan_v2/current_snapshot.json .football3-cache/weekly-12-league-personnel/current_snapshot.json; fi
+          if [ -f football-data/research/evidence/weekly_12_league_personnel_scan_v2/current_snapshot.json ]; then
+            cp football-data/research/evidence/weekly_12_league_personnel_scan_v2/current_snapshot.json \
+               .football3-cache/weekly-12-league-personnel/current_snapshot.json
+          fi
       - name: Save fingerprint
         if: always() && hashFiles('.football3-cache/weekly-12-league-personnel/current_snapshot.json') != ''
         uses: actions/cache/save@v4
