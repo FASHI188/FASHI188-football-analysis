@@ -1,0 +1,51 @@
+name: football3 Top1 disjoint 20k draw calibration R3
+on:
+  push:
+    branches:
+      - football3/top1-20k-opponent-veto-r1
+    paths:
+      - 'football-data/experiments/top1_20k_r3/**'
+      - '.github/workflows/football3-top1-20k-draw-calibration-r3.yml'
+permissions:
+  contents: write
+jobs:
+  r3-draw-calibration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-20k-opponent-veto-r1
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install calibration runtime
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+      - name: Freeze third disjoint 20000 matches
+        run: python football-data/experiments/top1_20k_r3/run_experiment_r3.py freeze
+      - name: Run strict chronological draw calibration experiment
+        run: python football-data/experiments/top1_20k_r3/run_experiment_r3.py run
+      - name: Verify no-market untouched-test contract
+        run: python football-data/experiments/top1_20k_r3/run_experiment_r3.py verify
+      - name: Persist R3 frozen data and result to GitHub
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_20k_r3/data football-data/experiments/top1_20k_r3/results
+          if git diff --cached --quiet; then
+            echo 'No generated changes to commit'
+          else
+            git commit -m '[generated top1-20k-r3] freeze third disjoint 20000 and draw calibration result'
+            git push origin HEAD:football3/top1-20k-opponent-veto-r1
+          fi
+      - name: Upload immutable R3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-20k-draw-calibration-r3
+          path: |
+            football-data/experiments/top1_20k_r3/data/source_manifest_r3.json
+            football-data/experiments/top1_20k_r3/results/summary_r3.json
+            football-data/experiments/top1_20k_r3/data/matches_r3_20000_part*.csv
+          retention-days: 30
