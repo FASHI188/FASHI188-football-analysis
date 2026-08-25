@@ -8,8 +8,9 @@ from pathlib import Path
 import numpy as np
 
 ARCHIVE='https://codeload.github.com/footballcsv/england/zip/refs/heads/master'
-ROOT=Path(__file__).resolve().parent;DATA=ROOT/'data';OUT=ROOT/'results'
-N=15000;BURN=3000;TRAIN=6000;VAL=3000;TEST=3000
+ROOT=Path(__file__).resolve().parent; DATA=ROOT/'data'; OUT=ROOT/'results'
+EXPECTED_ROWS=6598
+TARGET_BURN=1000; TARGET_TRAIN=2800; TARGET_VAL=1200
 GH=1.45;GA=1.20;CP=30.;TP=6.;HALF=240.;LR=.06;BLEND=.50;MAXG=12
 ELO_K=20.;ELO_HOME=60.;ELO_SCALE=400.
 FIELDS=['date','game_id','competition_id','season','home_team','away_team','home_goals','away_goals']
@@ -28,7 +29,8 @@ def parse_ft(s):
     except:return None
 
 def freeze():
-    DATA.mkdir(parents=True,exist_ok=True);req=urllib.request.Request(ARCHIVE,headers={'User-Agent':'football3-research/7.0'})
+    DATA.mkdir(parents=True,exist_ok=True)
+    req=urllib.request.Request(ARCHIVE,headers={'User-Agent':'football3-research/7.1'})
     with urllib.request.urlopen(req,timeout=300) as r:raw=r.read()
     rows=[];files=[];bad=Counter()
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
@@ -36,7 +38,8 @@ def freeze():
             if '/1990s/' not in name or not name.endswith('.csv') or '/eng.' not in name:continue
             parts=name.split('/');season=parts[-2];fn=parts[-1]
             if season<'1992-93' or season>'1999-00' or fn not in {'eng.1.csv','eng.2.csv','eng.3.csv','eng.4.csv'}:continue
-            files.append(name);rd=csv.DictReader(io.StringIO(z.read(name).decode('utf-8-sig',errors='replace')))
+            files.append(name)
+            rd=csv.DictReader(io.StringIO(z.read(name).decode('utf-8-sig',errors='replace')))
             for i,r in enumerate(rd,1):
                 try:d=parse_date(r.get('Date',''))
                 except:bad['date']+=1;continue
@@ -46,14 +49,14 @@ def freeze():
                 hg,ag=sc;comp=fn[:-4];gid=f'{season}:{comp}:{i}:{h}:{a}'
                 rows.append({'date':d.isoformat(),'game_id':gid,'competition_id':comp,'season':season,'home_team':h,'away_team':a,'home_goals':hg,'away_goals':ag})
     rows.sort(key=lambda r:(r['date'],r['game_id']))
-    if len(rows)<N:raise RuntimeError(f'only {len(rows)} eligible 1990s rows; need {N}')
-    chosen=rows[-N:];p=DATA/'matches_r7_15000.csv'
-    with p.open('w',encoding='utf-8',newline='') as f:w=csv.DictWriter(f,fieldnames=FIELDS);w.writeheader();w.writerows(chosen)
-    m={'schema_version':'football3-top1-r7-england-1990s','status':'FROZEN_15000_EXTERNAL_PURE_RESULTS','source_repository':'footballcsv/england',
-       'source_archive_sha256':hashlib.sha256(raw).hexdigest(),'source_files_used':len(files),'eligible_rows':len(rows),'snapshot_rows':N,
-       'selection':'latest 15000 rows from 1992-93..1999-00 eng.1..eng.4','first_date':chosen[0]['date'],'last_date':chosen[-1]['date'],
-       'snapshot_sha256':fsha(p),'overlap_with_r1_r6':False,'source_has_odds_columns':False,'odds_used':False,'market_prices_used':False,
-       'same_date_update_allowed':False,'excluded_counts':dict(bad)}
+    if len(rows)!=EXPECTED_ROWS:raise RuntimeError(f'R7 repaired protocol expects exactly {EXPECTED_ROWS} rows, got {len(rows)}')
+    p=DATA/'matches_r7_6598.csv'
+    with p.open('w',encoding='utf-8',newline='') as f:w=csv.DictWriter(f,fieldnames=FIELDS);w.writeheader();w.writerows(rows)
+    m={'schema_version':'football3-top1-r7-england-1990s-r1','status':'FROZEN_6598_EXTERNAL_PURE_RESULTS','protocol_repair':'row-count-only; Elo/model hyperparameters unchanged',
+       'source_repository':'footballcsv/england','source_archive_sha256':hashlib.sha256(raw).hexdigest(),'source_files_used':len(files),'snapshot_rows':len(rows),
+       'selection':'all eligible rows from 1992-93..1999-00 eng.1..eng.4','first_date':rows[0]['date'],'last_date':rows[-1]['date'],'snapshot_sha256':fsha(p),
+       'overlap_with_r1_r6':False,'source_has_odds_columns':False,'odds_used':False,'market_prices_used':False,'same_date_update_allowed':False,
+       'date_safe_split_required':True,'excluded_counts':dict(bad)}
     (DATA/'source_manifest_r7.json').write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n',encoding='utf-8');print(json.dumps(m,indent=2));return m
 
 @dataclass
@@ -108,9 +111,9 @@ def poisson_1x2(mh,ma):
 def actual(r):return 0 if r['home_goals']>r['away_goals'] else 1 if r['home_goals']==r['away_goals'] else 2
 def load():
     z=[]
-    with (DATA/'matches_r7_15000.csv').open(encoding='utf-8') as f:
+    with (DATA/'matches_r7_6598.csv').open(encoding='utf-8') as f:
         for r in csv.DictReader(f):r['home_goals']=int(r['home_goals']);r['away_goals']=int(r['away_goals']);z.append(r)
-    z.sort(key=lambda r:(r['date'],r['game_id']));assert len(z)==N;return z
+    z.sort(key=lambda r:(r['date'],r['game_id']));assert len(z)==EXPECTED_ROWS;return z
 def feat_e2(p):
     v=np.clip([p['p_home'],p['p_draw'],p['p_away']],1e-8,1);gap=abs(p['mu_home']-p['mu_away']);tot=p['mu_total']
     return [math.log(v[0]/v[2]),math.log(v[1]/v[2]),tot,tot*tot,gap,gap*gap,math.log1p(p['home_history']),math.log1p(p['away_history']),
@@ -126,15 +129,24 @@ def metrics(rows,key):
         ll-=math.log(max(v[y],1e-15));br+=sum((v[i]-(i==y))**2 for i in range(3));rps+=((v[0]-(y==0))**2+((v[0]+v[1])-(y<=1))**2)/2
     return {'count':n,'coverage':1.0,'hits':hit,'top1_accuracy':hit/n,'logloss':ll/n,'brier':br/n,'rps':rps/n,
             'top1_picks':{'home':picks[0],'draw':picks[1],'away':picks[2]},'top1_hits':{'home':hits[0],'draw':hits[1],'away':hits[2]},'actuals':{'home':acts[0],'draw':acts[1],'away':acts[2]}}
+def date_safe_boundary(pred,target):
+    i=min(max(1,target),len(pred)-1)
+    while i<len(pred) and pred[i]['date']==pred[i-1]['date']:i+=1
+    return i
 
 def run():
     rows=load();st=S();pred=[];by=defaultdict(list)
     for r in rows:by[r['date']].append(r)
     for ds in sorted(by):
         pending=[]
-        for r in sorted(by[ds],key=lambda x:x['game_id']):p=st.pred(r);pred.append({'y':actual(r),'raw':p});pending.append((r,p))
+        for r in sorted(by[ds],key=lambda x:x['game_id']):p=st.pred(r);pred.append({'date':ds,'y':actual(r),'raw':p});pending.append((r,p))
         for r,p in pending:st.update(r,p)
-    train=pred[BURN:BURN+TRAIN];val=pred[BURN+TRAIN:BURN+TRAIN+VAL];test=pred[-TEST:]
+    b1=date_safe_boundary(pred,TARGET_BURN)
+    b2=date_safe_boundary(pred,b1+TARGET_TRAIN)
+    b3=date_safe_boundary(pred,b2+TARGET_VAL)
+    train=pred[b1:b2];val=pred[b2:b3];test=pred[b3:]
+    if min(len(train),len(val),len(test))<800:raise RuntimeError(f'unsafe repaired split sizes: {len(train)},{len(val)},{len(test)}')
+    assert pred[b1-1]['date']!=pred[b1]['date'] and pred[b2-1]['date']!=pred[b2]['date'] and pred[b3-1]['date']!=pred[b3]['date']
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
@@ -146,9 +158,10 @@ def run():
         P0=e2.predict_proba([feat_e2(r['raw']) for r in subset]);P1=h1.predict_proba([feat_h1(r['raw']) for r in subset])
         for r,a,b in zip(subset,P0,P1):r['E2']=decorate(a);r['H1']=decorate(b)
     vm0=metrics(val,'E2');vm1=metrics(val,'H1');tm0=metrics(test,'E2');tm1=metrics(test,'H1')
-    out={'schema_version':'football3-top1-r7-elo-fullcoverage','status':'COMPLETE','classification':'RESEARCH_ONLY_NOT_VALIDATED_NOT_PROMOTED','formal_weight':0,
-         'governance':{'snapshot_rows':N,'external_source':'footballcsv/england 1990s','source_pure_results_only':True,'overlap_with_r1_r6':False,
-                       'same_date_results_withheld':True,'burn_in':BURN,'train':TRAIN,'validation':VAL,'untouched_test':TEST,'coverage_required':1.0,
+    out={'schema_version':'football3-top1-r7-elo-fullcoverage-r1','status':'COMPLETE','classification':'RESEARCH_ONLY_NOT_VALIDATED_NOT_PROMOTED','formal_weight':0,
+         'governance':{'snapshot_rows':len(pred),'protocol_repair':'only sample size and date-safe boundaries changed after pre-result row-count failure; Elo/model hyperparameters unchanged',
+                       'external_source':'footballcsv/england 1990s','source_pure_results_only':True,'overlap_with_r1_r6':False,'same_date_results_withheld':True,
+                       'burn_in':b1,'train':len(train),'validation':len(val),'untouched_test':len(test),'date_safe_split_boundaries':True,'coverage_required':1.0,
                        'abstention_used':False,'veto_used':False,'odds_used':False,'market_prices_used':False,'manual_match_adjustment':False,
                        'test_labels_used_for_training_or_hyperparameter_selection':False},
          'fixed_elo':{'initial':1500.0,'k':ELO_K,'home_advantage':ELO_HOME,'scale':ELO_SCALE},
@@ -158,8 +171,9 @@ def run():
     OUT.mkdir(parents=True,exist_ok=True);(OUT/'summary_r7.json').write_text(json.dumps(out,indent=2,ensure_ascii=False)+'\n',encoding='utf-8');print(json.dumps(out,indent=2));return out
 def verify():
     m=json.loads((DATA/'source_manifest_r7.json').read_text());o=json.loads((OUT/'summary_r7.json').read_text())
-    assert m['snapshot_rows']==N and m['overlap_with_r1_r6'] is False and m['source_has_odds_columns'] is False
-    assert o['governance']['coverage_required']==1.0 and not o['governance']['abstention_used'] and not o['governance']['veto_used'] and not o['governance']['odds_used']
+    assert m['snapshot_rows']==EXPECTED_ROWS and m['overlap_with_r1_r6'] is False and m['source_has_odds_columns'] is False
+    assert o['governance']['date_safe_split_boundaries'] is True and o['governance']['coverage_required']==1.0
+    assert not o['governance']['abstention_used'] and not o['governance']['veto_used'] and not o['governance']['odds_used'] and o['formal_weight']==0
     print('VERIFY_OK')
 if __name__=='__main__':
     import argparse
