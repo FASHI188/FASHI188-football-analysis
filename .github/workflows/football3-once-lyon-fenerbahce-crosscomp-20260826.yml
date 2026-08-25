@@ -1,0 +1,310 @@
+name: football3 Lyon vs Fenerbahce cross-competition latent-strength experiment
+
+on:
+  push:
+    branches:
+      - football3/once-lyon-fenerbahce-crosscomp-20260826
+    paths:
+      - .github/workflows/football3-once-lyon-fenerbahce-crosscomp-20260826.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crosscomp-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - name: Checkout exact execution commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Freeze UCL and domestic-league pre-kickoff data
+        run: |
+          python - <<'PY'
+          import ast, csv, json, re
+          from pathlib import Path
+
+          # Reuse the already frozen and audited 79-match 2026/27 UCL qualifying block.
+          src = Path('.github/workflows/football3-once-celje-slovan-20260826-r1.yml').read_text(encoding='utf-8')
+          found = re.search(r"matches = (\[.*?\n\s*\])\n\s*assert len\(matches\) == 79", src, re.S)
+          if not found:
+              raise SystemExit('frozen 79-match UCL block not found')
+          ucl = ast.literal_eval(found.group(1))
+          assert len(ucl) == 79
+
+          path = Path('football-data/processed/UEFA_ChampionsLeague/main_tournament_90min_safe.csv')
+          rows = list(csv.DictReader(path.open(encoding='utf-8-sig', newline='')))
+          fieldnames = list(rows[0].keys())
+          assert not any(r['season'] == '2026/27' for r in rows)
+          for date, home, away, hg, ag, stage in ucl:
+              row = {k: '' for k in fieldnames}
+              row.update({
+                  'competition_id':'UEFA_ChampionsLeague','season':'2026/27','source_season':'2026-27',
+                  'stage':stage,'source_code':'uefa_official_frozen_pre_kickoff_20260825',
+                  'Date':date,'Time':'','HomeTeam':home,'AwayTeam':away,
+                  'FTHG':str(hg),'FTAG':str(ag),'FTR':'H' if hg > ag else 'D' if hg == ag else 'A',
+                  'HTHG':'','HTAG':''
+              })
+              rows.append(row)
+          with path.open('w', encoding='utf-8', newline='') as fh:
+              w = csv.DictWriter(fh, fieldnames=fieldnames); w.writeheader(); w.writerows(rows)
+
+          # 2026/27 Ligue 1, all completed league matches strictly before 2026-08-26.
+          ligue1 = [
+              ('2026-08-21','Marseille','Strasbourg',4,0),
+              ('2026-08-22','Lens','Auxerre',5,2),
+              ('2026-08-22','Le Mans','Brest',2,2),
+              ('2026-08-22','Troyes','Paris FC',0,0),
+              ('2026-08-22','Nice','Lorient',0,0),
+              ('2026-08-22','Toulouse','Lyon',0,2),
+              ('2026-08-23','Angers','Lille',0,2),
+              ('2026-08-23','Le Havre','Monaco',0,1),
+              ('2026-08-23','Rennes','Paris SG',2,2),
+          ]
+          # 2026/27 Turkish Super Lig, first two completed rounds strictly before 2026-08-26.
+          superlig = [
+              ('2026-08-14','Galatasaray','Corum FK',2,2),
+              ('2026-08-15','Kasimpasa','Trabzonspor',1,1),
+              ('2026-08-15','Konyaspor','Rizespor',0,1),
+              ('2026-08-15','Gaziantep','Alanyaspor',1,1),
+              ('2026-08-15','Genclerbirligi','Fenerbahçe',2,1),
+              ('2026-08-16','Basaksehir','Kocaelispor',2,0),
+              ('2026-08-16','Amed','Erzurumspor',3,0),
+              ('2026-08-16','Besiktas','Eyupspor',1,0),
+              ('2026-08-17','Samsunspor','Goztepe',3,3),
+              ('2026-08-21','Erzurumspor','Galatasaray',0,4),
+              ('2026-08-22','Rizespor','Samsunspor',0,2),
+              ('2026-08-22','Corum FK','Kasimpasa',0,1),
+              ('2026-08-22','Fenerbahçe','Konyaspor',4,2),
+              ('2026-08-23','Trabzonspor','Basaksehir',2,1),
+              ('2026-08-23','Eyupspor','Gaziantep',0,1),
+              ('2026-08-23','Alanyaspor','Besiktas',1,0),
+              ('2026-08-23','Goztepe','Genclerbirligi',0,1),
+              ('2026-08-24','Kocaelispor','Amed',2,0),
+          ]
+          assert len(ligue1) == 9 and len(superlig) == 18
+          assert all(x[0] < '2026-08-26' for x in ligue1 + superlig)
+          assert [x for x in ligue1 if 'Lyon' in x[1:3]] == [('2026-08-22','Toulouse','Lyon',0,2)]
+          assert len([x for x in superlig if 'Fenerbahçe' in x[1:3]]) == 2
+
+          frozen = {
+              'status':'FROZEN_PRE_KICKOFF_CROSS_COMP_INPUT',
+              'target_fixture':'Lyon vs Fenerbahçe','target_date':'2026-08-26',
+              'ucl_rows':len(ucl),'ligue1_rows':len(ligue1),'superlig_rows':len(superlig),
+              'lyon_ligue1_rows':1,'fener_superlig_rows':2,
+              'market_snapshot_used':False,'odds_used':False,'manual_probability_adjustment':False,
+              'source_notes':[
+                  'UCL: previously frozen 90m-safe official qualifying block',
+                  'Ligue 1: completed Matchday 1 results through 2026-08-23',
+                  'Super Lig: completed Matchdays 1-2 through 2026-08-24'
+              ]
+          }
+          Path('/tmp/crosscomp_frozen.json').write_text(json.dumps(frozen, ensure_ascii=False, indent=2), encoding='utf-8')
+          Path('/tmp/domestic_leagues.json').write_text(json.dumps({'ligue1':ligue1,'superlig':superlig}, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps(frozen, ensure_ascii=False, sort_keys=True))
+          PY
+
+      - name: Run UCL-only and league-augmented latent-strength models
+        run: |
+          python - <<'PY'
+          import json, math
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from formal_cold_start_candidate_v1 import predict_cold_start_from_history
+          from formal_next_season_parameter_rollforward_v470 import build_one
+          from football_v460_engine import (
+              _merge_parameters, build_score_matrix, current_season_history,
+              fit_current_season_state, load_config, low_score_factors,
+          )
+          from platform_core import (
+              derive_score_marginals, normalize_team_token, parse_iso_datetime,
+              read_processed_matches, sha256_json, top_scores,
+          )
+
+          cutoff = parse_iso_datetime('2026-08-26T18:55:00Z', 'cutoff_utc')
+          formal_config = load_config()
+          roll = build_one('UEFA_ChampionsLeague', {'source_season':'2025/26','target_season':'2026/27'})
+          if roll.get('status') != 'NEXT_SEASON_PARAMETERS_FROZEN':
+              raise SystemExit(f'PIT rollforward failed: {roll}')
+          params = _merge_parameters(formal_config, roll['selected_parameters'])
+
+          matches = read_processed_matches('UEFA_ChampionsLeague')
+          season, history = current_season_history(matches, cutoff, '2026/27')
+          assert season == '2026/27' and len(history) == 79
+
+          # Existing fail-closed result, retained as control.
+          baseline = predict_cold_start_from_history(
+              history, 'UEFA_ChampionsLeague', '2026/27', 'Lyon', 'Fenerbahçe', cutoff,
+              stable_selected_parameters=params,
+          )
+
+          # UCL environment only. Team strength can be estimated from multiple competitions,
+          # but each match is normalized by its own competition/venue scoring environment.
+          permissive = dict(formal_config)
+          permissive['minimum_competition_history_matches'] = 1
+          state = fit_current_season_state(history, cutoff, params, permissive)
+          ucl_env = {'home':float(state['league_home_goals']), 'away':float(state['league_away_goals'])}
+          factors = low_score_factors(state, params)
+          domestic = json.loads(Path('/tmp/domestic_leagues.json').read_text(encoding='utf-8'))
+
+          def env(rows):
+              return {
+                  'home': sum(float(r[3]) for r in rows) / len(rows),
+                  'away': sum(float(r[4]) for r in rows) / len(rows),
+              }
+          l1_env = env(domestic['ligue1'])
+          tr_env = env(domestic['superlig'])
+
+          def age_weight(date_text):
+              d = datetime.fromisoformat(date_text).replace(tzinfo=timezone.utc)
+              age = max(0.0, (cutoff - d).total_seconds() / 86400.0)
+              return 0.5 ** (age / float(params['half_life_days']))
+
+          def team_records(team, include_domestic):
+              key = normalize_team_token(team)
+              out = []
+              for m in history:
+                  if normalize_team_token(m.home_team) == key or normalize_team_token(m.away_team) == key:
+                      out.append({
+                          'competition':'UCL','date':m.date.date().isoformat(),
+                          'home':m.home_team,'away':m.away_team,'hg':m.home_goals,'ag':m.away_goals,
+                          'env':ucl_env,
+                      })
+              if include_domestic:
+                  source = domestic['ligue1'] if team == 'Lyon' else domestic['superlig']
+                  comp = 'Ligue1' if team == 'Lyon' else 'SuperLig'
+                  comp_env = l1_env if team == 'Lyon' else tr_env
+                  for date, home, away, hg, ag in source:
+                      if normalize_team_token(home) == key or normalize_team_token(away) == key:
+                          out.append({'competition':comp,'date':date,'home':home,'away':away,'hg':hg,'ag':ag,'env':comp_env})
+              return out
+
+          def strength(team, include_domestic):
+              records = team_records(team, include_domestic)
+              key = normalize_team_token(team)
+              att_sum = 0.0; def_sum = 0.0; wsum = 0.0
+              details = []
+              for r in records:
+                  home_side = normalize_team_token(r['home']) == key
+                  gf = float(r['hg'] if home_side else r['ag'])
+                  ga = float(r['ag'] if home_side else r['hg'])
+                  exp_gf = float(r['env']['home'] if home_side else r['env']['away'])
+                  exp_ga = float(r['env']['away'] if home_side else r['env']['home'])
+                  w = age_weight(r['date'])
+                  att_ratio = gf / max(1e-9, exp_gf)
+                  def_ratio = ga / max(1e-9, exp_ga)
+                  att_sum += w * att_ratio
+                  def_sum += w * def_ratio
+                  wsum += w
+                  details.append({
+                      'competition':r['competition'],'date':r['date'],'venue':'H' if home_side else 'A',
+                      'gf':gf,'ga':ga,'expected_gf_env':exp_gf,'expected_ga_env':exp_ga,
+                      'weight':w,'attack_ratio':att_ratio,'concede_ratio':def_ratio,
+                  })
+              prior_n = float(params['team_prior_matches'])
+              attack = (att_sum + prior_n) / (wsum + prior_n)
+              concede = (def_sum + prior_n) / (wsum + prior_n)
+              return {
+                  'attack_multiplier':attack,'concede_multiplier':concede,
+                  'raw_matches':len(records),'effective_weight':wsum,'details':details,
+              }
+
+          def model(include_domestic):
+              home_s = strength('Lyon', include_domestic)
+              away_s = strength('Fenerbahçe', include_domestic)
+              min_mu = float(params['minimum_goal_mean']); max_mu = float(params['maximum_goal_mean'])
+              mu_home = ucl_env['home'] * home_s['attack_multiplier'] * away_s['concede_multiplier']
+              mu_away = ucl_env['away'] * away_s['attack_multiplier'] * home_s['concede_multiplier']
+              mu_home = min(max_mu, max(min_mu, mu_home)); mu_away = min(max_mu, max(min_mu, mu_away))
+              matrix = build_score_matrix(
+                  mu_home, mu_away, float(state['nb_dispersion_k']),
+                  float(params['beta_binomial_concentration']),
+                  int(formal_config['max_total_goals_exact']), factors,
+              )
+              marg = derive_score_marginals(matrix)
+              return {
+                  'route':'EXPERIMENTAL_CROSS_COMP_CURRENT_SEASON_LATENT_STRENGTH_V0' if include_domestic else 'EXPERIMENTAL_UCL_ONLY_ALL_VENUE_LATENT_STRENGTH_V0',
+                  'mu_home':mu_home,'mu_away':mu_away,'mu_total':mu_home+mu_away,
+                  'home_strength':home_s,'away_strength':away_s,
+                  'probabilities':{'one_x_two':marg['1x2'],'total_goals':marg['total_goals'],'btts_yes':marg['btts_yes']},
+                  'top_scores':top_scores(matrix, 10),
+              }
+
+          ucl_only = model(False)
+          augmented = model(True)
+          output = {
+              'target_fixture':'Lyon vs Fenerbahçe','cutoff_utc':cutoff.isoformat(),
+              'ucl_history_matches':len(history),
+              'competition_environments':{'UCL':ucl_env,'Ligue1':l1_env,'SuperLig':tr_env},
+              'parameters':params,
+              'parameter_sha256':sha256_json(params),
+              'control_fail_closed':{
+                  'state':(baseline.get('cold_start_candidate') or {}).get('state'),
+                  'one_x_two':(baseline.get('probabilities') or {}).get('one_x_two'),
+                  'top_scores':baseline.get('top_scores',[])[:5],
+              },
+              'ucl_only_all_venue':ucl_only,
+              'ucl_plus_domestic_league':augmented,
+              'audit':{
+                  'market_snapshot_used':False,'odds_used':False,'manual_probability_adjustment':False,
+                  'formal_weight':0.0,'scientific_status':'NOT_VALIDATED_NOT_PROMOTED',
+                  'team_strength_rollforward':False,
+                  'hyperparameters_rollforward_only':True,
+                  'domestic_data_used_only_for_normalized_team_strength':True,
+                  'ucl_environment_kept_separate':True,
+              },
+          }
+          Path('/tmp/lyon_fener_crosscomp_output.json').write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding='utf-8')
+          Path('/tmp/lyon_fener_parameter_rollforward.json').write_text(json.dumps(roll, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Assert experimental comparison integrity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('/tmp/lyon_fener_crosscomp_output.json').read_text(encoding='utf-8'))
+          assert p['control_fail_closed']['state'] == 'UNINFORMED_GLOBAL_BASELINE'
+          a = p['ucl_only_all_venue']; b = p['ucl_plus_domestic_league']
+          assert a['home_strength']['raw_matches'] == 3
+          assert a['away_strength']['raw_matches'] == 5
+          assert b['home_strength']['raw_matches'] == 4
+          assert b['away_strength']['raw_matches'] == 7
+          audit = p['audit']
+          assert audit['market_snapshot_used'] is False
+          assert audit['odds_used'] is False
+          assert audit['manual_probability_adjustment'] is False
+          assert audit['ucl_environment_kept_separate'] is True
+          for block in (a,b):
+              one = block['probabilities']['one_x_two']
+              assert abs(sum(one.values()) - 1.0) < 1e-8
+          print('UCL_ONLY_1X2=', json.dumps(a['probabilities']['one_x_two'], sort_keys=True))
+          print('UCL_ONLY_TOP=', json.dumps(a['top_scores'][:5], ensure_ascii=False))
+          print('AUGMENTED_1X2=', json.dumps(b['probabilities']['one_x_two'], sort_keys=True))
+          print('AUGMENTED_TOP=', json.dumps(b['top_scores'][:5], ensure_ascii=False))
+          print('AUGMENTED_MU=', b['mu_home'], b['mu_away'])
+          PY
+
+      - name: Upload immutable experiment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-lyon-fenerbahce-crosscomp-20260826
+          path: |
+            /tmp/crosscomp_frozen.json
+            /tmp/domestic_leagues.json
+            /tmp/lyon_fener_crosscomp_output.json
+            /tmp/lyon_fener_parameter_rollforward.json
+          if-no-files-found: error
+          retention-days: 30
