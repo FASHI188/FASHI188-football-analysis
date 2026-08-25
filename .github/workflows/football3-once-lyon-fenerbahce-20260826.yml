@@ -1,0 +1,173 @@
+name: football3 Lyon vs Fenerbahce pure-model frozen inference
+
+on:
+  push:
+    branches:
+      - football3/once-lyon-fenerbahce-20260826
+    paths:
+      - .github/workflows/football3-once-lyon-fenerbahce-20260826.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: football-data/engine:football-data/validation
+    steps:
+      - name: Checkout exact execution commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Freeze 90m-safe 2026/27 UCL qualifying history
+        run: |
+          python - <<'PY'
+          import ast, csv, json, re, subprocess
+          from pathlib import Path
+
+          source_commit = 'c0205f580e803a89dbca7198b7189afce5fc2ce8'
+          source_path = '.github/workflows/football3-once-celje-slovan-20260826.yml'
+          text = subprocess.check_output(['git','show',f'{source_commit}:{source_path}'], text=True)
+          found = re.search(r"matches = (\[.*?\n\s*\])\n\s*assert len\(matches\) == 79", text, re.S)
+          if not found:
+              raise SystemExit('frozen 79-match source block not found')
+          matches = ast.literal_eval(found.group(1))
+          assert len(matches) == 79
+
+          path = Path('football-data/processed/UEFA_ChampionsLeague/main_tournament_90min_safe.csv')
+          rows = list(csv.DictReader(path.open(encoding='utf-8-sig', newline='')))
+          fieldnames = list(rows[0].keys())
+          assert not any(r['season'] == '2026/27' for r in rows)
+          for date, home, away, hg, ag, stage in matches:
+              row = {k: '' for k in fieldnames}
+              row.update({
+                  'competition_id':'UEFA_ChampionsLeague',
+                  'season':'2026/27','source_season':'2026-27','stage':stage,
+                  'source_code':'uefa_official_frozen_pre_kickoff_20260825',
+                  'Date':date,'Time':'','HomeTeam':home,'AwayTeam':away,
+                  'FTHG':str(hg),'FTAG':str(ag),
+                  'FTR':'H' if hg > ag else 'D' if hg == ag else 'A',
+                  'HTHG':'','HTAG':''
+              })
+              rows.append(row)
+          with path.open('w', encoding='utf-8', newline='') as fh:
+              w = csv.DictWriter(fh, fieldnames=fieldnames)
+              w.writeheader(); w.writerows(rows)
+
+          target = [r for r in rows if r['season'] == '2026/27']
+          lyon_home = [r for r in target if r['HomeTeam'] == 'Lyon']
+          fener_away = [r for r in target if r['AwayTeam'] == 'Fenerbahçe']
+          lyon_all = [r for r in target if r['HomeTeam'] == 'Lyon' or r['AwayTeam'] == 'Lyon']
+          fener_all = [r for r in target if r['HomeTeam'] == 'Fenerbahçe' or r['AwayTeam'] == 'Fenerbahçe']
+          assert len(target) == 79
+          assert len(lyon_home) == 1, len(lyon_home)
+          assert len(fener_away) == 2, len(fener_away)
+          assert len(lyon_all) == 3, len(lyon_all)
+          assert len(fener_all) == 5, len(fener_all)
+          assert all(r['Date'] < '2026-08-26' for r in target)
+          receipt = {
+              'status':'FROZEN_PRE_KICKOFF_90M_SAFE_BACKFILL',
+              'competition_id':'UEFA_ChampionsLeague','season':'2026/27',
+              'target_fixture':'Lyon vs Fenerbahçe',
+              'safe_history_rows':79,
+              'lyon_all_rows':3,'fener_all_rows':5,
+              'lyon_home_rows':1,'fener_away_rows':2,
+              'stable_home_threshold_met':False,
+              'stable_away_threshold_met':True,
+              'frozen_source_commit':source_commit,
+              'pure_model_input':True,'market_snapshot_used':False,'odds_used':False
+          }
+          Path('/tmp/lyon_fener_pre_kickoff_backfill.json').write_text(
+              json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+          print('UCL_90M_SAFE_BACKFILL_OK rows=79 lyon_all=3 lyon_home=1 fener_all=5 fener_away=2')
+          PY
+
+      - name: Write pure-model strictly pre-kickoff input
+        run: |
+          cat > /tmp/lyon_fener_input.json <<'JSON'
+          {
+            "competition_id": "UEFA_ChampionsLeague",
+            "season": "2026/27",
+            "home_team": "Lyon",
+            "away_team": "Fenerbahçe",
+            "cutoff_utc": "2026-08-26T18:55:00Z"
+          }
+          JSON
+          cat /tmp/lyon_fener_input.json
+
+      - name: Run fail-closed cold-start router without market inputs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from formal_cold_start_candidate_v1 import predict_cold_start_from_history
+          from football_v460_engine import current_season_history
+          from platform_core import atomic_write_json, parse_iso_datetime, read_processed_matches
+
+          inp = json.loads(Path('/tmp/lyon_fener_input.json').read_text(encoding='utf-8'))
+          cutoff = parse_iso_datetime(inp['cutoff_utc'], 'cutoff_utc')
+          matches = read_processed_matches(inp['competition_id'])
+          target_season, history = current_season_history(matches, cutoff, inp['season'])
+          assert target_season == inp['season']
+          assert len(history) == 79
+          out = predict_cold_start_from_history(
+              history,
+              inp['competition_id'], inp['season'], inp['home_team'], inp['away_team'], cutoff,
+          )
+          out['oneoff_execution_audit'] = {
+              'route_from_model':(out.get('cold_start_candidate') or {}).get('state'),
+              'strict_stable_route_available':False,
+              'reason':'Lyon current-season UCL home venue sample is 1; stable threshold is 2',
+              'market_snapshot_used':False,
+              'odds_used':False,
+              'manual_probability_adjustment':False,
+              'same_day_rows_excluded':True,
+          }
+          atomic_write_json(Path('/tmp/lyon_fener_output.json'), out)
+          print(json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Assert model did not bypass sample gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('/tmp/lyon_fener_output.json').read_text(encoding='utf-8'))
+          state = (p.get('cold_start_candidate') or {}).get('state')
+          if state == 'STABLE_CURRENT_SEASON':
+              raise SystemExit('stable route illegally bypassed Lyon home venue sample gate')
+          if int(p.get('history_matches', -1)) != 79:
+              raise SystemExit(f"unexpected history_matches={p.get('history_matches')}")
+          if (p.get('cold_start_candidate') or {}).get('historical_odds_read') is not False:
+              raise SystemExit('historical odds audit is not false')
+          one = (p.get('probabilities') or {}).get('one_x_two')
+          if not one:
+              raise SystemExit('1X2 missing')
+          audit = p.get('oneoff_execution_audit') or {}
+          if any(audit.get(k) is not False for k in ['market_snapshot_used','odds_used','manual_probability_adjustment']):
+              raise SystemExit(f'pure-model audit failed: {audit}')
+          print('STATE=', state)
+          print('MODEL_1X2=', json.dumps(one, ensure_ascii=False, sort_keys=True))
+          print('TOP_SCORES=', json.dumps(p.get('top_scores', [])[:5], ensure_ascii=False))
+          print('TEAM_SAMPLE=', json.dumps(p.get('team_sample', {}), ensure_ascii=False, sort_keys=True))
+          PY
+
+      - name: Upload immutable inference output
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-lyon-fenerbahce-20260826-pure-model-frozen
+          path: |
+            /tmp/lyon_fener_input.json
+            /tmp/lyon_fener_output.json
+            /tmp/lyon_fener_pre_kickoff_backfill.json
+          if-no-files-found: error
+          retention-days: 30
