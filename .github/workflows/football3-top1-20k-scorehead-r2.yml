@@ -1,0 +1,49 @@
+name: football3 Top1 disjoint 20k score-head R2
+on:
+  push:
+    branches:
+      - football3/top1-20k-opponent-veto-r1
+    paths:
+      - 'football-data/experiments/top1_20k_r2/**'
+      - '.github/workflows/football3-top1-20k-scorehead-r2.yml'
+permissions:
+  contents: write
+jobs:
+  r2-scorehead:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-20k-opponent-veto-r1
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Freeze disjoint preceding 20000 matches
+        run: python football-data/experiments/top1_20k_r2/run_experiment_r2.py freeze
+      - name: Run preregistered score-head comparison
+        run: python football-data/experiments/top1_20k_r2/run_experiment_r2.py run
+      - name: Verify no-market untouched-test contract
+        run: python football-data/experiments/top1_20k_r2/run_experiment_r2.py verify
+      - name: Persist R2 frozen data and result to GitHub
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_20k_r2/data football-data/experiments/top1_20k_r2/results
+          if git diff --cached --quiet; then
+            echo 'No generated changes to commit'
+          else
+            git commit -m '[generated top1-20k-r2] freeze disjoint 20000 and score-head result'
+            git push origin HEAD:football3/top1-20k-opponent-veto-r1
+          fi
+      - name: Upload immutable R2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-20k-scorehead-r2
+          path: |
+            football-data/experiments/top1_20k_r2/data/source_manifest_r2.json
+            football-data/experiments/top1_20k_r2/results/summary_r2.json
+            football-data/experiments/top1_20k_r2/data/matches_r2_20000_part*.csv
+          retention-days: 30
