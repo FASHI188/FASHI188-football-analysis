@@ -1,0 +1,55 @@
+name: football3 Top1 strict-prior xG full coverage R9
+
+on:
+  push:
+    branches:
+      - football3/top1-20k-opponent-veto-r1
+    paths:
+      - football-data/experiments/top1_r9_xg/run_experiment_r9.py
+      - .github/workflows/football3-top1-r9-xg-fullcoverage.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r9-xg-full-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-20k-opponent-veto-r1
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy scikit-learn
+      - name: Freeze 20000 historical matches with xG
+        run: python football-data/experiments/top1_r9_xg/run_experiment_r9.py freeze
+      - name: Run 100 percent coverage strict-prior xG comparison
+        run: python football-data/experiments/top1_r9_xg/run_experiment_r9.py run
+      - name: Verify no-market strict-prior-xG contract
+        run: python football-data/experiments/top1_r9_xg/run_experiment_r9.py verify
+      - name: Persist R9 manifest and result to GitHub
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r9_xg/data/source_manifest_r9.json football-data/experiments/top1_r9_xg/results/summary_r9.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated top1-r9] freeze xG manifest and strict-prior full-coverage result'
+            git push origin HEAD:football3/top1-20k-opponent-veto-r1
+          fi
+      - name: Upload immutable R9 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r9-xg-fullcoverage
+          path: |
+            football-data/experiments/top1_r9_xg/data/source_manifest_r9.json
+            football-data/experiments/top1_r9_xg/results/summary_r9.json
+          if-no-files-found: error
+          retention-days: 30
