@@ -4,11 +4,34 @@ from __future__ import annotations
 import football3_weekly_12_league_personnel_scan_v2 as core
 
 # Root-cause hardening for official membership surfaces.
-# Portugal: use a current 2026/27 Liga Portugal team page whose classification
-# exposes all 18 Liga Portugal Betclic clubs in machine-readable text.
+# Portugal: the weekly official registration article is the authoritative current
+# transfer-window surface and lists all participating Liga Portugal Betclic SADs.
 core.LEAGUES["POR_PrimeiraLiga"]["membership"] = [
-    "https://www.ligaportugal.pt/team/157/fc-porto/20262027"
+    "https://www.ligaportugal.pt/noticias/28214/inscricoes-oficiais-liga-portugal-betclic-%28atualizacao-14-de-agosto%29"
 ]
+
+# Official Portuguese registration headings often use legal SAD names rather
+# than the public competition short name. These aliases are membership-only.
+POR_MEMBERSHIP_SHORT = {
+    "FC Porto": ["FC Porto", "Futebol Clube do Porto"],
+    "FC Arouca": ["FC Arouca", "Arouca"],
+    "Gil Vicente FC": ["Gil Vicente FC", "Gil Vicente"],
+    "Marítimo M.": ["Marítimo M.", "Marítimo da Madeira", "Marítimo"],
+    "Académico": ["Académico de Viseu", "Académico"],
+    "CD Nacional": ["CD Nacional", "Nacional"],
+    "Estrela Amadora": ["Estrela Amadora", "CFEA", "Club Football Estrela"],
+    "Moreirense FC": ["Moreirense FC", "Moreirense"],
+    "Santa Clara": ["Santa Clara Açores", "Santa Clara"],
+    "SC Braga": ["SC Braga", "Sporting Clube de Braga"],
+    "SL Benfica": ["SL Benfica", "Sport Lisboa e Benfica"],
+    "Sporting CP": ["Sporting CP", "Sporting Clube de Portugal"],
+    "Estoril Praia": ["Estoril Praia"],
+    "FC Famalicão": ["FC Famalicão", "Famalicão"],
+    "Casa Pia AC": ["Casa Pia AC", "Casa Pia"],
+    "Rio Ave FC": ["Rio Ave FC", "Rio Ave"],
+    "Vitória SC": ["Vitória SC", "Vitória Sport Clube"],
+    "FC Alverca": ["FC Alverca", "Futebol Clube Alverca", "Alverca"],
+}
 
 # K League official competition pages render club membership primarily with
 # Korean short names. Keep personnel fingerprints on the stricter full aliases,
@@ -34,9 +57,9 @@ _base_contains = core.contains
 def membership_compatible_contains(text: str, team: str) -> bool:
     if _base_contains(text, team):
         return True
-    aliases = KOR_MEMBERSHIP_SHORT.get(team, [])
+    candidates = POR_MEMBERSHIP_SHORT.get(team, []) + KOR_MEMBERSHIP_SHORT.get(team, [])
     low = text.casefold()
-    return any(alias.casefold() in low for alias in aliases)
+    return any(alias.casefold() in low for alias in candidates)
 
 
 core.contains = membership_compatible_contains
