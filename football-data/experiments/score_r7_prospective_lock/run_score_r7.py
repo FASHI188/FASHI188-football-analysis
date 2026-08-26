@@ -24,6 +24,16 @@ LEAGUE_META={
     'Ligue_1':('France','Ligue 1'),
     'RFPL':('Russia','Premier League'),
 }
+R7_TEAM_ALIASES={
+    'Manchester City':'Man City',
+    'Atletico Madrid':'Ath Madrid',
+    'Real Betis':'Betis',
+    'Celta Vigo':'Celta',
+    'Paris Saint Germain':'Paris SG',
+    'Zenit St. Petersburg':'Zenit',
+    'FK Akhmat':'Akhmat Grozny',
+    'Parma Calcio 1913':'Parma',
+}
 LOCKED_RHO=-0.02250000000000002
 HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
 TOPK=5
@@ -60,12 +70,17 @@ def league_id_exact(leagues,key):
     return hits[0]
 
 
+def resolve_team_r7(title,primary,all_teams):
+    query=R7_TEAM_ALIASES.get(title,title)
+    return r17.resolve_team(query,primary,all_teams)
+
+
 def collect(base):
     tp=HERE/'_teams.parquet'; lp=HERE/'_leagues.parquet'
     r9.download(f'{HF}/teams.parquet?download=true',tp); r9.download(f'{HF}/leagues.parquet?download=true',lp)
     teams=__import__('pandas').read_parquet(tp); leagues=__import__('pandas').read_parquet(lp)
     tp.unlink(missing_ok=True); lp.unlink(missing_ok=True)
-    active={x['home_team'] for x in base}|{x['away_team'] for x in base}; fallback=r17.team_index(teams,active)
+    all_teams=r17.team_index(teams,set())
     past=[]; future=[]; audit=[]; source_counts={}; compmap={}; mapping_failures={}
     for lg in LEAGUES:
         cid=league_id_exact(leagues,lg); compmap[lg]=cid
@@ -75,7 +90,7 @@ def collect(base):
             dt=str(z.get('datetime') or '')[:10]
             if not (UPDATE_START <= dt <= TARGET_END): continue
             ht=str((z.get('h') or {}).get('title') or ''); at=str((z.get('a') or {}).get('title') or '')
-            hid,hc=r17.resolve_team(ht,primary,fallback); aid,ac=r17.resolve_team(at,primary,fallback)
+            hid,hc=resolve_team_r7(ht,primary,all_teams); aid,ac=resolve_team_r7(at,primary,all_teams)
             kind='past' if dt<=LOCK_DAY and complete(z) else 'future' if TARGET_START<=dt<=TARGET_END and not complete(z) else 'ignored'
             audit.append({'league':lg,'date':dt,'kind':kind,'understat_id':str(z.get('id')),'home':ht,'home_id':hid,'home_candidates':hc,'away':at,'away_id':aid,'away_candidates':ac})
             if hid is None or aid is None:
