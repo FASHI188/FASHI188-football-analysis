@@ -1,0 +1,80 @@
+name: football3 top1 R26b unseen FD fresh S60
+
+on:
+  push:
+    branches:
+      - football3/top1-r26b-unseen-fd-fresh-s60
+    paths:
+      - football-data/experiments/top1_r26b_unseen_fd_fresh_s60/run_experiment_r26b.py
+      - football-data/experiments/top1_r26b_unseen_fd_fresh_s60/driver_r26b.py
+      - .github/workflows/football3-top1-r26b-unseen-fd-fresh-s60.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  r26b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r26b-unseen-fd-fresh-s60
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Materialize exact frozen R9b snapshot
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py freeze
+      - name: Download locked R24 scale artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-top1-r24-history-scale-curve
+          path: football-data/experiments/top1_r25_fresh_s60_confirmation/r24_artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: FASHI188/FASHI188-football-analysis
+          run-id: 32939928003
+      - name: Run R26b unseen FD fresh S60
+        run: python football-data/experiments/top1_r26b_unseen_fd_fresh_s60/driver_r26b.py
+      - name: Persist compact R26b diagnostic on failure
+        if: failure()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for f in \
+            football-data/experiments/top1_r26b_unseen_fd_fresh_s60/results/error_r26b.json \
+            football-data/experiments/top1_r26b_unseen_fd_fresh_s60/data/diagnostic_r26b.json; do
+            if [ -f "$f" ]; then git add -f "$f"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m '[diagnostic] football3 R26b compact failure receipt'
+            git push origin HEAD:football3/top1-r26b-unseen-fd-fresh-s60
+          fi
+      - name: Verify R26b contract
+        run: python football-data/experiments/top1_r26b_unseen_fd_fresh_s60/run_experiment_r26b.py verify
+      - name: Persist R26b evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r26b_unseen_fd_fresh_s60/results/summary_r26b.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R26b unseen FD fresh S60 confirmation'
+            git push origin HEAD:football3/top1-r26b-unseen-fd-fresh-s60
+          fi
+      - name: Upload R26b artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r26b-unseen-fd-fresh-s60
+          path: |
+            football-data/experiments/top1_r26b_unseen_fd_fresh_s60/results/summary_r26b.json
+            football-data/experiments/top1_r26b_unseen_fd_fresh_s60/data/fresh_cohort_r26b.json
+          if-no-files-found: error
+          retention-days: 90
