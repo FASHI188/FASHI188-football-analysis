@@ -1,0 +1,51 @@
+name: football3 single test Preston vs Everton
+
+on:
+  push:
+    branches:
+      - football3/single-test-preston-everton-20260826
+    paths:
+      - 'football-data/experiments/single_tests/preston_everton_20260826.py'
+      - '.github/workflows/football3-single-test-preston-everton.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  predict:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact test branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/single-test-preston-everton-20260826
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+
+      - name: Run R9b prematch calculation
+        run: python football-data/experiments/single_tests/preston_everton_20260826.py
+
+      - name: Persist result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/single_tests/results/preston_everton_20260826.json
+          if ! git diff --cached --quiet; then
+            git commit -m '[generated single-test] Preston Everton prematch R9b result'
+            git push origin HEAD:football3/single-test-preston-everton-20260826
+          fi
+
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-single-test-preston-everton
+          path: football-data/experiments/single_tests/results/preston_everton_20260826.json
+          if-no-files-found: error
