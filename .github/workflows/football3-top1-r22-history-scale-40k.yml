@@ -6,6 +6,7 @@ on:
       - football3/top1-r22-history-scale-40k
     paths:
       - football-data/experiments/top1_r22_history_scale_40k/run_experiment_r22.py
+      - football-data/experiments/top1_r22_history_scale_40k/driver_r22.py
       - .github/workflows/football3-top1-r22-history-scale-40k.yml
   workflow_dispatch:
 
@@ -29,7 +30,27 @@ jobs:
       - name: Install modeling runtime
         run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
       - name: Run R22 fixed-tail history scale audit
-        run: python football-data/experiments/top1_r22_history_scale_40k/run_experiment_r22.py run
+        run: python football-data/experiments/top1_r22_history_scale_40k/driver_r22.py
+      - name: Persist compact R22 diagnostic on failure
+        if: failure()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [ -f football-data/experiments/top1_r22_history_scale_40k/results/error_r22.json ]; then
+            git add football-data/experiments/top1_r22_history_scale_40k/results/error_r22.json
+            if ! git diff --cached --quiet; then
+              git commit -m '[diagnostic] football3 R22 compact failure receipt'
+              git push origin HEAD:football3/top1-r22-history-scale-40k
+            fi
+          fi
+      - name: Upload compact R22 diagnostic on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r22-error
+          path: football-data/experiments/top1_r22_history_scale_40k/results/error_r22.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Verify R22 contract
         run: python football-data/experiments/top1_r22_history_scale_40k/run_experiment_r22.py verify
       - name: Persist R22 evidence
