@@ -39,6 +39,13 @@ def s60_prob(model,raw):
     return {'home':p['p_home'],'draw':p['p_draw'],'away':p['p_away'],'top1':('home','draw','away')[int(p['top1'])]}
 
 
+def compact_candidates(cands):
+    out=[]
+    for score,tid,names in cands[:2]:
+        out.append({'score':round(float(score),3),'id':str(tid),'names':list(names)[:3]})
+    return out
+
+
 def league_id_exact(leagues,key):
     country,name=LEAGUE_META[key]
     hits=[]
@@ -59,7 +66,7 @@ def collect(base):
     teams=__import__('pandas').read_parquet(tp); leagues=__import__('pandas').read_parquet(lp)
     tp.unlink(missing_ok=True); lp.unlink(missing_ok=True)
     active={x['home_team'] for x in base}|{x['away_team'] for x in base}; fallback=r17.team_index(teams,active)
-    past=[]; future=[]; audit=[]; source_counts={}; compmap={}
+    past=[]; future=[]; audit=[]; source_counts={}; compmap={}; mapping_failures={}
     for lg in LEAGUES:
         cid=league_id_exact(leagues,lg); compmap[lg]=cid
         allowed={x['home_team'] for x in base if x['competition_id']==cid}|{x['away_team'] for x in base if x['competition_id']==cid}
@@ -71,7 +78,11 @@ def collect(base):
             hid,hc=r17.resolve_team(ht,primary,fallback); aid,ac=r17.resolve_team(at,primary,fallback)
             kind='past' if dt<=LOCK_DAY and complete(z) else 'future' if TARGET_START<=dt<=TARGET_END and not complete(z) else 'ignored'
             audit.append({'league':lg,'date':dt,'kind':kind,'understat_id':str(z.get('id')),'home':ht,'home_id':hid,'home_candidates':hc,'away':at,'away_id':aid,'away_candidates':ac})
-            if hid is None or aid is None: continue
+            if hid is None or aid is None:
+                if kind in {'past','future'}:
+                    if hid is None: mapping_failures[(lg,kind,'home',ht)]=compact_candidates(hc)
+                    if aid is None: mapping_failures[(lg,kind,'away',at)]=compact_candidates(ac)
+                continue
             if kind=='past':
                 g=z.get('goals') or {}; past.append({'date':dt,'game_id':f'UNDERSTAT_R7_PAST_{lg}_{z.get("id")}','competition_id':cid,'home_team':hid,'away_team':aid,'home_goals':int(g['h']),'away_goals':int(g['a']),'home_xg':0.0,'away_xg':0.0,'league':lg})
             elif kind=='future':
@@ -79,7 +90,9 @@ def collect(base):
     past.sort(key=lambda x:(x['date'],x['game_id'])); future.sort(key=lambda x:(x['date'],x['game_id']))
     pa=[x for x in audit if x['kind']=='past']; fa=[x for x in audit if x['kind']=='future']
     pcov=len(past)/len(pa) if pa else 0.; fcov=len(future)/len(fa) if fa else 0.
-    if len(future)<20 or pcov<.90 or fcov<.90: raise RuntimeError(f'R7 cohort gate failed future={len(future)} past_cov={pcov:.3f} future_cov={fcov:.3f}')
+    if len(future)<20 or pcov<.90 or fcov<.90:
+        details=[{'league':k[0],'kind':k[1],'side':k[2],'team':k[3],'candidates':v} for k,v in sorted(mapping_failures.items())]
+        raise RuntimeError(f'R7 cohort gate failed future={len(future)} past_cov={pcov:.3f} future_cov={fcov:.3f}; mapping_failures={json.dumps(details,ensure_ascii=False,separators=(",",":"))}')
     return past,future,audit,source_counts,compmap,pcov,fcov
 
 
