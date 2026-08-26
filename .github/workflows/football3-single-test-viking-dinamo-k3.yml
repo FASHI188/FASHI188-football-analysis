@@ -1,0 +1,68 @@
+name: football3 single test Viking Dinamo R9b K1 K3
+
+on:
+  push:
+    branches:
+      - football3/single-test-viking-dinamo-20260826-k3
+    paths:
+      - football-data/experiments/single_tests/viking_dinamo_20260826.py
+      - .github/workflows/football3-single-test-viking-dinamo-k3.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  single-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/single-test-viking-dinamo-20260826-k3
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Run strict-prior Viking Dinamo calculation
+        run: python football-data/experiments/single_tests/viking_dinamo_20260826.py
+      - name: Verify one-shot contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/experiments/single_tests/results/viking_dinamo_20260826.json')
+          x=json.loads(p.read_text())
+          assert x['status']=='COMPLETE'
+          g=x['governance']
+          assert g['strict_prior_snapshot'] and not g['odds_used'] and not g['market_prices_used']
+          assert not g['manual_probability_adjustment'] and not g['post_match_target_data_used'] and not g['same_day_leakage']
+          assert len(x['pre_match_updates'])==15
+          for stage in ('snapshot_only','pre_match_updated'):
+              for model in ('K1','K3'):
+                  q=x[stage]['prediction'][model]
+                  assert abs(q['home']+q['draw']+q['away']-1.0) < 1e-8
+          print('VIKING_DINAMO_CONTRACT_PASS')
+          PY
+      - name: Persist result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/single_tests/results/viking_dinamo_20260826.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated single-test] Viking Dinamo 20260826'
+            git push origin HEAD:football3/single-test-viking-dinamo-20260826-k3
+          fi
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-single-test-viking-dinamo-k3
+          path: football-data/experiments/single_tests/results/viking_dinamo_20260826.json
+          if-no-files-found: error
+          retention-days: 90
