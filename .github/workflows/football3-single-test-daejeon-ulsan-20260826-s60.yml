@@ -1,0 +1,59 @@
+name: football3 single test Daejeon Ulsan 20260826 S60
+
+on:
+  push:
+    branches:
+      - football3/single-test-daejeon-ulsan-20260826-s60
+    paths:
+      - football-data/experiments/single_tests/daejeon_ulsan_20260826_s60.py
+      - .github/workflows/football3-single-test-daejeon-ulsan-20260826-s60.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/single-test-daejeon-ulsan-20260826-s60
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Materialize exact frozen R9b snapshot
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py freeze
+      - name: Download locked R24 scale artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-top1-r24-history-scale-curve
+          path: football-data/experiments/top1_r25_fresh_s60_confirmation/r24_artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: FASHI188/FASHI188-football-analysis
+          run-id: 32939928003
+      - name: Run Daejeon Ulsan S60 prematch test
+        run: python football-data/experiments/single_tests/daejeon_ulsan_20260826_s60.py
+      - name: Persist single-test result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/single_tests/results/daejeon_ulsan_20260826_s60.json
+          if ! git diff --cached --quiet; then
+            git commit -m '[generated] football3 Daejeon-Ulsan S60 prematch result'
+            git push origin HEAD:football3/single-test-daejeon-ulsan-20260826-s60
+          fi
+      - name: Upload single-test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-single-test-daejeon-ulsan-20260826-s60
+          path: football-data/experiments/single_tests/results/daejeon_ulsan_20260826_s60.json
+          if-no-files-found: error
+          retention-days: 90
