@@ -1,0 +1,55 @@
+name: football3 Top1 R12 strict-prior draw features
+
+on:
+  push:
+    branches:
+      - football3/top1-r12-draw-features
+    paths:
+      - football-data/experiments/top1_r12_draw_features/run_experiment_r12.py
+      - .github/workflows/football3-top1-r12-draw-features.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r12-draw-features:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact R12 branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r12-draw-features
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Rebuild exact R9b snapshot through hash gate
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py freeze
+      - name: Run fixed strict-prior draw feature challenger
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py run
+      - name: Verify R12 no-market same-date contract
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py verify
+      - name: Persist R12 manifest and result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r12_draw_features/data/source_manifest_r12.json football-data/experiments/top1_r12_draw_features/results/summary_r12.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated top1-r12] persist strict-prior draw feature result'
+            git push origin HEAD:football3/top1-r12-draw-features
+          fi
+      - name: Upload immutable R12 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r12-draw-features
+          path: |
+            football-data/experiments/top1_r12_draw_features/data/source_manifest_r12.json
+            football-data/experiments/top1_r12_draw_features/results/summary_r12.json
+          if-no-files-found: error
+          retention-days: 30
