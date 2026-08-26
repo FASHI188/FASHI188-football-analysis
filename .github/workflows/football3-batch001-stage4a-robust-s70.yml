@@ -6,6 +6,7 @@ on:
       - football3/batch001-stage4a-robust-s70
     paths:
       - football-data/experiments/batch001_stage4a_robust_s70/run_stage4a.py
+      - football-data/experiments/batch001_stage4a_robust_s70/stage4a_driver.py
       - .github/workflows/football3-batch001-stage4a-robust-s70.yml
   workflow_dispatch:
 
@@ -38,7 +39,19 @@ jobs:
           repository: FASHI188/FASHI188-football-analysis
           run-id: 32939928003
       - name: Generate locked S70 robust predictions
-        run: python football-data/experiments/batch001_stage4a_robust_s70/run_stage4a.py run
+        run: |
+          cd football-data/experiments/batch001_stage4a_robust_s70
+          python stage4a_driver.py
+      - name: Persist compact Stage4A diagnostic on failure
+        if: failure()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [ -f football-data/experiments/batch001_stage4a_robust_s70/results/error_stage4a.json ]; then
+            git add football-data/experiments/batch001_stage4a_robust_s70/results/error_stage4a.json
+            git commit -m '[diagnostic] football3 Batch-001 Stage4A failure' || true
+            git push origin HEAD:football3/batch001-stage4a-robust-s70
+          fi
       - name: Verify Stage4A contract
         run: python football-data/experiments/batch001_stage4a_robust_s70/run_stage4a.py verify
       - name: Persist locked candidate predictions
