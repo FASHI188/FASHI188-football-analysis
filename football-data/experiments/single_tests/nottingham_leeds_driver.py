@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Compact failure receipt only; never loads the full Actions log.
 import json
 from pathlib import Path
 import nottingham_leeds_20260825 as m
