@@ -1,0 +1,76 @@
+name: football3 top1 R25 fresh S60 confirmation
+
+on:
+  push:
+    branches:
+      - football3/top1-r25-fresh-s60-confirmation
+    paths:
+      - football-data/experiments/top1_r25_fresh_s60_confirmation/run_experiment_r25.py
+      - football-data/experiments/top1_r25_fresh_s60_confirmation/driver_r25.py
+      - .github/workflows/football3-top1-r25-fresh-s60-confirmation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  r25:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r25-fresh-s60-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Materialize exact frozen R9b snapshot
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py freeze
+      - name: Download locked R24 scale artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-top1-r24-history-scale-curve
+          path: football-data/experiments/top1_r25_fresh_s60_confirmation/r24_artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: FASHI188/FASHI188-football-analysis
+          run-id: 32939928003
+      - name: Run R25 fresh S60 confirmation
+        run: python football-data/experiments/top1_r25_fresh_s60_confirmation/driver_r25.py
+      - name: Persist compact R25 diagnostic on failure
+        if: failure()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f football-data/experiments/top1_r25_fresh_s60_confirmation/results/error_r25.json football-data/experiments/top1_r25_fresh_s60_confirmation/data/diagnostic_r25.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m '[diagnostic] football3 R25 compact failure receipt'
+            git push origin HEAD:football3/top1-r25-fresh-s60-confirmation
+          fi
+      - name: Verify R25 contract
+        run: python football-data/experiments/top1_r25_fresh_s60_confirmation/run_experiment_r25.py verify
+      - name: Persist R25 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r25_fresh_s60_confirmation/results/summary_r25.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R25 fresh S60 confirmation'
+            git push origin HEAD:football3/top1-r25-fresh-s60-confirmation
+          fi
+      - name: Upload R25 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r25-fresh-s60-confirmation
+          path: |
+            football-data/experiments/top1_r25_fresh_s60_confirmation/results/summary_r25.json
+            football-data/experiments/top1_r25_fresh_s60_confirmation/data/fresh_cohort_r25.json
+          if-no-files-found: error
+          retention-days: 90
