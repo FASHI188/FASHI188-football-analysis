@@ -1,0 +1,53 @@
+name: football3 Top1 R14 compact draw features
+
+on:
+  push:
+    branches:
+      - football3/top1-r14-compact-draw-features
+    paths:
+      - football-data/experiments/top1_r14_compact_draw/run_experiment_r14.py
+      - .github/workflows/football3-top1-r14-compact-draw-features.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r14-compact-draw:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact R14 branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r14-compact-draw-features
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Run compact strict-prior draw challenger
+        run: python football-data/experiments/top1_r14_compact_draw/run_experiment_r14.py run
+      - name: Verify R14 contract
+        run: python football-data/experiments/top1_r14_compact_draw/run_experiment_r14.py verify
+      - name: Persist R14 manifest and result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r14_compact_draw/data/source_manifest_r14.json football-data/experiments/top1_r14_compact_draw/results/summary_r14.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated top1-r14] persist compact draw result'
+            git push origin HEAD:football3/top1-r14-compact-draw-features
+          fi
+      - name: Upload immutable R14 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r14-compact-draw-features
+          path: |
+            football-data/experiments/top1_r14_compact_draw/data/source_manifest_r14.json
+            football-data/experiments/top1_r14_compact_draw/results/summary_r14.json
+          if-no-files-found: error
+          retention-days: 30
