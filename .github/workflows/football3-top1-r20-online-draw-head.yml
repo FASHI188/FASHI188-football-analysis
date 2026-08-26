@@ -1,0 +1,52 @@
+name: football3 top1 R20 online draw head
+
+on:
+  push:
+    branches:
+      - football3/top1-r20-online-draw-head
+    paths:
+      - football-data/experiments/top1_r20_online_draw_head/run_experiment_r20.py
+      - .github/workflows/football3-top1-r20-online-draw-head.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r20-online-draw-head
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Run R20 rolling online draw head
+        run: python football-data/experiments/top1_r20_online_draw_head/run_experiment_r20.py run
+      - name: Verify R20 contract
+        run: python football-data/experiments/top1_r20_online_draw_head/run_experiment_r20.py verify
+      - name: Persist R20 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r20_online_draw_head/results/summary_r20.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R20 online draw head'
+            git push origin HEAD:football3/top1-r20-online-draw-head
+          fi
+      - name: Upload R20 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r20-online-draw-head
+          path: football-data/experiments/top1_r20_online_draw_head/results/summary_r20.json
+          if-no-files-found: error
+          retention-days: 90
