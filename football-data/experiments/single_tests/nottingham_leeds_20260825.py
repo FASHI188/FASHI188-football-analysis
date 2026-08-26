@@ -38,7 +38,7 @@ def main():
     teams = pd.read_parquet(tp); leagues = pd.read_parquet(lp)
     R = lambda n, a=(): b.resolve_team(teams, n, a)
 
-    forest = R("Nottingham Forest", ("Nottm Forest", "Nottingham Forest FC"))
+    forest = R("Nott'm Forest", ("Nottingham Forest", "Nottm Forest", "Nottingham Forest FC"))
     leeds = R("Leeds United", ("Leeds", "Leeds United FC"))
     cup = resolve_cup(leagues)
     fid = forest["team_id"]; lid = leeds["team_id"]
