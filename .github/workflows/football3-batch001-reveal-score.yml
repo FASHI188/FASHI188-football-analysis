@@ -1,0 +1,44 @@
+name: football3 Batch-001 reveal score
+
+on:
+  push:
+    branches:
+      - football3/batch001-reveal-score
+    paths:
+      - football-data/experiments/batch001_reveal_score/score_batch001.py
+      - .github/workflows/football3-batch001-reveal-score.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reveal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/batch001-reveal-score
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reveal and score locked 100
+        run: python football-data/experiments/batch001_reveal_score/score_batch001.py run
+      - name: Verify reveal contract
+        run: python football-data/experiments/batch001_reveal_score/score_batch001.py verify
+      - name: Persist Batch-001 reveal
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/batch001_reveal_score/results/summary_batch001_reveal.json
+          git commit -m '[revealed] football3 Batch-001 score S60 vs S70 robust' || true
+          git push origin HEAD:football3/batch001-reveal-score
+      - name: Upload Batch-001 reveal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch001-reveal-score
+          path: football-data/experiments/batch001_reveal_score/results/summary_batch001_reveal.json
+          if-no-files-found: error
+          retention-days: 90
