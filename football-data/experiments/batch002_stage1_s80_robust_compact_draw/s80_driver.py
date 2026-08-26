@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Trigger-only commit after the preregistered workflow exists; model logic unchanged.
+# PR-merge trigger: no candidate, feature, cutoff, or hyperparameter changes.
 import json
 from pathlib import Path
 import run_batch002_s80 as m
