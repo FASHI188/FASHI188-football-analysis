@@ -1,0 +1,51 @@
+name: football3 Batch-001 100-match lock
+
+on:
+  push:
+    branches:
+      - football3/batch001-100match-pseudoprospective
+    paths:
+      - football-data/experiments/batch001_100match_pseudoprospective/lock_batch001.py
+      - .github/workflows/football3-batch001-100match-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  batch001-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Batch-001 branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/batch001-100match-pseudoprospective
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Lock first 100 historical matches
+        run: python football-data/experiments/batch001_100match_pseudoprospective/lock_batch001.py run
+      - name: Verify immutable cohort contract
+        run: python football-data/experiments/batch001_100match_pseudoprospective/lock_batch001.py verify
+      - name: Persist locked cohort
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/batch001_100match_pseudoprospective/results/batch001_locked_100.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[locked] football3 Batch-001 first 100 matches'
+            git push origin HEAD:football3/batch001-100match-pseudoprospective
+          fi
+      - name: Upload Batch-001 lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch001-100match-lock
+          path: football-data/experiments/batch001_100match_pseudoprospective/results/batch001_locked_100.json
+          if-no-files-found: error
+          retention-days: 90
