@@ -2,9 +2,9 @@
 from __future__ import annotations
 import json
 from pathlib import Path
-import run_experiment_r25 as m
 
 try:
+    import run_experiment_r25 as m
     m.run()
 except Exception as exc:
     p=Path(__file__).resolve().parent/'results'/'error_r25.json'; p.parent.mkdir(parents=True,exist_ok=True)
