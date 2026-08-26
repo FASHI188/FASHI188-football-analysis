@@ -11,7 +11,7 @@ r23=r25.r23; r18=r25.r18; r17=r25.r17; r9=r25.r9
 START='2026-07-05'; END='2026-08-25'; MIN_FRESH_PER_COMP=20
 FIX_SHA='7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7'
 HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
-EXCLUDED_CODES=('E1','E2','E3','N1','B1','P1','SC0','D2','F2','I2','SP2')
+EXCLUDED_CODES=('E0','E1','E2','E3','SP1','SP2','I1','I2','F1','F2','D1','D2','N1','B1','P1','SC0')
 
 def comp_label(leagues,cid):
     cols=r17.text_cols(leagues); row=leagues[leagues['id'].astype(str)==str(cid)]
@@ -26,8 +26,8 @@ def collect_fresh():
     lp=HERE/'_leagues.parquet'; fp=HERE/'_fixtures.parquet'; r9.download(f'{HF}/leagues.parquet?download=true',lp); r9.download(f'{HF}/fixtures.parquet?download=true',fp)
     if r9.fsha(fp)!=FIX_SHA: raise RuntimeError('R26 fixtures hash drift')
     leagues=pd.read_parquet(lp)
-    excluded=set(r17.league_id(leagues,k) for k in r17.UNDERSTAT_LEAGUES)
-    for code in EXCLUDED_CODES: excluded.add(r23.comp_id(leagues,code)[0])
+    excluded=set(r23.comp_id(leagues,code)[0] for code in EXCLUDED_CODES)
+    excluded.add(r17.league_id(leagues,'RFPL'))
     fx=pd.read_parquet(fp,columns=['id','date_utc','league_id','home_team_id','away_team_id','goals_home','goals_away','status_norm','is_played'])
     fx=fx[(fx.is_played==True)&(fx.status_norm=='FT')&fx.goals_home.notna()&fx.goals_away.notna()&fx.league_id.notna()&fx.home_team_id.notna()&fx.away_team_id.notna()].copy()
     fx['date']=pd.to_datetime(fx.date_utc,utc=True).dt.date.astype(str); fx=fx[(fx.date>=START)&(fx.date<=END)].sort_values(['date','id']).drop_duplicates('id')
