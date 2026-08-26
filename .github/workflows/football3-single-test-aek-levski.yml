@@ -1,0 +1,49 @@
+name: football3 single test AEK vs Levski
+
+on:
+  push:
+    branches:
+      - football3/single-test-aek-levski
+    paths:
+      - football-data/experiments/single_tests/aek_levski_20260826.py
+      - .github/workflows/football3-single-test-aek-levski.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact test branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/single-test-aek-levski
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Run strict-prior single-match calculation
+        run: python football-data/experiments/single_tests/aek_levski_20260826.py
+      - name: Persist result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/single_tests/results/aek_levski_20260826.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated single-test] AEK vs Levski pre-match probabilities'
+            git push origin HEAD:football3/single-test-aek-levski
+          fi
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-single-test-aek-levski
+          path: football-data/experiments/single_tests/results/aek_levski_20260826.json
+          if-no-files-found: error
+          retention-days: 30
