@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json,sys
+import csv,json,sys
 from collections import defaultdict
 from pathlib import Path
 import pandas as pd
@@ -16,6 +16,13 @@ EXTRA_N=40000; TRAIN_MULT=3
 R24_RUN=32939928003; R24_DIGEST='sha256:f158db875f247bb0600892e66f2d5f0f8abaa46f1fb73afd1d62441ebf4914d9'; EXTRA_SHA='477d1a4f542850e4e2981b98acbbbba0c261b14f37fc0f5f618d5cb1234452bc'
 EXTRA=HERE/'r24_artifact'/'data'/'extra_r24_xg_60000.csv'; HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
 
+def load_extra_preserve(p):
+    z=[]
+    with p.open(encoding='utf-8') as f:
+        for x in csv.DictReader(f):
+            x['home_goals']=int(x['home_goals']); x['away_goals']=int(x['away_goals']); x['home_xg']=float(x['home_xg']); x['away_xg']=float(x['away_xg']); z.append(x)
+    return z
+
 def select_s60():
     s=json.loads((R24/'results'/'summary_r24.json').read_text(encoding='utf-8'))
     if s['status']!='COMPLETE' or s['governance']['fresh_R23_used_for_selection']:
@@ -30,7 +37,7 @@ def select_s60():
 def lock_models():
     if not EXTRA.exists(): raise RuntimeError(f'locked R24 artifact missing: {EXTRA}')
     if r9.fsha(EXTRA)!=EXTRA_SHA: raise RuntimeError('R24 extra artifact hash mismatch')
-    base=r9.load(); ex60=r23.load_csv(EXTRA)
+    base=r9.load(); ex60=load_extra_preserve(EXTRA)
     if len(base)!=20000 or len(ex60)!=60000: raise RuntimeError(f'history size mismatch base={len(base)} extra={len(ex60)}')
     extra=ex60[-EXTRA_N:]
     if max(x['date'] for x in extra)>=min(x['date'] for x in base): raise RuntimeError('S60 extra history not strictly earlier')
