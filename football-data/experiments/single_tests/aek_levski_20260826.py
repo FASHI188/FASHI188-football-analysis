@@ -58,11 +58,15 @@ def download_table(name: str) -> Path:
     return p
 
 
+def string_columns(df: pd.DataFrame):
+    return [c for c in df.columns if pd.api.types.is_string_dtype(df[c].dtype) or df[c].dtype == object]
+
+
 def resolve_team(teams: pd.DataFrame, needle: str, alternates: tuple[str, ...]):
     id_col = "id" if "id" in teams.columns else "team_id" if "team_id" in teams.columns else None
     if id_col is None:
         raise RuntimeError(f"cannot identify team id column: {list(teams.columns)}")
-    text_cols = [c for c in teams.columns if teams[c].dtype == object]
+    text_cols = string_columns(teams)
     keys = tuple(x.lower() for x in (needle,) + alternates)
     candidates = []
     for row in teams.itertuples(index=False):
@@ -80,7 +84,8 @@ def resolve_team(teams: pd.DataFrame, needle: str, alternates: tuple[str, ...]):
         if score:
             candidates.append((score, int(d[id_col]), texts))
     if not candidates:
-        raise RuntimeError(f"no team match for {needle}; columns={list(teams.columns)}")
+        sample = teams[[id_col] + text_cols].head(30).to_dict("records")
+        raise RuntimeError(f"no team match for {needle}; columns={list(teams.columns)} sample={sample}")
     candidates.sort(key=lambda x: (-x[0], x[1]))
     top = candidates[0]
     return {"team_id": str(top[1]), "texts": top[2], "candidates": candidates[:8]}
@@ -90,7 +95,7 @@ def resolve_ucl_league(leagues: pd.DataFrame) -> str:
     id_col = "id" if "id" in leagues.columns else "league_id" if "league_id" in leagues.columns else None
     if id_col is None:
         raise RuntimeError(f"cannot identify league id column: {list(leagues.columns)}")
-    text_cols = [c for c in leagues.columns if leagues[c].dtype == object]
+    text_cols = string_columns(leagues)
     hits = []
     for row in leagues.itertuples(index=False):
         d = row._asdict()
