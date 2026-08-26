@@ -1,0 +1,39 @@
+name: football3 Batch-002 100-match lock
+on:
+  push:
+    branches: [football3/batch002-100match-lock]
+    paths:
+      - football-data/experiments/batch002_100match_lock/lock_batch002.py
+      - .github/workflows/football3-batch002-100match-lock.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/batch002-100match-lock
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Lock Batch-002
+        run: python football-data/experiments/batch002_100match_lock/lock_batch002.py run
+      - name: Verify immutable cohort
+        run: python football-data/experiments/batch002_100match_lock/lock_batch002.py verify
+      - name: Persist locked cohort
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/batch002_100match_lock/results/batch002_locked_100.json
+          git commit -m '[locked] football3 Batch-002 first 100 matches' || true
+          git push origin HEAD:football3/batch002-100match-lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch002-100match-lock
+          path: football-data/experiments/batch002_100match_lock/results/batch002_locked_100.json
+          if-no-files-found: error
+          retention-days: 90
