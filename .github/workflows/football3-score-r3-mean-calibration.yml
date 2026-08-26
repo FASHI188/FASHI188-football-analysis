@@ -1,0 +1,61 @@
+name: football3 score R3 mean calibration
+
+on:
+  push:
+    branches:
+      - football3/score-r3-mean-calibration
+    paths:
+      - football-data/experiments/score_r3_mean_calibration/run_score_r3.py
+      - .github/workflows/football3-score-r3-mean-calibration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  score-r3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/score-r3-mean-calibration
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Materialize exact frozen R9b snapshot
+        run: python football-data/experiments/top1_r12_draw_features/run_experiment_r12.py freeze
+      - name: Download locked R24 scale artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-top1-r24-history-scale-curve
+          path: football-data/experiments/top1_r25_fresh_s60_confirmation/r24_artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: FASHI188/FASHI188-football-analysis
+          run-id: 32939928003
+      - name: Run Score R3
+        run: python football-data/experiments/score_r3_mean_calibration/run_score_r3.py run
+      - name: Verify Score R3 contract
+        run: python football-data/experiments/score_r3_mean_calibration/run_score_r3.py verify
+      - name: Persist Score R3 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/score_r3_mean_calibration/results/summary_score_r3.json
+          if ! git diff --cached --quiet; then
+            git commit -m '[generated] football3 score R3 mean calibration result'
+            git push origin HEAD:football3/score-r3-mean-calibration
+          fi
+      - name: Upload Score R3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-score-r3-mean-calibration
+          path: football-data/experiments/score_r3_mean_calibration/results/summary_score_r3.json
+          if-no-files-found: error
+          retention-days: 90
