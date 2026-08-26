@@ -10,12 +10,16 @@ try:
     m.run()
 except Exception as exc:
     diag = {"exception_type": type(exc).__name__, "message": str(exc)[:1200]}
-    mapping = m.S2 / "data" / "mapping_audit_batch001_stage2.json"
+    mapping = m.S2 / "data" / "mapping_audit_stage2.json"
     if mapping.exists():
         try:
             audit = json.loads(mapping.read_text(encoding="utf-8"))
-            diag["unresolved"] = audit.get("unresolved", [])
-            diag["mapping_audit_rows"] = audit.get("audit", [])[-10:]
+            unresolved = []
+            for rec in audit:
+                if rec.get("home_team_id") is None or rec.get("away_team_id") is None or len(rec.get("fixture_candidates", [])) != 1:
+                    unresolved.append(rec)
+            diag["unresolved"] = unresolved
+            diag["mapping_audit_rows"] = len(audit)
         except Exception as audit_exc:
             diag["mapping_audit_read_error"] = f"{type(audit_exc).__name__}: {audit_exc}"
     (OUT / "error_batch002_s80.json").write_text(
