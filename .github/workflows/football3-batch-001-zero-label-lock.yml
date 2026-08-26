@@ -1,0 +1,83 @@
+name: football3 Batch-001 zero-label lock
+
+on:
+  push:
+    branches:
+      - football3/batch-001-pseudo-prospective-lock-20260826
+    paths:
+      - .github/workflows/football3-batch-001-zero-label-lock.yml
+      - football-data/batches/batch-001/PREREG.md
+      - football-data/batches/batch-001/materialize_zero_label_lock.py
+
+permissions:
+  contents: write
+
+jobs:
+  lock-batch-001:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: football3/batch-001-pseudo-prospective-lock-20260826
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install zero-label runtime
+        run: python -m pip install --disable-pip-version-check pandas==2.2.3
+
+      - name: Fail if immutable lock already exists
+        run: |
+          test ! -e football-data/batches/batch-001/lock/batch001_zero_label_lock.csv
+          test ! -e football-data/batches/batch-001/lock/batch001_zero_label_lock.json
+
+      - name: Materialize zero-label Batch-001 lock
+        env:
+          BATCH001_OUT: football-data/batches/batch-001/lock
+        run: python football-data/batches/batch-001/materialize_zero_label_lock.py
+
+      - name: Verify lock contract
+        run: |
+          python - <<'PY'
+          import csv, json
+          from pathlib import Path
+          p = Path('football-data/batches/batch-001/lock')
+          meta = json.loads((p/'batch001_zero_label_lock.json').read_text())
+          assert meta['status'] == 'ZERO_LABEL_LOCK_COMPLETE'
+          assert meta['selected_rows'] == 100
+          assert meta['forbidden_result_fields_exported'] is False
+          assert meta['labels_opened_for_selection'] is False
+          with (p/'batch001_zero_label_lock.csv').open(newline='', encoding='utf-8') as f:
+              reader = csv.reader(f)
+              header = next(reader)
+              rows = list(reader)
+          assert len(rows) == 100
+          forbidden = {'FTHG','FTAG','FTR','HTHG','HTAG','HTR','RESULT','SCORE'}
+          assert not (forbidden & {h.upper() for h in header})
+          print('LOCK_CONTRACT_OK')
+          print('lock_csv_sha256=' + meta['lock_csv_sha256'])
+          print('date_range=' + meta['selected_date_min'] + '..' + meta['selected_date_max'])
+          print('competition_counts=' + json.dumps(meta['competition_counts'], sort_keys=True))
+          PY
+
+      - name: Persist immutable lock on branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/batches/batch-001/lock/batch001_zero_label_lock.csv
+          git add football-data/batches/batch-001/lock/batch001_zero_label_lock.json
+          git commit -m 'data(football3): lock Batch-001 zero-label 100-match cohort'
+          git push origin HEAD:football3/batch-001-pseudo-prospective-lock-20260826
+
+      - name: Upload immutable Batch-001 lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch-001-zero-label-lock
+          path: football-data/batches/batch-001/lock/
+          if-no-files-found: error
+          retention-days: 90
