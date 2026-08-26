@@ -16,6 +16,14 @@ r9=r25.r9; r23=r25.r23
 OUT=HERE/'results'; DATA=HERE/'data'
 UPDATE_START='2026-07-05'; LOCK_DAY='2026-08-26'; TARGET_START='2026-08-27'; TARGET_END='2026-09-02'
 LEAGUES=('EPL','La_liga','Bundesliga','Serie_A','Ligue_1','RFPL')
+LEAGUE_META={
+    'EPL':('England','Premier League'),
+    'La_liga':('Spain','La Liga'),
+    'Bundesliga':('Germany','Bundesliga'),
+    'Serie_A':('Italy','Serie A'),
+    'Ligue_1':('France','Ligue 1'),
+    'RFPL':('Russia','Premier League'),
+}
 LOCKED_RHO=-0.02250000000000002
 HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
 TOPK=5
@@ -31,6 +39,20 @@ def s60_prob(model,raw):
     return {'home':p['p_home'],'draw':p['p_draw'],'away':p['p_away'],'top1':('home','draw','away')[int(p['top1'])]}
 
 
+def league_id_exact(leagues,key):
+    country,name=LEAGUE_META[key]
+    hits=[]
+    for row in leagues.itertuples(index=False):
+        d=row._asdict()
+        row_country=str(d.get('country') or '').strip().casefold()
+        row_name=str(d.get('name') or '').strip().casefold()
+        if row_country==country.casefold() and row_name==name.casefold():
+            hits.append(str(int(d['id'])))
+    if len(set(hits))!=1:
+        raise RuntimeError(f'league map exact mismatch {key}: {hits}')
+    return hits[0]
+
+
 def collect(base):
     tp=HERE/'_teams.parquet'; lp=HERE/'_leagues.parquet'
     r9.download(f'{HF}/teams.parquet?download=true',tp); r9.download(f'{HF}/leagues.parquet?download=true',lp)
@@ -39,7 +61,7 @@ def collect(base):
     active={x['home_team'] for x in base}|{x['away_team'] for x in base}; fallback=r17.team_index(teams,active)
     past=[]; future=[]; audit=[]; source_counts={}; compmap={}
     for lg in LEAGUES:
-        cid=r17.league_id(leagues,lg); compmap[lg]=cid
+        cid=league_id_exact(leagues,lg); compmap[lg]=cid
         allowed={x['home_team'] for x in base if x['competition_id']==cid}|{x['away_team'] for x in base if x['competition_id']==cid}
         primary=r17.team_index(teams,allowed); rows=r17.ajax(lg); source_counts[lg]=len(rows)
         for z in rows:
