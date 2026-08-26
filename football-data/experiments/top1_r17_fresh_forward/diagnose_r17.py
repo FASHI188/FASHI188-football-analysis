@@ -26,14 +26,39 @@ def exact_league_id(leagues, key):
 
 
 r17.league_id = exact_league_id
+_original_team_index = r17.team_index
+_team_index_calls = 0
+
+
+def metadata_team_index(teams, allowed):
+    global _team_index_calls
+    _team_index_calls += 1
+    # The first call builds the fallback. Use the full metadata table so newly promoted/newly observed clubs can cold-start.
+    if _team_index_calls == 1:
+        return _original_team_index(teams, set())
+    return _original_team_index(teams, allowed)
+
+
+r17.team_index = metadata_team_index
 _original_resolve = r17.resolve_team
 _unresolved = []
+ALIASES = {
+    "Manchester City": "Man City",
+    "Atletico Madrid": "Ath Madrid",
+    "Real Betis": "Betis",
+    "Celta Vigo": "Celta",
+    "Parma Calcio 1913": "Parma",
+    "Paris Saint Germain": "Paris SG",
+    "Zenit St. Petersburg": "Zenit",
+    "FK Akhmat": "Akhmat Grozny",
+}
 
 
 def audited_resolve(title, primary, fallback):
-    tid, candidates = _original_resolve(title, primary, fallback)
+    query = ALIASES.get(title, title)
+    tid, candidates = _original_resolve(query, primary, fallback)
     if tid is None:
-        _unresolved.append({"title": title, "candidates": candidates})
+        _unresolved.append({"title": title, "query": query, "candidates": candidates})
     return tid, candidates
 
 
