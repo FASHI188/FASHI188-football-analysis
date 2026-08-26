@@ -6,6 +6,7 @@ on:
       - football3/batch001-stage2-historical-s60-replay
     paths:
       - football-data/experiments/batch001_stage2_historical_s60_replay/run_stage2.py
+      - football-data/experiments/batch001_stage2_historical_s60_replay/driver_stage2.py
       - .github/workflows/football3-batch001-stage2-historical-s60-replay.yml
   workflow_dispatch:
 
@@ -48,7 +49,21 @@ jobs:
           repository: FASHI188/FASHI188-football-analysis
           run-id: 32976447136
       - name: Run strict historical S60 replay
-        run: python football-data/experiments/batch001_stage2_historical_s60_replay/run_stage2.py run
+        run: python football-data/experiments/batch001_stage2_historical_s60_replay/driver_stage2.py
+      - name: Persist compact Stage2 diagnostic on failure
+        if: failure()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for f in \
+            football-data/experiments/batch001_stage2_historical_s60_replay/results/error_stage2.json \
+            football-data/experiments/batch001_stage2_historical_s60_replay/data/mapping_audit_stage2.json; do
+            if [ -f "$f" ]; then git add -f "$f"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m '[diagnostic] football3 Batch-001 stage2 compact failure receipt'
+            git push origin HEAD:football3/batch001-stage2-historical-s60-replay
+          fi
       - name: Verify Batch-001 stage2 contract
         run: python football-data/experiments/batch001_stage2_historical_s60_replay/run_stage2.py verify
       - name: Persist locked baseline predictions
