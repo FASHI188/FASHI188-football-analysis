@@ -26,11 +26,26 @@ def exact_league_id(leagues, key):
 
 
 r17.league_id = exact_league_id
+_original_resolve = r17.resolve_team
+_unresolved = []
+
+
+def audited_resolve(title, primary, fallback):
+    tid, candidates = _original_resolve(title, primary, fallback)
+    if tid is None:
+        _unresolved.append({"title": title, "candidates": candidates})
+    return tid, candidates
+
+
+r17.resolve_team = audited_resolve
 
 try:
     r17.run()
 except Exception as exc:
     p = Path(__file__).resolve().parent / "data" / "diagnostic_r17.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"exception_type": type(exc).__name__, "message": str(exc)}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    unique = {}
+    for x in _unresolved:
+        unique[x["title"]] = x
+    p.write_text(json.dumps({"exception_type": type(exc).__name__, "message": str(exc), "unresolved": list(unique.values())}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     raise
