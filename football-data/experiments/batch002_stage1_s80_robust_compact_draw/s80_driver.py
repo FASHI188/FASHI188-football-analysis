@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Trigger-only commit after the preregistered workflow exists; model logic unchanged.
 import json
 from pathlib import Path
 import run_batch002_s80 as m
