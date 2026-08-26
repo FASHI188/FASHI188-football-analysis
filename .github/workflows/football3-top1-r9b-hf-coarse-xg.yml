@@ -1,0 +1,55 @@
+name: football3 Top1 R9b HF coarse-xG full coverage
+
+on:
+  push:
+    branches:
+      - football3/top1-r9b-hf-coarse-xg
+    paths:
+      - football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py
+      - .github/workflows/football3-top1-r9b-hf-coarse-xg.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r9b-hf-coarse-xg:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact R9b branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r9b-hf-coarse-xg
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Freeze 20000 HF coarse-xG matches
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run 100 percent coverage strict-prior xG comparison
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py run
+      - name: Verify R9b no-market strict-prior contract
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py verify
+      - name: Persist R9b manifest and result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r9b_xg_hf/data/source_manifest_r9b.json football-data/experiments/top1_r9b_xg_hf/results/summary_r9b.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated top1-r9b] freeze HF xG manifest and full-coverage result'
+            git push origin HEAD:football3/top1-r9b-hf-coarse-xg
+          fi
+      - name: Upload immutable R9b artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r9b-hf-coarse-xg
+          path: |
+            football-data/experiments/top1_r9b_xg_hf/data/source_manifest_r9b.json
+            football-data/experiments/top1_r9b_xg_hf/results/summary_r9b.json
+          if-no-files-found: error
+          retention-days: 30
