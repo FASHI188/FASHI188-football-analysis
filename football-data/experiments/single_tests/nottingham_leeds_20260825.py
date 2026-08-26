@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+# Strict prematch reconstruction: target-match result/events are excluded.
 import json
 import sys
 from pathlib import Path
@@ -43,12 +44,7 @@ def main():
     fid = forest["team_id"]; lid = leeds["team_id"]
     fdom = b.latest_comp_for_team(rows, fid, cup)
     ldom = b.latest_comp_for_team(rows, lid, cup)
-    if fdom != ldom:
-        # Both were Premier League clubs in the immediately prior season. If lake aliases differ,
-        # use Forest's latest non-cup competition for the actual 2026-08-22 league update.
-        prem = fdom
-    else:
-        prem = fdom
+    prem = fdom
     tp.unlink(missing_ok=True); lp.unlink(missing_ok=True)
 
     target = {"date":TARGET_DAY,"game_id":"WEB_NFO_LEE_CUP_20260825","competition_id":cup,
