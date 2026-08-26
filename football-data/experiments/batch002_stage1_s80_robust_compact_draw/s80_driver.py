@@ -31,3 +31,5 @@ except Exception as exc:
         encoding="utf-8",
     )
     raise
+
+# CI trigger only: validate the metadata-only fallback from the current branch HEAD.
