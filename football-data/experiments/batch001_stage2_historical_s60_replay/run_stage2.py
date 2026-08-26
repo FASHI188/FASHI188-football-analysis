@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import sys
 from collections import defaultdict
-from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +27,12 @@ HISTORY_N = 60000
 TRAIN_N = 24123
 DIVS = ("E0", "D1", "I1", "SP1", "F1")
 TOP1_NAME = {0: "HOME", 1: "DRAW", 2: "AWAY"}
+# Metadata-only first-team disambiguation. These duplicate names exist in teams.parquet.
+# IDs were resolved against league_id + home/away fixture identity only; no outcome fields were read.
+TEAM_ID_OVERRIDES = {
+    ("E0", "Arsenal"): "3",
+    ("F1", "Lyon"): "224",
+}
 
 
 def utc_ts(x):
@@ -68,8 +73,10 @@ def safe_target_metadata(lock):
     for z in lock["rows"]:
         div = z["division"]
         cid = cm[div][0]
-        hid, hc = r18.resolve(z["home"], idx)
-        aid, ac = r18.resolve(z["away"], idx)
+        hid_auto, hc = r18.resolve(z["home"], idx)
+        aid_auto, ac = r18.resolve(z["away"], idx)
+        hid = TEAM_ID_OVERRIDES.get((div, z["home"]), hid_auto)
+        aid = TEAM_ID_OVERRIDES.get((div, z["away"]), aid_auto)
         rec = {
             "batch_index": z["batch_index"],
             "date": z["date"],
@@ -77,8 +84,12 @@ def safe_target_metadata(lock):
             "home": z["home"],
             "away": z["away"],
             "competition_id": cid,
+            "home_team_id_auto": hid_auto,
+            "away_team_id_auto": aid_auto,
             "home_team_id": hid,
             "away_team_id": aid,
+            "home_id_override_used": (div, z["home"]) in TEAM_ID_OVERRIDES,
+            "away_id_override_used": (div, z["away"]) in TEAM_ID_OVERRIDES,
             "home_candidates": hc,
             "away_candidates": ac,
         }
@@ -248,6 +259,8 @@ def run():
             "historical_xg_requires_known_at_before_effective_cutoff": True,
             "same_date_model_state_shared": True,
             "same_date_effective_cutoff_is_earliest_nominal_T_minus_24h": True,
+            "metadata_team_id_overrides": {"E0:Arsenal": "3", "F1:Lyon": "224"},
+            "metadata_overrides_use_outcomes": False,
             "odds_used": False,
             "market_prices_used": False,
             "manual_probability_adjustment": False,
@@ -291,6 +304,7 @@ def verify():
     assert not g["target_result_labels_loaded_for_scoring"]
     assert not g["target_same_date_results_used"]
     assert g["historical_xg_requires_known_at_before_effective_cutoff"]
+    assert not g["metadata_overrides_use_outcomes"]
     assert not g["odds_used"] and not g["market_prices_used"]
     assert g["no_accuracy_or_result_metric_computed"]
     for x in p:
