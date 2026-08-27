@@ -20,6 +20,12 @@ ORIG_REPLAY = r42.replay_history
 ORIG_LOAD_PLAYERS = r42.load_player_names
 ORIG_RANKED = r42.ranked_expected
 
+# Exact, audited aliases only. These are not fuzzy guesses. Gabriel Magalhaes is
+# player_id 43554 in the frozen R42B Arsenal history and is stored there as "Gabriel".
+AUDITED_PLAYER_ALIASES = {
+    "gabrielmagalhaes": {"player_id": 43554, "dataset_name": "Gabriel", "evidence": "R42B Arsenal strict-prior XI"},
+}
+
 _HISTORY = None
 _TARGET_ROW = None
 _BRIDGE_META = {}
@@ -46,7 +52,30 @@ def load_target_fixture_bridge(tmp: Path):
 
 def _resolve_one(name, role, state, ledger, by_id, by_surname, by_compact):
     recent = r42.recent_team_players(state)
-    res = r42.resolve_player(name, recent, ledger, by_id, by_surname, by_compact)
+    alias = AUDITED_PLAYER_ALIASES.get(r42.compact(name))
+    if alias is not None:
+        pid = int(alias["player_id"])
+        if pid not in by_id:
+            raise RuntimeError(f"audited alias player id missing from player master: {name} -> {pid}")
+        if r42.compact(by_id[pid]) != r42.compact(alias["dataset_name"]):
+            raise RuntimeError(
+                f"audited alias source drift: {name} -> {pid}; expected={alias['dataset_name']} actual={by_id[pid]}"
+            )
+        res = {
+            "resolved": True,
+            "live_name": name,
+            "player_id": pid,
+            "dataset_name": by_id[pid],
+            "score": None,
+            "margin_to_second": None,
+            "in_recent_team_xis": bool(pid in recent),
+            "ledger_matches": int(ledger.n.get(pid, 0)),
+            "candidates": [{"player_id": pid, "name": by_id[pid], "ledger_matches": int(ledger.n.get(pid, 0))}],
+            "bridge_fallback": "audited_exact_alias",
+            "alias_evidence": alias["evidence"],
+        }
+    else:
+        res = r42.resolve_player(name, recent, ledger, by_id, by_surname, by_compact)
     if not res.get("resolved"):
         exact = list(by_compact.get(r42.compact(name), []))
         scored = sorted(
@@ -189,6 +218,7 @@ def run():
             "availability_weight_refit": False,
             "probability_retuning": False,
             "formal_probability_change_allowed": False,
+            "audited_alias_count": len(AUDITED_PLAYER_ALIASES),
         },
         "bridge_input": d,
         "bridge_resolution": _BRIDGE_META,
@@ -239,6 +269,7 @@ def verify():
     assert g["prior_completed_match_xi_membership_only"] is True
     assert g["prior_match_score_xg_not_applied_to_player_ledger"] is True
     assert g["availability_weight_refit"] is False and g["probability_retuning"] is False
+    assert g["audited_alias_count"] == 1
     for side in ("home", "away"):
         b = s["bridge_resolution"][side]
         assert len(b["resolved_starter_ids"]) == 11
