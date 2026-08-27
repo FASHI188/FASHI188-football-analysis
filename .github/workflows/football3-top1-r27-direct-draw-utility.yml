@@ -1,0 +1,52 @@
+name: football3 top1 R27 direct draw utility
+
+on:
+  push:
+    branches:
+      - football3/top1-r27-direct-draw-utility
+    paths:
+      - football-data/experiments/top1_r27_direct_draw_utility/run_experiment_r27.py
+      - .github/workflows/football3-top1-r27-direct-draw-utility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r27:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r27-direct-draw-utility
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Run R27 direct draw utility
+        run: python football-data/experiments/top1_r27_direct_draw_utility/run_experiment_r27.py run
+      - name: Verify R27 contract
+        run: python football-data/experiments/top1_r27_direct_draw_utility/run_experiment_r27.py verify
+      - name: Persist R27 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r27_direct_draw_utility/results/summary_r27.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R27 direct draw utility'
+            git push origin HEAD:football3/top1-r27-direct-draw-utility
+          fi
+      - name: Upload R27 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r27-direct-draw-utility
+          path: football-data/experiments/top1_r27_direct_draw_utility/results/summary_r27.json
+          if-no-files-found: error
+          retention-days: 90
