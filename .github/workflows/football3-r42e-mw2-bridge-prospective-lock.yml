@@ -1,0 +1,52 @@
+name: football3 R42E MW2 bridge prospective lock
+
+on:
+  push:
+    branches:
+      - football3/r42e-mw2-bridge-prospective-lock-20260827
+    paths:
+      - football-data/experiments/r42e_mw2_bridge_prospective_lock/**
+      - .github/workflows/football3-r42e-mw2-bridge-prospective-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r42e-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r42e-mw2-bridge-prospective-lock-20260827
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build immutable R42E prematch lock
+        run: python football-data/experiments/r42e_mw2_bridge_prospective_lock/run_r42e_lock.py run
+      - name: Verify R42E lock contract
+        run: python football-data/experiments/r42e_mw2_bridge_prospective_lock/run_r42e_lock.py verify
+      - name: Persist R42E lock
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r42e_mw2_bridge_prospective_lock/results/r42e_mw2_bridge_lock.json
+          if git diff --cached --quiet; then
+            echo 'Lock already persisted; no overwrite'
+          else
+            git commit -m '[locked] football3 R42E MW2 bridge prospective lock'
+            git fetch origin football3/r42e-mw2-bridge-prospective-lock-20260827
+            git rebase origin/football3/r42e-mw2-bridge-prospective-lock-20260827
+            git push origin HEAD:football3/r42e-mw2-bridge-prospective-lock-20260827
+          fi
+      - name: Upload R42E lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r42e-mw2-bridge-prospective-lock
+          path: football-data/experiments/r42e_mw2_bridge_prospective_lock/results/r42e_mw2_bridge_lock.json
+          if-no-files-found: error
+          retention-days: 90
