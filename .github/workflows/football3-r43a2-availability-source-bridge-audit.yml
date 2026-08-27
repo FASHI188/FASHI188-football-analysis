@@ -1,0 +1,72 @@
+name: football3 R43A2 availability source bridge audit
+
+on:
+  push:
+    branches:
+      - football3/r43a2-availability-source-bridge-audit
+    paths:
+      - football-data/experiments/r43a2_availability_source_bridge_audit/**
+      - .github/workflows/football3-r43a2-availability-source-bridge-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43a2-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43a2-availability-source-bridge-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check pandas pyarrow
+      - name: Restore R9b 20k source spine
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Fetch pinned availability source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/withqwerty/availability-data.git /tmp/availability-data
+          git -C /tmp/availability-data fetch --depth=1 origin 5c6286c24dd58b3c9a6b4f5ccbd0c6e6466cb7dd
+          git -C /tmp/availability-data sparse-checkout init --cone
+          git -C /tmp/availability-data sparse-checkout set raw cleaned
+          git -C /tmp/availability-data checkout --detach 5c6286c24dd58b3c9a6b4f5ccbd0c6e6466cb7dd
+          test "$(git -C /tmp/availability-data rev-parse HEAD)" = "5c6286c24dd58b3c9a6b4f5ccbd0c6e6466cb7dd"
+      - name: Fetch pinned Reep identity files
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 -o /tmp/reep-people.csv https://raw.githubusercontent.com/withqwerty/reep/0ec59faa5d81615b7a8200ae6121023a3bc14ce3/data/people.csv
+          curl -L --fail --retry 3 -o /tmp/reep-teams.csv https://raw.githubusercontent.com/withqwerty/reep/0ec59faa5d81615b7a8200ae6121023a3bc14ce3/data/teams.csv
+      - name: Run R43A2 availability bridge audit
+        run: python football-data/experiments/r43a2_availability_source_bridge_audit/run_r43a2_availability_bridge_audit.py run
+      - name: Verify R43A2 contract
+        run: python football-data/experiments/r43a2_availability_source_bridge_audit/run_r43a2_availability_bridge_audit.py verify
+      - name: Persist R43A2 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43a2_availability_source_bridge_audit/results/summary_r43a2_availability_bridge_audit.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43A2 availability source bridge audit'
+            git fetch origin football3/r43a2-availability-source-bridge-audit
+            git rebase origin/football3/r43a2-availability-source-bridge-audit
+            git push origin HEAD:football3/r43a2-availability-source-bridge-audit
+          fi
+      - name: Upload R43A2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43a2-availability-source-bridge-audit
+          path: football-data/experiments/r43a2_availability_source_bridge_audit/results/summary_r43a2_availability_bridge_audit.json
+          if-no-files-found: error
+          retention-days: 90
