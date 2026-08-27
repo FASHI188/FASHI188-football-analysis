@@ -1,0 +1,47 @@
+name: football3 Batch005 R34 reveal
+
+on:
+  push:
+    branches:
+      - football3/batch005-r34-away-load-lock-reveal
+    paths:
+      - football-data/experiments/batch005_r34_away_load/results/batch005_predictions_locked.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reveal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/batch005-r34-away-load-lock-reveal
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install reveal runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow
+      - name: Reveal and score Batch005
+        run: python football-data/experiments/batch005_r34_away_load/reveal_score_batch005.py run
+      - name: Verify Batch005 reveal contract
+        run: python football-data/experiments/batch005_r34_away_load/reveal_score_batch005.py verify
+      - name: Persist Batch005 reveal evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/batch005_r34_away_load/results/summary_batch005_reveal.json
+          git commit -m '[generated] football3 Batch005 R34 reveal score'
+          git push origin HEAD:football3/batch005-r34-away-load-lock-reveal
+      - name: Upload Batch005 reveal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch005-r34-reveal-score
+          path: football-data/experiments/batch005_r34_away_load/results/summary_batch005_reveal.json
+          if-no-files-found: error
+          retention-days: 90
