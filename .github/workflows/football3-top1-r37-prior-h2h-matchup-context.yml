@@ -1,0 +1,56 @@
+name: football3 top1 R37 prior H2H matchup context
+
+on:
+  push:
+    branches:
+      - football3/top1-r37-prior-h2h-matchup-context
+    paths:
+      - football-data/experiments/top1_r37_prior_h2h_matchup_context/run_experiment_r37.py
+      - .github/workflows/football3-top1-r37-prior-h2h-matchup-context.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r37:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r37-prior-h2h-matchup-context
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Restore frozen R9b 20k snapshot
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run R37 prior H2H matchup context
+        run: python football-data/experiments/top1_r37_prior_h2h_matchup_context/run_experiment_r37.py run
+      - name: Verify R37 contract
+        run: python football-data/experiments/top1_r37_prior_h2h_matchup_context/run_experiment_r37.py verify
+      - name: Persist R37 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r37_prior_h2h_matchup_context/results/summary_r37.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R37 prior H2H matchup context'
+            git fetch origin football3/top1-r37-prior-h2h-matchup-context
+            git rebase origin/football3/top1-r37-prior-h2h-matchup-context
+            git push origin HEAD:football3/top1-r37-prior-h2h-matchup-context
+          fi
+      - name: Upload R37 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r37-prior-h2h-matchup-context
+          path: football-data/experiments/top1_r37_prior_h2h_matchup_context/results/summary_r37.json
+          if-no-files-found: error
+          retention-days: 90
