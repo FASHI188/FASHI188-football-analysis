@@ -8,6 +8,7 @@ on:
       - football-data/prematch_pit/pit_event_ledger_v2.py
       - football-data/prematch_pit/ingest_pit_inbox_v2.py
       - football-data/prematch_pit/inbox/**
+      - football-data/prematch_pit/batches/**
       - .github/workflows/football3-prematch-pit-event-ledger-v2.yml
   workflow_dispatch:
 
@@ -34,6 +35,29 @@ jobs:
         run: python football-data/prematch_pit/pit_event_ledger_v2.py schema
       - name: Verify event ledger contract
         run: python football-data/prematch_pit/pit_event_ledger_v2.py verify
+      - name: Validate MW2 prospective batch manifest
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          p=Path('football-data/prematch_pit/batches/2026_27_mw2_manifest.json')
+          d=json.loads(p.read_text())
+          assert d['status']=='FROZEN_FIXTURE_BATCH_OPEN_FOR_PREMATCH_OBSERVATIONS'
+          assert d['formal_weight']==0 and d['governance']['result_labels_accessed'] is False
+          fx=d['fixtures']; assert len(fx)==10
+          keys=[x['fixture_key'] for x in fx]; assert len(set(keys))==10
+          captured=datetime.fromisoformat(d['captured_at_utc'].replace('Z','+00:00'))
+          for x in fx:
+              ko=datetime.fromisoformat(x['kickoff_at_utc'].replace('Z','+00:00'))
+              assert captured < ko
+              assert x['home_team'] and x['away_team'] and x['home_team'] != x['away_team']
+          palace=[x for x in fx if x['fixture_key']=='ENG_PL_MW2_CRY_MCI'][0]
+          villa=[x for x in fx if x['fixture_key']=='ENG_PL_MW2_AVL_ARS'][0]
+          assert palace['existing_pit_eligible_events']==5 and palace['existing_prospective_lock'] is True
+          assert villa['existing_pit_eligible_events']==1
+          print(json.dumps({'status':'PASS','batch_id':d['batch_id'],'fixtures':len(fx),'captured_at_utc':d['captured_at_utc']},indent=2))
+          PY
       - name: Ingest immutable PIT inbox
         run: python football-data/prematch_pit/ingest_pit_inbox_v2.py run
       - name: Verify PIT inbox import
@@ -63,5 +87,7 @@ jobs:
             football-data/prematch_pit/results/pit_event_schema_v2.json
             football-data/prematch_pit/results/pit_inbox_import_receipt_v2.json
             football-data/prematch_pit/ledger/prematch_events_v2.jsonl
+            football-data/prematch_pit/batches/2026_27_mw2_manifest.json
+            football-data/prematch_pit/inbox/20260827_aston_villa_arsenal_official_suspension.json
           if-no-files-found: error
           retention-days: 90
