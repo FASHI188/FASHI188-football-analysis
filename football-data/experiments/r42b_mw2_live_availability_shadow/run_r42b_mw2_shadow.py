@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "results"
 R42_DIR = HERE.parent / "r42_live_availability_shadow"
@@ -15,6 +17,7 @@ r42 = r42r1.r42
 PIT_SNAPSHOT = HERE / "inputs" / "prematch_events_v2_snapshot.jsonl"
 PIT_SNAPSHOT_BLOB_SHA = "0279012a5c3aba8cf64148061d1c9dc7a1a3d581"
 PIT_SOURCE_HEAD = "eed32f3f105ecda107b8ea49da779627dcc7d9c2"
+EXPECTED_PL_LEAGUE_ID = 1
 
 TARGETS = [
     {
@@ -36,6 +39,123 @@ TARGETS = [
 ]
 
 
+def team_candidates(teams: pd.DataFrame, target: str):
+    scored = []
+    for x in teams.itertuples(index=False):
+        score = float(r42r1.team_match_score(target, str(x.name)))
+        if score >= 0.72:
+            scored.append((score, int(x.id), str(x.name)))
+    scored.sort(reverse=True)
+    if not scored:
+        raise RuntimeError(f"no credible team candidates for {target}")
+    return scored[:20]
+
+
+def load_target_fixture_pair_fixed(tmp: Path):
+    """Resolve duplicate team names through the target home/away fixture pair.
+
+    R42-r1 resolves each team independently. That correctly refuses ambiguous exact
+    duplicates such as the two dataset rows named Arsenal. R42B instead carries all
+    credible name candidates into the frozen Premier League fixture table and selects
+    the unique home/away pair nearest the current official kickoff within 14 days.
+    No outcome or post-match field is used.
+    """
+    fp = tmp / "fixtures.parquet"
+    tp = tmp / "teams.parquet"
+    r42.download(r42.FIXTURES_URL, fp)
+    r42.download(r42.TEAMS_URL, tp)
+    fixture_sha = r42.fsha(fp)
+    if fixture_sha != r42.EXPECTED_FIXTURES_SHA256:
+        raise RuntimeError(f"fixtures source drift: {fixture_sha}")
+
+    teams = pd.read_parquet(tp, columns=["id", "name"])
+    home_candidates = team_candidates(teams, r42.TARGET["home_team"])
+    away_candidates = team_candidates(teams, r42.TARGET["away_team"])
+    hs = {pid: score for score, pid, _ in home_candidates}
+    aas = {pid: score for score, pid, _ in away_candidates}
+    names = {int(x.id): str(x.name) for x in teams.itertuples(index=False)}
+
+    fx = pd.read_parquet(
+        fp,
+        columns=["id", "date_utc", "league_id", "home_team_id", "away_team_id", "status_norm", "is_played"],
+    )
+    fx["dt"] = pd.to_datetime(fx["date_utc"], utc=True)
+    official_dt = pd.Timestamp(r42.TARGET["kickoff_at_utc"])
+    pair = fx[
+        (fx["league_id"] == EXPECTED_PL_LEAGUE_ID)
+        & fx["home_team_id"].isin(hs)
+        & fx["away_team_id"].isin(aas)
+    ].copy()
+    if pair.empty:
+        raise RuntimeError(
+            "no Premier League fixture joins credible team candidates: "
+            f"home={home_candidates[:5]} away={away_candidates[:5]}"
+        )
+    pair["distance_seconds"] = (pair["dt"] - official_dt).abs().dt.total_seconds()
+    pair["name_score"] = pair["home_team_id"].map(hs) + pair["away_team_id"].map(aas)
+    pair = pair[pair["distance_seconds"] <= 14 * 86400].copy()
+    if pair.empty:
+        raise RuntimeError("no candidate team-pair fixture within 14 days of official kickoff")
+    pair = pair.sort_values(["distance_seconds", "name_score", "dt", "id"], ascending=[True, False, True, True])
+    x = pair.iloc[0]
+    if len(pair) > 1:
+        y = pair.iloc[1]
+        if float(y["distance_seconds"]) == float(x["distance_seconds"]) and float(y["name_score"]) == float(x["name_score"]):
+            raise RuntimeError(
+                "team-pair fixture resolution tie: "
+                + json.dumps(pair[["id", "date_utc", "home_team_id", "away_team_id", "distance_seconds", "name_score"]].head(5).to_dict("records"), default=str)
+            )
+
+    h, a = int(x["home_team_id"]), int(x["away_team_id"])
+    source_dt = pd.Timestamp(x["dt"])
+    schedule_delta_seconds = int((source_dt - official_dt).total_seconds())
+    row = {
+        "date": official_dt.date().isoformat(),
+        "game_id": str(int(x["id"])),
+        "competition_id": str(int(x["league_id"])),
+        "home_team": str(h),
+        "away_team": str(a),
+    }
+    meta = {
+        "fixture_id": int(x["id"]),
+        "league_id": int(x["league_id"]),
+        "home_team_id": h,
+        "away_team_id": a,
+        "home_team_identity": {
+            "target_name": r42.TARGET["home_team"],
+            "resolved_team_id": h,
+            "resolved_dataset_name": names[h],
+            "score": float(hs[h]),
+            "resolution_rule": "name candidates joined through unique target fixture pair",
+            "top_candidates": [
+                {"team_id": int(pid), "name": name, "score": float(score)}
+                for score, pid, name in home_candidates[:5]
+            ],
+        },
+        "away_team_identity": {
+            "target_name": r42.TARGET["away_team"],
+            "resolved_team_id": a,
+            "resolved_dataset_name": names[a],
+            "score": float(aas[a]),
+            "resolution_rule": "name candidates joined through unique target fixture pair",
+            "top_candidates": [
+                {"team_id": int(pid), "name": name, "score": float(score)}
+                for score, pid, name in away_candidates[:5]
+            ],
+        },
+        "official_current_kickoff_utc": official_dt.isoformat(),
+        "source_snapshot_kickoff_utc": source_dt.isoformat(),
+        "source_schedule_stale": bool(schedule_delta_seconds != 0),
+        "source_schedule_delta_seconds": schedule_delta_seconds,
+        "matching_rule": "credible team-name candidate sets + Premier League league_id=1 + unique home/away fixture pair + nearest source-snapshot kickoff within 14 days; current official kickoff remains PIT cutoff",
+        "status_norm_in_source": str(x["status_norm"]),
+        "is_played_in_source": bool(x["is_played"]),
+        "fixtures_sha256": fixture_sha,
+        "teams_sha256": r42.fsha(tp),
+    }
+    return row, meta, fp, tp
+
+
 def run_one(target: dict):
     target_dir = OUT / target["key"]
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -47,7 +167,7 @@ def run_one(target: dict):
     }
     r42.LEDGER_PATH = PIT_SNAPSHOT
     r42.OUT = target_dir
-    r42.load_target_fixture = r42r1.load_target_fixture_fixed
+    r42.load_target_fixture = load_target_fixture_pair_fixed
     r42.run()
     return json.loads((target_dir / "summary_r42_shadow.json").read_text(encoding="utf-8"))
 
@@ -80,7 +200,8 @@ def run():
             "current_match_confirmed_xi_used": False,
             "absence_weight_refit": False,
             "probability_retuning": False,
-            "same_R42_mechanism_reused_without_parameter_search": True
+            "same_R42_mechanism_reused_without_parameter_search": True,
+            "duplicate_team_name_resolution_uses_fixture_identity_only": True
         },
         "targets": results,
         "interpretation_rule": "These are shadow diagnostics. A PIT event only changes the expected-XI player layer when its resolved player is present in the strict-prior expected XI; doubtful is shown separately from confirmed out/suspended and is never silently upgraded."
@@ -96,6 +217,7 @@ def verify():
     assert g["pit_snapshot_records"] == 7
     assert g["result_labels_accessed"] is False and g["postmatch_target_data_used"] is False
     assert g["absence_weight_refit"] is False and g["probability_retuning"] is False
+    assert g["duplicate_team_name_resolution_uses_fixture_identity_only"] is True
     assert len(d["targets"]) == 2
     for item in d["targets"]:
         t = item["target"]
@@ -103,6 +225,7 @@ def verify():
         assert s["status"] == "COMPLETE" and s["formal_weight"] == 0
         assert s["governance"]["result_label_accessed"] is False
         assert s["governance"]["target_postmatch_data_used"] is False
+        assert s["source"]["target_fixture"]["league_id"] == EXPECTED_PL_LEAGUE_ID
         assert s["source"]["target_fixture"]["official_current_kickoff_utc"].startswith(t["kickoff_at_utc"].replace("Z", ""))
         live_ids = {x["record_id"] for x in s["entity_resolution"]}
         assert set(t["target_record_ids"]).issubset(live_ids)
