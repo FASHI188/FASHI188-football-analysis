@@ -1,0 +1,47 @@
+name: football3 Batch-004 100-match lock
+
+on:
+  push:
+    branches:
+      - football3/batch004-s92-draw-gate
+    paths:
+      - football-data/experiments/batch004_100match_lock/lock_batch004.py
+      - .github/workflows/football3-batch004-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/batch004-s92-draw-gate
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Lock Batch-004 safe cohort
+        run: python football-data/experiments/batch004_100match_lock/lock_batch004.py run
+      - name: Verify Batch-004 lock
+        run: python football-data/experiments/batch004_100match_lock/lock_batch004.py verify
+      - name: Upload Batch-004 lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-batch004-100match-lock
+          path: football-data/experiments/batch004_100match_lock/results/batch004_locked_100.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Persist Batch-004 lock
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/batch004_100match_lock/results/batch004_locked_100.json
+          git commit -m '[locked] football3 Batch-004 fresh 100-match cohort' || true
+          git fetch origin football3/batch004-s92-draw-gate
+          git rebase origin/football3/batch004-s92-draw-gate
+          git push origin HEAD:football3/batch004-s92-draw-gate
