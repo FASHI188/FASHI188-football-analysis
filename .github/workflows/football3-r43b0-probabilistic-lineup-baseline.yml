@@ -1,0 +1,56 @@
+name: football3 R43B0 probabilistic lineup baseline
+
+on:
+  push:
+    branches:
+      - football3/r43b0-probabilistic-lineup-baseline
+    paths:
+      - football-data/experiments/r43b0_probabilistic_lineup_baseline/**
+      - .github/workflows/football3-r43b0-probabilistic-lineup-baseline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43b0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43b0-probabilistic-lineup-baseline
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Restore R9b 20k source spine
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run R43B0 probabilistic lineup baseline
+        run: python football-data/experiments/r43b0_probabilistic_lineup_baseline/run_r43b0_probabilistic_lineup.py run
+      - name: Verify R43B0 contract
+        run: python football-data/experiments/r43b0_probabilistic_lineup_baseline/run_r43b0_probabilistic_lineup.py verify
+      - name: Persist R43B0 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43b0_probabilistic_lineup_baseline/results/summary_r43b0_probabilistic_lineup.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43B0 probabilistic lineup baseline'
+            git fetch origin football3/r43b0-probabilistic-lineup-baseline
+            git rebase origin/football3/r43b0-probabilistic-lineup-baseline
+            git push origin HEAD:football3/r43b0-probabilistic-lineup-baseline
+          fi
+      - name: Upload R43B0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43b0-probabilistic-lineup-baseline
+          path: football-data/experiments/r43b0_probabilistic_lineup_baseline/results/summary_r43b0_probabilistic_lineup.json
+          if-no-files-found: error
+          retention-days: 90
