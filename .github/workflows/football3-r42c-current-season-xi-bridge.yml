@@ -1,0 +1,59 @@
+name: football3 R42C current-season XI bridge
+
+on:
+  push:
+    branches:
+      - football3/r42c-current-season-xi-bridge
+    paths:
+      - football-data/experiments/r42c_current_season_xi_bridge/**
+      - .github/workflows/football3-r42c-current-season-xi-bridge.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r42c-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r42c-current-season-xi-bridge
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Restore exact R9b frozen 20k snapshot
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run R42C current-season XI bridge
+        run: python football-data/experiments/r42c_current_season_xi_bridge/run_r42c_bridge.py run
+      - name: Verify R42C contract
+        run: python football-data/experiments/r42c_current_season_xi_bridge/run_r42c_bridge.py verify
+      - name: Persist R42C evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r42c_current_season_xi_bridge/results/summary_r42c_bridge.json
+          git add football-data/experiments/r42c_current_season_xi_bridge/results/raw_bridge/summary_r42_shadow.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R42C current-season XI bridge'
+            git fetch origin football3/r42c-current-season-xi-bridge
+            git rebase origin/football3/r42c-current-season-xi-bridge
+            git push origin HEAD:football3/r42c-current-season-xi-bridge
+          fi
+      - name: Upload R42C artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r42c-current-season-xi-bridge
+          path: |
+            football-data/experiments/r42c_current_season_xi_bridge/results/summary_r42c_bridge.json
+            football-data/experiments/r42c_current_season_xi_bridge/results/raw_bridge/summary_r42_shadow.json
+          if-no-files-found: error
+          retention-days: 90
