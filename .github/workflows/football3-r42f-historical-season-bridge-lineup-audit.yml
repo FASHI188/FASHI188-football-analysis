@@ -1,0 +1,59 @@
+name: football3 R42F historical season bridge lineup audit
+
+on:
+  push:
+    branches:
+      - football3/r42f-historical-season-bridge-lineup-audit
+    paths:
+      - football-data/experiments/r42f_historical_season_bridge_lineup_audit/**
+      - .github/workflows/football3-r42f-historical-season-bridge-lineup-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r42f-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r42f-historical-season-bridge-lineup-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow
+      - name: Restore exact R9b frozen 20k snapshot
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run R42F lineup audit
+        run: python football-data/experiments/r42f_historical_season_bridge_lineup_audit/run_r42f_lineup_audit.py run
+      - name: Verify R42F contract
+        run: python football-data/experiments/r42f_historical_season_bridge_lineup_audit/run_r42f_lineup_audit.py verify
+      - name: Persist R42F evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r42f_historical_season_bridge_lineup_audit/results/summary_r42f_lineup_audit.json
+          git add football-data/experiments/r42f_historical_season_bridge_lineup_audit/results/observations_r42f.jsonl
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R42F historical season bridge lineup audit'
+            git fetch origin football3/r42f-historical-season-bridge-lineup-audit
+            git rebase origin/football3/r42f-historical-season-bridge-lineup-audit
+            git push origin HEAD:football3/r42f-historical-season-bridge-lineup-audit
+          fi
+      - name: Upload R42F artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r42f-historical-season-bridge-lineup-audit
+          path: |
+            football-data/experiments/r42f_historical_season_bridge_lineup_audit/results/summary_r42f_lineup_audit.json
+            football-data/experiments/r42f_historical_season_bridge_lineup_audit/results/observations_r42f.jsonl
+          if-no-files-found: error
+          retention-days: 90
