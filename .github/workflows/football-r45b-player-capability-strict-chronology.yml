@@ -1,0 +1,57 @@
+name: Football R45B Player Capability Strict Chronology
+
+on:
+  push:
+    branches:
+      - research/r45b-player-capability-strict-chronology
+    paths:
+      - .github/workflows/football-r45b-player-capability-strict-chronology.yml
+      - football-data/research/r45b_player_capability_strict_chronology/**
+
+permissions:
+  contents: read
+
+jobs:
+  audit-prior:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct frozen R45A runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=football-data/research/r45a_player_capability_300_retro/encoded
+          OUT=football-data/research/r45b_player_capability_strict_chronology/audit
+          mkdir -p "$OUT"
+          cat "$SRC"/run_r45a.py.b64.part1 "$SRC"/run_r45a.py.b64.part2 | base64 -d | gzip -d > "$OUT/run_r45a_original.py"
+          echo 'e4bce5f43ba3a6db80ff6e5c9386249d05f59fc61499dd052ca5180e63627ebe  '"$OUT/run_r45a_original.py" | sha256sum -c -
+      - name: Extract PIT-sensitive code map
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=football-data/research/r45b_player_capability_strict_chronology/audit
+          python - <<'PY'
+          import ast, json, pathlib
+          p=pathlib.Path('football-data/research/r45b_player_capability_strict_chronology/audit/run_r45a_original.py')
+          s=p.read_text()
+          tree=ast.parse(s)
+          funcs=[]
+          for n in tree.body:
+              if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
+                  funcs.append({'name':n.name,'lineno':n.lineno,'end_lineno':getattr(n,'end_lineno',None)})
+          needles=['lineup','player','attribute','date','train','test','market','feature','xi','snapshot']
+          hits={k:[] for k in needles}
+          for i,line in enumerate(s.splitlines(),1):
+              lo=line.lower()
+              for k in needles:
+                  if k in lo:
+                      hits[k].append(i)
+          pathlib.Path('football-data/research/r45b_player_capability_strict_chronology/audit/code_map.json').write_text(json.dumps({'functions':funcs,'keyword_lines':hits},indent=2))
+          print(json.dumps({'function_count':len(funcs),'functions':funcs},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r45b-prior-runner-audit
+          path: football-data/research/r45b_player_capability_strict_chronology/audit
+          if-no-files-found: error
