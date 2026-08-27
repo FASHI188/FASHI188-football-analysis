@@ -1,0 +1,187 @@
+{
+  "schema_version": "football3-r43a-pit-data-contract-audit-v1",
+  "status": "COMPLETE",
+  "classification": "PIT_SOURCE_CAPABILITY_AND_GAP_AUDIT_NO_MODEL_FIT_NO_TARGET_LABEL_USE",
+  "formal_weight": 0,
+  "base_evidence_commit": "aa05776c2a354ad6c85f53a7a6e39f7035b4d86a",
+  "roadmap_commit": "2227db67017891ddacae6cbe2c62f866a507b0bd",
+  "question": "Which R43 prematch-context signals can be reconstructed point-in-time from the current frozen football data line, and which require new timestamped sources before modelling?",
+  "governance": {
+    "model_fit": false,
+    "target_outcome_labels_used": false,
+    "target_current_match_lineup_used_as_feature": false,
+    "closing_odds_used_as_earlier_horizon_feature": false,
+    "r42l_lock_modified": false,
+    "missing_means_available": false,
+    "audit_population": "R9b latest 20k frozen xG fixture ids, source tables inspected only for historical coverage and timestamp contract"
+  },
+  "r9b_source": {
+    "snapshot_rows": 20000,
+    "first_date": "2025-04-12",
+    "last_date": "2026-07-04",
+    "snapshot_sha256": "6ea5f6d98a6b43c1f34df58f08edfa52819415f79da88428947caae68d9170ba",
+    "fixtures_sha256_from_r9b": "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7",
+    "match_stats_sha256_from_r9b": "2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9",
+    "strict_prior_xg_contract": true
+  },
+  "downloaded_source_hashes": {
+    "fixtures": "7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7",
+    "fixture_lineups": "dcd9181f54df52193877ffd8a41b5d1097b404eb46b4890069c0e4d1c8c13abd",
+    "fixture_players": "a315191ffac285a11597758c859cd88b97ea8aba89374a8fb299ee754a2f76ad",
+    "fixture_players_stats_flat": "e112f61265639d4271b368c0908fa2d0e2b04084e9667deefcbf5c3f730779e6",
+    "odds": "33286ac0c288a2dfd149a1cb26db92eba2ddb33fec74b30967607035592d720d"
+  },
+  "coverage_on_r9b_20k": {
+    "fixture_rows": 20000,
+    "fixture_side_denominator": 40000,
+    "lineup_side_rows": 39612,
+    "lineup_side_coverage": 0.9903,
+    "coach_side_rows": 38947,
+    "coach_side_coverage": 0.973675,
+    "formation_side_rows": 37688,
+    "formation_side_coverage": 0.9422,
+    "sides_with_exact_11_starters": 26250,
+    "exact_11_starter_side_coverage": 0.65625,
+    "starter_rows": 288830,
+    "starter_rows_with_minutes_from_either_player_table": 280086,
+    "starter_minute_coverage": 0.9697261364816674,
+    "referee_fixture_rows": 16638,
+    "referee_fixture_coverage": 0.8319,
+    "odds_fixture_rows": 12106,
+    "odds_fixture_coverage": 0.6053,
+    "odds_rows": 12583,
+    "odds_rows_with_known_at": 12583,
+    "odds_known_at_minus_kickoff_minutes": {
+      "n": 12583,
+      "p05": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "signal_contracts": [
+    {
+      "signal": "fixture_calendar_and_kickoff",
+      "status": "AVAILABLE",
+      "source": "fixtures.date_utc/league_id/team ids",
+      "pit_rule": "kickoff calendar is usable only from a snapshot captured before prediction time; historical completed fixture times are safe as lagged history",
+      "usable_now": true
+    },
+    {
+      "signal": "historical_lineup_membership",
+      "status": "AVAILABLE_LAGGED_ONLY",
+      "source": "fixture_players.is_starter",
+      "pit_rule": "target-match lineup has no release timestamp in this dataset; only completed prior-match lineup membership may feed an earlier target",
+      "usable_now": true
+    },
+    {
+      "signal": "historical_player_minutes",
+      "status": "AVAILABLE_LAGGED_ONLY_WITH_MISSINGNESS",
+      "source": "fixture_players.minutes plus fixture_players_stats_flat.games_minutes",
+      "pit_rule": "minutes are postmatch facts and become usable only after the prior match is complete",
+      "usable_now": true
+    },
+    {
+      "signal": "coach_and_formation_history",
+      "status": "AVAILABLE_LAGGED_ONLY",
+      "source": "fixture_lineups.coach_name/coach_api_id/formation",
+      "pit_rule": "fixture_lineups has no known_at; never use the target-match row for an earlier prediction horizon; derive coach/style from prior completed matches only until a timestamped assignment source is added",
+      "usable_now": true
+    },
+    {
+      "signal": "postmatch_team_stats_and_xg",
+      "status": "AVAILABLE_WITH_KNOWN_AT",
+      "source": "match_stats known_at contract already frozen by R9b/R42",
+      "pit_rule": "same-date updates occur only after predictions; target-match stats never enter prematch features",
+      "usable_now": true
+    },
+    {
+      "signal": "closing_1x2_market",
+      "status": "AVAILABLE_CLOSING_ONLY_SEPARATE_TRACK",
+      "source": "odds.home_win/draw/away_win/known_at",
+      "pit_rule": "known_at is at/around kickoff; closing line is forbidden for any earlier prediction horizon and remains isolated from the football-blind track",
+      "usable_now": false
+    },
+    {
+      "signal": "referee_identity",
+      "status": "PARTIAL_IDENTITY_WITHOUT_ASSIGNMENT_TIMESTAMP",
+      "source": "fixtures.referee_name",
+      "pit_rule": "historical referee profile can be learned from completed matches, but target referee cannot be used until a separate assignment timestamp proves it was known before the prediction horizon",
+      "usable_now": false
+    },
+    {
+      "signal": "injury_illness_suspension_history",
+      "status": "MISSING_TIMESTAMPED_HISTORY",
+      "source": null,
+      "pit_rule": "requires status and status-change timestamp; missing record must never mean available",
+      "usable_now": false
+    },
+    {
+      "signal": "training_return_minutes_restriction",
+      "status": "MISSING_TIMESTAMPED_HISTORY",
+      "source": null,
+      "pit_rule": "requires timestamped return/training evidence or must remain unknown",
+      "usable_now": false
+    },
+    {
+      "signal": "standings_and_competition_state",
+      "status": "NOT_MATERIALIZED_AS_PIT_SNAPSHOT",
+      "source": null,
+      "pit_rule": "must reconstruct standings/aggregate/qualification state strictly from matches completed before target kickoff and competition rules",
+      "usable_now": false
+    },
+    {
+      "signal": "travel_distance_timezones_venue",
+      "status": "MISSING_GEO_CONTRACT",
+      "source": null,
+      "pit_rule": "requires stable venue/team location history and season-aware venue changes",
+      "usable_now": false
+    },
+    {
+      "signal": "weather_forecast_snapshot",
+      "status": "MISSING_HISTORICAL_FORECAST_TIMESTAMP",
+      "source": null,
+      "pit_rule": "observed match weather is not interchangeable with the forecast available at prediction time",
+      "usable_now": false
+    },
+    {
+      "signal": "fixed_horizon_market_snapshots",
+      "status": "MISSING",
+      "source": null,
+      "pit_rule": "need e.g. T-72h/T-24h/T-6h/T-1h timestamps; current closing-only odds cannot backfill these horizons",
+      "usable_now": false
+    }
+  ],
+  "critical_missing_or_unmaterialized": [
+    "injury_illness_suspension_history",
+    "training_return_minutes_restriction",
+    "standings_and_competition_state",
+    "travel_distance_timezones_venue",
+    "weather_forecast_snapshot",
+    "fixed_horizon_market_snapshots"
+  ],
+  "gates": {
+    "current_source_contract_audit_passed": true,
+    "historical_lineup_and_minutes_can_seed_r43b_c": true,
+    "r43a_full_pit_spine_ready_for_context_modelling": false,
+    "reason": "Current source is sufficient for lagged lineup/player/coach history and postmatch known_at features, but it lacks timestamped historical availability/injury status and several other prediction-time context snapshots required by R43A."
+  },
+  "next_action": {
+    "step": "R43A2_SOURCE_ACQUISITION_AND_RECONSTRUCTION",
+    "priority": [
+      "timestamped injury/illness/suspension history",
+      "historical availability/return status where reliable",
+      "standings and competition-state reconstruction from completed fixtures",
+      "venue/team geography for rest/travel features",
+      "coach tenure reconstruction using only prior completed fixture evidence"
+    ],
+    "do_not_start_r43b_full_model_until": "availability source contract is PIT-safe; a lineup-only historical baseline may be built separately but cannot be called the full R43B availability model"
+  },
+  "limitations": [
+    "fixture_lineups has no known_at timestamp, so target-match coach/formation/lineup fields are not admissible at an earlier prediction horizon.",
+    "odds in the current dataset are predominantly closing lines known at/around kickoff and cannot be backfilled as T-24h or other earlier snapshots.",
+    "referee_name lacks assignment timestamp, so the target referee is not PIT-safe for arbitrary earlier horizons.",
+    "This audit checks source capability and coverage only; it does not claim predictive gain."
+  ]
+}
