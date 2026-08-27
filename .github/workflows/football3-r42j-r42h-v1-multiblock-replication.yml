@@ -1,0 +1,73 @@
+name: football3 R42J R42H V1 multiblock replication
+
+on:
+  push:
+    branches:
+      - football3/r42j-r42h-v1-multiblock-replication
+    paths:
+      - football-data/experiments/r42j_r42h_v1_multiblock_replication/run_r42j_multiblock.py
+      - .github/workflows/football3-r42j-r42h-v1-multiblock-replication.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r42j-battery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r42j-r42h-v1-multiblock-replication
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Verify frozen R42J and R42I runners
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '3a0f0d8e43fba763b3ff082d3f0ea5bd8300f33e4c3d6f0923f5d68e7422cf6c  football-data/experiments/r42j_r42h_v1_multiblock_replication/run_r42j_multiblock.py' | sha256sum -c -
+          echo '17155fe709877801299b1b8f2d965cb11da4cb81c5d2fc5733cf7536bbe2faad  football-data/experiments/r42i_player_technical_replication_prev20k/run_r42i_prev20k.py' | sha256sum -c -
+          python -m py_compile football-data/experiments/r42j_r42h_v1_multiblock_replication/run_r42j_multiblock.py
+          python -m py_compile football-data/experiments/r42i_player_technical_replication_prev20k/run_r42i_prev20k.py
+      - name: Reconstruct frozen R42H dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/experiments/r42h_player_technical_translation
+          cat "$D"/encoded/run_r42h.py.gz.b64.part0 "$D"/encoded/run_r42h.py.gz.b64.part1 | base64 -d | gzip -d > "$D"/run_r42h_player_technical_translation.py
+          echo 'b7bf4bd5fbfd61936e8de52fa09e5b81f748389cb9e0d2de6f33641c1d394a45  '"$D"'/run_r42h_player_technical_translation.py' | sha256sum -c -
+          python -m py_compile "$D"/run_r42h_player_technical_translation.py
+      - name: Run R42J three-block replication battery
+        run: python football-data/experiments/r42j_r42h_v1_multiblock_replication/run_r42j_multiblock.py run
+      - name: Verify R42J contract
+        run: python football-data/experiments/r42j_r42h_v1_multiblock_replication/run_r42j_multiblock.py verify
+      - name: Persist R42J evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r42j_r42h_v1_multiblock_replication/results/summary_r42j_multiblock_replication.json
+          git add football-data/experiments/r42j_r42h_v1_multiblock_replication/results/pooled_oos_records_r42j.jsonl
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R42J R42H V1 multiblock replication battery'
+            git fetch origin football3/r42j-r42h-v1-multiblock-replication
+            git rebase origin/football3/r42j-r42h-v1-multiblock-replication
+            git push origin HEAD:football3/r42j-r42h-v1-multiblock-replication
+          fi
+      - name: Upload R42J artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r42j-r42h-v1-multiblock-replication
+          path: |
+            football-data/experiments/r42j_r42h_v1_multiblock_replication/results/summary_r42j_multiblock_replication.json
+            football-data/experiments/r42j_r42h_v1_multiblock_replication/results/pooled_oos_records_r42j.jsonl
+          if-no-files-found: error
+          retention-days: 90
