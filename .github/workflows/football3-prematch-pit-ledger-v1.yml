@@ -1,0 +1,56 @@
+name: football3 prematch PIT ledger v1
+
+on:
+  push:
+    branches:
+      - football3/prematch-pit-ledger-v1
+    paths:
+      - football-data/prematch_pit/pit_ledger_v1.py
+      - .github/workflows/football3-prematch-pit-ledger-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pit-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/prematch-pit-ledger-v1
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run PIT ledger selftest
+        run: python football-data/prematch_pit/pit_ledger_v1.py selftest
+      - name: Probe approved free sources
+        run: python football-data/prematch_pit/pit_ledger_v1.py probe
+      - name: Verify PIT source gate
+        run: python football-data/prematch_pit/pit_ledger_v1.py verify
+      - name: Persist PIT ledger evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/prematch_pit/results/source_capabilities_v1.json
+          git add football-data/prematch_pit/results/pit_observation_schema_v1.json
+          git add football-data/prematch_pit/results/selftest_v1.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 prematch PIT ledger v1 evidence'
+            git fetch origin football3/prematch-pit-ledger-v1
+            git rebase origin/football3/prematch-pit-ledger-v1
+            git push origin HEAD:football3/prematch-pit-ledger-v1
+          fi
+      - name: Upload PIT ledger artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-prematch-pit-ledger-v1
+          path: football-data/prematch_pit/results/*.json
+          if-no-files-found: error
+          retention-days: 90
