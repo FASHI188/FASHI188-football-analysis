@@ -1,0 +1,110 @@
+{
+  "schema_version": "football3-r40a-recognition-dictionary-v1",
+  "common_event_fields": [
+    "fixture_id",
+    "team_id",
+    "player_id",
+    "event_time",
+    "known_at",
+    "source",
+    "confidence",
+    "temporal_class"
+  ],
+  "temporal_classes": {
+    "PREMATCH_READY": "known_at is auditable and strictly earlier than prediction cutoff",
+    "DERIVED_STRICT_PRIOR": "computed only from events strictly earlier than target kickoff",
+    "RETROSPECTIVE_ONLY": "historical fact exists but original public availability time is not auditable",
+    "BLOCKED": "source or identity/timestamp quality insufficient for modeling"
+  },
+  "event_types": {
+    "expected_lineup": {
+      "fields": [
+        "expected_starters",
+        "starter_probabilities",
+        "lineup_certainty",
+        "lineup_continuity",
+        "prior_churn",
+        "formation_tendency"
+      ],
+      "temporal_class": "DERIVED_STRICT_PRIOR"
+    },
+    "player_unavailable_injury": {
+      "fields": [
+        "player_id",
+        "reason",
+        "onset_date",
+        "announcement_known_at"
+      ],
+      "temporal_class": "RETROSPECTIVE_ONLY until announcement_known_at exists"
+    },
+    "player_unavailable_suspension": {
+      "fields": [
+        "player_id",
+        "reason",
+        "effective_from",
+        "known_at"
+      ],
+      "temporal_class": "BLOCKED until timestamped source is added"
+    },
+    "player_strength": {
+      "fields": [
+        "strict_prior_player_residual",
+        "expected_minutes_share",
+        "replacement_drop"
+      ],
+      "temporal_class": "DERIVED_STRICT_PRIOR for residual; expected_minutes/replacement quality need later validation"
+    },
+    "schedule_load": {
+      "fields": [
+        "rest_days",
+        "matches_last_3d",
+        "matches_last_7d",
+        "matches_last_14d",
+        "consecutive_away_sequence"
+      ],
+      "temporal_class": "PREMATCH_READY"
+    },
+    "travel_load": {
+      "fields": [
+        "distance_km",
+        "cross_border",
+        "timezone_shift_hours"
+      ],
+      "temporal_class": "BLOCKED until audited venue geocodes exist"
+    },
+    "manager_context": {
+      "fields": [
+        "manager_id",
+        "appointment_known_at",
+        "matches_in_charge"
+      ],
+      "temporal_class": "BLOCKED until timestamped manager source is added"
+    },
+    "tactical_shape": {
+      "fields": [
+        "formation_tendency",
+        "pressing_proxy",
+        "possession_style",
+        "directness_proxy"
+      ],
+      "temporal_class": "LIMITED: prior formation recognizable; richer tactics need source"
+    },
+    "weather_context": {
+      "fields": [
+        "temperature_c",
+        "wind_kph",
+        "precipitation_mm",
+        "pitch_state",
+        "forecast_known_at"
+      ],
+      "temporal_class": "BLOCKED until timestamped forecast archive is added"
+    }
+  },
+  "hard_rules": [
+    "never use target actual XI for a prediction made before official lineup publication",
+    "never use injury end_date/days_missed/games_missed to infer earlier availability",
+    "every external event must carry known_at before it can enter a formal prematch model",
+    "entity joins must be stable by competition/season and ambiguous mappings must remain auditable",
+    "unavailable fields remain null/BLOCKED; no synthetic backfill from post-match facts"
+  ]
+}
