@@ -22,7 +22,7 @@ s2 = s91.s2
 s70 = s90.s70
 r9 = s91.r9
 
-HISTORY_N = 60000
+HISTORY_CAP = 60000
 TRAIN_N = 24123
 VALID_MIN = 5000
 HARD_CUTOFF_DATE = "2025-01-01"
@@ -76,14 +76,17 @@ def run():
     pool = s2.load_frozen_pool()
     eligible = [x for x in pool if x["date"] < HARD_CUTOFF_DATE]
     eligible.sort(key=lambda x: (x["date"], x["game_id"]))
-    if len(eligible) < HISTORY_N:
-        raise RuntimeError(f"insufficient pre-2025 pool rows: {len(eligible)}")
+    available = len(eligible)
+    if available < TRAIN_N + VALID_MIN:
+        raise RuntimeError(f"insufficient pre-2025 pool rows for train+validation: {available}")
 
-    window = [{k: v for k, v in x.items() if k != "_known"} for x in eligible[-HISTORY_N:]]
+    history_n = min(HISTORY_CAP, available)
+    window = [{k: v for k, v in x.items() if k != "_known"} for x in eligible[-history_n:]]
     hp, _state, _robust_hist, _draw_state = s80.history_joint(window)
-    if len(hp) != HISTORY_N:
-        raise RuntimeError(f"history replay mismatch: {len(hp)}")
+    if len(hp) != history_n:
+        raise RuntimeError(f"history replay mismatch: {len(hp)}/{history_n}")
 
+    # Keep whole dates intact so no same-day result can cross the train/validation boundary.
     validation_start_date = hp[-VALID_MIN]["date"]
     pre = [r for r in hp if r["date"] < validation_start_date]
     valid = [r for r in hp if r["date"] >= validation_start_date]
@@ -148,6 +151,8 @@ def run():
         "classification": "PRE_BATCH001_PRE_BATCH002_PRE_BATCH003_HISTORICAL_HOLDOUT",
         "governance": {
             "hard_cutoff_date_exclusive": HARD_CUTOFF_DATE,
+            "history_cap_predeclared": HISTORY_CAP,
+            "history_window_adjusted_only_for_pre_cutoff_data_availability": history_n < HISTORY_CAP,
             "Batch001_results_used": False,
             "Batch002_results_used": False,
             "Batch003_results_used": False,
@@ -157,7 +162,8 @@ def run():
             "selection_rule_predeclared": "max total hits; tie max worst-chunk accuracy; tie max draw precision; tie highest threshold",
             "candidate_must_be_locked_on_fresh_batch_before_scoring": True,
         },
-        "history_rows": HISTORY_N,
+        "pre_cutoff_available_rows": available,
+        "history_rows": history_n,
         "train_rows": len(train),
         "validation_rows": len(valid),
         "train_first_date": train[0]["date"],
@@ -182,6 +188,8 @@ def run():
     )
     print(json.dumps({
         "status": out["status"],
+        "pre_cutoff_available_rows": available,
+        "history_rows": history_n,
         "train_rows": out["train_rows"],
         "validation_rows": out["validation_rows"],
         "S70_argmax": baseline70,
@@ -194,6 +202,8 @@ def verify():
     s = json.loads((OUT / "summary_s92_history_gate.json").read_text(encoding="utf-8"))
     g = s["governance"]
     assert s["status"] == "S92_HISTORY_GATE_VALIDATION_COMPLETE"
+    assert s["history_rows"] <= HISTORY_CAP
+    assert s["pre_cutoff_available_rows"] >= s["history_rows"] >= TRAIN_N + VALID_MIN
     assert s["train_rows"] == TRAIN_N and s["validation_rows"] >= VALID_MIN
     assert s["validation_last_date"] < HARD_CUTOFF_DATE
     assert not g["Batch001_results_used"] and not g["Batch002_results_used"] and not g["Batch003_results_used"]
