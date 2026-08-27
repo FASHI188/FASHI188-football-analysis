@@ -1,0 +1,53 @@
+name: football3 R40A prematch information recognition
+
+on:
+  push:
+    branches:
+      - football3/r40a-prematch-information-recognition
+    paths:
+      - football-data/experiments/r40a_prematch_information_recognition/run_r40a.py
+      - .github/workflows/football3-r40a-prematch-information-recognition.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r40a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r40a-prematch-information-recognition
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run R40A recognition audit
+        run: python football-data/experiments/r40a_prematch_information_recognition/run_r40a.py run
+      - name: Verify R40A safety contract
+        run: python football-data/experiments/r40a_prematch_information_recognition/run_r40a.py verify
+      - name: Persist R40A recognition evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r40a_prematch_information_recognition/results/summary_r40a.json
+          git add football-data/experiments/r40a_prematch_information_recognition/results/recognition_dictionary_r40a.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R40A prematch recognition audit'
+            git fetch origin football3/r40a-prematch-information-recognition
+            git rebase origin/football3/r40a-prematch-information-recognition
+            git push origin HEAD:football3/r40a-prematch-information-recognition
+          fi
+      - name: Upload R40A artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r40a-prematch-information-recognition
+          path: football-data/experiments/r40a_prematch_information_recognition/results/*.json
+          if-no-files-found: error
+          retention-days: 90
