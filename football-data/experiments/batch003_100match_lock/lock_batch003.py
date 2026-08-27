@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent
-ROOT=HERE.parents[2]
+ROOT=HERE.parents[1]
 OUT=HERE/'results'
 START='2026-04-12';N=100
 DIVS=('E0','D1','I1','SP1','F1')
