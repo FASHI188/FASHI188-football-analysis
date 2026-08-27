@@ -1,0 +1,56 @@
+name: football3 top1 R40C role-aware expected-XI
+
+on:
+  push:
+    branches:
+      - football3/top1-r40c-role-aware-expected-xi
+    paths:
+      - football-data/experiments/top1_r40c_role_aware_expected_xi/run_experiment_r40c.py
+      - .github/workflows/football3-top1-r40c-role-aware-expected-xi.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r40c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/top1-r40c-role-aware-expected-xi
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install modeling runtime
+        run: python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+      - name: Restore exact R9b frozen 20k snapshot
+        run: python football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py freeze
+      - name: Run R40C role-aware expected-XI
+        run: python football-data/experiments/top1_r40c_role_aware_expected_xi/run_experiment_r40c.py run
+      - name: Verify R40C contract
+        run: python football-data/experiments/top1_r40c_role_aware_expected_xi/run_experiment_r40c.py verify
+      - name: Persist R40C evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/top1_r40c_role_aware_expected_xi/results/summary_r40c.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R40C role-aware expected-XI'
+            git fetch origin football3/top1-r40c-role-aware-expected-xi
+            git rebase origin/football3/top1-r40c-role-aware-expected-xi
+            git push origin HEAD:football3/top1-r40c-role-aware-expected-xi
+          fi
+      - name: Upload R40C artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-top1-r40c-role-aware-expected-xi
+          path: football-data/experiments/top1_r40c_role_aware_expected_xi/results/summary_r40c.json
+          if-no-files-found: error
+          retention-days: 90
