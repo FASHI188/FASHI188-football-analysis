@@ -1,0 +1,57 @@
+name: football3 R42 Palace City prospective lock
+
+on:
+  push:
+    branches:
+      - football3/r42-palace-city-prospective-lock-20260827
+    paths:
+      - football-data/prospective_locks/r42_palace_city_20260827/lock.json
+      - .github/workflows/football3-r42-palace-city-prospective-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r42-palace-city-prospective-lock-20260827
+          fetch-depth: 0
+      - name: Validate immutable prematch lock
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p=Path('football-data/prospective_locks/r42_palace_city_20260827/lock.json')
+          d=json.loads(p.read_text())
+          assert d['status']=='LOCKED_PREMATCH'
+          assert d['formal_weight']==0
+          assert d['evidence']['result_label_accessed'] is False
+          assert d['evidence']['postmatch_target_data_used'] is False
+          assert d['immutability_contract']['actual_result'] is None
+          assert d['immutability_contract']['score'] is None
+          assert d['immutability_contract']['reveal_must_be_written_to_separate_file'] is True
+          locked=datetime.fromisoformat(d['locked_at_utc'].replace('Z','+00:00'))
+          kickoff=datetime.fromisoformat(d['target']['official_kickoff_at_utc'].replace('Z','+00:00'))
+          assert locked < kickoff
+          for name,v in d['locked_outputs'].items():
+              s=v['home']+v['draw']+v['away']
+              assert abs(s-1.0) < 1e-12, (name,s)
+              assert v['top1']=='away'
+          assert len(d['locked_information']['confirmed_out'])==3
+          assert len(d['locked_information']['doubtful'])==1
+          print(json.dumps({'status':'PASS','locked_at_utc':d['locked_at_utc'],'kickoff_at_utc':d['target']['official_kickoff_at_utc'],'seconds_before_kickoff':int((kickoff-locked).total_seconds()),'top1':'away'},indent=2))
+          PY
+      - name: Upload immutable lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r42-palace-city-prematch-lock
+          path: football-data/prospective_locks/r42_palace_city_20260827/lock.json
+          if-no-files-found: error
+          retention-days: 90
