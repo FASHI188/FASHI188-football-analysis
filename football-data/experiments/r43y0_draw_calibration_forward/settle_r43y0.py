@@ -16,6 +16,7 @@ CONFIRM_MIN=50
 ACCURACY_FLOOR=0.53
 WILSON90_FLOOR=0.50
 FOLDS=3
+SEALED41_N=41
 Z90=1.6448536269514722
 
 def load(p):return json.loads(Path(p).read_text(encoding='utf-8'))
@@ -53,7 +54,15 @@ def folds(rows):
     return out
 
 def run():
-    ydoc=load(Y0);yp={str(e['match_id']):e for e in ydoc.get('events',[]) if e.get('event_type')=='PREDICTION_FROZEN'}
+    ydoc=load(Y0);yevents=[e for e in ydoc.get('events',[]) if e.get('event_type')=='PREDICTION_FROZEN'];yp={str(e['match_id']):e for e in yevents}
+    sealed41=yevents[:SEALED41_N]
+    if len(sealed41)<SEALED41_N:raise RuntimeError('sealed41 Y0 prefix unavailable')
+    sealed41_divergence=[]
+    for e in sealed41:
+        p=e['payload'];u0=p['source_r43u0_probabilities'];y0=p['r43y0_probabilities']
+        if top1(u0)!=top1(y0):
+            sealed41_divergence.append({'match_id':str(e['match_id']),'kickoff_at':p['fixture_identity']['kickoff_at'],'competition_id':p['fixture_identity']['competition_id'],'home_team':p['fixture_identity']['home_team'],'away_team':p['fixture_identity']['away_team'],'u0_top1':top1(u0),'y0_top1':top1(y0),'u0_probabilities':u0,'y0_probabilities':y0})
+    divergence_ids={x['match_id'] for x in sealed41_divergence}
     rdoc=load(U1_RESULTS) if U1_RESULTS.exists() else {'events':[]};rr={str(e['match_id']):e for e in rdoc.get('events',[]) if e.get('event_type')=='RESULT_SETTLED'}
     rows=[];rejected=[]
     for mid,e in yp.items():
@@ -63,7 +72,8 @@ def run():
             rejected.append({'match_id':mid,'reason':'r43u1_result_prediction_hash_mismatch'});continue
         y=str(r['payload']['result']['actual_result'])
         if y not in CLASSES:rejected.append({'match_id':mid,'reason':'invalid_result'});continue
-        rows.append({'match_id':mid,'kickoff_at':e['payload']['fixture_identity']['kickoff_at'],'competition_id':e['payload']['fixture_identity']['competition_id'],'u0':e['payload']['source_r43u0_probabilities'],'y0':e['payload']['r43y0_probabilities'],'y':y})
+        u0p=e['payload']['source_r43u0_probabilities'];y0p=e['payload']['r43y0_probabilities']
+        rows.append({'match_id':mid,'kickoff_at':e['payload']['fixture_identity']['kickoff_at'],'competition_id':e['payload']['fixture_identity']['competition_id'],'u0':u0p,'y0':y0p,'u0_top1':top1(u0p),'y0_top1':top1(y0p),'decision_divergence':top1(u0p)!=top1(y0p),'y':y})
     rows.sort(key=lambda x:(x['kickoff_at'],x['match_id']))
     u=metrics(rows,'u0');y=metrics(rows,'y0');d=delta(u,y);fr=[]
     for i,f in enumerate(folds(rows),1):
@@ -71,19 +81,34 @@ def run():
     nonneg=sum(1 for f in fr if f['y0_minus_u0']['accuracy_pp'] is not None and f['y0_minus_u0']['accuracy_pp']>=-1e-12)
     drawll=sum(1 for f in fr if f['y0_minus_u0']['draw_logloss'] is not None and f['y0_minus_u0']['draw_logloss']<0)
     structural=load(LOCK_SUMMARY)['structural_activation'];natural=int(structural['natural_draw_top1_count'])
+    divergence_rows=[r for r in rows if r['match_id'] in divergence_ids]
+    du=metrics(divergence_rows,'u0');dy=metrics(divergence_rows,'y0');dd=delta(du,dy)
+    divergence_diag={
+      'classification':'PREREGISTERED_MECHANISM_DIAGNOSTIC_NOT_A_PROMOTION_GATE',
+      'definition_locked_pre_outcome':'Within sealed first 41 Y0 predictions, include every match where frozen Y0 Top1 differs from frozen U0 Top1; no outcome/threshold selection.',
+      'sealed41_locked_divergence_count':len(sealed41_divergence),
+      'sealed41_locked_divergences':sealed41_divergence,
+      'settled_divergence_count':len(divergence_rows),
+      'open_divergence_count':len(sealed41_divergence)-len(divergence_rows),
+      'settled_rows':divergence_rows,
+      'u0':du,'y0':dy,'y0_minus_u0':dd,
+      'standalone_promotion_allowed':False,
+      'interpretation_rule':'Report exact hit/proper-score deltas on all predeclared divergences. Never create or tune a rule from these outcomes; n=3 sealed41 is mechanism evidence only.'
+    }
     discovery=len(rows)>=DISCOVERY_MIN
     confirmation=len(rows)>=CONFIRM_MIN
     signal=bool(discovery and natural>0 and d['accuracy_pp']>=0 and d['logloss']<0 and d['brier']<0 and d['rps']<0 and d['draw_logloss']<0 and d['draw_brier']<0 and nonneg>=2 and drawll>=2)
     confirmed=bool(confirmation and signal and y['top1_accuracy']>=ACCURACY_FLOOR and y['wilson90_lower']>=WILSON90_FLOOR)
     action='Y0_FORWARD_CONFIRMATION_PASSED_MANUAL_REVIEW_ONLY' if confirmed else ('Y0_DISCOVERY_SIGNAL_CONTINUE_TO_50_NO_RETUNING' if signal else ('Y0_DISCOVERY_GATE_FAILED_DO_NOT_RETUNE_ON_THESE_MATCHES' if discovery else 'WAIT_FOR_PRISTINE_SETTLEMENT_NO_RETUNING'))
-    out={'schema_version':'football3-r43y0-draw-calibration-forward-evaluation-v1','status':'COMPLETE','classification':'PRISTINE_PAIRED_FORWARD_Y0_VS_U0','formal_weight':'FORWARD_EVIDENCE','generated_at_utc':now(),'governance':{'predictions_read_only':True,'outcome_used_only_for_settlement':True,'parameter_search':False,'threshold_search':False,'draw_override':False,'gate_preregistered_before_first_y0_settlement':True,'automatic_promotion':False,'main_merge':False,'publication':False},'gate_preregistration':{'discovery_min_settled':DISCOVERY_MIN,'confirmation_min_settled':CONFIRM_MIN,'confirmation_accuracy_floor':ACCURACY_FLOOR,'confirmation_wilson90_lower_floor':WILSON90_FLOOR,'requirements':['natural draw Top1 activation >0 in locked ledger','Y0 Top1 accuracy >= U0','Y0 LogLoss < U0','Y0 Brier < U0','Y0 RPS < U0','Y0 draw LogLoss < U0','Y0 draw Brier < U0','>=2/3 chronological folds nonnegative Top1 delta','>=2/3 chronological folds improved draw LogLoss'],'no_retuning_on_forward_outcomes':True},'coverage':{'locked_predictions':len(yp),'settled_predictions':len(rows),'open_predictions':len(yp)-len(rows),'rejected':rejected},'structural_activation':structural,'paired':{'u0':u,'y0':y,'y0_minus_u0':d,'folds':fr,'nonnegative_top1_folds':nonneg,'improved_draw_logloss_folds':drawll},'gate':{'discovery_sample_met':discovery,'confirmation_sample_met':confirmation,'forward_signal_passed':signal,'forward_confirmation_passed':confirmed,'action':action},'settled_rows':rows,'action':action}
+    out={'schema_version':'football3-r43y0-draw-calibration-forward-evaluation-v2','status':'COMPLETE','classification':'PRISTINE_PAIRED_FORWARD_Y0_VS_U0','formal_weight':'FORWARD_EVIDENCE','generated_at_utc':now(),'governance':{'predictions_read_only':True,'outcome_used_only_for_settlement':True,'parameter_search':False,'threshold_search':False,'draw_override':False,'gate_preregistered_before_first_y0_settlement':True,'sealed41_divergence_diagnostic_preregistered_before_first_settlement':True,'automatic_promotion':False,'main_merge':False,'publication':False},'gate_preregistration':{'discovery_min_settled':DISCOVERY_MIN,'confirmation_min_settled':CONFIRM_MIN,'confirmation_accuracy_floor':ACCURACY_FLOOR,'confirmation_wilson90_lower_floor':WILSON90_FLOOR,'requirements':['natural draw Top1 activation >0 in locked ledger','Y0 Top1 accuracy >= U0','Y0 LogLoss < U0','Y0 Brier < U0','Y0 RPS < U0','Y0 draw LogLoss < U0','Y0 draw Brier < U0','>=2/3 chronological folds nonnegative Top1 delta','>=2/3 chronological folds improved draw LogLoss'],'no_retuning_on_forward_outcomes':True},'coverage':{'locked_predictions':len(yp),'settled_predictions':len(rows),'open_predictions':len(yp)-len(rows),'rejected':rejected},'structural_activation':structural,'paired':{'u0':u,'y0':y,'y0_minus_u0':d,'folds':fr,'nonnegative_top1_folds':nonneg,'improved_draw_logloss_folds':drawll},'sealed41_decision_divergence_diagnostic':divergence_diag,'gate':{'discovery_sample_met':discovery,'confirmation_sample_met':confirmation,'forward_signal_passed':signal,'forward_confirmation_passed':confirmed,'action':action},'settled_rows':rows,'action':action}
     OUT.parent.mkdir(parents=True,exist_ok=True);OUT.write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(json.dumps(out,ensure_ascii=False,indent=2));return out
 
 def verify():
-    s=load(OUT);g=s['governance'];p=s['gate_preregistration']
-    assert s['status']=='COMPLETE' and g['predictions_read_only'] and g['outcome_used_only_for_settlement'] and g['parameter_search'] is False and g['threshold_search'] is False and g['draw_override'] is False and g['gate_preregistered_before_first_y0_settlement'] and g['automatic_promotion'] is False
+    s=load(OUT);g=s['governance'];p=s['gate_preregistration'];z=s['sealed41_decision_divergence_diagnostic']
+    assert s['status']=='COMPLETE' and g['predictions_read_only'] and g['outcome_used_only_for_settlement'] and g['parameter_search'] is False and g['threshold_search'] is False and g['draw_override'] is False and g['gate_preregistered_before_first_y0_settlement'] and g['sealed41_divergence_diagnostic_preregistered_before_first_settlement'] and g['automatic_promotion'] is False
     assert p['discovery_min_settled']==DISCOVERY_MIN and p['confirmation_min_settled']==CONFIRM_MIN and p['no_retuning_on_forward_outcomes'] is True
-    print('R43Y0 paired forward gate verified')
+    assert z['sealed41_locked_divergence_count']==3 and z['standalone_promotion_allowed'] is False
+    print('R43Y0 paired forward gate + sealed41 divergence diagnostic verified')
 
 if __name__=='__main__':
     cmd=sys.argv[1] if len(sys.argv)>1 else 'run'
