@@ -1,0 +1,66 @@
+name: football3 R43U1 refresh team identity
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - .github/workflows/football3-r43u1-refresh-team-identity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-team-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile existing maintenance chain
+        run: |
+          python -m py_compile football-data/validation/v6_team_configuration_fetch_v660.py
+          python -m py_compile football-data/validation/v6_team_roster_repair_v664.py
+          python -m py_compile football-data/validation/v6_team_configuration_weekly_v660.py
+      - name: Fetch latest team configurations
+        run: python football-data/validation/v6_team_configuration_fetch_v660.py
+      - name: Repair sub-18 roster snapshots
+        run: python football-data/validation/v6_team_roster_repair_v664.py
+      - name: Rebuild authoritative weekly team status
+        run: python football-data/validation/v6_team_configuration_weekly_v660.py
+      - name: Persist team identity evidence
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/evidence/team_configuration_weekly || true
+          git add football-data/manifests/v6_team_configuration_fetch_v660_status.json || true
+          git add football-data/manifests/v6_team_roster_repair_v664_status.json || true
+          git add football-data/manifests/v6_team_configuration_weekly_v660_status.json || true
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43U1 refresh weekly team identity'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload team identity receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43u1-team-identity-refresh
+          path: |
+            football-data/manifests/v6_team_configuration_fetch_v660_status.json
+            football-data/manifests/v6_team_roster_repair_v664_status.json
+            football-data/manifests/v6_team_configuration_weekly_v660_status.json
+          if-no-files-found: error
+          retention-days: 30
