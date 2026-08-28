@@ -1,0 +1,57 @@
+name: football3 R43U1 refresh market evidence
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - .github/workflows/football3-r43u1-refresh-market-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Capture active Kambi prematch surfaces
+        run: python football-data/validation/v6_active_kambi_market_capture_v652.py
+      - name: Freeze newly eligible market-first predictions
+        run: python football-data/validation/v6_market_first_forward_v651.py
+      - name: Persist prospective market evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/manifests/v6_active_kambi_market_capture_v652_status.json
+          git add football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          git add football-data/forward/v6_market_first_events_v651.json
+          git add football-data/evidence/markets_prospective || true
+          git add football-data/evidence/direct_provider_probes/kambi/active_leagues || true
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43U1 refresh prospective market evidence'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload refresh receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43u1-market-refresh
+          path: |
+            football-data/manifests/v6_active_kambi_market_capture_v652_status.json
+            football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          if-no-files-found: error
+          retention-days: 30
