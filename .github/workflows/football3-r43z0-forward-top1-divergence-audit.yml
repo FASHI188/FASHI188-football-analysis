@@ -1,0 +1,59 @@
+name: football3 R43Z0 forward Top1 divergence audit
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - football-data/experiments/r43z0_forward_top1_divergence_audit/run_r43z0.py
+      - .github/workflows/football3-r43z0-forward-top1-divergence-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43z0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify zero-label audit dependencies
+        run: |
+          test -f football-data/forward/r43u1_pristine_forward_events.json
+          test -f football-data/forward/r43y0_draw_calibration_forward_events.json
+          test -f football-data/forward/r43_batch01_pristine_lockbox.json
+          test -f football-data/forward/r43_batch02_pristine_lockbox.json
+          python -m py_compile football-data/experiments/r43z0_forward_top1_divergence_audit/run_r43z0.py
+      - name: Run zero-label Top1 divergence audit
+        run: python football-data/experiments/r43z0_forward_top1_divergence_audit/run_r43z0.py run
+      - name: Verify zero-label audit contract
+        run: python football-data/experiments/r43z0_forward_top1_divergence_audit/run_r43z0.py verify
+      - name: Persist R43Z0 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43z0_forward_top1_divergence_audit/results/summary_r43z0_forward_top1_divergence.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43Z0 zero-label forward Top1 divergence'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload R43Z0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43z0-forward-top1-divergence
+          path: football-data/experiments/r43z0_forward_top1_divergence_audit/results/summary_r43z0_forward_top1_divergence.json
+          if-no-files-found: error
+          retention-days: 90
