@@ -1,0 +1,63 @@
+name: football3 R43U1 pristine forward confirmation
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - football-data/experiments/r43u1_pristine_forward_confirmation/run_r43u1.py
+      - .github/workflows/football3-r43u1-pristine-forward-confirmation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43u1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Verify frozen dependencies
+        run: |
+          test -f football-data/forward/v6_market_first_events_v651.json
+          test -f football-data/experiments/r43t0_dynamic_bivariate_residual_state/run_r43t0.py
+          test -f football-data/experiments/r43u0_fixed_diagonal_inflation/run_r43u0.py
+          test -f football-data/experiments/r43q0_sharp_market_score_base/run_r43q0.py
+          python -m py_compile football-data/experiments/r43u1_pristine_forward_confirmation/run_r43u1.py
+      - name: Run R43U1 pristine forward lock
+        run: python football-data/experiments/r43u1_pristine_forward_confirmation/run_r43u1.py run
+      - name: Verify R43U1 contract
+        run: python football-data/experiments/r43u1_pristine_forward_confirmation/run_r43u1.py verify
+      - name: Persist R43U1 lock evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/forward/r43u1_pristine_forward_events.json football-data/experiments/r43u1_pristine_forward_confirmation/results/summary_r43u1_pristine_forward_lock.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43U1 pristine forward lock'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload R43U1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43u1-pristine-forward-lock
+          path: |
+            football-data/forward/r43u1_pristine_forward_events.json
+            football-data/experiments/r43u1_pristine_forward_confirmation/results/summary_r43u1_pristine_forward_lock.json
+          if-no-files-found: error
+          retention-days: 90
