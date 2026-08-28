@@ -1,0 +1,114 @@
+name: football3 R43I0 market forward settlement
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - .github/workflows/football3-r43i0-market-forward-settlement.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile frozen settlement path
+        run: |
+          python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+          python -m py_compile football-data/validation/v6_market_first_result_resolver_v651.py
+          python -m py_compile football-data/validation/v6_pristine_forward_result_resolver_v612.py
+
+      - name: Freeze prediction hashes before settlement
+        shell: bash
+        run: |
+          PYTHONPATH=football-data/engine:football-data/validation python - <<'PY'
+          import json
+          from pathlib import Path
+          import v6_market_first_forward_v651 as m
+          x=m.load_ledger()
+          before={mid:e['event_hash'] for mid,e in sorted(m.prediction_events(x).items())}
+          Path('/tmp/r43i0_prediction_hashes_before.json').write_text(json.dumps(before,sort_keys=True),encoding='utf-8')
+          print(json.dumps({'prediction_count':len(before),'chain':m.audit_chain(x)},ensure_ascii=False))
+          PY
+
+      - name: Resolve matured frozen predictions only
+        env:
+          PYTHONPATH: football-data/engine:football-data/validation
+        run: python football-data/validation/v6_market_first_result_resolver_v651.py
+
+      - name: Verify immutable predictions and evaluation contract
+        shell: bash
+        run: |
+          PYTHONPATH=football-data/engine:football-data/validation python - <<'PY'
+          import json
+          from pathlib import Path
+          import v6_market_first_forward_v651 as m
+          x=m.load_ledger()
+          after={mid:e['event_hash'] for mid,e in sorted(m.prediction_events(x).items())}
+          before=json.loads(Path('/tmp/r43i0_prediction_hashes_before.json').read_text(encoding='utf-8'))
+          assert before == after, 'frozen market prediction event hashes changed'
+          chain=m.audit_chain(x); assert chain['status']=='PASS'
+          ev=json.loads(m.OUT.read_text(encoding='utf-8'))
+          rs=json.loads((m.ROOT/'manifests'/'v6_market_first_result_resolver_v651_status.json').read_text(encoding='utf-8'))
+          assert ev['status']=='PASS'
+          assert ev['prediction_count']==len(after)
+          assert ev['settled_count']<=ev['prediction_count']
+          assert rs['governance']['existing_market_predictions_only'] is True
+          assert rs['governance']['prediction_generation'] is False
+          assert rs['governance']['runtime_probability_change'] is False
+          print(json.dumps({
+            'prediction_count':ev['prediction_count'],
+            'settled_count':ev['settled_count'],
+            'open_prediction_count':ev['open_prediction_count'],
+            'evaluation_status':ev['evaluation_status'],
+            'all_market_predictions':ev['all_market_predictions'],
+            'selective_arm_a':ev['selective_arm_a'],
+            'minimum_sample_gate_met':ev['minimum_sample_gate_met'],
+            'promotion_gate_passed':ev['promotion_gate_passed'],
+            'resolver_status':rs['status'],
+            'resolver_stats':rs['stats'],
+          },ensure_ascii=False,indent=2))
+          PY
+
+      - name: Persist append-only settlement evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            football-data/forward/v6_market_first_events_v651.json \
+            football-data/forward/inbox/market_first_results_v651.json \
+            football-data/manifests/v6_market_first_result_resolver_v651_status.json \
+            football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          if git diff --cached --quiet; then
+            echo 'No settlement evidence delta'
+          else
+            git commit -m '[r43i0] append matured market-first settlements and evaluation'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+
+      - name: Upload R43I0 settlement artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43i0-market-forward-settlement
+          path: |
+            football-data/manifests/v6_market_first_result_resolver_v651_status.json
+            football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          if-no-files-found: error
+          retention-days: 90
