@@ -1,0 +1,206 @@
+name: football3 R43E3 two leg state reconstruction audit
+
+on:
+  push:
+    branches:
+      - football3/r43e3-two-leg-state-reconstruction-audit
+    paths:
+      - .github/workflows/football3-r43e3-two-leg-state-reconstruction-audit.yml
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43e3-two-leg-state-reconstruction-audit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check pandas pyarrow numpy
+      - name: Reconstruct two-leg and schedule state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request, hashlib
+          from pathlib import Path
+          from collections import defaultdict
+          import pandas as pd
+          import numpy as np
+
+          base='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
+          files=['fixtures.parquet','leagues.parquet','league_catalogue.parquet']
+          tmp=Path('/tmp/r43e3'); tmp.mkdir(exist_ok=True)
+          meta={}
+          for f in files:
+              p=tmp/f
+              req=urllib.request.Request(f'{base}/{f}?download=true',headers={'User-Agent':'football3-r43e3'})
+              with urllib.request.urlopen(req,timeout=600) as r, p.open('wb') as w:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      w.write(b)
+              h=hashlib.sha256(p.read_bytes()).hexdigest()
+              meta[f]={'sha256':h,'size_bytes':p.stat().st_size}
+
+          fx=pd.read_parquet(tmp/'fixtures.parquet')
+          lg=pd.read_parquet(tmp/'leagues.parquet')
+          cat=pd.read_parquet(tmp/'league_catalogue.parquet')
+          for c in ['date_utc','created_at','updated_at']:
+              fx[c]=pd.to_datetime(fx[c],utc=True,errors='coerce')
+          played=fx[(fx['is_played']==True)&(fx['status_norm']=='FT')&fx['goals_home'].notna()&fx['goals_away'].notna()].copy()
+          played=played.sort_values(['date_utc','id'])
+
+          type_counts=cat['af_type'].fillna('NA').astype(str).value_counts().to_dict()
+          # Primary catalogue join by dataset league id; fallback via api-football league id.
+          c1=cat.dropna(subset=['dataset_league_id']).drop_duplicates('dataset_league_id').set_index('dataset_league_id')
+          c2=cat.dropna(subset=['af_league_id']).drop_duplicates('af_league_id').set_index('af_league_id')
+          league_by_id=lg.drop_duplicates('id').set_index('id')
+          def league_info(lid):
+              lid=int(lid)
+              if lid in c1.index:
+                  r=c1.loc[lid]
+                  return str(r.get('af_type')),str(r.get('af_name')),str(r.get('af_country')),'dataset_league_id'
+              if lid in league_by_id.index:
+                  api_id=league_by_id.loc[lid].get('api_football_id')
+                  if pd.notna(api_id) and int(api_id) in c2.index:
+                      r=c2.loc[int(api_id)]
+                      return str(r.get('af_type')),str(r.get('af_name')),str(r.get('af_country')),'api_football_id'
+              return 'UNKNOWN','UNKNOWN','UNKNOWN','none'
+
+          info={}
+          for lid in played['league_id'].dropna().astype(int).unique(): info[lid]=league_info(lid)
+          mapped=sum(1 for v in info.values() if v[0] != 'UNKNOWN')
+
+          # Reciprocal pair: same competition, same two teams, reversed home/away, previous FT leg 2-45 days earlier.
+          by_key=defaultdict(list)
+          candidates=[]
+          windows={7:0,14:0,21:0,28:0,45:0}
+          for r in played.itertuples(index=False):
+              lid=int(r.league_id); h=int(r.home_team_id); a=int(r.away_team_id); dt=r.date_utc
+              key=(lid,min(h,a),max(h,a))
+              prevs=by_key[key]
+              best=None
+              for p in reversed(prevs):
+                  gap=(dt-p['date']).total_seconds()/86400.0
+                  if gap>45: break
+                  if gap>=2 and p['home']==a and p['away']==h:
+                      best=(p,gap); break
+              if best:
+                  p,gap=best
+                  typ,name,country,mapvia=info.get(lid,('UNKNOWN','UNKNOWN','UNKNOWN','none'))
+                  for w in windows:
+                      if gap<=w: windows[w]+=1
+                  candidates.append({
+                    'fixture_id':int(r.id),'date':dt.isoformat(),'league_id':lid,'competition_type':typ,
+                    'competition_name':name,'country':country,'home_team_id':h,'away_team_id':a,
+                    'prior_fixture_id':p['fixture_id'],'prior_date':p['date'].isoformat(),'gap_days':gap,
+                    'agg_home_before':int(p['ga']),'agg_away_before':int(p['gh']),
+                    'aggregate_diff_home_before':int(p['ga']-p['gh']),
+                    'current_home_state_before':'leading' if p['ga']>p['gh'] else 'trailing' if p['ga']<p['gh'] else 'tied'
+                  })
+              prevs.append({'fixture_id':int(r.id),'date':dt,'home':h,'away':a,'gh':int(r.goals_home),'ga':int(r.goals_away)})
+
+          cand=pd.DataFrame(candidates)
+          cup_mask=cand['competition_type'].str.lower().isin(['cup','cups']) if len(cand) else pd.Series([],dtype=bool)
+          cup=cand[cup_mask].copy() if len(cand) else cand.copy()
+
+          # PIT schedule creation audit: whether a fixture row existed before its kickoff.
+          sched=fx[fx['date_utc'].notna() & fx['created_at'].notna()].copy()
+          sched['created_lead_hours']=(sched['date_utc']-sched['created_at']).dt.total_seconds()/3600.0
+          pre=sched['created_lead_hours']>0
+          lead=sched.loc[pre,'created_lead_hours']
+
+          # For each played match, infer next scheduled match for each team only if that next fixture row was created before current kickoff.
+          appearances=[]
+          for r in fx[fx['date_utc'].notna()].sort_values(['date_utc','id']).itertuples(index=False):
+              appearances.append((int(r.home_team_id),r.date_utc,int(r.id),r.created_at,int(r.league_id)))
+              appearances.append((int(r.away_team_id),r.date_utc,int(r.id),r.created_at,int(r.league_id)))
+          by_team=defaultdict(list)
+          for x in appearances: by_team[x[0]].append(x)
+          next_gap=[]
+          sample_next=[]
+          # bounded audit on latest 20k played to keep runtime small
+          for r in played.tail(20000).itertuples(index=False):
+              cur=r.date_utc
+              for tid in (int(r.home_team_id),int(r.away_team_id)):
+                  arr=by_team[tid]
+                  found=None
+                  for x in arr:
+                      if x[1] <= cur or x[2]==int(r.id): continue
+                      if pd.notna(x[3]) and x[3] <= cur:
+                          found=x; break
+                  if found:
+                      hrs=(found[1]-cur).total_seconds()/3600.0
+                      if hrs>=0:
+                          next_gap.append(hrs)
+                          if len(sample_next)<30:
+                              sample_next.append({'current_fixture_id':int(r.id),'team_id':tid,'next_fixture_id':found[2],'hours_to_next':hrs,'next_league_id':found[4]})
+
+          def stats(xs):
+              a=np.asarray(xs,dtype=float)
+              if len(a)==0: return {'n':0}
+              return {'n':int(len(a)),'mean':float(np.mean(a)),'median':float(np.median(a)),'p10':float(np.quantile(a,.1)),'p90':float(np.quantile(a,.9))}
+
+          out=Path('football-data/experiments/r43e3_two_leg_state_reconstruction_audit/results')
+          out.mkdir(parents=True,exist_ok=True)
+          result={
+            'schema_version':'football3-r43e3-two-leg-state-reconstruction-audit-v1',
+            'status':'COMPLETE','formal_weight':0,
+            'question':'Can match-state context be reconstructed strictly from the existing fixture calendar and prior completed legs when provider round/stage fields are absent?',
+            'governance':{
+              'audit_only':True,'uses_only_prior_completed_leg_for_aggregate_state':True,
+              'next_fixture_requires_created_at_before_current_kickoff':True,
+              'no_manual_win_draw_loss_bonus':True,'no_manual_draw_override':True,'r42l_lock_modified':False
+            },
+            'source':meta,
+            'league_catalogue_type_counts':type_counts,
+            'played_fixture_count':int(len(played)),
+            'played_league_count':int(len(info)),'catalogue_mapped_leagues':int(mapped),
+            'reciprocal_second_leg_candidates_all_types':int(len(cand)),
+            'reciprocal_candidates_by_window_days':{str(k):int(v) for k,v in windows.items()},
+            'reciprocal_candidate_type_counts':cand['competition_type'].value_counts().to_dict() if len(cand) else {},
+            'cup_second_leg_candidates':int(len(cup)),
+            'cup_gap_days':stats(cup['gap_days'].tolist() if len(cup) else []),
+            'cup_aggregate_state_counts':cup['current_home_state_before'].value_counts().to_dict() if len(cup) else {},
+            'cup_examples':cup.sort_values('date').tail(50).to_dict('records') if len(cup) else [],
+            'fixture_created_before_kickoff_rate':float(pre.mean()) if len(sched) else None,
+            'fixture_created_lead_hours_pre_kickoff':stats(lead.tolist()),
+            'pit_next_fixture_gap_hours_latest20k_sides':stats(next_gap),
+            'pit_next_fixture_examples':sample_next,
+            'interpretation':{
+              'round_stage_fields_available':False,
+              'two_leg_state_reconstructable_from_prior_reciprocal_fixture':'candidate heuristic; requires competition/type and gap validation',
+              'next_match_schedule_state_reconstructable':'yes when fixture created_at precedes current kickoff',
+              'standings_or_table_importance_available':False
+            }
+          }
+          (out/'summary_r43e3_two_leg_state_reconstruction_audit.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          print(json.dumps(result,indent=2,ensure_ascii=False))
+          PY
+      - name: Verify audit contract
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/experiments/r43e3_two_leg_state_reconstruction_audit/results/summary_r43e3_two_leg_state_reconstruction_audit.json'
+          d=json.load(open(p))
+          assert d['status']=='COMPLETE' and d['formal_weight']==0
+          assert d['governance']['uses_only_prior_completed_leg_for_aggregate_state'] is True
+          assert d['governance']['next_fixture_requires_created_at_before_current_kickoff'] is True
+          assert d['governance']['no_manual_draw_override'] is True
+          assert d['governance']['r42l_lock_modified'] is False
+          print('R43E3 contract verified')
+          PY
+      - name: Upload R43E3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43e3-two-leg-state-reconstruction-audit
+          path: football-data/experiments/r43e3_two_leg_state_reconstruction_audit/results/summary_r43e3_two_leg_state_reconstruction_audit.json
+          if-no-files-found: error
+          retention-days: 90
