@@ -1,0 +1,60 @@
+name: football3 R43K0 frozen multiline OU draw reconstruction
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/**
+      - .github/workflows/football3-r43k0-frozen-multiline-ou-draw-reconstruction.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43k0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install scipy
+        run: python -m pip install --disable-pip-version-check scipy
+      - name: Compile R43K0
+        run: python -m py_compile football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/run_r43k0.py
+      - name: Run R43K0 multiline OU draw reconstruction
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/run_r43k0.py run
+      - name: Verify R43K0 discovery contract
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/run_r43k0.py verify
+      - name: Persist R43K0 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/results/summary_r43k0_frozen_multiline_ou_draw_reconstruction.json
+          if git diff --cached --quiet; then
+            echo 'No evidence delta'
+          else
+            git commit -m '[r43k0] persist prospective multiline OU draw reconstruction'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+      - name: Upload R43K0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43k0-frozen-multiline-ou-draw-reconstruction
+          path: football-data/experiments/r43k0_frozen_multiline_ou_draw_reconstruction/results/summary_r43k0_frozen_multiline_ou_draw_reconstruction.json
+          if-no-files-found: error
+          retention-days: 90
