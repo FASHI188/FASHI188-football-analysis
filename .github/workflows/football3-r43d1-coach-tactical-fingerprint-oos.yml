@@ -39,7 +39,27 @@ jobs:
           python -m py_compile football-data/experiments/r43f5_probability_weighted_technical_mixture/run_r43f5.py
           python -m py_compile football-data/experiments/r43d1_coach_tactical_fingerprint_oos/run_r43d1.py
       - name: Run R43D1 tactical fingerprint test
-        run: python football-data/experiments/r43d1_coach_tactical_fingerprint_oos/run_r43d1.py run
+        shell: bash
+        run: |
+          set +e
+          mkdir -p football-data/experiments/r43d1_coach_tactical_fingerprint_oos/results
+          python football-data/experiments/r43d1_coach_tactical_fingerprint_oos/run_r43d1.py run 2> >(tee /tmp/r43d1_stderr >&2)
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            tail -n 40 /tmp/r43d1_stderr > football-data/experiments/r43d1_coach_tactical_fingerprint_oos/results/error_tail.txt
+            printf '%s\n' "$code" > football-data/experiments/r43d1_coach_tactical_fingerprint_oos/results/exit_code.txt
+          fi
+          exit "$code"
+      - name: Upload bounded failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43d1-failure-diagnostics
+          path: |
+            football-data/experiments/r43d1_coach_tactical_fingerprint_oos/results/error_tail.txt
+            football-data/experiments/r43d1_coach_tactical_fingerprint_oos/results/exit_code.txt
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify R43D1 contract
         run: python football-data/experiments/r43d1_coach_tactical_fingerprint_oos/run_r43d1.py verify
       - name: Persist R43D1 evidence
