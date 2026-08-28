@@ -1,0 +1,59 @@
+name: football3 R43X0 high confidence coverage
+
+on:
+  push:
+    branches:
+      - football3/r43x0-high-confidence-coverage
+    paths:
+      - football-data/experiments/r43x0_high_confidence_coverage/run_r43x0.py
+      - .github/workflows/football3-r43x0-high-confidence-coverage.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43x0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43x0-high-confidence-coverage
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Verify inherited dependencies
+        run: |
+          test -f football-data/experiments/r43u0_fixed_diagonal_inflation/run_r43u0.py
+          test -f football-data/experiments/r43t0_dynamic_bivariate_residual_state/run_r43t0.py
+          python -m py_compile football-data/experiments/r43x0_high_confidence_coverage/run_r43x0.py
+      - name: Run R43X0 high confidence coverage
+        run: python football-data/experiments/r43x0_high_confidence_coverage/run_r43x0.py run
+      - name: Verify R43X0 contract
+        run: python football-data/experiments/r43x0_high_confidence_coverage/run_r43x0.py verify
+      - name: Persist R43X0 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43x0_high_confidence_coverage/results/summary_r43x0_high_confidence_coverage.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43X0 high confidence coverage'
+            git fetch origin football3/r43x0-high-confidence-coverage
+            git rebase origin/football3/r43x0-high-confidence-coverage
+            git push origin HEAD:football3/r43x0-high-confidence-coverage
+          fi
+      - name: Upload R43X0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43x0-high-confidence-coverage
+          path: football-data/experiments/r43x0_high_confidence_coverage/results/summary_r43x0_high_confidence_coverage.json
+          if-no-files-found: error
+          retention-days: 90
