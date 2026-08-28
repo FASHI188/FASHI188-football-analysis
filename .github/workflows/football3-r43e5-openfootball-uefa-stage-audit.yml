@@ -1,0 +1,235 @@
+name: football3 R43E5 OpenFootball UEFA stage audit
+
+on:
+  push:
+    branches:
+      - football3/r43e5-openfootball-uefa-stage-audit
+    paths:
+      - .github/workflows/football3-r43e5-openfootball-uefa-stage-audit.yml
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43e5-openfootball-uefa-stage-audit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check pandas pyarrow numpy
+      - name: Audit OpenFootball UEFA stage join
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import calendar, hashlib, json, re, unicodedata, urllib.request
+          from collections import defaultdict
+          from datetime import datetime, timezone
+          from difflib import SequenceMatcher
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+
+          OUT=Path('football-data/experiments/r43e5_openfootball_uefa_stage_audit/results')
+          OUT.mkdir(parents=True,exist_ok=True)
+          TMP=Path('/tmp/r43e5'); TMP.mkdir(exist_ok=True)
+          HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
+          OF='https://raw.githubusercontent.com/openfootball/champions-league/master'
+          seasons=['2020-21','2021-22','2022-23','2023-24','2024-25','2025-26']
+          filenames=['cl.txt','clq.txt','el.txt','elq.txt','conf.txt','confq.txt']
+
+          def download(url,path,required=True):
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-r43e5'})
+              try:
+                  with urllib.request.urlopen(req,timeout=300) as r, path.open('wb') as w:
+                      while True:
+                          b=r.read(1<<20)
+                          if not b: break
+                          w.write(b)
+                  return True
+              except Exception:
+                  if required: raise
+                  return False
+          def sha(path):
+              h=hashlib.sha256();
+              with path.open('rb') as f:
+                  for b in iter(lambda:f.read(1<<20),b''): h.update(b)
+              return h.hexdigest()
+          def norm(s):
+              s=re.sub(r'\s*\([A-Z]{3}\)\s*$','',str(s).strip())
+              s=unicodedata.normalize('NFKD',s).encode('ascii','ignore').decode('ascii').lower()
+              s=s.replace('&',' and ')
+              s=re.sub(r'[^a-z0-9]+',' ',s).strip()
+              toks=[x for x in s.split() if x not in {'fc','cf','afc','fk','sk','nk','sc','ac','as','ss','rsc','tc','club','clube','futbol','football','calcio','fussball'}]
+              return ' '.join(toks)
+          def sim(a,b):
+              a,b=norm(a),norm(b)
+              if not a or not b: return 0.0
+              if a==b: return 1.0
+              seq=SequenceMatcher(None,a,b).ratio()
+              A=set(a.split()); B=set(b.split()); jac=len(A&B)/max(1,len(A|B))
+              contain=1.0 if (a in b or b in a) and min(len(a),len(b))>=5 else 0.0
+              return max(seq,0.72*seq+0.28*jac,0.92 if contain else 0.0)
+
+          # Provider fixture/team names.
+          srcmeta={}
+          for f in ['fixtures.parquet','teams.parquet','league_catalogue.parquet']:
+              p=TMP/f; download(f'{HF}/{f}?download=true',p)
+              srcmeta[f]={'sha256':sha(p),'size_bytes':p.stat().st_size}
+          fx=pd.read_parquet(TMP/'fixtures.parquet')
+          tm=pd.read_parquet(TMP/'teams.parquet')
+          cat=pd.read_parquet(TMP/'league_catalogue.parquet')
+          namecol=next((c for c in ['name','team_name','api_name'] if c in tm.columns),None)
+          if namecol is None:
+              raise RuntimeError(f'no team-name column in {list(tm.columns)}')
+          tidcol='id' if 'id' in tm.columns else 'team_id'
+          names={int(r[tidcol]):str(r[namecol]) for _,r in tm[[tidcol,namecol]].dropna().drop_duplicates(tidcol).iterrows()}
+          fx=fx[fx['date_utc'].notna()].copy(); fx['date']=pd.to_datetime(fx['date_utc'],utc=True).dt.date
+          # Restrict to audit-era dates; league filtering intentionally not required for name/date join.
+          fx=fx[(fx['date']>=pd.Timestamp('2020-07-01').date())&(fx['date']<=pd.Timestamp('2026-07-15').date())]
+          provider=[]
+          for r in fx.itertuples(index=False):
+              h=names.get(int(r.home_team_id)); a=names.get(int(r.away_team_id))
+              if h and a:
+                  provider.append({'fixture_id':int(r.id),'date':r.date,'league_id':int(r.league_id),'home':h,'away':a,'home_n':norm(h),'away_n':norm(a)})
+          by_date=defaultdict(list)
+          for r in provider: by_date[r['date']].append(r)
+
+          MONTH={m.lower():i for i,m in enumerate(calendar.month_abbr) if m}
+          DAYWORDS={'mon','tue','wed','thu','fri','sat','sun'}
+          def parse_of(text,season,file):
+              out=[]; stage='UNKNOWN'; cur_date=None; year=None
+              season_start=int(season[:4]); default_year=season_start
+              for raw in text.splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith('#') or line.startswith('='): continue
+                  if line.startswith('▪'):
+                      stage=line.lstrip('▪').strip(); continue
+                  # Date line e.g. Thu Jul 11 2024 / Thu Jul 18
+                  bits=line.split()
+                  if len(bits)>=3 and bits[0][:3].lower() in DAYWORDS and bits[1][:3].lower() in MONTH:
+                      mo=MONTH[bits[1][:3].lower()]
+                      try: day=int(re.sub(r'\D','',bits[2]))
+                      except: day=None
+                      explicit=None
+                      if len(bits)>=4 and re.fullmatch(r'20\d{2}',bits[3]): explicit=int(bits[3])
+                      if day:
+                          if explicit is not None: year=explicit
+                          elif year is None: year=default_year if mo>=7 else default_year+1
+                          elif cur_date is not None and mo < cur_date.month-6: year+=1
+                          cur_date=datetime(year,mo,day,tzinfo=timezone.utc).date()
+                          continue
+                  # match line: optional time, home v away, followed by score token
+                  m=re.match(r'^(?:\d{1,2}:\d{2}\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s|$)',line)
+                  if m and cur_date:
+                      out.append({'season':season,'file':file,'date':cur_date,'stage':stage,'home':m.group(1).strip(),'away':m.group(2).strip(),'score_token':f'{m.group(3)}-{m.group(4)}'})
+              return out
+
+          ofmeta={}; matches=[]
+          for season in seasons:
+              for f in filenames:
+                  p=TMP/f'{season}_{f}'
+                  ok=download(f'{OF}/{season}/{f}',p,required=False)
+                  if not ok: continue
+                  text=p.read_text(encoding='utf-8',errors='replace')
+                  parsed=parse_of(text,season,f)
+                  ofmeta[f'{season}/{f}']={'sha256':sha(p),'size_bytes':p.stat().st_size,'parsed_matches':len(parsed)}
+                  matches.extend(parsed)
+
+          # Date+team fuzzy join. No score/result is used to choose a provider target.
+          joined=[]; ambiguous=[]; unmatched=[]
+          for x in matches:
+              cand=[]
+              for dd in [x['date'], x['date']-pd.Timedelta(days=1), x['date']+pd.Timedelta(days=1)]:
+                  d=dd if not hasattr(dd,'date') else dd.date()
+                  for r in by_date.get(d,[]):
+                      s=(sim(x['home'],r['home'])+sim(x['away'],r['away']))/2
+                      rs=(sim(x['home'],r['away'])+sim(x['away'],r['home']))/2
+                      cand.append((max(s,rs),s>=rs,r))
+              cand.sort(key=lambda z:z[0],reverse=True)
+              if not cand or cand[0][0] < 0.70:
+                  unmatched.append({**x,'best_score':cand[0][0] if cand else None}); continue
+              margin=cand[0][0]-(cand[1][0] if len(cand)>1 else 0.0)
+              if margin<0.04 and cand[0][0]<0.93:
+                  ambiguous.append({**x,'best_score':cand[0][0],'margin':margin}); continue
+              best=cand[0]
+              joined.append({**x,'fixture_id':best[2]['fixture_id'],'league_id':best[2]['league_id'],'provider_home':best[2]['home'],'provider_away':best[2]['away'],'match_score':best[0],'same_orientation':best[1]})
+
+          # Identify exact two-leg structure only inside a shared OpenFootball stage: same file/season/stage/team pair, exactly two matches reversed orientation.
+          groups=defaultdict(list)
+          for x in joined:
+              key=(x['season'],x['file'],x['stage'],tuple(sorted([norm(x['home']),norm(x['away'])])))
+              groups[key].append(x)
+          exact_legs=[]
+          for key,xs in groups.items():
+              xs=sorted(xs,key=lambda z:(z['date'],z['fixture_id']))
+              if len(xs)==2 and norm(xs[0]['home'])==norm(xs[1]['away']) and norm(xs[0]['away'])==norm(xs[1]['home']):
+                  for i,z in enumerate(xs,1):
+                      exact_legs.append({**z,'leg_number':i,'pair_fixture_id':xs[1-i]['fixture_id']})
+          exact2=[x for x in exact_legs if x['leg_number']==2]
+
+          stage_counts=pd.Series([x['stage'] for x in joined]).value_counts().head(30).to_dict() if joined else {}
+          file_join=defaultdict(lambda:{'source':0,'joined':0,'exact_second_legs':0})
+          for x in matches: file_join[f"{x['season']}/{x['file']}"]['source']+=1
+          for x in joined: file_join[f"{x['season']}/{x['file']}"]['joined']+=1
+          for x in exact2: file_join[f"{x['season']}/{x['file']}"]['exact_second_legs']+=1
+          score_arr=[x['match_score'] for x in joined]
+          result={
+            'schema_version':'football3-r43e5-openfootball-uefa-stage-audit-v1',
+            'status':'COMPLETE','formal_weight':0,
+            'question':'Can a free stage-labelled UEFA source supply exact round/stage and two-leg identity for historical prematch context, avoiding the noisy generic reciprocal-rematch heuristic?',
+            'governance':{
+              'audit_only':True,'external_source':'openfootball/champions-league','external_license':'CC0/public domain',
+              'join_uses_date_and_team_names_only':True,'provider_result_not_used_for_join':True,
+              'openfootball_result_not_used_as_model_feature':True,'stage_and_leg_identity_are_prematch_inherent':True,
+              'no_manual_importance_bonus':True,'no_manual_draw_override':True,'r42l_lock_modified':False,
+              'base_returns_to_last_passing_development_architecture':'R43F5'
+            },
+            'provider_source':srcmeta,
+            'provider_team_name_column':namecol,
+            'openfootball_files':ofmeta,
+            'source_match_count':len(matches),'joined_match_count':len(joined),'join_rate':len(joined)/max(1,len(matches)),
+            'ambiguous_count':len(ambiguous),'unmatched_count':len(unmatched),
+            'join_score_mean':float(np.mean(score_arr)) if score_arr else None,'join_score_p10':float(np.quantile(score_arr,.1)) if score_arr else None,
+            'joined_stage_counts_top30':stage_counts,
+            'exact_two_leg_match_rows':len(exact_legs),'exact_second_leg_count':len(exact2),
+            'by_file':dict(file_join),
+            'exact_second_leg_examples':exact2[-100:],
+            'ambiguous_examples':ambiguous[:30],
+            'unmatched_examples':unmatched[:30],
+            'decision':{
+              'stage_source_usable_for_historical_uefa_context': bool(len(joined)>=400 and len(exact2)>=50 and len(joined)/max(1,len(matches))>=0.55),
+              'next_if_usable':'build strict chronological UEFA stage/leg state ablation on R43F5; aggregate score uses only first-leg score before second leg',
+              'next_if_not_usable':'improve identity mapping on audit only; do not tune outcome model'
+            }
+          }
+          (OUT/'summary_r43e5_openfootball_uefa_stage_audit.json').write_text(json.dumps(result,indent=2,ensure_ascii=False,default=str)+'\n',encoding='utf-8')
+          print(json.dumps({k:result[k] for k in ['status','source_match_count','joined_match_count','join_rate','ambiguous_count','unmatched_count','exact_second_leg_count','decision']},indent=2,ensure_ascii=False))
+          PY
+      - name: Verify audit contract
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/experiments/r43e5_openfootball_uefa_stage_audit/results/summary_r43e5_openfootball_uefa_stage_audit.json'
+          d=json.load(open(p))
+          assert d['status']=='COMPLETE' and d['formal_weight']==0
+          assert d['governance']['join_uses_date_and_team_names_only'] is True
+          assert d['governance']['openfootball_result_not_used_as_model_feature'] is True
+          assert d['governance']['no_manual_importance_bonus'] is True
+          assert d['governance']['no_manual_draw_override'] is True
+          assert d['governance']['r42l_lock_modified'] is False
+          print('R43E5 contract verified')
+          PY
+      - name: Upload R43E5 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43e5-openfootball-uefa-stage-audit
+          path: football-data/experiments/r43e5_openfootball_uefa_stage_audit/results/summary_r43e5_openfootball_uefa_stage_audit.json
+          if-no-files-found: error
+          retention-days: 90
