@@ -1,0 +1,58 @@
+name: football3 R43M0 frozen context market-residual anatomy
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - football-data/experiments/r43m0_frozen_context_market_residual_anatomy/**
+      - .github/workflows/football3-r43m0-frozen-context-market-residual-anatomy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43m0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile R43M0
+        run: python -m py_compile football-data/experiments/r43m0_frozen_context_market_residual_anatomy/run_r43m0.py
+      - name: Run R43M0 frozen context residual anatomy
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43m0_frozen_context_market_residual_anatomy/run_r43m0.py run
+      - name: Verify R43M0 diagnostic contract
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43m0_frozen_context_market_residual_anatomy/run_r43m0.py verify
+      - name: Persist R43M0 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add football-data/experiments/r43m0_frozen_context_market_residual_anatomy/results/summary_r43m0_frozen_context_market_residual_anatomy.json
+          if git diff --cached --quiet; then
+            echo 'No evidence delta'
+          else
+            git commit -m '[r43m0] persist frozen context market-residual anatomy'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+      - name: Upload R43M0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43m0-frozen-context-market-residual-anatomy
+          path: football-data/experiments/r43m0_frozen_context_market_residual_anatomy/results/summary_r43m0_frozen_context_market_residual_anatomy.json
+          if-no-files-found: error
+          retention-days: 90
