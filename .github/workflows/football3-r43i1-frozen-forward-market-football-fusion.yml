@@ -1,0 +1,54 @@
+name: football3 R43I1 frozen forward market-football fusion
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - football-data/experiments/r43i1_frozen_forward_market_football_fusion/**
+      - .github/workflows/football3-r43i1-frozen-forward-market-football-fusion.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43i1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile R43I1
+        run: python -m py_compile football-data/experiments/r43i1_frozen_forward_market_football_fusion/run_r43i1.py
+      - name: Run R43I1 fixed frozen fusion discovery
+        run: python football-data/experiments/r43i1_frozen_forward_market_football_fusion/run_r43i1.py run
+      - name: Verify R43I1 contract
+        run: python football-data/experiments/r43i1_frozen_forward_market_football_fusion/run_r43i1.py verify
+      - name: Persist R43I1 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add football-data/experiments/r43i1_frozen_forward_market_football_fusion/results/summary_r43i1_frozen_forward_market_football_fusion.json
+          if git diff --cached --quiet; then
+            echo 'No evidence delta'
+          else
+            git commit -m '[r43i1] persist frozen forward football-market fusion discovery'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+      - name: Upload R43I1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43i1-frozen-forward-market-football-fusion
+          path: football-data/experiments/r43i1_frozen_forward_market_football_fusion/results/summary_r43i1_frozen_forward_market_football_fusion.json
+          if-no-files-found: error
+          retention-days: 90
