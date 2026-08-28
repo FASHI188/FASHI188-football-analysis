@@ -144,7 +144,7 @@ def run() -> dict:
             },
             "reliability": {"r_ctx": r_ctx, "r_tech": r_tech, **rel_diag},
             "probabilities": {
-                "raw_R9_generator": base.to_simple(raw),
+                "raw_R9_generator": simple(vec_local(raw)),
                 "R42E_locked_anchor": anchor,
                 "R42H_local_bridge_baseline_diagnostic": base.to_simple(local_baseline),
                 "R42H_local_full_technical_diagnostic": base.to_simple(local_full),
