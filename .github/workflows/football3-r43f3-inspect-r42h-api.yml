@@ -1,0 +1,40 @@
+name: football3 R43F3 inspect R42H api
+
+on:
+  push:
+    branches:
+      - football3/r43f3-context-lineup-technical-translation
+    paths:
+      - .github/workflows/football3-r43f3-inspect-r42h-api.yml
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43f3-context-lineup-technical-translation
+      - name: Reconstruct frozen R42H
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/experiments/r42h_player_technical_translation
+          cat "$D"/encoded/run_r42h.py.gz.b64.part0 "$D"/encoded/run_r42h.py.gz.b64.part1 | base64 -d | gzip -d > "$D"/run_r42h_player_technical_translation.py
+          echo 'b7bf4bd5fbfd61936e8de52fa09e5b81f748389cb9e0d2de6f33641c1d394a45  '"$D"'/run_r42h_player_technical_translation.py' | sha256sum -c -
+      - name: Inspect selected R42H APIs
+        run: |
+          python - <<'PY'
+          import inspect, sys
+          from pathlib import Path
+          d=Path('football-data/experiments/r42h_player_technical_translation')
+          sys.path.insert(0,str(d))
+          import run_r42h_player_technical_translation as m
+          for name in ['TechnicalLedger','freeze_tech_snapshot','technical_context','live_technical_context','model_prob']:
+              obj=getattr(m,name)
+              print('\n===== '+name+' =====')
+              try: print('SIG',inspect.signature(obj))
+              except Exception as e: print('SIGERR',e)
+              print(inspect.getsource(obj))
+          PY
