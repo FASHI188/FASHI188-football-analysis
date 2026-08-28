@@ -98,18 +98,38 @@ def patch_metric_row():
     v500._metric_row=enhanced_metric_row
 
 
-def expected_competitions():
-    status=load(v500.FORMAL_STATUS)
-    comps=sorted((status.get('reports') or {}).keys())
-    if len(comps)!=17:
-        raise RuntimeError(f'expected 17 competitions, got {len(comps)}: {comps}')
-    return comps
+def source_evaluability():
+    formal=load(v500.FORMAL_STATUS)
+    requested=sorted((formal.get('reports') or {}).keys())
+    if len(requested)!=17:
+        raise RuntimeError(f'expected 17 requested competitions, got {len(requested)}: {requested}')
+    source=load(v500.OUT)
+    source_reports=source.get('reports') or {}
+    if set(source_reports)!=set(requested):
+        raise RuntimeError('frozen V500 source report domain set differs from formal 17-domain request')
+    excluded={}
+    evaluable=[]
+    for cid in requested:
+        rep=source_reports[cid] or {}
+        if rep.get('status')=='FAILED' or rep.get('outer_prediction_count') in (None,0):
+            excluded[cid]=rep.get('reason') or (source.get('failures') or {}).get(cid) or 'FROZEN_V500_NO_EVALUABLE_OOS_ROWS'
+        else:
+            evaluable.append(cid)
+    frozen_failures=source.get('failures') or {}
+    if excluded != {cid:(source_reports[cid].get('reason') or frozen_failures.get(cid) or 'FROZEN_V500_NO_EVALUABLE_OOS_ROWS') for cid in excluded}:
+        raise RuntimeError('source exclusion reconstruction mismatch')
+    if len(evaluable)!=16 or set(excluded)!={'UEFA_ChampionsLeague'}:
+        raise RuntimeError(f'unexpected frozen V500 evaluability: evaluable={len(evaluable)} excluded={excluded}')
+    if 'no forward OOF rows' not in str(excluded['UEFA_ChampionsLeague']):
+        raise RuntimeError(f'unexpected UCL frozen exclusion reason: {excluded["UEFA_ChampionsLeague"]}')
+    return {'requested':requested,'evaluable':evaluable,'excluded':excluded}
 
 
 def replay_domain(cid: str):
     patch_metric_row()
-    if cid not in expected_competitions():
-        raise RuntimeError(f'unknown competition {cid}')
+    ev=source_evaluability()
+    if cid not in ev['evaluable']:
+        raise RuntimeError(f'competition is not frozen-evaluable in V500: {cid}')
     report=load(v500.REPORT_ROOT/f'{cid}.json')
     seasons=v500._completed_outer_seasons(cid,report)
     if len(seasons)<3:
@@ -140,9 +160,9 @@ def replay_domain(cid: str):
             rows.append({'competition_id':cid,'season':target,'date':b['date'],'match_key':k,'selected_profile':pid,'actual':b['actual'],'baseline_prob':b['probabilities'],'candidate_prob':c['probabilities']})
         selected_folds.append({'target_season':target,'selected_profile':pid,'selection_rows':chosen['selection_rows'],'outer_rows':len(keys)})
     if not rows:
-        raise RuntimeError(f'no R43AA0 OOS rows for {cid}')
+        raise RuntimeError(f'no R43AA0 OOS rows for frozen-evaluable domain {cid}')
     return {
-        'schema_version':'football3-r43aa0-domain-v1',
+        'schema_version':'football3-r43aa0-domain-v2',
         'competition_id':cid,
         'source_model_blob_sha':SOURCE_BLOB_SHA,
         'generated_at_utc':now(),
@@ -160,10 +180,10 @@ def run_domain(cid: str):
 
 
 def aggregate_domains():
-    comps=expected_competitions()
+    ev=source_evaluability(); comps=ev['evaluable']
     missing=[cid for cid in comps if not (DOMAIN_DIR/f'{cid}.json').exists()]
     if missing:
-        raise RuntimeError({'missing_domain_outputs':missing})
+        raise RuntimeError({'missing_frozen_evaluable_domain_outputs':missing})
     rows=[]; domain_meta={}
     for cid in comps:
         obj=load(DOMAIN_DIR/f'{cid}.json')
@@ -200,7 +220,7 @@ def aggregate_domains():
     }
     gate['passed']=bool(all(gate.values()))
     out={
-        'schema_version':'football3-r43aa0-bayesian-state-1x2-replay-v1',
+        'schema_version':'football3-r43aa0-bayesian-state-1x2-replay-v2',
         'status':'COMPLETE',
         'classification':'VIEWED_HISTORICAL_STRICT_OOS_REPLAY_FORMAL_WEIGHT_ZERO',
         'formal_weight':0,
@@ -208,6 +228,11 @@ def aggregate_domains():
         'governance':{
             'source_model':'bayesian_dynamic_state_oof_v500',
             'source_model_blob_sha':SOURCE_BLOB_SHA,
+            'source_evaluability_ledger':str(v500.OUT.relative_to(ROOT)),
+            'source_requested_domains':17,
+            'source_evaluable_domains':16,
+            'source_frozen_exclusions':ev['excluded'],
+            'coverage_contract_corrected_before_aggregate_metrics_viewed':True,
             'model_parameters_changed':False,
             'profile_grid_changed':False,
             'profile_selection_rule_changed':False,
@@ -222,7 +247,7 @@ def aggregate_domains():
             'full_volume_accuracy_floor':FULL_VOLUME_ACCURACY_FLOOR,
             'requirements':['candidate Top1 >=53%','candidate hits > baseline','LogLoss/Brier/RPS improve','draw LogLoss/Brier improve','natural draw Top1 >0','>=2/3 chronological folds nonnegative Top1 delta','>=2/3 chronological folds all proper scores improve'],
         },
-        'coverage':{'competition_count':len(comps),'row_count':len(rows),'domain_meta':domain_meta},
+        'coverage':{'requested_competition_count':17,'evaluable_competition_count':len(comps),'excluded_competitions':ev['excluded'],'row_count':len(rows),'domain_meta':domain_meta},
         'aggregate':{'baseline':b,'candidate':c,'candidate_minus_baseline':d},
         'time_folds':fold_rows,
         'fold_consistency':{'nonnegative_top1_folds':nonneg_top1,'all_proper_score_improving_folds':proper_good},
@@ -231,21 +256,24 @@ def aggregate_domains():
     }
     OUT.parent.mkdir(parents=True,exist_ok=True)
     OUT.write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    print(json.dumps({'status':out['status'],'coverage':out['coverage']['row_count'],'aggregate':out['aggregate'],'fold_consistency':out['fold_consistency'],'gate':out['gate'],'action':out['action']},ensure_ascii=False,indent=2))
+    print(json.dumps({'status':out['status'],'coverage':out['coverage'],'aggregate':out['aggregate'],'fold_consistency':out['fold_consistency'],'gate':out['gate'],'action':out['action']},ensure_ascii=False,indent=2))
     return out
 
 
 def run_sequential():
     DOMAIN_DIR.mkdir(parents=True,exist_ok=True)
-    for cid in expected_competitions():
+    for cid in source_evaluability()['evaluable']:
         run_domain(cid)
     return aggregate_domains()
 
 
 def verify():
-    s=load(OUT); g=s['governance']; gp=s['gate_preregistration']
+    s=load(OUT); g=s['governance']; gp=s['gate_preregistration']; cov=s['coverage']
     assert s['status']=='COMPLETE' and s['formal_weight']==0
-    assert s['coverage']['competition_count']==17
+    assert cov['requested_competition_count']==17 and cov['evaluable_competition_count']==16
+    assert set(cov['excluded_competitions'])=={'UEFA_ChampionsLeague'}
+    assert 'no forward OOF rows' in str(cov['excluded_competitions']['UEFA_ChampionsLeague'])
+    assert g['coverage_contract_corrected_before_aggregate_metrics_viewed'] is True
     assert g['model_parameters_changed'] is False and g['profile_grid_changed'] is False and g['profile_selection_rule_changed'] is False
     assert g['new_labels_consumed'] is False and g['historical_labels_already_viewed'] is True and g['promotion_allowed_from_this_replay'] is False
     assert abs(float(gp['full_volume_accuracy_floor'])-0.53)<1e-15
