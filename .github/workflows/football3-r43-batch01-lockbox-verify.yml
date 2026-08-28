@@ -1,0 +1,56 @@
+name: football3 R43 Batch01 lockbox verify
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - football-data/forward/r43_batch01_pristine_lockbox.json
+      - football-data/experiments/r43_batch01_lockbox/verify_lockbox.py
+      - .github/workflows/football3-r43-batch01-lockbox-verify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-lockbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify sealed Batch01 prefixes
+        run: |
+          python -m py_compile football-data/experiments/r43_batch01_lockbox/verify_lockbox.py
+          python football-data/experiments/r43_batch01_lockbox/verify_lockbox.py run
+          python football-data/experiments/r43_batch01_lockbox/verify_lockbox.py verify
+      - name: Persist lockbox verification
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43_batch01_lockbox/results/summary_r43_batch01_lockbox_verify.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43 Batch01 lockbox verification'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload lockbox verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43-batch01-lockbox-verify
+          path: |
+            football-data/forward/r43_batch01_pristine_lockbox.json
+            football-data/experiments/r43_batch01_lockbox/results/summary_r43_batch01_lockbox_verify.json
+          if-no-files-found: error
+          retention-days: 90
