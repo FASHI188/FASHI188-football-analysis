@@ -1,0 +1,58 @@
+name: football3 R43L0 frozen fresh-matrix forward evaluation
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/**
+      - .github/workflows/football3-r43l0-frozen-fresh-matrix-forward-eval.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43l0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile R43L0
+        run: python -m py_compile football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/run_r43l0.py
+      - name: Run R43L0 frozen fresh-matrix forward evaluation
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/run_r43l0.py run
+      - name: Verify R43L0 contract
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/run_r43l0.py verify
+      - name: Persist R43L0 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/results/summary_r43l0_frozen_fresh_matrix_forward_eval.json
+          if git diff --cached --quiet; then
+            echo 'No evidence delta'
+          else
+            git commit -m '[r43l0] persist frozen fresh-matrix forward evaluation'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+      - name: Upload R43L0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43l0-frozen-fresh-matrix-forward-eval
+          path: football-data/experiments/r43l0_frozen_fresh_matrix_forward_eval/results/summary_r43l0_frozen_fresh_matrix_forward_eval.json
+          if-no-files-found: error
+          retention-days: 90
