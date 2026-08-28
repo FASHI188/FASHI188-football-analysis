@@ -1,0 +1,58 @@
+name: football3 R43I4 frozen prospective T-1h market refresh
+
+on:
+  push:
+    branches:
+      - football3/r43i0-market-forward-settlement-20260828
+    paths:
+      - football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/**
+      - .github/workflows/football3-r43i4-frozen-prospective-t1h-market-refresh.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43i4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43i0-market-forward-settlement-20260828
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile R43I4
+        run: python -m py_compile football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/run_r43i4.py
+      - name: Run R43I4 fixed T-1h prospective refresh
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/run_r43i4.py run
+      - name: Verify R43I4 discovery contract
+        env:
+          PYTHONPATH: football-data/engine
+        run: python football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/run_r43i4.py verify
+      - name: Persist R43I4 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/results/summary_r43i4_frozen_prospective_t1h_market_refresh.json
+          if git diff --cached --quiet; then
+            echo 'No evidence delta'
+          else
+            git commit -m '[r43i4] persist fixed T-1h prospective market refresh discovery'
+            git push origin HEAD:football3/r43i0-market-forward-settlement-20260828
+          fi
+      - name: Upload R43I4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43i4-frozen-prospective-t1h-market-refresh
+          path: football-data/experiments/r43i4_frozen_prospective_t1h_market_refresh/results/summary_r43i4_frozen_prospective_t1h_market_refresh.json
+          if-no-files-found: error
+          retention-days: 90
