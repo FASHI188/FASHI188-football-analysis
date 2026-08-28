@@ -1,0 +1,63 @@
+name: football3 R43U1 full17 Kambi refresh
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - .github/workflows/football3-r43u1-full17-kambi-refresh.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-full17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify existing full17 capture chain
+        run: |
+          test -f football-data/config/v6_full17_identity_registry_v6482.json
+          test -f football-data/config/v6_full17_kambi_group_aliases_v6482.json
+          python -m py_compile football-data/validation/v6_full17_kambi_capture_v6482.py
+          python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+      - name: Capture synchronized full17 Kambi prematch surfaces
+        run: python football-data/validation/v6_full17_kambi_capture_v6482.py
+      - name: Freeze newly eligible market-first predictions
+        run: python football-data/validation/v6_market_first_forward_v651.py
+      - name: Persist full17 prospective evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/manifests/v6_full17_kambi_capture_v6482_status.json
+          git add football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          git add football-data/forward/v6_market_first_events_v651.json
+          git add football-data/evidence/markets_prospective || true
+          git add football-data/evidence/direct_provider_probes/kambi/full17 || true
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43U1 full17 prospective market evidence'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload full17 refresh receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43u1-full17-market-refresh
+          path: |
+            football-data/manifests/v6_full17_kambi_capture_v6482_status.json
+            football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
+          if-no-files-found: error
+          retention-days: 30
