@@ -26,8 +26,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p football-data/experiments/r43d0_coach_tactical_fingerprint_audit/results
           python - <<'PY'
-          import urllib.request, hashlib
+          import urllib.request, hashlib, json
           from pathlib import Path
           import pandas as pd
           base='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
@@ -36,9 +37,24 @@ jobs:
             'fixture_lineups':'fixture_lineups.parquet',
             'fixtures':'fixtures.parquet',
           }
-          out=Path('/tmp/r43d0'); out.mkdir(exist_ok=True)
+          tmp=Path('/tmp/r43d0'); tmp.mkdir(exist_ok=True)
+          result={
+            'schema_version':'football3-r43d0-coach-tactical-source-audit-v1',
+            'status':'COMPLETE',
+            'formal_weight':0,
+            'question':'Which historical provider fields can support a strict-prior coach tactical fingerprint without hand labels or target-match leakage?',
+            'governance':{
+              'strict_prior_required':True,
+              'target_match_stats_used_as_feature':False,
+              'target_match_lineup_or_coach_used_before_prediction':False,
+              'draw_research_priority':True,
+              'no_manual_draw_override':True,
+              'r42l_lock_modified':False,
+            },
+            'files':{},
+          }
           for k,f in files.items():
-              p=out/f
+              p=tmp/f
               req=urllib.request.Request(f'{base}/{f}?download=true',headers={'User-Agent':'football3-r43d0'})
               with urllib.request.urlopen(req,timeout=600) as r, p.open('wb') as w:
                   while True:
@@ -46,18 +62,50 @@ jobs:
                       if not b: break
                       w.write(b)
               h=hashlib.sha256(p.read_bytes()).hexdigest()
-              print(f'FILE {k} sha256={h} size={p.stat().st_size}')
               df=pd.read_parquet(p)
-              print(f'ROWS {k} {len(df)}')
-              print(f'COLUMNS {k}:')
+              meta={'sha256':h,'size_bytes':p.stat().st_size,'rows':len(df),'columns':[]}
               for c in df.columns:
-                  lc=c.lower()
-                  if k!='match_stats' or any(x in lc for x in ['possession','shot','pass','corner','attack','danger','foul','card','offside','save','goal','xg','known','fixture','team','home','away']):
-                      print('  ',c, str(df[c].dtype), 'nonnull=', int(df[c].notna().sum()))
-              if k=='fixture_lineups':
-                  print('LINEUP_CANDIDATE_COLS', [c for c in df.columns if any(x in c.lower() for x in ['coach','formation','team','fixture','player','position'])])
+                  meta['columns'].append({'name':c,'dtype':str(df[c].dtype),'nonnull':int(df[c].notna().sum())})
               if k=='match_stats':
-                  print('MATCH_STATS_ALL_COLUMNS', list(df.columns))
+                  keywords=['possession','shot','pass','corner','attack','danger','foul','card','offside','save','goal','xg','known','fixture','team','home','away']
+                  meta['tactical_candidate_columns']=[c for c in df.columns if any(x in c.lower() for x in keywords)]
                   if 'known_at' in df.columns:
-                      print('KNOWN_AT_RANGE', str(df['known_at'].min()), str(df['known_at'].max()))
+                      meta['known_at_min']=str(df['known_at'].min())
+                      meta['known_at_max']=str(df['known_at'].max())
+              if k=='fixture_lineups':
+                  meta['lineup_candidate_columns']=[c for c in df.columns if any(x in c.lower() for x in ['coach','formation','team','fixture','player','position'])]
+              result['files'][k]=meta
+          ms=result['files']['match_stats']['tactical_candidate_columns']
+          result['assessment']={
+            'has_possession':any('possession' in c.lower() for c in ms),
+            'has_shots':any('shot' in c.lower() for c in ms),
+            'has_passes':any('pass' in c.lower() for c in ms),
+            'has_corners':any('corner' in c.lower() for c in ms),
+            'has_attacks_or_danger':any(('attack' in c.lower() or 'danger' in c.lower()) for c in ms),
+            'has_cards_or_fouls':any(('card' in c.lower() or 'foul' in c.lower()) for c in ms),
+            'has_known_at':any(c['name']=='known_at' for c in result['files']['match_stats']['columns']),
+            'next_action':'Build strict-prior coach/team tactical vectors only from fields with sufficient coverage; target-match stats remain labels/evaluation only and same-date updates occur after predictions.'
+          }
+          out=Path('football-data/experiments/r43d0_coach_tactical_fingerprint_audit/results/source_schema_audit.json')
+          out.write_text(json.dumps(result,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps({'status':result['status'],'assessment':result['assessment']},indent=2))
           PY
+      - name: Verify audit contract
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/experiments/r43d0_coach_tactical_fingerprint_audit/results/source_schema_audit.json'
+          d=json.load(open(p))
+          assert d['status']=='COMPLETE'
+          assert d['formal_weight']==0
+          assert d['governance']['target_match_stats_used_as_feature'] is False
+          assert d['governance']['no_manual_draw_override'] is True
+          assert d['governance']['r42l_lock_modified'] is False
+          print('R43D0 contract OK')
+          PY
+      - name: Upload R43D0 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43d0-coach-tactical-source-audit
+          path: football-data/experiments/r43d0_coach_tactical_fingerprint_audit/results/source_schema_audit.json
+          if-no-files-found: error
