@@ -27,10 +27,25 @@ jobs:
           python-version: '3.11'
       - name: Verify existing full17 capture chain
         run: |
-          test -f football-data/config/v6_full17_identity_registry_v6482.json
+          test -f football-data/config/v6_full17_provider_aliases_v6483.json
           test -f football-data/config/v6_full17_kambi_group_aliases_v6482.json
+          python -m py_compile football-data/validation/v6_full17_identity_registry_v6482.py
           python -m py_compile football-data/validation/v6_full17_kambi_capture_v6482.py
           python -m py_compile football-data/validation/v6_market_first_forward_v651.py
+      - name: Rebuild strict current-domain identity registry
+        run: |
+          python football-data/validation/v6_full17_identity_registry_v6482.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/config/v6_full17_identity_registry_v6482.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x.get('status') == 'PASS_ALL_17', x.get('status')
+          assert int(x.get('available_competition_count') or 0) == 17
+          bad={k:v.get('alias_errors') for k,v in (x.get('competitions') or {}).items() if v.get('alias_errors')}
+          assert not bad, bad
+          print('strict identity registry PASS_ALL_17 with zero alias errors')
+          PY
       - name: Capture synchronized full17 Kambi prematch surfaces
         run: python football-data/validation/v6_full17_kambi_capture_v6482.py
       - name: Freeze newly eligible market-first predictions
@@ -39,6 +54,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/config/v6_full17_identity_registry_v6482.json
           git add football-data/manifests/v6_full17_kambi_capture_v6482_status.json
           git add football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
           git add football-data/forward/v6_market_first_events_v651.json
@@ -47,7 +63,7 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No generated changes'
           else
-            git commit -m '[generated] football3 R43U1 full17 prospective market evidence'
+            git commit -m '[generated] football3 R43U1 full17 strict-identity prospective evidence'
             git fetch origin football3/r43u1-pristine-forward-confirmation
             git rebase origin/football3/r43u1-pristine-forward-confirmation
             git push origin HEAD:football3/r43u1-pristine-forward-confirmation
@@ -57,9 +73,8 @@ jobs:
         with:
           name: football3-r43u1-full17-market-refresh
           path: |
+            football-data/config/v6_full17_identity_registry_v6482.json
             football-data/manifests/v6_full17_kambi_capture_v6482_status.json
             football-data/manifests/v6_market_first_forward_evaluation_v651_status.json
           if-no-files-found: error
           retention-days: 30
-
-# refresh 2026-08-28T15Z after Batch01 lockbox seal
