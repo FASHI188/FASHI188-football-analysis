@@ -1,0 +1,61 @@
+name: football3 R43S0 draw probability path audit
+
+on:
+  push:
+    branches:
+      - football3/r43s0-draw-probability-path-audit
+    paths:
+      - football-data/experiments/r43s0_draw_probability_path_audit/run_r43s0.py
+      - .github/workflows/football3-r43s0-draw-probability-path-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43s0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43s0-draw-probability-path-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Verify audit dependencies
+        run: |
+          test -f football-data/forward/v6_market_first_events_v651.json
+          test -f football-data/forward/v6_pristine_forward_events_v612.json
+          python -m py_compile football-data/experiments/r43q0_sharp_market_score_base/run_r43q0.py
+          python -m py_compile football-data/experiments/r43r0_strong_shrink_football_residual/run_r43r0.py
+          python -m py_compile football-data/experiments/r43s0_draw_probability_path_audit/run_r43s0.py
+      - name: Run R43S0 draw path audit
+        run: python football-data/experiments/r43s0_draw_probability_path_audit/run_r43s0.py run
+      - name: Verify R43S0 contract
+        run: python football-data/experiments/r43s0_draw_probability_path_audit/run_r43s0.py verify
+      - name: Persist R43S0 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43s0_draw_probability_path_audit/results/summary_r43s0_draw_probability_path_audit.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43S0 draw probability path audit'
+            git fetch origin football3/r43s0-draw-probability-path-audit
+            git rebase origin/football3/r43s0-draw-probability-path-audit
+            git push origin HEAD:football3/r43s0-draw-probability-path-audit
+          fi
+      - name: Upload R43S0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43s0-draw-probability-path-audit
+          path: football-data/experiments/r43s0_draw_probability_path_audit/results/summary_r43s0_draw_probability_path_audit.json
+          if-no-files-found: error
+          retention-days: 90
