@@ -1,0 +1,104 @@
+name: football3 R43E2 match state source audit
+
+on:
+  push:
+    branches:
+      - football3/r43e2-match-state-importance-source-audit
+    paths:
+      - .github/workflows/football3-r43e2-match-state-source-audit.yml
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43e2-match-state-importance-source-audit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check pandas pyarrow
+      - name: Audit provider files for match-state context
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request, urllib.parse
+          from pathlib import Path
+          import pandas as pd
+
+          out=Path('football-data/experiments/r43e2_match_state_source_audit/results')
+          out.mkdir(parents=True,exist_ok=True)
+          api='https://huggingface.co/api/datasets/eatpizzanot/soccer-dataset/tree/main?recursive=true&expand=false&limit=1000'
+          req=urllib.request.Request(api,headers={'User-Agent':'football3-r43e2'})
+          with urllib.request.urlopen(req,timeout=120) as r:
+              tree=json.load(r)
+          paths=[]
+          for x in tree:
+              p=x.get('path') or x.get('name')
+              if p: paths.append(p)
+          keys=('fixture','league','competition','season','standing','round','schedule','cup','tournament')
+          candidates=sorted({p for p in paths if p.endswith('.parquet') and any(k in p.lower() for k in keys)})
+          base='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/'
+          inspected={}
+          for p in candidates[:50]:
+              dest=Path('/tmp')/Path(p).name
+              try:
+                  u=base+urllib.parse.quote(p,safe='/')+'?download=true'
+                  req=urllib.request.Request(u,headers={'User-Agent':'football3-r43e2'})
+                  with urllib.request.urlopen(req,timeout=240) as r, dest.open('wb') as w:
+                      while True:
+                          b=r.read(1<<20)
+                          if not b: break
+                          w.write(b)
+                  pf=pd.read_parquet(dest)
+                  cols=list(pf.columns)
+                  relevant=[c for c in cols if any(k in c.lower() for k in ('round','stage','leg','season','league','competition','date','status','team','rank','point','group','fixture','home','away','winner','score'))]
+                  inspected[p]={'rows':int(len(pf)),'columns':cols,'relevant_columns':relevant}
+              except Exception as e:
+                  inspected[p]={'error':repr(e)}
+          result={
+            'schema_version':'football3-r43e2-match-state-source-audit-v1',
+            'status':'COMPLETE',
+            'formal_weight':0,
+            'question':'Which provider tables can support strict-prematch current/next-match importance, knockout leg, aggregate-state, and rotation-incentive features?',
+            'governance':{
+              'audit_only':True,
+              'target_result_used_for_prediction':False,
+              'no_manual_importance_bonus':True,
+              'no_manual_draw_override':True,
+              'r42l_lock_modified':False,
+              'base_returned_to_last_passing_development_architecture':'R43F5'
+            },
+            'tree_file_count':len(paths),
+            'candidate_parquet_files':candidates,
+            'inspected':inspected,
+          }
+          (out/'summary_r43e2_match_state_source_audit.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          print(json.dumps(result,indent=2,ensure_ascii=False))
+          PY
+      - name: Verify audit contract
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/experiments/r43e2_match_state_source_audit/results/summary_r43e2_match_state_source_audit.json'
+          d=json.load(open(p))
+          assert d['status']=='COMPLETE'
+          assert d['formal_weight']==0
+          assert d['governance']['no_manual_importance_bonus'] is True
+          assert d['governance']['no_manual_draw_override'] is True
+          assert d['governance']['r42l_lock_modified'] is False
+          print('R43E2 source audit contract verified')
+          PY
+      - name: Upload R43E2 audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43e2-match-state-source-audit
+          path: football-data/experiments/r43e2_match_state_source_audit/results/summary_r43e2_match_state_source_audit.json
+          if-no-files-found: error
+          retention-days: 90
