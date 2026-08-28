@@ -1,0 +1,67 @@
+name: football3 R43Y0 draw calibration forward
+
+on:
+  push:
+    branches:
+      - football3/r43u1-pristine-forward-confirmation
+    paths:
+      - football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py
+      - football-data/experiments/r43y0_draw_calibration_forward/settle_r43y0.py
+      - .github/workflows/football3-r43y0-draw-calibration-forward.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  r43y0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43u1-pristine-forward-confirmation
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify preregistered Y0 code
+        run: |
+          test -f football-data/forward/r43u1_pristine_forward_events.json
+          python -m py_compile football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py
+          python -m py_compile football-data/experiments/r43y0_draw_calibration_forward/settle_r43y0.py
+      - name: Lock R43Y0 predictions without outcome access
+        run: python football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py run
+      - name: Verify R43Y0 lock contract
+        run: python football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py verify
+      - name: Evaluate only already settled paired results
+        run: python football-data/experiments/r43y0_draw_calibration_forward/settle_r43y0.py run
+      - name: Verify paired Y0 gate contract
+        run: python football-data/experiments/r43y0_draw_calibration_forward/settle_r43y0.py verify
+      - name: Persist R43Y0 forward evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/forward/r43y0_draw_calibration_forward_events.json
+          git add football-data/experiments/r43y0_draw_calibration_forward/results/summary_r43y0_draw_calibration_lock.json
+          git add football-data/experiments/r43y0_draw_calibration_forward/results/summary_r43y0_draw_calibration_evaluation.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43Y0 pristine forward evidence'
+            git fetch origin football3/r43u1-pristine-forward-confirmation
+            git rebase origin/football3/r43u1-pristine-forward-confirmation
+            git push origin HEAD:football3/r43u1-pristine-forward-confirmation
+          fi
+      - name: Upload R43Y0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43y0-draw-calibration-forward
+          path: |
+            football-data/forward/r43y0_draw_calibration_forward_events.json
+            football-data/experiments/r43y0_draw_calibration_forward/results/summary_r43y0_draw_calibration_lock.json
+            football-data/experiments/r43y0_draw_calibration_forward/results/summary_r43y0_draw_calibration_evaluation.json
+          if-no-files-found: error
+          retention-days: 90
