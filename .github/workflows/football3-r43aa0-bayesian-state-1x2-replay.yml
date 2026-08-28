@@ -1,0 +1,56 @@
+name: football3 R43AA0 Bayesian state 1X2 replay
+
+on:
+  push:
+    branches:
+      - football3/r43aa0-bayesian-state-1x2-replay
+    paths:
+      - football-data/experiments/r43aa0_bayesian_state_1x2_replay/run_r43aa0.py
+      - .github/workflows/football3-r43aa0-bayesian-state-1x2-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43aa0-bayesian-state-1x2-replay
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify frozen source and compile
+        run: |
+          test "$(git rev-parse HEAD:football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          python -m py_compile football-data/experiments/r43aa0_bayesian_state_1x2_replay/run_r43aa0.py
+      - name: Run R43AA0 strict historical OOS replay
+        run: python football-data/experiments/r43aa0_bayesian_state_1x2_replay/run_r43aa0.py run
+      - name: Verify R43AA0 contract
+        run: python football-data/experiments/r43aa0_bayesian_state_1x2_replay/run_r43aa0.py verify
+      - name: Persist R43AA0 evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add football-data/experiments/r43aa0_bayesian_state_1x2_replay/results/summary_r43aa0.json
+          if git diff --cached --quiet; then
+            echo 'No generated changes'
+          else
+            git commit -m '[generated] football3 R43AA0 historical OOS replay evidence'
+            git fetch origin football3/r43aa0-bayesian-state-1x2-replay
+            git rebase origin/football3/r43aa0-bayesian-state-1x2-replay
+            git push origin HEAD:football3/r43aa0-bayesian-state-1x2-replay
+          fi
+      - name: Upload R43AA0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43aa0-bayesian-state-1x2-replay
+          path: football-data/experiments/r43aa0_bayesian_state_1x2_replay/results/summary_r43aa0.json
+          if-no-files-found: error
+          retention-days: 90
