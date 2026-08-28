@@ -1,0 +1,63 @@
+name: football3 R43D0 coach tactical source audit
+
+on:
+  push:
+    branches:
+      - football3/r43d0-coach-tactical-fingerprint-audit
+    paths:
+      - .github/workflows/football3-r43d0-coach-tactical-fingerprint-audit.yml
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43d0-coach-tactical-fingerprint-audit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check pandas pyarrow
+      - name: Audit tactical source schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import urllib.request, hashlib
+          from pathlib import Path
+          import pandas as pd
+          base='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
+          files={
+            'match_stats':'match_stats.parquet',
+            'fixture_lineups':'fixture_lineups.parquet',
+            'fixtures':'fixtures.parquet',
+          }
+          out=Path('/tmp/r43d0'); out.mkdir(exist_ok=True)
+          for k,f in files.items():
+              p=out/f
+              req=urllib.request.Request(f'{base}/{f}?download=true',headers={'User-Agent':'football3-r43d0'})
+              with urllib.request.urlopen(req,timeout=600) as r, p.open('wb') as w:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      w.write(b)
+              h=hashlib.sha256(p.read_bytes()).hexdigest()
+              print(f'FILE {k} sha256={h} size={p.stat().st_size}')
+              df=pd.read_parquet(p)
+              print(f'ROWS {k} {len(df)}')
+              print(f'COLUMNS {k}:')
+              for c in df.columns:
+                  lc=c.lower()
+                  if k!='match_stats' or any(x in lc for x in ['possession','shot','pass','corner','attack','danger','foul','card','offside','save','goal','xg','known','fixture','team','home','away']):
+                      print('  ',c, str(df[c].dtype), 'nonnull=', int(df[c].notna().sum()))
+              if k=='fixture_lineups':
+                  print('LINEUP_CANDIDATE_COLS', [c for c in df.columns if any(x in c.lower() for x in ['coach','formation','team','fixture','player','position'])])
+              if k=='match_stats':
+                  print('MATCH_STATS_ALL_COLUMNS', list(df.columns))
+                  if 'known_at' in df.columns:
+                      print('KNOWN_AT_RANGE', str(df['known_at'].min()), str(df['known_at'].max()))
+          PY
