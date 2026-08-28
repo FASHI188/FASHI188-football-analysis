@@ -5,7 +5,6 @@ import json, math, sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
 
 ROOT = Path(__file__).resolve().parents[2]
 VALID = ROOT / 'validation'
@@ -16,7 +15,9 @@ for p in (VALID, ENGINE):
 
 import bayesian_dynamic_state_oof_v500 as v500
 
-OUT = ROOT / 'experiments' / 'r43aa0_bayesian_state_1x2_replay' / 'results' / 'summary_r43aa0.json'
+BASE = ROOT / 'experiments' / 'r43aa0_bayesian_state_1x2_replay'
+OUT = BASE / 'results' / 'summary_r43aa0.json'
+DOMAIN_DIR = BASE / 'results' / 'domains'
 CLASSES = ('home','draw','away')
 SOURCE_BLOB_SHA = '9c302506c49aa1847e60cd7896fc1a80f3b6b457'
 FULL_VOLUME_ACCURACY_FLOOR = 0.53
@@ -91,54 +92,90 @@ def enhanced_metric_row(matrix, match):
     return base
 
 
-def run():
-    # No model change: monkey-patch only adds diagnostic fields to the old metric row.
+def patch_metric_row():
     if not hasattr(v500,'_ORIGINAL_METRIC_ROW'):
         v500._ORIGINAL_METRIC_ROW=v500._metric_row
     v500._metric_row=enhanced_metric_row
 
-    status=load(v500.FORMAL_STATUS)
-    competitions=sorted((status.get('reports') or {}).keys())
-    rows=[]; domain_meta={}; failures={}
-    for cid in competitions:
-        try:
-            report=load(v500.REPORT_ROOT/f'{cid}.json')
-            seasons=v500._completed_outer_seasons(cid,report)
-            if len(seasons)<3:
-                raise RuntimeError(f'need >=3 seasons, got {seasons}')
-            all_matches=v500.read_processed_matches(cid)
-            sims={s:v500._simulate_season(cid,s,all_matches,report) for s in seasons}
-            selected_folds=[]
-            for target_index in range(2,len(seasons)):
-                target=seasons[target_index]; priors=seasons[:target_index]
-                scored=[]
-                for profile in v500.PROFILES:
-                    pid=profile['id']
-                    prior_rows=[r for s in priors for r in sims[s]['profiles'][pid]]
-                    if len(prior_rows)<v500.MIN_PRIOR_SELECTION_ROWS:
-                        continue
-                    scored.append({'profile_id':pid,'objective':v500._selection_objective(prior_rows),'selection_rows':len(prior_rows)})
-                if not scored:
-                    continue
-                scored.sort(key=lambda x:(x['objective'],x['profile_id']))
-                chosen=scored[0]; pid=chosen['profile_id']
-                bm={r['match_key']:r for r in sims[target]['baseline']}
-                cm={r['match_key']:r for r in sims[target]['profiles'][pid]}
-                keys=sorted(set(bm)&set(cm))
-                for k in keys:
-                    b=bm[k]; c=cm[k]
-                    if b['actual']!=c['actual']:
-                        raise RuntimeError(f'actual mismatch {k}')
-                    rows.append({'competition_id':cid,'season':target,'date':b['date'],'match_key':k,'selected_profile':pid,'actual':b['actual'],'baseline_prob':b['probabilities'],'candidate_prob':c['probabilities']})
-                selected_folds.append({'target_season':target,'selected_profile':pid,'selection_rows':chosen['selection_rows'],'outer_rows':len(keys)})
-            domain_meta[cid]={'seasons':seasons,'selected_folds':selected_folds,'rows':sum(1 for r in rows if r['competition_id']==cid)}
-        except Exception as exc:
-            failures[cid]=f'{type(exc).__name__}: {exc}'
 
-    if failures:
-        raise RuntimeError({'domain_failures':failures})
+def expected_competitions():
+    status=load(v500.FORMAL_STATUS)
+    comps=sorted((status.get('reports') or {}).keys())
+    if len(comps)!=17:
+        raise RuntimeError(f'expected 17 competitions, got {len(comps)}: {comps}')
+    return comps
+
+
+def replay_domain(cid: str):
+    patch_metric_row()
+    if cid not in expected_competitions():
+        raise RuntimeError(f'unknown competition {cid}')
+    report=load(v500.REPORT_ROOT/f'{cid}.json')
+    seasons=v500._completed_outer_seasons(cid,report)
+    if len(seasons)<3:
+        raise RuntimeError(f'need >=3 seasons, got {seasons}')
+    all_matches=v500.read_processed_matches(cid)
+    sims={s:v500._simulate_season(cid,s,all_matches,report) for s in seasons}
+    rows=[]; selected_folds=[]
+    for target_index in range(2,len(seasons)):
+        target=seasons[target_index]; priors=seasons[:target_index]
+        scored=[]
+        for profile in v500.PROFILES:
+            pid=profile['id']
+            prior_rows=[r for s in priors for r in sims[s]['profiles'][pid]]
+            if len(prior_rows)<v500.MIN_PRIOR_SELECTION_ROWS:
+                continue
+            scored.append({'profile_id':pid,'objective':v500._selection_objective(prior_rows),'selection_rows':len(prior_rows)})
+        if not scored:
+            continue
+        scored.sort(key=lambda x:(x['objective'],x['profile_id']))
+        chosen=scored[0]; pid=chosen['profile_id']
+        bm={r['match_key']:r for r in sims[target]['baseline']}
+        cm={r['match_key']:r for r in sims[target]['profiles'][pid]}
+        keys=sorted(set(bm)&set(cm))
+        for k in keys:
+            b=bm[k]; c=cm[k]
+            if b['actual']!=c['actual']:
+                raise RuntimeError(f'actual mismatch {k}')
+            rows.append({'competition_id':cid,'season':target,'date':b['date'],'match_key':k,'selected_profile':pid,'actual':b['actual'],'baseline_prob':b['probabilities'],'candidate_prob':c['probabilities']})
+        selected_folds.append({'target_season':target,'selected_profile':pid,'selection_rows':chosen['selection_rows'],'outer_rows':len(keys)})
     if not rows:
-        raise RuntimeError('no R43AA0 OOS rows')
+        raise RuntimeError(f'no R43AA0 OOS rows for {cid}')
+    return {
+        'schema_version':'football3-r43aa0-domain-v1',
+        'competition_id':cid,
+        'source_model_blob_sha':SOURCE_BLOB_SHA,
+        'generated_at_utc':now(),
+        'domain_meta':{'seasons':seasons,'selected_folds':selected_folds,'rows':len(rows)},
+        'rows':rows,
+    }
+
+
+def run_domain(cid: str):
+    out=replay_domain(cid)
+    DOMAIN_DIR.mkdir(parents=True,exist_ok=True)
+    path=DOMAIN_DIR/f'{cid}.json'
+    path.write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+    print(json.dumps({'status':'DOMAIN_COMPLETE','competition_id':cid,'rows':len(out['rows']),'path':str(path)},ensure_ascii=False))
+
+
+def aggregate_domains():
+    comps=expected_competitions()
+    missing=[cid for cid in comps if not (DOMAIN_DIR/f'{cid}.json').exists()]
+    if missing:
+        raise RuntimeError({'missing_domain_outputs':missing})
+    rows=[]; domain_meta={}
+    for cid in comps:
+        obj=load(DOMAIN_DIR/f'{cid}.json')
+        if obj.get('competition_id')!=cid:
+            raise RuntimeError(f'competition mismatch in {cid}.json')
+        if obj.get('source_model_blob_sha')!=SOURCE_BLOB_SHA:
+            raise RuntimeError(f'source hash mismatch in {cid}.json')
+        domain_rows=obj.get('rows') or []
+        if not domain_rows:
+            raise RuntimeError(f'empty domain rows for {cid}')
+        rows.extend(domain_rows)
+        domain_meta[cid]=obj['domain_meta']
 
     b=metrics(rows,'baseline_prob'); c=metrics(rows,'candidate_prob'); d=delta(b,c)
     fold_rows=[]
@@ -174,6 +211,7 @@ def run():
             'model_parameters_changed':False,
             'profile_grid_changed':False,
             'profile_selection_rule_changed':False,
+            'execution_parallelized_only':True,
             'new_labels_consumed':False,
             'historical_labels_already_viewed':True,
             'promotion_allowed_from_this_replay':False,
@@ -184,7 +222,7 @@ def run():
             'full_volume_accuracy_floor':FULL_VOLUME_ACCURACY_FLOOR,
             'requirements':['candidate Top1 >=53%','candidate hits > baseline','LogLoss/Brier/RPS improve','draw LogLoss/Brier improve','natural draw Top1 >0','>=2/3 chronological folds nonnegative Top1 delta','>=2/3 chronological folds all proper scores improve'],
         },
-        'coverage':{'competition_count':len(competitions),'row_count':len(rows),'domain_meta':domain_meta},
+        'coverage':{'competition_count':len(comps),'row_count':len(rows),'domain_meta':domain_meta},
         'aggregate':{'baseline':b,'candidate':c,'candidate_minus_baseline':d},
         'time_folds':fold_rows,
         'fold_consistency':{'nonnegative_top1_folds':nonneg_top1,'all_proper_score_improving_folds':proper_good},
@@ -197,9 +235,17 @@ def run():
     return out
 
 
+def run_sequential():
+    DOMAIN_DIR.mkdir(parents=True,exist_ok=True)
+    for cid in expected_competitions():
+        run_domain(cid)
+    return aggregate_domains()
+
+
 def verify():
     s=load(OUT); g=s['governance']; gp=s['gate_preregistration']
     assert s['status']=='COMPLETE' and s['formal_weight']==0
+    assert s['coverage']['competition_count']==17
     assert g['model_parameters_changed'] is False and g['profile_grid_changed'] is False and g['profile_selection_rule_changed'] is False
     assert g['new_labels_consumed'] is False and g['historical_labels_already_viewed'] is True and g['promotion_allowed_from_this_replay'] is False
     assert abs(float(gp['full_volume_accuracy_floor'])-0.53)<1e-15
@@ -209,6 +255,10 @@ def verify():
 
 if __name__=='__main__':
     cmd=sys.argv[1] if len(sys.argv)>1 else 'run'
-    if cmd=='run': run()
+    if cmd=='run': run_sequential()
+    elif cmd=='run-domain':
+        if len(sys.argv)!=3: raise SystemExit('run-domain requires competition id')
+        run_domain(sys.argv[2])
+    elif cmd=='aggregate': aggregate_domains()
     elif cmd=='verify': verify()
     else: raise SystemExit(cmd)
