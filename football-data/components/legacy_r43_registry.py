@@ -1,7 +1,8 @@
 """Governed registry for the existing R43Q/R/T/U/Y research components.
 
-M5A is declaration-only: it records exact source lineage and gate state, and makes
-all legacy components disabled by default. No algorithm is re-created here.
+The registry records exact source lineage, gate state, migration state and default
+enablement. Migration never implies promotion: every legacy component stays off
+unless a later explicit governance gate enables it.
 """
 from __future__ import annotations
 
@@ -78,9 +79,9 @@ SPECS: dict[str, LegacyComponentSpec] = {
         True,
         False,
         False,
-        False,
         True,
-        "R43U architecture gate passed on the already-consumed 53-row cohort and was frozen for new forward confirmation, but it did not meet 53%; it remains disabled here and U0/Y0 forward predictions stay sealed.",
+        True,
+        "Exact R43U diagonal operation has been migrated behind the unified component interface and compatibility-gated, but remains disabled. Its historical gate passed only on the already-consumed 53-row cohort and did not meet 53%; U0/Y0 stays sealed.",
     ),
     "R43Y": LegacyComponentSpec(
         "R43Y",
@@ -113,7 +114,7 @@ class DeclaredLegacyScoreMatrixComponent:
 
     def apply(self, matrix: list[dict[str, Any]], request: Any, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         raise RuntimeError(
-            f"{self.component_id} implementation is not migrated/enabled; declaration-only component cannot execute"
+            f"{self.component_id} implementation is not available through declaration-only wrapper"
         )
 
 
@@ -122,4 +123,4 @@ def unresolved_sources() -> tuple[str, ...]:
 
 
 def migration_candidates() -> tuple[str, ...]:
-    return tuple(sorted(key for key, spec in SPECS.items() if spec.source_resolved and spec.native_output == "score_matrix"))
+    return tuple(sorted(key for key, spec in SPECS.items() if spec.source_resolved and spec.native_output == "score_matrix" and not spec.implementation_migrated))
