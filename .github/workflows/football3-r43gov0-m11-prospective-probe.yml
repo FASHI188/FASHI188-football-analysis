@@ -1,0 +1,149 @@
+name: football3 R43GOV0 M11 prospective Kambi PIT probe
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - '.github/workflows/football3-r43gov0-m11-prospective-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prospective-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Capture fresh atomic Kambi PIT snapshots
+        id: capture
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/v6_full17_kambi_capture_v6484.py
+          rc=$?
+          echo "capture_rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Gate M11 prospective eligibility
+        env:
+          CAPTURE_RC: ${{ steps.capture.outputs.capture_rc }}
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+
+          root = Path('football-data')
+          manifest_path = root / 'manifests' / 'v6_full17_kambi_capture_v6482_status.json'
+          outdir = Path('m11_probe')
+          outdir.mkdir(parents=True, exist_ok=True)
+          lock_utc = datetime(2026, 8, 29, 14, 12, 17, tzinfo=timezone.utc)
+
+          def iso(v):
+              x = datetime.fromisoformat(str(v).replace('Z', '+00:00'))
+              if x.tzinfo is None:
+                  raise ValueError(f'timezone missing: {v}')
+              return x.astimezone(timezone.utc)
+
+          gate = {
+              'schema_version': 'football3-r43gov0-m11-prospective-kambi-probe-v1',
+              'status': 'BLOCKED_CAPTURE_MANIFEST_MISSING',
+              'prereg_lock_commit': '5ad4d48acee540dc2f6bb651228b202b06a4f713',
+              'prereg_lock_utc': lock_utc.isoformat(),
+              'prediction_cutoff': 'T_minus_60_minutes',
+              'prediction_cutoff_tolerance_minutes': 0,
+              'same_snapshot_1x2_ah_ou_required': True,
+              'outcome_data_read': False,
+              'capture_rc': int(os.environ.get('CAPTURE_RC') or -999),
+              'candidates': [],
+              'errors': [],
+          }
+          if not manifest_path.exists():
+              gate['errors'].append('capture manifest not written')
+          else:
+              manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+              gate['capture_manifest_status'] = manifest.get('status')
+              gate['target_group_event_count'] = int(manifest.get('target_group_event_count') or 0)
+              gate['not_started_target_event_count'] = int(manifest.get('not_started_target_event_count') or 0)
+              gate['identity_resolved_count'] = int(manifest.get('identity_resolved_count') or 0)
+              gate['identity_unresolved_count'] = int(manifest.get('identity_unresolved_count') or 0)
+              gate['detail_or_market_fail_count'] = int(manifest.get('detail_or_market_fail_count') or 0)
+              gate['formal_snapshot_count_available'] = int(manifest.get('formal_snapshot_count_available') or 0)
+              valid = []
+              for row in manifest.get('events') or []:
+                  rel = row.get('formal_snapshot_path')
+                  if not rel:
+                      continue
+                  p = root / rel
+                  if not p.exists():
+                      gate['errors'].append(f'missing formal snapshot:{rel}')
+                      continue
+                  s = json.loads(p.read_text(encoding='utf-8'))
+                  try:
+                      observed = iso(s['source_observed_at_utc'])
+                      kickoff = iso(s['kickoff_utc'])
+                      surfaces = s['surface_observed_at_utc']
+                      surface_times = [iso(surfaces[k]) for k in ('one_x_two','asian_handicap','over_under')]
+                      atomic = all(t == observed for t in surface_times)
+                      complete = (
+                          all(k in s['one_x_two'] for k in ('home','draw','away')) and
+                          all(k in s['asian_handicap'] for k in ('line','home','away')) and
+                          all(k in s['over_under'] for k in ('line','over','under'))
+                      )
+                      after_lock = observed >= lock_utc
+                      before_cutoff = observed <= kickoff - timedelta(minutes=60)
+                      if atomic and complete and after_lock and before_cutoff:
+                          valid.append({
+                              'competition_id': s['competition_id'],
+                              'home_team': s['home_team'],
+                              'away_team': s['away_team'],
+                              'kickoff_utc': s['kickoff_utc'],
+                              'observed_at_utc': s['source_observed_at_utc'],
+                              'provider_event_id': row.get('event_id'),
+                              'formal_snapshot_path': rel,
+                              'snapshot_sha256': s.get('raw_snapshot_sha256') or hashlib.sha256(p.read_bytes()).hexdigest(),
+                          })
+                  except Exception as exc:
+                      gate['errors'].append(f'{rel}:{type(exc).__name__}:{exc}')
+              valid.sort(key=lambda x: (x['kickoff_utc'], str(x['provider_event_id'])))
+              gate['fresh_atomic_t60_eligible_count'] = len(valid)
+              gate['candidates'] = valid[:50]
+              status = str(manifest.get('status') or '')
+              if status == 'LISTVIEW_FAIL_CLOSED':
+                  gate['status'] = 'BLOCKED_EXTERNAL_DATA'
+                  gate['errors'].append(str(manifest.get('error') or 'Kambi listView failed'))
+              elif gate['target_group_event_count'] == 0:
+                  gate['status'] = 'WAIT_NO_TARGET_EVENTS'
+              elif gate['formal_snapshot_count_available'] == 0:
+                  gate['status'] = 'BLOCKED_NO_ATOMIC_PIT'
+              elif valid:
+                  gate['status'] = 'PASS_FRESH_ATOMIC_PIT_AVAILABLE'
+              else:
+                  gate['status'] = 'WAIT_NO_T60_ELIGIBLE_FRESH_SNAPSHOT'
+          (outdir / 'gate.json').write_text(json.dumps(gate, ensure_ascii=False, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps({k: gate.get(k) for k in (
+              'status','capture_manifest_status','target_group_event_count','identity_resolved_count',
+              'identity_unresolved_count','detail_or_market_fail_count','formal_snapshot_count_available',
+              'fresh_atomic_t60_eligible_count','capture_rc')}, ensure_ascii=False, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m11-prospective-kambi-probe
+          path: |
+            m11_probe/gate.json
+            football-data/manifests/v6_full17_kambi_capture_v6482_status.json
+            football-data/evidence/markets_prospective
+            football-data/evidence/direct_provider_probes/kambi/full17
+          if-no-files-found: warn
+          retention-days: 30
