@@ -1,0 +1,92 @@
+name: User Pure Model Batch 2026-08-29
+
+on:
+  push:
+    paths:
+      - 'football-data/forward/inbox/user_pure_model_batch_20260829_6.json'
+
+permissions:
+  contents: read
+
+jobs:
+  pure-model-batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Run actual actionable model for six fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pure_model_out
+          export PYTHONPATH=football-data/engine
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path('.')
+          batch_path = root / 'football-data/forward/inbox/user_pure_model_batch_20260829_6.json'
+          fixtures = json.loads(batch_path.read_text(encoding='utf-8'))['fixtures']
+          out_root = root / 'pure_model_out'
+          report = {
+              'runner': 'football-data/engine/run_formal_prediction_actionable.py',
+              'mode': 'PURE_REPOSITORY_MODEL_NO_MANUAL_PROBABILITY_ADJUSTMENT',
+              'fixtures': [],
+          }
+
+          for idx, fixture in enumerate(fixtures, start=1):
+              fixture_id = fixture['fixture_id']
+              work = out_root / fixture_id
+              work.mkdir(parents=True, exist_ok=True)
+              input_path = work / 'input.json'
+              context_path = work / 'context.json'
+              calc_path = work / 'calculation.json'
+              validation_path = work / 'validation.json'
+              input_path.write_text(json.dumps(fixture['input'], ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+              cmd = [
+                  sys.executable,
+                  'football-data/engine/run_formal_prediction_actionable.py',
+                  '--input', str(input_path),
+                  '--context-output', str(context_path),
+                  '--calculation-output', str(calc_path),
+                  '--validation-output', str(validation_path),
+                  '--print-summary',
+              ]
+              proc = subprocess.run(cmd, text=True, capture_output=True)
+              item = {
+                  'fixture_id': fixture_id,
+                  'label': fixture['label'],
+                  'returncode': proc.returncode,
+                  'stdout': proc.stdout,
+                  'stderr': proc.stderr,
+                  'context_exists': context_path.exists(),
+                  'calculation_exists': calc_path.exists(),
+                  'validation_exists': validation_path.exists(),
+              }
+              if calc_path.exists():
+                  calc = json.loads(calc_path.read_text(encoding='utf-8'))
+                  item['probabilities'] = calc.get('probabilities')
+                  item['conclusions'] = calc.get('conclusions')
+                  item['module_states'] = calc.get('module_states')
+                  item['model_audit'] = calc.get('model_audit')
+              if validation_path.exists():
+                  item['validation'] = json.loads(validation_path.read_text(encoding='utf-8'))
+              report['fixtures'].append(item)
+
+          (out_root / 'batch_report.json').write_text(
+              json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload pure model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pure-model-batch-20260829-6
+          path: pure_model_out/
+          if-no-files-found: error
+          retention-days: 7
