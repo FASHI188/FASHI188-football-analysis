@@ -1,18 +1,50 @@
 """Protocol adapters for native R43 score-matrix components.
 
-R43Q is exposed as an optional market-score baseline candidate. R43T is exposed
-as a stateful ScoreMatrixComponent whose kickoff-group lifecycle must be driven
-explicitly. Neither changes the formal V500 default baseline or promotion state.
+R43Q is an optional research market-score baseline candidate. In the unified
+inference path it can consume 1X2/AH/OU only from a legal atomic PIT market
+record. R43T remains a stateful score-matrix component with explicit kickoff-group
+lifecycle. Neither changes the formal V500 default baseline or promotion state.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any, Iterable, Mapping
 
 import numpy as np
 
 from components.r43q_market_score_core import R43QMarketScoreCore, score_matrix
 from components.r43t_dynamic_bivariate_state import R43TDynamicBivariateState
-from pipeline.unified_inference import FixtureRequest, canonical_matrix, matrix_hash
+from pipeline.unified_inference import (
+    ConsumerFeatureEvidence,
+    FixtureRequest,
+    canonical_matrix,
+    matrix_hash,
+)
+from pit.feature_store import PITReadResult, PointInTimeFeatureStore
+
+
+MARKET_FEATURE_FAMILY = "market_1x2_ah_ou"
+MARKET_NUMERICAL_FEATURE_NAMES = (
+    "one_x_two_odds",
+    "asian_handicap",
+    "over_under",
+    "snapshot_timestamp_utc",
+)
+
+
+def _stable_hash(payload: Any) -> str:
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _utc(value: str) -> datetime:
+    token = str(value).strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(token)
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise RuntimeError("market snapshot timestamp must be timezone-aware")
+    return dt.astimezone(timezone.utc)
 
 
 def dense_to_cells(matrix: np.ndarray) -> list[dict[str, Any]]:
@@ -27,12 +59,62 @@ def dense_to_cells(matrix: np.ndarray) -> list[dict[str, Any]]:
 
 
 class R43QMarketScoreBaseline:
-    """Optional exact R43Q market-score baseline; never the formal default."""
+    """PIT-bound optional exact R43Q market-score baseline.
+
+    The baseline is not formal default. It deliberately accepts no direct market
+    payload: its three market surfaces must be present in one PIT record so their
+    timing and source lineage are part of the numerical activation receipt.
+    """
 
     component_id = "R43Q_market_score_baseline"
-    component_version = "r43gov0-m5h-q-baseline-v1"
+    component_version = "r43gov0-m8-q-pit-baseline-v2"
     formal_default = False
+    pit_bound_market = True
     source_blob_sha = R43QMarketScoreCore.source_blob_sha
+    required_numeric_feature_families = (MARKET_FEATURE_FAMILY,)
+
+    def __init__(self, pit_store: PointInTimeFeatureStore):
+        self.pit_store = pit_store
+        self._last_evidence: tuple[ConsumerFeatureEvidence, ...] = ()
+
+    def _read_atomic_market_snapshot(self, request: FixtureRequest) -> tuple[PITReadResult, Mapping[str, Any]]:
+        pit = self.pit_store.read(
+            MARKET_FEATURE_FAMILY,
+            request.fixture_id,
+            request.as_of,
+            canonical_entity_id=request.fixture_id,
+            require_historical_use=True,
+        )
+        record = pit.latest()
+        if record is None:
+            raise RuntimeError("R43Q market PIT record unavailable at requested as_of")
+        if record.entity_type != "fixture_market":
+            raise RuntimeError("R43Q market PIT record entity_type must be fixture_market")
+        if record.canonical_entity_id != request.fixture_id:
+            raise RuntimeError("R43Q market PIT fixture identity mismatch")
+        value = record.value
+        if not isinstance(value, Mapping):
+            raise RuntimeError("R43Q market PIT value must be a mapping")
+        missing = [name for name in MARKET_NUMERICAL_FEATURE_NAMES if name not in value]
+        if missing:
+            raise RuntimeError(f"R43Q atomic market snapshot missing fields: {missing}")
+        snapshot_at = _utc(str(value["snapshot_timestamp_utc"]))
+        if snapshot_at > record.observed_at:
+            raise RuntimeError("R43Q market snapshot timestamp is later than observed_at")
+        if snapshot_at > request.as_of.astimezone(timezone.utc):
+            raise RuntimeError("R43Q market snapshot is later than prediction as_of")
+
+        selected = PITReadResult(
+            status=pit.status,
+            feature_family=pit.feature_family,
+            fixture_id=pit.fixture_id,
+            canonical_entity_id=pit.canonical_entity_id,
+            as_of=pit.as_of,
+            records=(record,),
+            rejected_counts=pit.rejected_counts,
+            store_fingerprint=pit.store_fingerprint,
+        )
+        return selected, value
 
     def predict(
         self,
@@ -41,14 +123,48 @@ class R43QMarketScoreBaseline:
         canonical_away_team_id: str,
         payload: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
+        if payload:
+            raise RuntimeError("R43Q unified baseline forbids direct payload; use PIT market record")
+        pit, value = self._read_atomic_market_snapshot(request)
         try:
-            one_x_two_odds = payload["one_x_two_odds"]
-            asian_handicap = payload["asian_handicap"]
-            over_under = payload["over_under"]
+            one_x_two_odds = value["one_x_two_odds"]
+            asian_handicap = value["asian_handicap"]
+            over_under = value["over_under"]
         except (KeyError, TypeError) as exc:
-            raise RuntimeError("R43Q baseline requires 1X2/AH/OU same-timestamp payload") from exc
+            raise RuntimeError("R43Q PIT baseline requires atomic 1X2/AH/OU surfaces") from exc
+
         built = R43QMarketScoreCore.build(one_x_two_odds, asian_handicap, over_under)
-        return dense_to_cells(built["score_matrix"])
+        cells = dense_to_cells(built["score_matrix"])
+        record = pit.latest()
+        assert record is not None
+        numerical_values = {
+            "snapshot_timestamp_utc": value["snapshot_timestamp_utc"],
+            "one_x_two_odds": one_x_two_odds,
+            "asian_handicap": asian_handicap,
+            "over_under": over_under,
+            "source_record_hash": record.record_hash,
+        }
+        input_hash = _stable_hash({
+            "feature_family": MARKET_FEATURE_FAMILY,
+            "record_hash": record.record_hash,
+            "numerical_values": numerical_values,
+        })
+        output_hash = matrix_hash(cells)
+        self._last_evidence = (
+            ConsumerFeatureEvidence(
+                feature_family=MARKET_FEATURE_FAMILY,
+                pit_result=pit,
+                numerical_values=numerical_values,
+                numerical_feature_names=MARKET_NUMERICAL_FEATURE_NAMES,
+                component_input_hash=input_hash,
+                component_output_hash=output_hash,
+                consumer_id=self.component_id,
+            ),
+        )
+        return cells
+
+    def numerical_feature_evidence(self) -> tuple[ConsumerFeatureEvidence, ...]:
+        return self._last_evidence
 
 
 class R43TDynamicStateMatrixComponent:
