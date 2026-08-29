@@ -103,9 +103,9 @@ def _candidate_id_from_fixture(
             q = q[q["_h"].isin(opponent_candidates)]
         ids = sorted(set(q["_a"]))
     fixtures_found = [
-        {"id": str(int(x.id)), "date_utc": x.date_utc.isoformat(),
-         "home_team_id": str(x._h), "away_team_id": str(x._a)}
-        for x in q.itertuples(index=False)
+        {"id": str(int(row["id"])), "date_utc": row["date_utc"].isoformat(),
+         "home_team_id": str(row["_h"]), "away_team_id": str(row["_a"])}
+        for _, row in q.iterrows()
     ]
     return (ids[0] if len(ids) == 1 else None), fixtures_found
 
