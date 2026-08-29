@@ -1,0 +1,102 @@
+name: football3 R43GOV0 M11 collector identity diagnostic
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - 'football-data/governance/r43gov0/m11_collector_identity_diag_heartbeat.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture current Kambi manifest
+        shell: bash
+        run: |
+          set +e
+          python football-data/validation/v6_full17_kambi_capture_v6484.py
+          echo "capture_rc=$?"
+          exit 0
+      - name: Diagnose unresolved source names against frozen current-team registry
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import json, re, unicodedata
+          from difflib import SequenceMatcher
+          from pathlib import Path
+
+          root=Path('football-data')
+          manifest=json.loads((root/'manifests/v6_full17_kambi_capture_v6482_status.json').read_text(encoding='utf-8'))
+          cfg=json.loads((root/'config/v6_full17_capture_identity_v6484.json').read_text(encoding='utf-8'))
+
+          def norm(v):
+              s=unicodedata.normalize('NFKD',str(v)).encode('ascii','ignore').decode().casefold()
+              s=re.sub(r'[^a-z0-9]+',' ',s)
+              return re.sub(r'\s+',' ',s).strip()
+
+          def hints(cid, source):
+              out=[]
+              q=norm(source)
+              for team in (cfg.get('competitions',{}).get(cid,{}) or {}).get('teams',[]):
+                  names=[team.get('canonical_name'),team.get('normalized_identity'),*((team.get('provider_alias_tokens') or []))]
+                  names=[str(x) for x in names if x]
+                  best=0.0
+                  for n in names:
+                      rn=norm(n)
+                      score=SequenceMatcher(None,q,rn).ratio()
+                      qt=set(q.split()); rt=set(rn.split())
+                      if qt and rt:
+                          score=max(score,len(qt&rt)/max(len(qt),len(rt)))
+                      if q==rn: score=1.0
+                      elif q in rn or rn in q: score=max(score,0.92)
+                      best=max(best,score)
+                  out.append({'score':round(best,4),'canonical_name':team.get('canonical_name'),'normalized_identity':team.get('normalized_identity'),'provider_alias_tokens':team.get('provider_alias_tokens') or []})
+              out.sort(key=lambda x:(-x['score'],str(x['canonical_name'])))
+              return out[:6]
+
+          rows=[]
+          for e in manifest.get('events') or []:
+              if e.get('status')!='EXACT_CURRENT_TEAM_IDENTITY_UNRESOLVED':
+                  continue
+              cid=str(e.get('competition_id'))
+              rows.append({
+                  'event_id':str(e.get('event_id')),
+                  'competition_id':cid,
+                  'provider_start':e.get('provider_start'),
+                  'provider_state':e.get('provider_state'),
+                  'source_home':e.get('source_home'),
+                  'source_away':e.get('source_away'),
+                  'home_registry_hints':hints(cid,e.get('source_home')),
+                  'away_registry_hints':hints(cid,e.get('source_away')),
+              })
+          out={
+              'schema_version':'football3-r43gov0-m11-collector-identity-diagnostic-v1',
+              'diagnostic_only':True,
+              'outcomes_read':False,
+              'fuzzy_runtime_resolution_allowed':False,
+              'manifest_status':manifest.get('status'),
+              'unresolved_count':len(rows),
+              'events':rows,
+          }
+          Path('m11_collector_identity_diagnostic.json').write_text(json.dumps(out,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps({'manifest_status':out['manifest_status'],'unresolved_count':len(rows),'outcomes_read':False},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m11-collector-identity-diagnostic
+          path: m11_collector_identity_diagnostic.json
+          if-no-files-found: error
+          retention-days: 30
