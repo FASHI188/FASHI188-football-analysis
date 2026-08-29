@@ -82,18 +82,10 @@ class FeatureActivationReceipt:
 
 
 DEFAULT_POLICIES: dict[str, FeatureFamilyPolicy] = {
-    # Lineup prediction quality passed its own historical mechanism gate, but the
-    # mechanism has not passed a 1X2 numerical-integration gate.
     "lineup_pstart": FeatureFamilyPolicy(True, True, False),
-    # Retrospective availability/personnel labels are not approved numerical features.
     "availability_status": FeatureFamilyPolicy(True, False, False),
-    # R42H player technical translation failed its promotion gate.
     "player_technical": FeatureFamilyPolicy(True, False, False),
-    # Coach translation/fingerprint paths failed promotion and do not have a verified
-    # current-match prematch coach-change timestamp contract.
     "head_coach": FeatureFamilyPolicy(True, False, False),
-    # Market surfaces have a proven numerical consumer (R43Q), but are not enabled
-    # here until the payload is bound to PIT records by the dedicated market adapter.
     "market_1x2_ah_ou": FeatureFamilyPolicy(True, True, False),
 }
 
