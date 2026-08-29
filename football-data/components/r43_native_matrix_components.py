@@ -60,7 +60,7 @@ class R43TDynamicStateMatrixComponent:
     """
 
     component_id = "R43T_dynamic_bivariate_residual_state_matrix"
-    component_version = "r43gov0-m5h-t-matrix-v1"
+    component_version = "r43gov0-m6-t-matrix-v2"
 
     def __init__(self, enabled: bool = False):
         self.enabled = bool(enabled)
@@ -97,6 +97,22 @@ class R43TDynamicStateMatrixComponent:
             "state_diff_pred": projection.state_diff_pred,
         })
         return dense_to_cells(score_matrix(projection.lambda_home, projection.lambda_away))
+
+    @staticmethod
+    def settlement_observation(
+        component_payload: Mapping[str, Any],
+        actual_result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Build the exact post-group R43T observation from frozen inputs + result."""
+        try:
+            return {
+                "lambda_home": float(component_payload["r43t_static_lambda_home"]),
+                "lambda_away": float(component_payload["r43t_static_lambda_away"]),
+                "hg": int(actual_result["home_goals_90"]),
+                "ag": int(actual_result["away_goals_90"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("R43T settlement requires frozen static lambdas and 90-minute score") from exc
 
     def settle_group(self, observations: Iterable[Mapping[str, Any]]) -> None:
         self.state.settle_group(observations)
