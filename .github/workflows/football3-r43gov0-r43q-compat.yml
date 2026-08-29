@@ -49,9 +49,25 @@ jobs:
           python -m py_compile football-data/components/r43q_market_score_core.py
           python -m py_compile football-data/tests/test_r43q_market_score_compat.py
       - name: Run exact source compatibility tests
+        id: compat
+        continue-on-error: true
         env:
           R43Q_SOURCE_FILE: /tmp/run_r43q0.py
-        run: python -m unittest discover -s football-data/tests -p 'test_r43q_market_score_compat.py' -v
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s football-data/tests -p 'test_r43q_market_score_compat.py' -v 2>&1 | tee /tmp/r43q_compat_test.log
+      - name: Upload M5C diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m5c-r43q-diagnostic
+          path: /tmp/r43q_compat_test.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce exact compatibility gate
+        if: steps.compat.outcome != 'success'
+        run: exit 1
       - name: Write M5C Q gate receipt
         shell: bash
         run: |
