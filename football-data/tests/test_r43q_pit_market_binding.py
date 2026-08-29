@@ -247,7 +247,7 @@ class R43QPITMarketBindingTests(unittest.TestCase):
         baseline_store = PointInTimeFeatureStore([market_record()])
         engine_store = PointInTimeFeatureStore([market_record()])
         baseline = R43QMarketScoreBaseline(baseline_store)
-        with self.assertRaisesRegex(ValueError, "same unified engine PIT store"):
+        with self.assertRaisesRegex(ValueError, "baseline PIT store must be the unified engine PIT store"):
             UnifiedInferenceEngine(resolver(), engine_store, research_assembler(), baseline, ())
 
 
