@@ -64,7 +64,7 @@ jobs:
           assert p['u0_y0_predictions_modified'] is False
           print('M11_PREREG_CONTRACT_PASS')
           PY
-      - name: Verify sealed CURRENT U0 Y0 paths unchanged from M10 lock head
+      - name: Verify sealed CURRENT U0 Y0 path existence and content from M10 lock head
         run: |
           set -euo pipefail
           BASE=7c1815c47102412e88f72189e2b8f837d9b73a42
@@ -74,9 +74,14 @@ jobs:
             football-data/forward/v6_market_first_events_v651.json \
             football-data/forward/r43u1_pristine_forward_events.json \
             football-data/forward/r43y0_draw_calibration_forward_events.json; do
-            old=$(git show "$BASE:$p" | git hash-object --stdin)
-            new=$(git hash-object "$p")
-            test "$old" = "$new" || { echo "sealed path drift: $p" >&2; exit 1; }
+            if git cat-file -e "$BASE:$p" 2>/dev/null; then
+              test -f "$p" || { echo "sealed path disappeared: $p" >&2; exit 1; }
+              old=$(git show "$BASE:$p" | git hash-object --stdin)
+              new=$(git hash-object "$p")
+              test "$old" = "$new" || { echo "sealed path drift: $p" >&2; exit 1; }
+            else
+              test ! -e "$p" || { echo "sealed path unexpectedly created: $p" >&2; exit 1; }
+            fi
           done
       - name: Write M11 freeze receipt
         run: |
@@ -97,7 +102,7 @@ jobs:
             'r43y_component_id':'R43Y_draw_calibration_matrix_transport',
             'operational_control':'S60',
             'v500_in_lockbox':False,
-            'sealed_current_u0_y0_unchanged':True,
+            'sealed_current_u0_y0_existence_and_content_locked':True,
             'outcome_based_selection':False,
             'retune_on_300':False,
             'formal_promotion_allowed':False,
