@@ -112,25 +112,43 @@ def competition_map(leagues, divisions: set[str]) -> dict[str, str]:
     return out
 
 
-def build_resolver(teams, divisions: set[str], provenance: str) -> TeamIdentityResolver:
+def build_resolver(teams, fixtures, cmap: dict[str, str], provenance: str) -> TeamIdentityResolver:
+    """Use exact provider metadata, scoped to teams observed in each competition.
+
+    The scope comes only from fixture league/team IDs; no result/status fields are
+    loaded. This prevents unrelated clubs with the same provider alias from
+    contaminating another division namespace while preserving fail-closed alias
+    conflicts within the actual competition.
+    """
     name_cols = [c for c in text_columns(teams) if c in {"name", "fd_name"} or "name" in c.casefold()]
-    records = []
+    team_meta = {}
     for row in teams.itertuples(index=False):
-        d = row._asdict(); tid = str(int(d["id"]))
-        aliases = set()
+        d = row._asdict(); tid = str(int(d["id"])); aliases = set()
         for col in name_cols:
             value = d.get(col)
             if value is not None and str(value).casefold() != "nan":
                 key = alias_key(value)
                 if key:
                     aliases.add(key)
-        for division in divisions:
-            ns = f"fd:{division.casefold()}"
+        team_meta[tid] = aliases
+
+    allowed_by_div = {}
+    league_as_str = fixtures["league_id"].astype(str)
+    for division, cid in cmap.items():
+        q = fixtures[league_as_str == str(cid)]
+        allowed_by_div[division] = set(q["home_team_id"].astype(str)) | set(q["away_team_id"].astype(str))
+
+    records = []
+    for division, allowed in allowed_by_div.items():
+        ns = f"fd:{division.casefold()}"
+        for tid in sorted(allowed):
+            if tid not in team_meta:
+                continue
             records.append({"source_namespace": ns, "source_team_id": tid, "canonical_team_id": tid,
-                            "mapping_method": "provider_team_id", "provenance_hash": provenance})
-            for alias in sorted(aliases):
+                            "mapping_method": "provider_team_id_competition_scoped", "provenance_hash": provenance})
+            for alias in sorted(team_meta[tid]):
                 records.append({"source_namespace": ns, "approved_name_alias": alias, "canonical_team_id": tid,
-                                "mapping_method": "provider_metadata_explicit_alias", "provenance_hash": provenance})
+                                "mapping_method": "provider_metadata_exact_alias_competition_scoped", "provenance_hash": provenance})
     return TeamIdentityResolver(records)
 
 
@@ -144,7 +162,7 @@ def resolve_targets(lock: dict, work: Path):
     fixtures["date_utc"] = pd.to_datetime(fixtures["date_utc"], utc=True)
     divisions = {str(x["division"]) for x in lock["rows"]}
     cmap = competition_map(leagues, divisions)
-    resolver = build_resolver(teams, divisions, sha256(tp))
+    resolver = build_resolver(teams, fixtures, cmap, sha256(tp))
     mapped, audit = [], []
     for z in lock["rows"]:
         div = str(z["division"]); ns = f"fd:{div.casefold()}"
@@ -176,17 +194,12 @@ def resolve_targets(lock: dict, work: Path):
     if len(mapped) != 100:
         unresolved = [r for r in audit if r["home_resolution"]["status"] != RESOLVED or r["away_resolution"]["status"] != RESOLVED or len(r.get("fixture_candidates", [])) != 1]
         diagnostic = {
-            "schema_version": "football3-batch001-unified-mapping-diagnostic-v1",
+            "schema_version": "football3-batch001-unified-mapping-diagnostic-v2",
             "status": "FAIL_MAPPING_INCOMPLETE",
-            "mapped": len(mapped),
-            "expected": 100,
-            "unresolved_count": len(unresolved),
-            "competition_map": cmap,
-            "unresolved": unresolved,
-            "all_audit": audit,
-            "outcome_columns_read": False,
-            "status_columns_read": False,
-            "fuzzy_matching_enabled": False,
+            "mapped": len(mapped), "expected": 100, "unresolved_count": len(unresolved),
+            "competition_map": cmap, "unresolved": unresolved, "all_audit": audit,
+            "identity_scope": "provider_team_ids_observed_in_safe_fixture_metadata_for_each_competition",
+            "outcome_columns_read": False, "status_columns_read": False, "fuzzy_matching_enabled": False,
         }
         OUT.mkdir(parents=True, exist_ok=True)
         (OUT / "mapping_diagnostic.json").write_text(json.dumps(diagnostic, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
