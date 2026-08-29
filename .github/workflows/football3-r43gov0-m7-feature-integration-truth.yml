@@ -1,0 +1,96 @@
+name: football3 R43GOV0 M7 feature integration truth
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - 'football-data/assembly/feature_assembler.py'
+      - 'football-data/governance/feature_integration_truth.py'
+      - 'football-data/tests/test_feature_integration_truth.py'
+      - '.github/workflows/football3-r43gov0-m7-feature-integration-truth.yml'
+  workflow_dispatch:
+
+jobs:
+  feature-integration-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify governance isolation and frozen V500
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "football3/r43gov0-unified-governance-audit"
+          test "$(git rev-parse HEAD:football-data/models/v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          BASE="8e7aa3d703b88fae7e275203afa9d6897db79dcf"
+          CHANGED="$(git diff --name-only "$BASE"...HEAD)"
+          if printf '%s\n' "$CHANGED" | grep -Eq '(^|/)CURRENT($|/)|football-data/forward/(r43u0|r43u1|r43y0)|FINAL_LOCKBOX'; then
+            echo "sealed/formal path modified"
+            exit 1
+          fi
+
+      - name: Compile M7 truth contract
+        run: |
+          python -m py_compile \
+            football-data/assembly/feature_assembler.py \
+            football-data/governance/feature_integration_truth.py \
+            football-data/tests/test_feature_integration_truth.py
+
+      - name: Run M7 truth tests
+        shell: bash
+        run: |
+          set -o pipefail
+          PYTHONPATH=football-data python -m unittest football-data/tests/test_feature_integration_truth.py -v 2>&1 | tee /tmp/m7-truth-tests.log
+
+      - name: Upload M7 diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m7-feature-integration-truth-diagnostic
+          path: /tmp/m7-truth-tests.log
+          retention-days: 30
+
+      - name: Write M7 gate receipt
+        shell: bash
+        run: |
+          cat > /tmp/m7_gate.json <<'JSON'
+          {
+            "schema_version": "football3-r43gov0-m7-feature-integration-truth-gate-v1",
+            "status": "PASS",
+            "scope": "research_governance_only",
+            "lineup_mechanism_gate_passed": true,
+            "lineup_numeric_1x2_enabled": false,
+            "player_technical_promotion_gate_passed": false,
+            "player_technical_numeric_1x2_enabled": false,
+            "head_coach_promotion_gate_passed": false,
+            "head_coach_verified_current_match_prematch_timestamp": false,
+            "head_coach_numeric_1x2_enabled": false,
+            "market_numeric_consumer_exists": true,
+            "market_pit_bound_numeric_input": false,
+            "market_numeric_effect_enabled_by_feature_policy": false,
+            "availability_numeric_1x2_enabled": false,
+            "truth_rule": "recognized_or_collected_does_not_imply_numeric_effect",
+            "current_modified": false,
+            "main_modified": false,
+            "v500_modified": false,
+            "u0_y0_predictions_modified": false,
+            "next_step": "M8_bind_market_1x2_ah_ou_to_PIT_and_R43Q"
+          }
+          JSON
+
+      - name: Upload M7 gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m7-feature-integration-truth-gate
+          path: /tmp/m7_gate.json
+          retention-days: 90
