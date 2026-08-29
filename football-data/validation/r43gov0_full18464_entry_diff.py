@@ -205,7 +205,7 @@ def main() -> int:
         "scope": "full_volume_no_sampling",
         "old_entry": "V4.7 direct _predict_from_loaded_matches + frozen OOF temperature",
         "rebuilt_entry": "TeamIdentityResolver -> PIT -> FeatureAssembler -> UnifiedInferenceEngine -> UnifiedDatasetGenerator -> FormalV470ReplayBaseline",
-        "operational_runtime_baseline_changed": false,
+        "operational_runtime_baseline_changed": False,
         "operational_runtime_baseline_remains": "S60",
         "expected_rows": EXPECTED_ROWS,
         "old_rows": len(expected),
@@ -222,11 +222,11 @@ def main() -> int:
         "activation_receipt_missing_count": receipt_missing,
         "baseline_numerical_receipt_missing_count": numerical_receipt_missing,
         "first_mismatches": mismatches,
-        "lineup_numeric_1x2_enabled": false,
-        "player_technical_numeric_1x2_enabled": false,
-        "head_coach_numeric_1x2_enabled": false,
-        "availability_numeric_1x2_enabled": false,
-        "u0_y0_modified": false,
+        "lineup_numeric_1x2_enabled": False,
+        "player_technical_numeric_1x2_enabled": False,
+        "head_coach_numeric_1x2_enabled": False,
+        "availability_numeric_1x2_enabled": False,
+        "u0_y0_modified": False,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
