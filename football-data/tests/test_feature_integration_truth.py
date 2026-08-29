@@ -17,7 +17,7 @@ class FeatureIntegrationTruthTests(unittest.TestCase):
             {"lineup_pstart", "availability_status", "player_technical", "head_coach", "market_1x2_ah_ou"},
         )
 
-    def test_no_feature_is_claimed_numeric_before_pit_binding(self):
+    def test_no_feature_is_enabled_by_default(self):
         assert_no_false_numeric_claims()
         self.assertEqual(numeric_enabled_families(), ())
 
@@ -41,16 +41,16 @@ class FeatureIntegrationTruthTests(unittest.TestCase):
         self.assertFalse(x.pit_contract_available)
         self.assertFalse(x.numeric_effect_enabled)
 
-    def test_market_has_exact_consumer_but_no_promotion_or_pit_binding(self):
+    def test_market_is_pit_bound_research_candidate_but_default_disabled(self):
         x = FEATURE_TRUTH["market_1x2_ah_ou"]
         self.assertFalse(x.historical_mechanism_gate_passed)
         self.assertTrue(x.numerical_consumer_exists)
         self.assertTrue(x.pit_contract_available)
-        self.assertFalse(x.currently_pit_bound_to_consumer)
+        self.assertTrue(x.currently_pit_bound_to_consumer)
         self.assertFalse(x.numeric_effect_enabled)
         self.assertFalse(x.formal_promotion_allowed)
 
-    def test_feature_assembler_policies_do_not_overclaim_numeric_effect(self):
+    def test_feature_assembler_default_policies_do_not_overclaim_numeric_effect(self):
         assembler = FeatureAssembler()
         self.assertTrue(assembler.policy("lineup_pstart").experiment_passed)
         self.assertFalse(assembler.policy("lineup_pstart").numeric_effect_enabled)
