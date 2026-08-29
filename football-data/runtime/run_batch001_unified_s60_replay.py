@@ -152,7 +152,7 @@ def resolve_targets(lock: dict, work: Path):
         aid_override = TEAM_ID_OVERRIDES.get((div, str(z["away"])))
         hr = resolver.resolve(ns, hid_override, alias_key(z["home"])) if hid_override else resolver.resolve(ns, None, alias_key(z["home"]))
         ar = resolver.resolve(ns, aid_override, alias_key(z["away"])) if aid_override else resolver.resolve(ns, None, alias_key(z["away"]))
-        rec = {"batch_index": z["batch_index"], "division": div, "home": z["home"], "away": z["away"],
+        rec = {"batch_index": z["batch_index"], "division": div, "date": z["date"], "home": z["home"], "away": z["away"],
                "home_resolution": hr.to_dict(), "away_resolution": ar.to_dict(),
                "home_override_used": hid_override is not None, "away_override_used": aid_override is not None}
         if hr.status != RESOLVED or ar.status != RESOLVED:
@@ -174,6 +174,22 @@ def resolve_targets(lock: dict, work: Path):
                        "nominal_cutoff_utc": (x.date_utc - pd.Timedelta(hours=24)).isoformat()})
     for p in (tp, lp, fp): p.unlink(missing_ok=True)
     if len(mapped) != 100:
+        unresolved = [r for r in audit if r["home_resolution"]["status"] != RESOLVED or r["away_resolution"]["status"] != RESOLVED or len(r.get("fixture_candidates", [])) != 1]
+        diagnostic = {
+            "schema_version": "football3-batch001-unified-mapping-diagnostic-v1",
+            "status": "FAIL_MAPPING_INCOMPLETE",
+            "mapped": len(mapped),
+            "expected": 100,
+            "unresolved_count": len(unresolved),
+            "competition_map": cmap,
+            "unresolved": unresolved,
+            "all_audit": audit,
+            "outcome_columns_read": False,
+            "status_columns_read": False,
+            "fuzzy_matching_enabled": False,
+        }
+        OUT.mkdir(parents=True, exist_ok=True)
+        (OUT / "mapping_diagnostic.json").write_text(json.dumps(diagnostic, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         raise RuntimeError(f"unified target mapping incomplete {len(mapped)}/100")
     return mapped, audit, cmap, resolver
 
