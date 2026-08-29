@@ -534,7 +534,7 @@ def run(probe_root: Path, q_source: Path) -> dict[str, Any]:
                 away_source_team_id=m["away_team_id"],
                 away_source_name=s["away_team"],
             )
-            s60 = engine.predict("m11_fresh_forward", request, {
+            s60 = engine.predict("live", request, {
                 "competition_id": m["league_id"],
                 "target_date": kickoff.date().isoformat(),
             })
