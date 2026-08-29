@@ -102,12 +102,31 @@ def _candidate_id_from_fixture(
         elif opponent_candidates:
             q = q[q["_h"].isin(opponent_candidates)]
         ids = sorted(set(q["_a"]))
+
+    selected_id = ids[0] if len(ids) == 1 else None
+    selection_rule = "unique_exact_fixture_candidate" if selected_id is not None else None
+    if selected_id is None and len(ids) > 1:
+        # Some provider metadata contains a midnight date-only placeholder duplicate
+        # alongside the same league/date/opponent fixture with a precise scheduled
+        # kickoff.  This rule uses schedule precision only; it never reads outcome,
+        # status, score, statistics, odds, or fuzzy names.
+        precise = q[~((q["date_utc"].dt.hour == 0)
+                      & (q["date_utc"].dt.minute == 0)
+                      & (q["date_utc"].dt.second == 0))]
+        precise_ids = sorted(set(precise["_h"] if side == "home" else precise["_a"]))
+        if len(precise_ids) == 1:
+            selected_id = precise_ids[0]
+            selection_rule = "unique_non_midnight_scheduled_kickoff_over_date_only_placeholder"
+
     fixtures_found = [
         {"id": str(int(row["id"])), "date_utc": row["date_utc"].isoformat(),
-         "home_team_id": str(row["_h"]), "away_team_id": str(row["_a"])}
+         "home_team_id": str(row["_h"]), "away_team_id": str(row["_a"]),
+         "is_midnight_placeholder": bool(
+             row["date_utc"].hour == 0 and row["date_utc"].minute == 0 and row["date_utc"].second == 0
+         )}
         for _, row in q.iterrows()
     ]
-    return (ids[0] if len(ids) == 1 else None), fixtures_found
+    return selected_id, fixtures_found, selection_rule
 
 
 def resolve_targets(lock: dict, work: Path):
@@ -136,7 +155,7 @@ def resolve_targets(lock: dict, work: Path):
         hcand = set(alias_ids.get(div, {}).get(home_alias, set()))
         acand = set(alias_ids.get(div, {}).get(away_alias, set()))
         if hr.status != RESOLVED:
-            hid, found = _candidate_id_from_fixture(
+            hid, found, rule = _candidate_id_from_fixture(
                 fixtures, cid=cmap[div], date=z["date"], side="home",
                 alias_candidates=hcand,
                 opponent_id=ar.canonical_team_id if ar.status == RESOLVED else None,
@@ -145,12 +164,13 @@ def resolve_targets(lock: dict, work: Path):
             contextual.append({
                 "side": "home", "alias_candidates": sorted(hcand),
                 "source_team_id": hid, "fixture_candidates": found,
+                "selection_rule": rule,
                 "resolution_succeeded": hid is not None,
             })
             if hid is not None:
                 hr = resolver.resolve(ns, hid, home_alias)
         if ar.status != RESOLVED:
-            aid, found = _candidate_id_from_fixture(
+            aid, found, rule = _candidate_id_from_fixture(
                 fixtures, cid=cmap[div], date=z["date"], side="away",
                 alias_candidates=acand,
                 opponent_id=hr.canonical_team_id if hr.status == RESOLVED else None,
@@ -159,6 +179,7 @@ def resolve_targets(lock: dict, work: Path):
             contextual.append({
                 "side": "away", "alias_candidates": sorted(acand),
                 "source_team_id": aid, "fixture_candidates": found,
+                "selection_rule": rule,
                 "resolution_succeeded": aid is not None,
             })
             if aid is not None:
@@ -200,12 +221,13 @@ def resolve_targets(lock: dict, work: Path):
                       or r["away_resolution"]["status"] != RESOLVED
                       or len(r.get("fixture_candidates", [])) != 1]
         diagnostic = {
-            "schema_version": "football3-batch001-unified-mapping-diagnostic-v4",
+            "schema_version": "football3-batch001-unified-mapping-diagnostic-v5",
             "status": "FAIL_MAPPING_INCOMPLETE",
             "mapped": len(mapped), "expected": 100, "unresolved_count": len(unresolved),
             "competition_map": cmap, "unresolved": unresolved, "all_audit": audit,
             "identity_scope": "competition_scoped_provider_ids_plus_exact_fixture_context_for_alias_conflicts",
             "context_fields": ["league_id", "date_utc", "home_team_id", "away_team_id"],
+            "placeholder_rule": "unique_non_midnight_scheduled_kickoff_over_date_only_placeholder",
             "outcome_columns_read": False, "status_columns_read": False,
             "fuzzy_matching_enabled": False,
         }
