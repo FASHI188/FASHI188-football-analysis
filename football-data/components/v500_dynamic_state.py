@@ -107,8 +107,6 @@ class V500BayesianDynamicStateComponent:
         if not isinstance(prediction_at, datetime) or prediction_at.tzinfo is None:
             raise ValueError("V500 requires timezone-aware prediction_datetime")
         league_home, league_away = self._rates()
-        # Source _dynamic_rates evolves state in place.  Use a copy so all fixtures
-        # in the group see exactly the same pre-settlement state.
         snapshot = copy.deepcopy(self.states)
         dyn_home, dyn_away, state_audit = v500._dynamic_rates(
             snapshot,
@@ -156,8 +154,8 @@ class V500BayesianDynamicStateComponent:
             raise ValueError("V500 settlement requires prediction_datetime")
         return {
             "fixture_id": request.fixture_id,
-            "home": str(payload.get("canonical_home_team_id") or ""),
-            "away": str(payload.get("canonical_away_team_id") or ""),
+            "home": str(prediction_result.canonical_home_team_id),
+            "away": str(prediction_result.canonical_away_team_id),
             "date": dt,
             "home_goals": int(outcome.home_goals),
             "away_goals": int(outcome.away_goals),
@@ -171,8 +169,6 @@ class V500BayesianDynamicStateComponent:
             raise RuntimeError("V500 settlement without open group")
         obs = sorted((dict(item) for item in observations), key=lambda x: str(x.get("fixture_id")))
         league_home, league_away = self._rates()
-        # All state updates use the same pre-group league rates; league aggregates
-        # advance only after every same-group state update is complete.
         for item in obs:
             if not item:
                 continue
