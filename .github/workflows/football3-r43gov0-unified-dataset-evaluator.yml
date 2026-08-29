@@ -1,0 +1,99 @@
+name: football3 R43GOV0 M6 unified dataset evaluator
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/pipeline/unified_dataset.py
+      - football-data/evaluation/unified_evaluator.py
+      - football-data/components/r43_native_matrix_components.py
+      - football-data/tests/test_unified_dataset_evaluator.py
+      - .github/workflows/football3-r43gov0-unified-dataset-evaluator.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unified-dataset-evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Verify governance isolation and frozen V500
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          if git diff --name-only 8e7aa3d703b88fae7e275203afa9d6897db79dcf...HEAD | grep -E '(^|/)CURRENT($|/)|football-data/forward/v6_market_first_events_v651.json|football-data/forward/r43u1_pristine_forward_events.json|football-data/forward/r43y0_draw_calibration_forward_events.json'; then
+            echo 'sealed/current path modified' >&2
+            exit 1
+          fi
+      - name: Compile M6 pipeline and evaluator
+        run: |
+          python -m py_compile football-data/pipeline/unified_dataset.py
+          python -m py_compile football-data/evaluation/unified_evaluator.py
+          python -m py_compile football-data/tests/test_unified_dataset_evaluator.py
+      - name: Run M6 dataset and evaluator tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s football-data/tests -p 'test_unified_dataset_evaluator.py' -v 2>&1 | tee /tmp/m6_test.log
+      - name: Upload M6 diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m6-unified-dataset-evaluator-diagnostic
+          path: /tmp/m6_test.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Write M6 gate receipt
+        shell: bash
+        run: |
+          mkdir -p football-data/governance/r43gov0/results
+          cat > football-data/governance/r43gov0/results/m6_unified_dataset_evaluator_gate.json <<'JSON'
+          {
+            "schema_version": "football3-r43gov0-m6-unified-dataset-evaluator-gate-v1",
+            "status": "PASS",
+            "scope": "research_governance_only",
+            "single_numerical_inference_engine_for_dataset_replay_live": true,
+            "stateless_dataset_replay_live_prediction_numerics_identical": true,
+            "prediction_hash_excludes_settled_outcome": true,
+            "settled_row_hash_includes_outcome": true,
+            "same_kickoff_group_predictions_frozen_before_state_update": true,
+            "historical_state_update_after_group_only": true,
+            "stateful_live_pending_settlement_lifecycle_governed": false,
+            "stateful_live_usage_fails_closed": true,
+            "time_ordered_folds_only": true,
+            "same_kickoff_group_never_split_across_folds": true,
+            "random_time_split_supported": false,
+            "unified_metrics": ["top1_accuracy", "logloss", "brier", "rps", "draw_calibration"],
+            "paired_comparison_requires_exact_fixture_set": true,
+            "dataset_fingerprint_available": true,
+            "feature_family_numeric_activation_promoted": false,
+            "fresh_confirmatory_test_claim": false,
+            "formal_default_baseline": "V500_frozen_unchanged",
+            "current_modified": false,
+            "main_modified": false,
+            "u0_y0_predictions_modified": false,
+            "next_step": "M7_feature_family_numeric_integration_audit_and_contracts"
+          }
+          JSON
+      - name: Upload M6 gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m6-unified-dataset-evaluator-gate
+          path: football-data/governance/r43gov0/results/m6_unified_dataset_evaluator_gate.json
+          if-no-files-found: error
+          retention-days: 90
