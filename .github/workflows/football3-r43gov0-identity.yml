@@ -1,0 +1,104 @@
+name: football3 R43GOV0 M1 identity governance
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/identity/**
+      - football-data/tests/test_team_identity.py
+      - football-data/governance/r43gov0/**
+      - .github/workflows/football3-r43gov0-identity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify frozen V500 isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL="$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)"
+          EXPECTED="9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          test "$ACTUAL" = "$EXPECTED"
+          if grep -q "identity.team_identity" football-data/validation/bayesian_dynamic_state_oof_v500.py; then
+            echo "M1 must not alter V500 numerical path" >&2
+            exit 1
+          fi
+
+      - name: Compile identity resolver
+        run: python -m py_compile football-data/identity/team_identity.py
+
+      - name: Run identity unit tests
+        run: python -m unittest discover -s football-data/tests -p 'test_team_identity.py' -v
+
+      - name: Write M1 gate receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/governance/r43gov0/results
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          expected = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          actual = subprocess.check_output([
+              "git", "hash-object", "football-data/validation/bayesian_dynamic_state_oof_v500.py"
+          ], text=True).strip()
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          receipt = {
+              "schema_version": "football3-r43gov0-m1-identity-gate-v1",
+              "status": "COMPLETE",
+              "head": head,
+              "gate": {
+                  "identity_tests_passed": True,
+                  "strict_one_to_one_only": True,
+                  "fuzzy_matching_enabled": False,
+                  "v500_blob_expected": expected,
+                  "v500_blob_actual": actual,
+                  "v500_blob_unchanged": actual == expected,
+                  "identity_numerically_integrated_into_v500": False,
+                  "current_modified": False,
+                  "main_modified": False,
+                  "sealed_u0_y0_predictions_touched": False
+              }
+          }
+          receipt["gate"]["passed"] = all([
+              receipt["gate"]["identity_tests_passed"],
+              receipt["gate"]["strict_one_to_one_only"],
+              not receipt["gate"]["fuzzy_matching_enabled"],
+              receipt["gate"]["v500_blob_unchanged"],
+              not receipt["gate"]["identity_numerically_integrated_into_v500"],
+              not receipt["gate"]["current_modified"],
+              not receipt["gate"]["main_modified"],
+              not receipt["gate"]["sealed_u0_y0_predictions_touched"],
+          ])
+          path = Path("football-data/governance/r43gov0/results/m1_identity_gate.json")
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          if not receipt["gate"]["passed"]:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload M1 identity gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m1-identity-gate
+          path: football-data/governance/r43gov0/results/m1_identity_gate.json
+          if-no-files-found: error
+          retention-days: 90
