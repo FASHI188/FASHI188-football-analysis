@@ -175,6 +175,22 @@ jobs:
             --output /tmp/r43q/football-data/experiments/r43q0_sharp_market_score_base/run_r43q0.py
           test "$(git hash-object /tmp/r43q/football-data/experiments/r43q0_sharp_market_score_base/run_r43q0.py)" = "299b86ed07e49af0b9ec5c7632f519e91e836158"
 
+      - name: Apply safe deterministic identity alias overlay
+        if: steps.probe_gate.outputs.status == 'PASS_FRESH_ATOMIC_PIT_AVAILABLE'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('football-data/runtime/run_m11_fresh_forward_lockbox.py')
+          s=p.read_text(encoding='utf-8')
+          marker='    fixed = {\n'
+          aliases='''        "pec zwolle": "zwolle",\n        "nec nijmegen": "nijmegen",\n        "atletico madrid": "ath madrid",\n        "gimnasia la plata": "gimnasia l p",\n        "red bull bragantino": "bragantino",\n        "atlanta united": "atlanta utd",\n        "d c united": "dc united",\n        "vasco da gama": "vasco",\n        "talleres (cordoba)": "talleres cordoba",\n        "hammarby if": "hammarby",\n        "leeds united": "leeds",\n        "sc freiburg": "freiburg",\n        "ifk goteborg": "goteborg",\n        "viking fk": "viking",\n        "hamarkameratene": "ham kam",\n        "kristiansund bk": "kristiansund",\n        "manchester united": "man united",\n        "ipswich town": "ipswich",\n'''
+          if marker not in s:
+              raise SystemExit('alias fixed-dict marker missing')
+          s=s.replace(marker, marker+aliases, 1)
+          p.write_text(s,encoding='utf-8')
+          print('safe deterministic alias overlay applied: 18 aliases')
+          PY
+
       - name: Run M11 fresh four-config lockbox
         if: steps.probe_gate.outputs.status == 'PASS_FRESH_ATOMIC_PIT_AVAILABLE'
         run: |
@@ -203,6 +219,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -- football-data/runtime/run_m11_fresh_forward_lockbox.py || true
           git add football-data/forward/m11_fresh_forward_300_lockbox.json || true
           git add football-data/evidence/markets_prospective || true
           git add football-data/evidence/direct_provider_probes/kambi/full17 || true
