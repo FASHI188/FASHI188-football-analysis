@@ -7,51 +7,124 @@ on:
     paths:
       - .github/workflows/football-r45b-player-capability-strict-chronology.yml
       - football-data/research/r45b_player_capability_strict_chronology/**
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  audit-prior:
+  r45b-strict:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - name: Reconstruct frozen R45A runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          SRC=football-data/research/r45a_player_capability_300_retro/encoded
-          OUT=football-data/research/r45b_player_capability_strict_chronology/audit
-          mkdir -p "$OUT"
-          cat "$SRC"/run_r45a.py.b64.part1 "$SRC"/run_r45a.py.b64.part2 | base64 -d | gzip -d > "$OUT/run_r45a_original.py"
-          echo 'e4bce5f43ba3a6db80ff6e5c9386249d05f59fc61499dd052ca5180e63627ebe  '"$OUT/run_r45a_original.py" | sha256sum -c -
-      - name: Extract PIT-sensitive code map
-        shell: bash
-        run: |
-          set -euo pipefail
-          OUT=football-data/research/r45b_player_capability_strict_chronology/audit
-          python - <<'PY'
-          import ast, json, pathlib
-          p=pathlib.Path('football-data/research/r45b_player_capability_strict_chronology/audit/run_r45a_original.py')
-          s=p.read_text()
-          tree=ast.parse(s)
-          funcs=[]
-          for n in tree.body:
-              if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
-                  funcs.append({'name':n.name,'lineno':n.lineno,'end_lineno':getattr(n,'end_lineno',None)})
-          needles=['lineup','player','attribute','date','train','test','market','feature','xi','snapshot']
-          hits={k:[] for k in needles}
-          for i,line in enumerate(s.splitlines(),1):
-              lo=line.lower()
-              for k in needles:
-                  if k in lo:
-                      hits[k].append(i)
-          pathlib.Path('football-data/research/r45b_player_capability_strict_chronology/audit/code_map.json').write_text(json.dumps({'functions':funcs,'keyword_lines':hits},indent=2))
-          print(json.dumps({'function_count':len(funcs),'functions':funcs},indent=2))
-          PY
-      - uses: actions/upload-artifact@v4
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
         with:
-          name: r45b-prior-runner-audit
-          path: football-data/research/r45b_player_capability_strict_chronology/audit
-          if-no-files-found: error
+          ref: research/r45b-player-capability-strict-chronology
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.2'
+
+      - name: Reconstruct frozen R45A fixed sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45a_player_capability_300_retro
+          cat "$D"/encoded/sample_market_min.csv.b64.part1 "$D"/encoded/sample_market_min.csv.b64.part2 "$D"/encoded/sample_market_min.csv.b64.part3_1 "$D"/encoded/sample_market_min.csv.b64.part3_2 "$D"/encoded/sample_market_min.csv.b64.part3_3_1 "$D"/encoded/sample_market_min.csv.b64.part3_3_2 "$D"/encoded/sample_market_min.csv.b64.part3_3_3 "$D"/encoded/sample_market_min.csv.b64.part4 | base64 -d | gzip -d > "$D/sample_market_min.csv"
+          echo 'bc58fcf4bf4a452d1769dacd9111b1cdf88e5039a45e706d339559a3627f163b  '"$D/sample_market_min.csv" | sha256sum -c -
+          python -m py_compile football-data/research/r45b_player_capability_strict_chronology/run_r45b.py
+
+      - name: Install fixed dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas==2.3.1 numpy==2.3.2 scipy==1.16.1 rapidfuzz==3.13.0 scikit-learn==1.9.0
+
+      - name: Fetch same frozen external capability source family
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45b_player_capability_strict_chronology
+          git clone --depth 1 https://github.com/jasonsignolet/football.git "$D/external_football"
+          cd "$D/external_football"
+          git rev-parse HEAD | tee ../external_source_commit.txt
+
+      - name: Convert RData with R-native date semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45b_player_capability_strict_chronology
+          cd "$D"
+          Rscript - <<'RS'
+          files <- c('football_match.RData','team.RData','player_attributes.RData','team_attributes.RData')
+          for (f in files) {
+            e <- new.env(parent=emptyenv())
+            n <- load(file.path('external_football','data',f), envir=e)
+            stopifnot(length(n)==1)
+            x <- e[[n[[1]]]]
+            out <- file.path('external_football','data',sub('\\.RData$','.csv',f))
+            write.csv(x,out,row.names=FALSE,na='')
+            if ('date' %in% names(x)) cat(f, as.character(min(x$date,na.rm=TRUE)), as.character(max(x$date,na.rm=TRUE)), '\n')
+          }
+          RS
+
+      - name: Run R45B strict-prior expected-XI diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/r45b_player_capability_strict_chronology
+          cd "$D"
+          EURO_FOOTBALL_DATA=external_football/data R45B_OUT=r45b_output python run_r45b.py | tee r45b_console.log
+
+      - name: Verify R45B governance contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('football-data/research/r45b_player_capability_strict_chronology/r45b_output/result.json')
+          x=json.loads(p.read_text())
+          assert x['formal_weight']==0
+          assert x['classification']=='POSTVIEW_STRICT_CHRONOLOGY_REPAIR_FORMAL_WEIGHT_ZERO'
+          if x['status']=='COMPLETE':
+              g=x['governance']
+              assert g['r45a_labels_already_consumed'] is True
+              assert g['promotion_allowed'] is False
+              assert g['target_match_xi_used'] is False
+              assert g['same_date_lineup_updates_before_prediction'] is False
+              assert g['player_snapshot_rule']=='attribute_date < match_date'
+              assert g['team_style_snapshot_rule']=='attribute_date < match_date'
+              assert g['draw_override'] is False and g['draw_threshold'] is False and g['class_weight'] is False
+              print(json.dumps({'status':x['status'],'coverage':x['coverage'],'delta':x['candidate_minus_baseline'],'bootstrap':x['bootstrap_m4_minus_m3'],'gate':x['gate'],'action':x['action']},indent=2))
+          elif x['status']=='STOP_COVERAGE':
+              print(json.dumps({'status':x['status'],'coverage':x['coverage'],'thresholds':x['thresholds']},indent=2))
+          else:
+              raise AssertionError(x['status'])
+          PY
+
+      - name: Hash outputs
+        if: always()
+        shell: bash
+        run: |
+          D=football-data/research/r45b_player_capability_strict_chronology
+          if [ -d "$D/r45b_output" ]; then find "$D/r45b_output" -type f -print0 | sort -z | xargs -0 sha256sum > "$D/r45b_output_sha256.txt"; fi
+
+      - name: Upload R45B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r45b-player-capability-strict-chronology
+          path: |
+            football-data/research/r45b_player_capability_strict_chronology/r45b_output
+            football-data/research/r45b_player_capability_strict_chronology/r45b_console.log
+            football-data/research/r45b_player_capability_strict_chronology/r45b_output_sha256.txt
+            football-data/research/r45b_player_capability_strict_chronology/external_source_commit.txt
+          if-no-files-found: warn
+          retention-days: 90
