@@ -12,7 +12,7 @@ on:
       - football-data/identity/team_identity.py
       - football-data/pit/feature_store.py
       - football-data/assembly/feature_assembler.py
-      - .github/workflows/football3-r43gov0-full18464-diff.yml
+      - '.github/workflows/football3-r43gov0-full18464-diff.yml'
   workflow_dispatch:
 
 permissions:
@@ -74,13 +74,22 @@ jobs:
           assert d['u0_y0_modified'] is False
           print('FULL_18464_DIFF_PASS')
           PY
-      - name: Verify sealed CURRENT U0 Y0 unchanged
+      - name: Verify sealed CURRENT U0 Y0 path existence and content
         run: |
           set -euo pipefail
           BASE=7c1815c47102412e88f72189e2b8f837d9b73a42
           git fetch --depth=1 origin "$BASE"
-          for p in CURRENT football-data/forward/r43u1_pristine_forward_events.json football-data/forward/r43y0_draw_calibration_forward_events.json; do
-            test "$(git show "$BASE:$p" | git hash-object --stdin)" = "$(git hash-object "$p")" || exit 1
+          for p in \
+            CURRENT \
+            football-data/forward/v6_market_first_events_v651.json \
+            football-data/forward/r43u1_pristine_forward_events.json \
+            football-data/forward/r43y0_draw_calibration_forward_events.json; do
+            if git cat-file -e "$BASE:$p" 2>/dev/null; then
+              test -f "$p" || { echo "sealed path disappeared: $p" >&2; exit 1; }
+              test "$(git show "$BASE:$p" | git hash-object --stdin)" = "$(git hash-object "$p")" || { echo "sealed path drift: $p" >&2; exit 1; }
+            else
+              test ! -e "$p" || { echo "sealed path unexpectedly created: $p" >&2; exit 1; }
+            fi
           done
       - uses: actions/upload-artifact@v4
         if: always()
