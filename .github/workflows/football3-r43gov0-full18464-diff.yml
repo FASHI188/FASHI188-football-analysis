@@ -1,0 +1,88 @@
+name: football3 R43GOV0 full 18464 entry diff
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/validation/r43gov0_full18464_entry_diff.py
+      - football-data/pipeline/formal_v470_replay_baseline.py
+      - football-data/pipeline/unified_inference.py
+      - football-data/pipeline/unified_dataset.py
+      - football-data/identity/team_identity.py
+      - football-data/pit/feature_store.py
+      - football-data/assembly/feature_assembler.py
+      - .github/workflows/football3-r43gov0-full18464-diff.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Compile full-volume diff chain
+        run: |
+          python -m py_compile football-data/pipeline/formal_v470_replay_baseline.py
+          python -m py_compile football-data/validation/r43gov0_full18464_entry_diff.py
+      - name: Prohibit precomputed matrix migration shortcut
+        run: |
+          set -euo pipefail
+          if grep -nE "payload\.get\(['\"]score_matrix|precomputed_matrix.*payload" football-data/pipeline/formal_v470_replay_baseline.py; then
+            echo 'precomputed matrix shortcut detected' >&2
+            exit 1
+          fi
+      - name: Run all 18464 old and rebuilt entries
+        env:
+          PYTHONPATH: football-data
+        run: python football-data/validation/r43gov0_full18464_entry_diff.py
+      - name: Verify full-volume acceptance receipt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('football-data/validation/reports/r43gov0_full18464_entry_diff.json')
+          d = json.loads(p.read_text())
+          assert d['status'] == 'PASS'
+          assert d['scope'] == 'full_volume_no_sampling'
+          assert d['expected_rows'] == d['old_rows'] == d['new_rows'] == 18464
+          assert d['competition_count'] == 17
+          assert d['fixture_set_match'] is True
+          assert d['matrix_hash_mismatch_count'] == 0
+          assert d['top1_mismatch_count'] == 0
+          assert d['max_abs_1x2_difference'] == 0.0
+          assert d['activation_receipt_missing_count'] == 0
+          assert d['baseline_numerical_receipt_missing_count'] == 0
+          assert d['operational_runtime_baseline_remains'] == 'S60'
+          assert d['operational_runtime_baseline_changed'] is False
+          assert not d['lineup_numeric_1x2_enabled'] and not d['player_technical_numeric_1x2_enabled']
+          assert not d['head_coach_numeric_1x2_enabled'] and not d['availability_numeric_1x2_enabled']
+          assert d['u0_y0_modified'] is False
+          print('FULL_18464_DIFF_PASS')
+          PY
+      - name: Verify sealed CURRENT U0 Y0 unchanged
+        run: |
+          set -euo pipefail
+          BASE=7c1815c47102412e88f72189e2b8f837d9b73a42
+          git fetch --depth=1 origin "$BASE"
+          for p in CURRENT football-data/forward/r43u1_pristine_forward_events.json football-data/forward/r43y0_draw_calibration_forward_events.json; do
+            test "$(git show "$BASE:$p" | git hash-object --stdin)" = "$(git hash-object "$p")" || exit 1
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-r43gov0-full18464-entry-diff
+          path: football-data/validation/reports/r43gov0_full18464_entry_diff.json
+          if-no-files-found: warn
+          retention-days: 90
