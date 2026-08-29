@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
+import sys
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "identity" / "team_identity.py"
-SPEC = importlib.util.spec_from_file_location("football3_team_identity", MODULE_PATH)
-assert SPEC and SPEC.loader
-MOD = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MOD)
-TeamIdentityResolver = MOD.TeamIdentityResolver
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from identity.team_identity import TeamIdentityResolver
 
 
 class TeamIdentityResolverTests(unittest.TestCase):
