@@ -1,0 +1,1 @@
+M7 truth contract separates collected/recognized data, PIT legality, numerical consumer existence, current PIT binding, numeric effect enablement, and formal promotion. No feature is allowed to claim numeric effect merely because data exists.
