@@ -10,9 +10,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from typing import Any, Iterable, Mapping
 
 from pit.feature_store import PITReadResult
+
+
+CLASSES = ("home", "draw", "away")
 
 
 def _iso(value: datetime) -> str:
@@ -22,6 +26,20 @@ def _iso(value: datetime) -> str:
 def _stable_hash(payload: Any) -> str:
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _validated_1x2(probabilities: Mapping[str, float] | None) -> dict[str, float] | None:
+    if probabilities is None:
+        return None
+    if set(probabilities) != set(CLASSES):
+        raise ValueError("final_1x2 must contain exactly home/draw/away")
+    out = {key: float(probabilities[key]) for key in CLASSES}
+    if any(not math.isfinite(value) or value < 0.0 for value in out.values()):
+        raise ValueError("final_1x2 probabilities must be finite and nonnegative")
+    total = sum(out.values())
+    if abs(total - 1.0) > 1e-9:
+        raise ValueError(f"final_1x2 probabilities must sum to 1, got {total}")
+    return out
 
 
 @dataclass(frozen=True)
@@ -175,7 +193,14 @@ class FeatureAssembler:
     ) -> FeatureActivationReceipt:
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("as_of must be timezone-aware")
-        acts = tuple(activations)
+        probs = _validated_1x2(final_1x2)
+        acts = tuple(sorted(
+            tuple(activations),
+            key=lambda activation: (
+                activation.feature_family,
+                _stable_hash(activation.to_dict()),
+            ),
+        ))
         payload = {
             "fixture_id": fixture_id,
             "as_of": _iso(as_of),
@@ -183,7 +208,7 @@ class FeatureAssembler:
             "canonical_away_team_id": canonical_away_team_id,
             "activations": [a.to_dict() for a in acts],
             "final_score_matrix_hash": final_score_matrix_hash,
-            "final_1x2": dict(final_1x2) if final_1x2 is not None else None,
+            "final_1x2": probs,
             "final_top1": final_top1,
         }
         receipt_hash = _stable_hash(payload)
@@ -194,7 +219,7 @@ class FeatureAssembler:
             canonical_away_team_id=canonical_away_team_id,
             activations=acts,
             final_score_matrix_hash=final_score_matrix_hash,
-            final_1x2=final_1x2,
+            final_1x2=probs,
             final_top1=final_top1,
             receipt_hash=receipt_hash,
         )
