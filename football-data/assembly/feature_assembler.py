@@ -1,6 +1,6 @@
 """Feature assembly and per-match activation receipts for Football3.
 
-This module does not alter any model.  It records whether a feature was merely
+This module does not alter any model. It records whether a feature was merely
 recognized, was PIT-legal, entered a numerical input, and actually changed the
 active component output for a specific prediction.
 """
@@ -82,15 +82,19 @@ class FeatureActivationReceipt:
 
 
 DEFAULT_POLICIES: dict[str, FeatureFamilyPolicy] = {
-    # R43B0R1 passed its lineup-probability/XI-overlap gate, but current Football3
-    # governance explicitly does not wire probable lineup into the active 1X2 path.
+    # Lineup prediction quality passed its own historical mechanism gate, but the
+    # mechanism has not passed a 1X2 numerical-integration gate.
     "lineup_pstart": FeatureFamilyPolicy(True, True, False),
-    # Retrospective availability rows are recognized labels, not PIT-legal numerical features.
+    # Retrospective availability/personnel labels are not approved numerical features.
     "availability_status": FeatureFamilyPolicy(True, False, False),
-    # R42H v1 did not pass its promotion gate and lacks independently bound row-level known_at.
+    # R42H player technical translation failed its promotion gate.
     "player_technical": FeatureFamilyPolicy(True, False, False),
-    # Generic market family may be activated only by a later component wrapper with proven PIT input.
-    "market_1x2_ah_ou": FeatureFamilyPolicy(True, False, False),
+    # Coach translation/fingerprint paths failed promotion and do not have a verified
+    # current-match prematch coach-change timestamp contract.
+    "head_coach": FeatureFamilyPolicy(True, False, False),
+    # Market surfaces have a proven numerical consumer (R43Q), but are not enabled
+    # here until the payload is bound to PIT records by the dedicated market adapter.
+    "market_1x2_ah_ou": FeatureFamilyPolicy(True, True, False),
 }
 
 
@@ -179,42 +183,26 @@ class FeatureAssembler:
     ) -> FeatureActivationReceipt:
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("as_of must be timezone-aware")
-        fixture = str(fixture_id).strip()
-        home = str(canonical_home_team_id).strip()
-        away = str(canonical_away_team_id).strip()
-        if not fixture or not home or not away:
-            raise ValueError("fixture_id and canonical team IDs must be non-empty")
-        ordered = tuple(sorted(activations, key=lambda a: a.feature_family))
-        if len({a.feature_family for a in ordered}) != len(ordered):
-            raise ValueError("duplicate feature_family activation in one receipt")
-        if final_1x2 is not None:
-            keys = set(final_1x2)
-            if keys != {"home", "draw", "away"}:
-                raise ValueError("final_1x2 must contain home/draw/away")
-            total = sum(float(final_1x2[k]) for k in ("home", "draw", "away"))
-            if abs(total - 1.0) > 1e-9:
-                raise ValueError("final_1x2 must sum to 1")
-            if final_top1 not in {"home", "draw", "away"}:
-                raise ValueError("final_top1 required when final_1x2 is present")
+        acts = tuple(activations)
         payload = {
-            "fixture_id": fixture,
+            "fixture_id": fixture_id,
             "as_of": _iso(as_of),
-            "canonical_home_team_id": home,
-            "canonical_away_team_id": away,
-            "activations": [a.to_dict() for a in ordered],
+            "canonical_home_team_id": canonical_home_team_id,
+            "canonical_away_team_id": canonical_away_team_id,
+            "activations": [a.to_dict() for a in acts],
             "final_score_matrix_hash": final_score_matrix_hash,
             "final_1x2": dict(final_1x2) if final_1x2 is not None else None,
             "final_top1": final_top1,
         }
         receipt_hash = _stable_hash(payload)
         return FeatureActivationReceipt(
-            fixture,
-            as_of.astimezone(timezone.utc),
-            home,
-            away,
-            ordered,
-            final_score_matrix_hash,
-            dict(final_1x2) if final_1x2 is not None else None,
-            final_top1,
-            receipt_hash,
+            fixture_id=fixture_id,
+            as_of=as_of.astimezone(timezone.utc),
+            canonical_home_team_id=canonical_home_team_id,
+            canonical_away_team_id=canonical_away_team_id,
+            activations=acts,
+            final_score_matrix_hash=final_score_matrix_hash,
+            final_1x2=final_1x2,
+            final_top1=final_top1,
+            receipt_hash=receipt_hash,
         )
