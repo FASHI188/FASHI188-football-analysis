@@ -86,7 +86,7 @@ DEFAULT_POLICIES: dict[str, FeatureFamilyPolicy] = {
     "availability_status": FeatureFamilyPolicy(True, False, False),
     "player_technical": FeatureFamilyPolicy(True, False, False),
     "head_coach": FeatureFamilyPolicy(True, False, False),
-    "market_1x2_ah_ou": FeatureFamilyPolicy(True, True, False),
+    "market_1x2_ah_ou": FeatureFamilyPolicy(True, False, False),
 }
 
 
