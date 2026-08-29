@@ -41,8 +41,9 @@ class FeatureIntegrationTruthTests(unittest.TestCase):
         self.assertFalse(x.pit_contract_available)
         self.assertFalse(x.numeric_effect_enabled)
 
-    def test_market_has_consumer_but_not_pit_bound(self):
+    def test_market_has_exact_consumer_but_no_promotion_or_pit_binding(self):
         x = FEATURE_TRUTH["market_1x2_ah_ou"]
+        self.assertFalse(x.historical_mechanism_gate_passed)
         self.assertTrue(x.numerical_consumer_exists)
         self.assertTrue(x.pit_contract_available)
         self.assertFalse(x.currently_pit_bound_to_consumer)
@@ -55,7 +56,7 @@ class FeatureIntegrationTruthTests(unittest.TestCase):
         self.assertFalse(assembler.policy("lineup_pstart").numeric_effect_enabled)
         self.assertFalse(assembler.policy("player_technical").numeric_effect_enabled)
         self.assertFalse(assembler.policy("head_coach").numeric_effect_enabled)
-        self.assertTrue(assembler.policy("market_1x2_ah_ou").experiment_passed)
+        self.assertFalse(assembler.policy("market_1x2_ah_ou").experiment_passed)
         self.assertFalse(assembler.policy("market_1x2_ah_ou").numeric_effect_enabled)
 
 
