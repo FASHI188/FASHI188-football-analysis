@@ -1,16 +1,8 @@
 """Real S60 numerical baseline for the unified Football3 inference path.
 
-This module moves the S60 calculation behind ``UnifiedInferenceEngine``.  It does
-not accept per-fixture precomputed probabilities or score matrices.  The numerical
-state is the frozen R9b strict-prior state machine and the classifier head is fitted
-locally with the exact S60 contract: StandardScaler + LogisticRegression(C=.5,
-random_state=0) on the last 24,123 date-safe historical raw predictions.
-
-S60 is natively a 1X2 model.  For the unified score-matrix protocol we build the
-parameter-free Poisson matrix implied by the raw S60 state means and then transport
-its home/draw/away masses to the classifier 1X2 vector while preserving within-
-outcome score shape.  This transport is an architecture adapter, not a claim that
-the legacy S60 source trained a native score-matrix head.
+Per-fixture precomputed probabilities/matrices are forbidden. S60 replays the
+frozen R9b strict-prior state, fits the fixed 24,123-row classifier head locally,
+and calculates every prediction inside UnifiedInferenceEngine.
 """
 from __future__ import annotations
 
@@ -19,13 +11,13 @@ from dataclasses import dataclass
 import importlib.util
 import math
 from pathlib import Path
+import sys
 from typing import Any, Iterable, Mapping
 
 import numpy as np
 
 from components.outcome_mass_matrix_transport import lift_1x2_target
 from pipeline.unified_inference import FixtureRequest, canonical_matrix
-
 
 ROOT = Path(__file__).resolve().parents[1]
 R9_SOURCE = ROOT / "experiments" / "top1_r9b_xg_hf" / "run_experiment_r9b.py"
@@ -38,34 +30,23 @@ MAX_GOALS = 12
 
 
 def _load_r9():
-    spec = importlib.util.spec_from_file_location("football3_s60_r9_source", R9_SOURCE)
+    name = "football3_s60_r9_source"
+    spec = importlib.util.spec_from_file_location(name, R9_SOURCE)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load frozen R9b numerical source")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 r9 = _load_r9()
 
-
 FORBIDDEN_FIXTURE_PAYLOAD_KEYS = {
-    "score_matrix",
-    "score_matrix_hash",
-    "source_model_blob_sha",
-    "precomputed_probabilities",
-    "probabilities",
-    "p_home",
-    "p_draw",
-    "p_away",
-    "top1",
-    "actual_result",
-    "home_goals_90",
-    "away_goals_90",
-    "home_goals",
-    "away_goals",
-    "home_xg",
-    "away_xg",
+    "score_matrix", "score_matrix_hash", "source_model_blob_sha",
+    "precomputed_probabilities", "probabilities", "p_home", "p_draw", "p_away",
+    "top1", "actual_result", "home_goals_90", "away_goals_90", "home_goals",
+    "away_goals", "home_xg", "away_xg",
 }
 
 
@@ -91,22 +72,15 @@ class S60FitReceipt:
         }
 
 
-def _validate_history_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def _clean_history(row: Mapping[str, Any]) -> dict[str, Any]:
     required = {
-        "date",
-        "game_id",
-        "competition_id",
-        "home_team",
-        "away_team",
-        "home_goals",
-        "away_goals",
-        "home_xg",
-        "away_xg",
+        "date", "game_id", "competition_id", "home_team", "away_team",
+        "home_goals", "away_goals", "home_xg", "away_xg",
     }
     missing = required - set(row)
     if missing:
         raise ValueError(f"S60 history row missing fields: {sorted(missing)}")
-    return {
+    out = {
         "date": str(row["date"]),
         "game_id": str(row["game_id"]),
         "competition_id": str(row["competition_id"]),
@@ -116,15 +90,15 @@ def _validate_history_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "away_goals": int(row["away_goals"]),
         "home_xg": float(row["home_xg"]),
         "away_xg": float(row["away_xg"]),
-        **({"xg_known_at": str(row["xg_known_at"])} if row.get("xg_known_at") is not None else {}),
     }
+    if row.get("xg_known_at") is not None:
+        out["xg_known_at"] = str(row["xg_known_at"])
+    return out
 
 
 def replay_history_date_safe(rows: Iterable[Mapping[str, Any]]):
-    """Replay strict-prior S60 state; no same-date result/xG enters prediction."""
-    clean = [_validate_history_row(row) for row in rows]
-    clean.sort(key=lambda row: (row["date"], row["game_id"]))
-    if len({row["game_id"] for row in clean}) != len(clean):
+    clean = sorted((_clean_history(row) for row in rows), key=lambda x: (x["date"], x["game_id"]))
+    if len({x["game_id"] for x in clean}) != len(clean):
         raise ValueError("duplicate S60 history game_id")
     state = r9.S()
     predicted: list[dict[str, Any]] = []
@@ -133,14 +107,9 @@ def replay_history_date_safe(rows: Iterable[Mapping[str, Any]]):
         by_date[row["date"]].append(row)
     for day in sorted(by_date):
         pending = []
-        for row in sorted(by_date[day], key=lambda item: item["game_id"]):
+        for row in sorted(by_date[day], key=lambda x: x["game_id"]):
             raw = state.pred(row)
-            predicted.append({
-                "date": day,
-                "game_id": row["game_id"],
-                "y": r9.actual(row),
-                "raw": raw,
-            })
+            predicted.append({"date": day, "game_id": row["game_id"], "y": r9.actual(row), "raw": raw})
             pending.append((row, raw))
         for row, raw in pending:
             state.update(row, raw)
@@ -151,7 +120,6 @@ def _fit_classifier(train_rows: list[dict[str, Any]]):
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
-
     if not train_rows:
         raise ValueError("S60 classifier training rows are empty")
     y = [int(row["y"]) for row in train_rows]
@@ -159,52 +127,39 @@ def _fit_classifier(train_rows: list[dict[str, Any]]):
         raise ValueError("S60 classifier training requires all three outcomes")
     model = make_pipeline(
         StandardScaler(),
-        LogisticRegression(
-            C=CLASSIFIER_C,
-            max_iter=3000,
-            random_state=CLASSIFIER_RANDOM_STATE,
-        ),
+        LogisticRegression(C=CLASSIFIER_C, max_iter=3000, random_state=CLASSIFIER_RANDOM_STATE),
     )
     model.fit([r9.feat_k1(row["raw"]) for row in train_rows], y)
     return model
 
 
 def _classifier_probabilities(model, raw: Mapping[str, Any]) -> dict[str, float]:
-    row = model.predict_proba([r9.feat_k1(raw)])[0]
-    classes = [int(value) for value in model[-1].classes_]
+    predicted = model.predict_proba([r9.feat_k1(raw)])[0]
     values = np.zeros(3, dtype=float)
-    for label, probability in zip(classes, row):
-        values[label] = float(probability)
+    for label, probability in zip(model[-1].classes_, predicted):
+        values[int(label)] = float(probability)
     values = np.clip(values, 1e-12, None)
     values /= values.sum()
     return {"home": float(values[0]), "draw": float(values[1]), "away": float(values[2])}
 
 
 def _poisson_matrix(mu_home: float, mu_away: float) -> list[dict[str, Any]]:
-    mh = float(mu_home)
-    ma = float(mu_away)
-    if not math.isfinite(mh) or not math.isfinite(ma) or mh <= 0.0 or ma <= 0.0:
+    mh, ma = float(mu_home), float(mu_away)
+    if not math.isfinite(mh) or not math.isfinite(ma) or mh <= 0 or ma <= 0:
         raise ValueError("invalid S60 Poisson means")
-    hp = [math.exp(-mh)]
-    ap = [math.exp(-ma)]
+    hp, ap = [math.exp(-mh)], [math.exp(-ma)]
     for k in range(1, MAX_GOALS + 1):
         hp.append(hp[-1] * mh / k)
         ap.append(ap[-1] * ma / k)
     cells = [
         {"home_goals": h, "away_goals": a, "probability": hp[h] * ap[a]}
-        for h in range(MAX_GOALS + 1)
-        for a in range(MAX_GOALS + 1)
+        for h in range(MAX_GOALS + 1) for a in range(MAX_GOALS + 1)
     ]
-    total = sum(float(cell["probability"]) for cell in cells)
-    return canonical_matrix([
-        {**cell, "probability": float(cell["probability"]) / total}
-        for cell in cells
-    ])
+    total = sum(float(c["probability"]) for c in cells)
+    return canonical_matrix([{**c, "probability": float(c["probability"]) / total} for c in cells])
 
 
 class S60NumericalBaseline:
-    """In-process S60 calculator.  Per-fixture precomputed numerics are rejected."""
-
     component_id = "S60_stage_primary_numerical_baseline"
     component_version = "r43gov-runtime-s60-v1"
     native_output = "1x2_probabilities"
@@ -226,26 +181,18 @@ class S60NumericalBaseline:
         expected_history_rows: int | None = HISTORY_ROWS,
         classifier_train_rows: int = CLASSIFIER_TRAIN_ROWS,
     ) -> "S60NumericalBaseline":
-        clean = [_validate_history_row(row) for row in rows]
-        clean.sort(key=lambda row: (row["date"], row["game_id"]))
+        clean = sorted((_clean_history(row) for row in rows), key=lambda x: (x["date"], x["game_id"]))
         if expected_history_rows is not None and len(clean) != int(expected_history_rows):
-            raise ValueError(
-                f"S60 history row count mismatch: {len(clean)} != {expected_history_rows}"
-            )
+            raise ValueError(f"S60 history row count mismatch: {len(clean)} != {expected_history_rows}")
         predicted, state = replay_history_date_safe(clean)
-        train_n = int(classifier_train_rows)
-        if train_n <= 0 or len(predicted) < train_n:
+        n = int(classifier_train_rows)
+        if n <= 0 or len(predicted) < n:
             raise ValueError("insufficient S60 classifier training history")
-        train = predicted[-train_n:]
+        train = predicted[-n:]
         model = _fit_classifier(train)
         receipt = S60FitReceipt(
-            R9_SOURCE_BLOB_SHA,
-            len(clean),
-            train_n,
-            clean[0]["date"],
-            clean[-1]["date"],
-            train[0]["date"],
-            train[-1]["date"],
+            R9_SOURCE_BLOB_SHA, len(clean), n, clean[0]["date"], clean[-1]["date"],
+            train[0]["date"], train[-1]["date"],
         )
         return cls(state, model, receipt)
 
@@ -272,8 +219,7 @@ class S60NumericalBaseline:
         }
         raw = self.state.pred(row)
         target = _classifier_probabilities(self.model, raw)
-        source_matrix = _poisson_matrix(float(raw["mu_home"]), float(raw["mu_away"]))
-        matrix = lift_1x2_target(source_matrix, target)
+        matrix = lift_1x2_target(_poisson_matrix(raw["mu_home"], raw["mu_away"]), target)
         self._last_receipt = {
             "fixture_id": request.fixture_id,
             "competition_id": competition_id,
