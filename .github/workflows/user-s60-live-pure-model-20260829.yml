@@ -1,4 +1,4 @@
-name: User Pure S60 Live 2026-08-29
+name: User Unified S60 Live 2026-08-29
 
 on:
   push:
@@ -6,12 +6,21 @@ on:
       - football3/r43gov0-unified-governance-audit
     paths:
       - 'football-data/forward/inbox/user_s60_live_20260829.json'
+      - 'football-data/forward/run_user_s60_unified_20260829.py'
+      - 'football-data/pipeline/s60_numerical_baseline.py'
+      - 'football-data/pipeline/runtime_authority.py'
+      - 'football-data/pipeline/unified_inference.py'
+      - 'football-data/assembly/feature_assembler.py'
+      - 'football-data/identity/team_identity.py'
+      - 'football-data/pit/feature_store.py'
+      - '.github/workflows/user-s60-live-pure-model-20260829.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  s60-live-pure-model:
+  s60-live-unified:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -25,12 +34,19 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check \
             pandas==2.2.3 numpy==2.1.3 scikit-learn==1.5.2 pyarrow==18.1.0
-      - name: Run frozen S60 architecture prospectively with zero target labels
+      - name: Prohibit direct R24 R23 R17 live bypass
+        run: |
+          set -euo pipefail
+          if grep -nE 'import run_experiment_r(24|23|17)|from .*top1_r(24|23|17)' football-data/forward/run_user_s60_unified_20260829.py; then
+            echo 'direct legacy live bypass detected' >&2
+            exit 1
+          fi
+      - name: Run S60 through unified identity PIT assembler inference chain
         env:
           S60_LIVE_INPUT: football-data/forward/inbox/user_s60_live_20260829.json
           S60_LIVE_OUT: s60_live_out
-        run: python football-data/forward/run_user_s60_live_20260829.py
-      - name: Verify pure-model contract
+        run: python football-data/forward/run_user_s60_unified_20260829.py
+      - name: Verify unified live contract
         run: |
           python - <<'PY'
           import json
@@ -38,9 +54,11 @@ jobs:
           p = Path('s60_live_out')
           d = json.loads((p/'s60_live_predictions.json').read_text())
           r = json.loads((p/'receipt.json').read_text())
-          assert d['status'] == 'S60_LIVE_PURE_MODEL_COMPLETE'
-          assert d['classification'] == 'TRUE_PROSPECTIVE_ZERO_TARGET_LABEL_PURE_MODEL'
+          assert d['status'] == 'S60_LIVE_UNIFIED_COMPLETE'
+          assert d['classification'] == 'TRUE_PROSPECTIVE_ZERO_TARGET_LABEL_UNIFIED_PIPELINE'
+          assert d['runtime_authority']['operational_execution_baseline'] == 'S60'
           assert d['model_definition']['name'] == 'S60'
+          assert d['model_definition']['direct_r24_r23_r17_runtime_calls'] is False
           assert d['model_definition']['manual_probability_adjustment'] is False
           assert d['model_definition']['market_probability_fallback'] is False
           assert d['information_boundary']['target_result_fields_loaded'] is False
@@ -48,19 +66,30 @@ jobs:
           assert d['information_boundary']['target_market_prices_loaded'] is False
           assert d['information_boundary']['target_lineup_evidence_loaded'] is False
           assert d['information_boundary']['target_rows_used_to_update_state'] is False
-          assert r['rows'] == 6
+          u = d['unified_contract']
+          assert u['team_identity_resolver_used'] and u['shared_pit_store_used']
+          assert u['feature_assembler_used'] and u['unified_inference_engine_used']
+          assert u['activation_receipt_emitted_per_fixture']
+          assert not u['lineup_numeric_1x2_enabled']
+          assert not u['player_technical_numeric_1x2_enabled']
+          assert not u['head_coach_numeric_1x2_enabled']
+          assert not u['availability_numeric_1x2_enabled']
+          assert r['rows'] == 6 and r['canonical_operational_baseline'] == 'S60'
+          assert r['unified_pipeline'] is True
           assert len(d['rows']) == 6
           for z in d['rows']:
               s = z['p_home'] + z['p_draw'] + z['p_away']
               assert abs(s - 1.0) < 1e-9
-          print('PURE_S60_LIVE_CONTRACT_OK')
+              assert z['activation_receipt'].get('receipt_hash')
+              assert z['component_chain'][0]['component_id'] == 'S60_strict_prior_numerical_baseline'
+          print('UNIFIED_S60_LIVE_CONTRACT_OK')
           print(json.dumps(r, sort_keys=True))
           PY
-      - name: Upload pure S60 predictions
+      - name: Upload unified S60 predictions and receipts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pure-s60-live-20260829-6
+          name: unified-s60-live-20260829-6
           path: s60_live_out/
           if-no-files-found: warn
           retention-days: 30
