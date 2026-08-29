@@ -1,0 +1,63 @@
+name: football3 R43GOV0 M10 rebuild freeze
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/governance/r43gov0/locks/m10_rebuild_lock.json
+      - football-data/tests/test_m10_rebuild_lock.py
+      - .github/workflows/football3-r43gov0-m10-freeze.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify frozen V500 and sealed paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          if git diff --name-only 8e7aa3d703b88fae7e275203afa9d6897db79dcf...HEAD | grep -E '(^|/)CURRENT($|/)|football-data/forward/v6_market_first_events_v651.json|football-data/forward/r43u1_pristine_forward_events.json|football-data/forward/r43y0_draw_calibration_forward_events.json'; then
+            echo 'sealed/current path modified' >&2
+            exit 1
+          fi
+
+      - name: Run frozen receipt tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s football-data/tests -p 'test_m10_rebuild_lock.py' -v 2>&1 | tee /tmp/m10_freeze.log
+
+      - name: Upload M10 freeze diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m10-rebuild-freeze-diagnostic
+          path: /tmp/m10_freeze.log
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload frozen M10 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m10-rebuild-lock
+          path: football-data/governance/r43gov0/locks/m10_rebuild_lock.json
+          if-no-files-found: error
+          retention-days: 90
