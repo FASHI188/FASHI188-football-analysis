@@ -2,7 +2,7 @@
 """Unified zero-label S60 live runtime.
 
 All predictions pass through TeamIdentityResolver -> shared PIT store ->
-FeatureAssembler -> UnifiedInferenceEngine -> activation receipt.  The runner never
+FeatureAssembler -> UnifiedInferenceEngine -> activation receipt. The runner never
 imports or calls R24/R23/R17 and never accepts target outcomes, xG, market prices,
 or lineup/personnel inputs.
 """
@@ -174,35 +174,41 @@ def competition_map(leagues, divisions: set[str]) -> dict[str, str]:
 
 
 def build_identity_resolver(teams, history: list[dict], cmap: dict[str, str], divisions: set[str], provenance: str):
-    allowed = {}
-    for division in divisions:
-        cid = cmap[division]
-        ids = set()
-        for row in history:
-            if row["competition_id"] == cid:
-                ids.add(row["home_team"]); ids.add(row["away_team"])
-        allowed[division] = ids
+    """Build strict exact provider identity records independent of the history window.
+
+    New/promoted teams may legitimately have zero appearances in the selected S60
+    60k state window. They still need a canonical provider identity so S60 can use
+    its prior state for them. No fuzzy matching is introduced: only provider IDs
+    and provider-metadata exact aliases are admitted, and alias conflicts fail closed.
+    """
+    del history, cmap
     name_cols = [c for c in text_columns(teams) if c in {"name", "fd_name"} or "name" in c.casefold()]
     records = []
     for row in teams.itertuples(index=False):
-        d = row._asdict(); tid = str(int(d["id"]))
+        d = row._asdict()
+        tid = str(int(d["id"]))
+        aliases = set()
+        for col in name_cols:
+            value = d.get(col)
+            if value is not None and str(value).casefold() != "nan":
+                alias = alias_key(value)
+                if alias:
+                    aliases.add(alias)
         for division in divisions:
-            if tid not in allowed[division]:
-                continue
             ns = f"fd:{division.casefold()}"
             records.append({
-                "source_namespace": ns, "source_team_id": tid, "canonical_team_id": tid,
-                "mapping_method": "provider_team_id", "provenance_hash": provenance,
+                "source_namespace": ns,
+                "source_team_id": tid,
+                "canonical_team_id": tid,
+                "mapping_method": "provider_team_id",
+                "provenance_hash": provenance,
             })
-            aliases = set()
-            for col in name_cols:
-                value = d.get(col)
-                if value is not None and str(value).casefold() != "nan":
-                    aliases.add(alias_key(value))
-            for alias in sorted(a for a in aliases if a):
+            for alias in sorted(aliases):
                 records.append({
-                    "source_namespace": ns, "approved_name_alias": alias,
-                    "canonical_team_id": tid, "mapping_method": "provider_metadata_explicit_alias",
+                    "source_namespace": ns,
+                    "approved_name_alias": alias,
+                    "canonical_team_id": tid,
+                    "mapping_method": "provider_metadata_explicit_alias",
                     "provenance_hash": provenance,
                 })
     return TeamIdentityResolver(records)
