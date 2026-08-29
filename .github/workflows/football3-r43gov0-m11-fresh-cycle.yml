@@ -187,8 +187,15 @@ jobs:
           if marker not in s:
               raise SystemExit('alias fixed-dict marker missing')
           s=s.replace(marker, marker+aliases, 1)
+
+          fallback_marker='''                mapped[event_id] = rec\n        audits.append(rec)\n    receipt = {\n'''
+          fallback='''                mapped[event_id] = rec\n        if (rec["status"] == "UNRESOLVED" and len(home_ids) == 1 and len(away_ids) == 1\n                and not rec.get("fixture_candidates")):\n            rec.update({\n                "status": "RESOLVED_SAFE_TEAM_IDS_PROVIDER_FIXTURE",\n                "selection_rule": "unique_exact_registry_team_ids_provider_fixture_identity",\n                "fixture_id": f"kambi:{event_id}",\n                "hf_kickoff_utc": kickoff.isoformat(),\n                "league_id": cid,\n                "home_team_id": home_ids[0],\n                "away_team_id": away_ids[0],\n            })\n            mapped[event_id] = rec\n        audits.append(rec)\n    receipt = {\n'''
+          if fallback_marker not in s:
+              raise SystemExit('safe mapping fallback marker missing')
+          s=s.replace(fallback_marker, fallback, 1)
+          s=s.replace('"mapping_method": "safe_hf_fixture_metadata_exact_pair",', '"mapping_method": "safe_exact_team_identity_no_fuzzy",', 1)
           p.write_text(s,encoding='utf-8')
-          print('safe deterministic alias overlay applied: 19 aliases')
+          print('safe deterministic identity overlay applied: 19 aliases + unique exact team-id fallback')
           PY
 
       - name: Run M11 fresh four-config lockbox
