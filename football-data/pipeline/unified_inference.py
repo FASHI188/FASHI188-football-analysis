@@ -1,7 +1,8 @@
 """Shared Football3 inference orchestration for dataset, replay and live modes.
 
-M4 starts with baseline-only numerical behavior.  Mode is metadata; the numerical
-call chain is intentionally identical across modes.
+The same numerical call chain is used across modes. Feature activation receipts
+separate PIT availability from actual numerical effect; consumer-attested evidence
+is required for components that declare a governed numerical feature dependency.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from typing import Any, Iterable, Mapping, Protocol
 
 from assembly.feature_assembler import FeatureActivation, FeatureAssembler
 from identity.team_identity import RESOLVED, TeamIdentityResolver
-from pit.feature_store import PointInTimeFeatureStore
+from pit.feature_store import PITReadResult, PointInTimeFeatureStore
 
 
 MODES = {"dataset", "replay", "live"}
@@ -80,6 +81,19 @@ class FeatureReadSpec:
     component_output_hash: str | None = None
 
 
+@dataclass(frozen=True)
+class ConsumerFeatureEvidence:
+    """Numerical feature evidence emitted by the consumer that actually used it."""
+
+    feature_family: str
+    pit_result: PITReadResult
+    numerical_values: Mapping[str, Any]
+    numerical_feature_names: tuple[str, ...]
+    component_input_hash: str
+    component_output_hash: str
+    consumer_id: str
+
+
 class BaselineComponent(Protocol):
     component_id: str
     component_version: str
@@ -126,6 +140,21 @@ class UnifiedInferenceEngine:
         self.baseline_component = baseline_component
         self.components = tuple(components)
 
+        # A PIT-bound consumer must read the exact same store used by the unified
+        # engine; a hidden second store would break dataset/replay/live parity.
+        bound_store = getattr(baseline_component, "pit_store", None)
+        if bound_store is not None and bound_store is not pit_store:
+            raise ValueError("baseline PIT store must be the unified engine PIT store")
+
+    def _require_governed_numeric_features_enabled(self) -> None:
+        required = tuple(getattr(self.baseline_component, "required_numeric_feature_families", ()))
+        for feature_family in required:
+            policy = self.feature_assembler.policy(str(feature_family))
+            if not policy.numeric_effect_enabled:
+                raise RuntimeError(
+                    f"numeric feature {feature_family} is disabled by governance policy"
+                )
+
     def predict(
         self,
         mode: str,
@@ -138,6 +167,8 @@ class UnifiedInferenceEngine:
             raise ValueError(f"unsupported mode: {mode}")
         if request.as_of.tzinfo is None or request.as_of.utcoffset() is None:
             raise ValueError("request.as_of must be timezone-aware")
+
+        self._require_governed_numeric_features_enabled()
 
         home = self.identity_resolver.resolve(
             request.home_source_namespace, request.home_source_team_id, request.home_source_name
@@ -154,7 +185,9 @@ class UnifiedInferenceEngine:
         assert home.canonical_team_id and away.canonical_team_id
 
         activations: list[FeatureActivation] = []
+        manual_feature_families: set[str] = set()
         for spec in feature_specs:
+            manual_feature_families.add(spec.feature_family)
             entity_id = None
             if spec.entity_side == "home":
                 entity_id = home.canonical_team_id
@@ -185,12 +218,39 @@ class UnifiedInferenceEngine:
                 request, home.canonical_team_id, away.canonical_team_id, baseline_payload
             )
         )
+        baseline_hash = matrix_hash(matrix)
+
+        evidence_provider = getattr(self.baseline_component, "numerical_feature_evidence", None)
+        if callable(evidence_provider):
+            for evidence in tuple(evidence_provider()):
+                if not isinstance(evidence, ConsumerFeatureEvidence):
+                    raise RuntimeError("baseline returned invalid consumer feature evidence")
+                if evidence.feature_family in manual_feature_families:
+                    raise RuntimeError(
+                        f"consumer-attested feature {evidence.feature_family} may not be supplied manually"
+                    )
+                if evidence.component_output_hash != baseline_hash:
+                    raise RuntimeError("consumer feature evidence output hash mismatch")
+                activation = self.feature_assembler.assemble_family(
+                    evidence.feature_family,
+                    evidence.pit_result,
+                    numerical_values=evidence.numerical_values,
+                    numerical_feature_names=evidence.numerical_feature_names,
+                    component_input_hash=evidence.component_input_hash,
+                    component_output_hash=evidence.component_output_hash,
+                )
+                if not activation.numeric_effect:
+                    raise RuntimeError(
+                        f"consumer feature {evidence.feature_family} did not produce governed numeric activation"
+                    )
+                activations.append(activation)
+
         chain: list[dict[str, Any]] = [{
             "component_id": self.baseline_component.component_id,
             "component_version": self.baseline_component.component_version,
             "enabled": True,
             "input_matrix_hash": None,
-            "output_matrix_hash": matrix_hash(matrix),
+            "output_matrix_hash": baseline_hash,
         }]
 
         payload = component_payload or {}
