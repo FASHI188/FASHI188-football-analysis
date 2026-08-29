@@ -10,14 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from assembly.feature_assembler import FeatureAssembler
+from assembly.feature_assembler import FeatureAssembler, FeatureFamilyPolicy
 from components.r43_native_matrix_components import R43QMarketScoreBaseline, R43TDynamicStateMatrixComponent
 from components.r43q_market_score_core import R43QMarketScoreCore
 from evaluation.unified_evaluator import evaluate, paired_compare
 from identity.team_identity import TeamIdentityResolver
 from pipeline.unified_dataset import PredictionCase, SettledOutcome, UnifiedDatasetGenerator, dataset_fingerprint, time_ordered_folds
 from pipeline.unified_inference import FixtureRequest, UnifiedInferenceEngine, canonical_matrix
-from pit.feature_store import PointInTimeFeatureStore
+from pit.feature_store import PITFeatureRecord, PointInTimeFeatureStore
 
 UTC = timezone.utc
 Q_PAYLOAD = {
@@ -88,14 +88,45 @@ def candidate_matrix():
     ])
 
 
-def engine(baseline, components=()):
+def engine(baseline, components=(), store=None, assembler=None):
+    actual_store = store or PointInTimeFeatureStore()
     return UnifiedInferenceEngine(
         identity_resolver(),
-        PointInTimeFeatureStore(),
-        FeatureAssembler(),
+        actual_store,
+        assembler or FeatureAssembler(),
         baseline,
         components,
     )
+
+
+def market_record_for_request(req: FixtureRequest) -> PITFeatureRecord:
+    snapshot_at = req.as_of - timedelta(minutes=30)
+    return PITFeatureRecord(
+        feature_family="market_1x2_ah_ou",
+        entity_type="fixture_market",
+        canonical_entity_id=req.fixture_id,
+        fixture_id=req.fixture_id,
+        value={"snapshot_timestamp_utc": snapshot_at.isoformat(), **Q_PAYLOAD},
+        source_name="m6_test_market",
+        source_record_id=f"{req.fixture_id}:market",
+        source_hash=f"m6:{req.fixture_id}",
+        observed_at=snapshot_at + timedelta(minutes=1),
+        known_at=snapshot_at + timedelta(minutes=2),
+        effective_at=snapshot_at,
+        expires_at=req.as_of + timedelta(hours=2),
+        leakage_class="prematch_market_snapshot",
+        historical_use_allowed=True,
+        adapter_version="m6-test-v1",
+    )
+
+
+def q_engine(requests, components=()):
+    store = PointInTimeFeatureStore([market_record_for_request(req) for req in requests])
+    baseline = R43QMarketScoreBaseline(store)
+    assembler = FeatureAssembler({
+        "market_1x2_ah_ou": FeatureFamilyPolicy(True, False, True),
+    })
+    return engine(baseline, components, store=store, assembler=assembler)
 
 
 def cases_with_outcomes(outcomes, matrix_payload=None, start=None):
@@ -170,18 +201,20 @@ class UnifiedDatasetEvaluatorTests(unittest.TestCase):
             "r43t_static_lambda_away": built["lambda_away"],
         }
         kickoff = datetime(2026, 8, 2, 18, 0, tzinfo=UTC)
+        req1 = fixture("g1", 0, 1, kickoff - timedelta(hours=5))
+        req2 = fixture("g2", 2, 3, kickoff - timedelta(hours=4))
         group = (
             PredictionCase(
-                fixture("g1", 0, 1, kickoff - timedelta(hours=5)), kickoff, Q_PAYLOAD,
+                req1, kickoff, {},
                 component_payload=component_payload, outcome=SettledOutcome(4, 0),
             ),
             PredictionCase(
-                fixture("g2", 2, 3, kickoff - timedelta(hours=4)), kickoff, Q_PAYLOAD,
+                req2, kickoff, {},
                 component_payload=component_payload, outcome=SettledOutcome(3, 0),
             ),
         )
         t = R43TDynamicStateMatrixComponent(enabled=True)
-        rows = UnifiedDatasetGenerator(engine(R43QMarketScoreBaseline(), (t,))).generate("replay", group)
+        rows = UnifiedDatasetGenerator(q_engine((req1, req2), (t,))).generate("replay", group)
         receipts = t.projection_receipts()
         self.assertEqual(len(rows), 2)
         self.assertEqual(len(receipts), 2)
@@ -194,9 +227,10 @@ class UnifiedDatasetEvaluatorTests(unittest.TestCase):
     def test_stateful_live_is_fail_closed_until_pending_settlement_lifecycle_is_governed(self):
         t = R43TDynamicStateMatrixComponent(enabled=True)
         kickoff = datetime(2026, 8, 2, 18, 0, tzinfo=UTC)
-        case = PredictionCase(fixture("live-t", 0, 1, kickoff - timedelta(hours=2)), kickoff, Q_PAYLOAD)
+        req = fixture("live-t", 0, 1, kickoff - timedelta(hours=2))
+        case = PredictionCase(req, kickoff, {})
         with self.assertRaisesRegex(RuntimeError, "pending-settlement live lifecycle"):
-            UnifiedDatasetGenerator(engine(R43QMarketScoreBaseline(), (t,))).generate("live", (case,))
+            UnifiedDatasetGenerator(q_engine((req,), (t,))).generate("live", (case,))
 
     def test_time_folds_are_chronological_and_never_split_same_kickoff_group(self):
         start = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
