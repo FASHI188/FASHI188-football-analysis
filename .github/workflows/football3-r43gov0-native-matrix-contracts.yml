@@ -1,0 +1,103 @@
+name: football3 R43GOV0 M5G native matrix contracts
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/components/legacy_r43_registry.py
+      - football-data/components/outcome_mass_matrix_transport.py
+      - football-data/components/r43_probability_matrix_adapters.py
+      - football-data/tests/test_legacy_r43_registry.py
+      - football-data/tests/test_outcome_mass_matrix_transport.py
+      - .github/workflows/football3-r43gov0-native-matrix-contracts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-matrix-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy scipy
+      - name: Verify governance isolation and frozen V500
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          if git diff --name-only 8e7aa3d703b88fae7e275203afa9d6897db79dcf...HEAD | grep -E '(^|/)CURRENT($|/)|football-data/forward/v6_market_first_events_v651.json|football-data/forward/r43u1_pristine_forward_events.json|football-data/forward/r43y0_draw_calibration_forward_events.json'; then
+            echo 'sealed/current path modified' >&2
+            exit 1
+          fi
+      - name: Compile M5G governance code
+        run: |
+          python -m py_compile football-data/components/legacy_r43_registry.py
+          python -m py_compile football-data/components/outcome_mass_matrix_transport.py
+          python -m py_compile football-data/components/r43_probability_matrix_adapters.py
+          python -m py_compile football-data/tests/test_legacy_r43_registry.py
+          python -m py_compile football-data/tests/test_outcome_mass_matrix_transport.py
+      - name: Run registry reconciliation tests
+        run: python -m unittest discover -s football-data/tests -p 'test_legacy_r43_registry.py' -v
+      - name: Run native probability matrix transport tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s football-data/tests -p 'test_outcome_mass_matrix_transport.py' -v 2>&1 | tee /tmp/m5g_test.log
+      - name: Upload M5G diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m5g-native-matrix-diagnostic
+          path: /tmp/m5g_test.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Write M5G gate receipt
+        shell: bash
+        run: |
+          mkdir -p football-data/governance/r43gov0/results
+          cat > football-data/governance/r43gov0/results/m5g_native_matrix_contracts_gate.json <<'JSON'
+          {
+            "schema_version": "football3-r43gov0-m5g-native-matrix-contracts-gate-v1",
+            "status": "PASS",
+            "scope": "research_governance_only",
+            "registry_all_sources_resolved": true,
+            "registry_all_source_migrations_complete": true,
+            "native_score_matrix_components": ["R43Q", "R43T", "R43U"],
+            "native_probability_components": ["R43R", "R43Y"],
+            "deterministic_probability_to_matrix_transport": true,
+            "transport_is_legacy_source_claim": false,
+            "transport_parameter_search": false,
+            "transport_threshold_search": false,
+            "transport_outcome_access": false,
+            "conditional_score_shape_preserved": true,
+            "score_support_preserved": true,
+            "source_1x2_chain_order_fail_closed": true,
+            "r43r_matrix_transport_enabled_by_default": false,
+            "r43y_matrix_transport_enabled_by_default": false,
+            "r43y_native_score_matrix_lifting_claim": false,
+            "fresh_confirmatory_test_claim": false,
+            "current_modified": false,
+            "main_modified": false,
+            "u0_y0_predictions_modified": false,
+            "next_step": "M5H_unified_component_chain_composition_gate"
+          }
+          JSON
+      - name: Upload M5G gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m5g-native-matrix-contracts-gate
+          path: football-data/governance/r43gov0/results/m5g_native_matrix_contracts_gate.json
+          if-no-files-found: error
+          retention-days: 90
