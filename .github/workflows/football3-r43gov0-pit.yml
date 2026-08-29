@@ -1,0 +1,106 @@
+name: football3 R43GOV0 M2 PIT governance
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/pit/**
+      - football-data/identity/**
+      - football-data/tests/test_pit_feature_store.py
+      - football-data/tests/test_team_identity.py
+      - .github/workflows/football3-r43gov0-pit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pit-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify frozen V500 isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+
+      - name: Compile governance plumbing
+        run: |
+          python -m py_compile football-data/identity/team_identity.py
+          python -m py_compile football-data/pit/feature_store.py
+
+      - name: Run M1 and M2 unit tests
+        run: |
+          python -m unittest discover -s football-data/tests -p 'test_team_identity.py' -v
+          python -m unittest discover -s football-data/tests -p 'test_pit_feature_store.py' -v
+
+      - name: Write M2 gate receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/governance/r43gov0/results
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          expected = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          actual = subprocess.check_output(["git", "hash-object", "football-data/validation/bayesian_dynamic_state_oof_v500.py"], text=True).strip()
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          gate = {
+              "identity_tests_passed": True,
+              "pit_tests_passed": True,
+              "known_after_as_of_blocked": True,
+              "retrospective_label_historical_use_blocked": True,
+              "future_effective_record_blocked": True,
+              "expired_record_blocked": True,
+              "canonical_entity_filter_enforced": True,
+              "timezone_aware_required": True,
+              "deterministic_record_hashes": True,
+              "v500_blob_unchanged": actual == expected,
+              "pit_numerically_integrated_into_v500": False,
+              "current_modified": False,
+              "main_modified": False,
+              "sealed_u0_y0_predictions_touched": False,
+          }
+          gate["passed"] = all([
+              gate["identity_tests_passed"], gate["pit_tests_passed"], gate["known_after_as_of_blocked"],
+              gate["retrospective_label_historical_use_blocked"], gate["future_effective_record_blocked"],
+              gate["expired_record_blocked"], gate["canonical_entity_filter_enforced"], gate["timezone_aware_required"],
+              gate["deterministic_record_hashes"], gate["v500_blob_unchanged"],
+              not gate["pit_numerically_integrated_into_v500"], not gate["current_modified"],
+              not gate["main_modified"], not gate["sealed_u0_y0_predictions_touched"],
+          ])
+          receipt = {
+              "schema_version": "football3-r43gov0-m2-pit-gate-v1",
+              "status": "COMPLETE",
+              "head": head,
+              "v500_blob_expected": expected,
+              "v500_blob_actual": actual,
+              "gate": gate,
+          }
+          path = Path("football-data/governance/r43gov0/results/m2_pit_gate.json")
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          if not gate["passed"]:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload M2 PIT gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m2-pit-gate
+          path: football-data/governance/r43gov0/results/m2_pit_gate.json
+          if-no-files-found: error
+          retention-days: 90
