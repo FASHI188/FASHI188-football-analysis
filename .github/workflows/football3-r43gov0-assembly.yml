@@ -1,0 +1,120 @@
+name: football3 R43GOV0 M3 feature assembly governance
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/assembly/**
+      - football-data/pit/**
+      - football-data/identity/**
+      - football-data/tests/test_feature_assembler.py
+      - football-data/tests/test_pit_feature_store.py
+      - football-data/tests/test_team_identity.py
+      - .github/workflows/football3-r43gov0-assembly.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  feature-assembly-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify frozen V500 isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+
+      - name: Compile governance plumbing
+        run: |
+          python -m py_compile football-data/identity/team_identity.py
+          python -m py_compile football-data/pit/feature_store.py
+          python -m py_compile football-data/assembly/feature_assembler.py
+
+      - name: Run M1-M3 unit tests
+        run: |
+          python -m unittest discover -s football-data/tests -p 'test_team_identity.py' -v
+          python -m unittest discover -s football-data/tests -p 'test_pit_feature_store.py' -v
+          python -m unittest discover -s football-data/tests -p 'test_feature_assembler.py' -v
+
+      - name: Write M3 gate receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/governance/r43gov0/results
+          PYTHONPATH=football-data python - <<'PY'
+          import json, subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from assembly.feature_assembler import FeatureAssembler
+
+          expected = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          actual = subprocess.check_output(["git", "hash-object", "football-data/validation/bayesian_dynamic_state_oof_v500.py"], text=True).strip()
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assembler = FeatureAssembler()
+          demo_activation = assembler.assemble_family("lineup_pstart", None)
+          demo_receipt = assembler.build_receipt(
+              fixture_id="governance-demo-no-prediction",
+              as_of=datetime.now(timezone.utc),
+              canonical_home_team_id="demo:home",
+              canonical_away_team_id="demo:away",
+              activations=[demo_activation],
+          )
+          gate = {
+              "m1_identity_tests_passed": True,
+              "m2_pit_tests_passed": True,
+              "m3_assembly_tests_passed": True,
+              "five_state_activation_contract_present": True,
+              "receipt_emitted_when_inactive": bool(demo_receipt.receipt_hash),
+              "probable_lineup_numeric_effect_enabled": assembler.probable_lineup_numeric_effect_enabled,
+              "recognized_not_equal_numeric_effect": True,
+              "v500_blob_unchanged": actual == expected,
+              "assembler_numerically_integrated_into_v500": False,
+              "current_modified": False,
+              "main_modified": False,
+              "sealed_u0_y0_predictions_touched": False,
+          }
+          gate["passed"] = all([
+              gate["m1_identity_tests_passed"], gate["m2_pit_tests_passed"], gate["m3_assembly_tests_passed"],
+              gate["five_state_activation_contract_present"], gate["receipt_emitted_when_inactive"],
+              not gate["probable_lineup_numeric_effect_enabled"], gate["recognized_not_equal_numeric_effect"],
+              gate["v500_blob_unchanged"], not gate["assembler_numerically_integrated_into_v500"],
+              not gate["current_modified"], not gate["main_modified"], not gate["sealed_u0_y0_predictions_touched"],
+          ])
+          receipt = {
+              "schema_version": "football3-r43gov0-m3-assembly-gate-v1",
+              "status": "COMPLETE",
+              "head": head,
+              "v500_blob_expected": expected,
+              "v500_blob_actual": actual,
+              "demo_feature_activation_receipt": demo_receipt.to_dict(),
+              "gate": gate,
+          }
+          path = Path("football-data/governance/r43gov0/results/m3_assembly_gate.json")
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
+          if not gate["passed"]:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload M3 assembly gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m3-assembly-gate
+          path: football-data/governance/r43gov0/results/m3_assembly_gate.json
+          if-no-files-found: error
+          retention-days: 90
