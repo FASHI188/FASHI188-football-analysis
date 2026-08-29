@@ -1,0 +1,42 @@
+name: football3 R43GOV0 runtime chain probe
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - .github/workflows/football3-r43gov0-runtime-chain-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - name: Locate exact 18464 contract and direct runtime bypasses
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '=== 18464 CONTRACT ==='
+            git grep -n -E '18464|18,464' -- \
+              football-data/manifests football-data/config football-data/validation \
+              football-data/experiments football-data/docs 2>/dev/null || true
+            echo '=== DIRECT R24/R23/R17 WORKFLOW CALLS ==='
+            git grep -n -E 'run_experiment_r24|run_experiment_r23|run_experiment_r17|top1_r24|top1_r23|top1_r17' -- \
+              .github/workflows football-data/runtime 2>/dev/null || true
+            echo '=== S60 RUNTIME REFERENCES ==='
+            git grep -n -E 'S60|s60' -- .github/workflows football-data/runtime football-data/pipeline 2>/dev/null || true
+          } | tee /tmp/runtime_chain_probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-runtime-chain-probe
+          path: /tmp/runtime_chain_probe.txt
+          if-no-files-found: error
+          retention-days: 30
