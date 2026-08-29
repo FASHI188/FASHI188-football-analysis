@@ -44,8 +44,8 @@ FEATURE_TRUTH: Mapping[str, FeatureIntegrationTruth] = {
         "R43E2 failed on an older disjoint 20k and current-match coach changes lack a verified prematch timestamp contract.",
     ),
     "market_1x2_ah_ou": FeatureIntegrationTruth(
-        "market_1x2_ah_ou", True, True, True, True, False, False, False,
-        "R43Q consumes 1X2/AH/OU numerically, but the unified path has not yet bound that payload to PIT records.",
+        "market_1x2_ah_ou", True, False, True, True, False, False, False,
+        "R43Q exact source compatibility is proven, but its historical architecture gate was not passed and the unified path is not yet PIT-bound.",
     ),
 }
 
@@ -57,6 +57,7 @@ def assert_no_false_numeric_claims() -> None:
             assert truth.numerical_consumer_exists
             assert truth.currently_pit_bound_to_consumer
         if truth.formal_promotion_allowed:
+            assert truth.historical_mechanism_gate_passed
             assert truth.numeric_effect_enabled
 
 
