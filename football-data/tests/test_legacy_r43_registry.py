@@ -38,11 +38,17 @@ class LegacyR43RegistryTests(unittest.TestCase):
         self.assertFalse(SPECS["R43T"].architecture_gate_passed)
         self.assertTrue(SPECS["R43U"].architecture_gate_passed)
         self.assertFalse(SPECS["R43U"].full_volume_53pct_met)
-        self.assertTrue(all(not spec.implementation_migrated for spec in SPECS.values()))
+        self.assertTrue(SPECS["R43U"].implementation_migrated)
+        self.assertFalse(SPECS["R43U"].enabled_by_default)
+        self.assertFalse(SPECS["R43Q"].implementation_migrated)
+        self.assertFalse(SPECS["R43T"].implementation_migrated)
 
     def test_r43r_is_not_misrepresented_as_native_score_matrix(self):
         self.assertEqual(SPECS["R43R"].native_output, "1x2_probabilities")
         self.assertNotIn("R43R", migration_candidates())
+
+    def test_remaining_native_matrix_migration_candidates_are_q_and_t(self):
+        self.assertEqual(migration_candidates(), ("R43Q", "R43T"))
 
     def test_r43y_provenance_remains_explicitly_unresolved(self):
         self.assertEqual(unresolved_sources(), ("R43Y",))
