@@ -13,6 +13,8 @@ from components.legacy_r43_registry import (
     DeclaredLegacyScoreMatrixComponent,
     SPECS,
     migration_candidates,
+    native_probability_components,
+    native_score_matrix_components,
     unresolved_sources,
 )
 
@@ -26,34 +28,38 @@ class LegacyR43RegistryTests(unittest.TestCase):
         for key in SPECS:
             self.assertFalse(DeclaredLegacyScoreMatrixComponent(key).enabled)
 
-    def test_source_lineage_is_exact_for_resolved_components(self):
+    def test_every_source_is_resolved_and_migrated(self):
+        self.assertEqual(unresolved_sources(), ())
+        self.assertEqual(migration_candidates(), ())
+        self.assertTrue(all(spec.source_resolved for spec in SPECS.values()))
+        self.assertTrue(all(spec.implementation_migrated for spec in SPECS.values()))
+
+    def test_source_lineage_is_exact(self):
         self.assertEqual(SPECS["R43Q"].source_blob_sha, "299b86ed07e49af0b9ec5c7632f519e91e836158")
         self.assertEqual(SPECS["R43R"].source_blob_sha, "8748e795bb92780c47af934c3187db14c254a415")
         self.assertEqual(SPECS["R43T"].source_blob_sha, "f6db4f0e6c0f544c058b15a7279731f55c5f6570")
         self.assertEqual(SPECS["R43U"].source_blob_sha, "4ad46cca4acb618068f6db2601cf96bad4109698")
+        self.assertEqual(SPECS["R43Y"].source_blob_sha, "a342138bef97eb4acb0bcba015dea251a3280fdf")
+        self.assertEqual(
+            SPECS["R43Y"].source_path,
+            "football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py",
+        )
 
-    def test_gate_states_are_not_promoted_by_registry(self):
+    def test_historical_gate_states_are_not_promoted_by_registry(self):
         self.assertFalse(SPECS["R43Q"].architecture_gate_passed)
         self.assertFalse(SPECS["R43R"].architecture_gate_passed)
         self.assertFalse(SPECS["R43T"].architecture_gate_passed)
         self.assertTrue(SPECS["R43U"].architecture_gate_passed)
         self.assertFalse(SPECS["R43U"].full_volume_53pct_met)
-        self.assertTrue(SPECS["R43U"].implementation_migrated)
-        self.assertFalse(SPECS["R43U"].enabled_by_default)
-        self.assertFalse(SPECS["R43Q"].implementation_migrated)
-        self.assertFalse(SPECS["R43T"].implementation_migrated)
+        self.assertIsNone(SPECS["R43Y"].architecture_gate_passed)
+        self.assertIsNone(SPECS["R43Y"].full_volume_53pct_met)
+        self.assertTrue(all(not spec.enabled_by_default for spec in SPECS.values()))
 
-    def test_r43r_is_not_misrepresented_as_native_score_matrix(self):
+    def test_native_contract_split_is_explicit(self):
+        self.assertEqual(native_score_matrix_components(), ("R43Q", "R43T", "R43U"))
+        self.assertEqual(native_probability_components(), ("R43R", "R43Y"))
         self.assertEqual(SPECS["R43R"].native_output, "1x2_probabilities")
-        self.assertNotIn("R43R", migration_candidates())
-
-    def test_remaining_native_matrix_migration_candidates_are_q_and_t(self):
-        self.assertEqual(migration_candidates(), ("R43Q", "R43T"))
-
-    def test_r43y_provenance_remains_explicitly_unresolved(self):
-        self.assertEqual(unresolved_sources(), ("R43Y",))
-        self.assertFalse(SPECS["R43Y"].source_resolved)
-        self.assertIsNone(SPECS["R43Y"].source_blob_sha)
+        self.assertEqual(SPECS["R43Y"].native_output, "1x2_probabilities")
 
     def test_declaration_cannot_execute_if_accidentally_called(self):
         component = DeclaredLegacyScoreMatrixComponent("R43U")
