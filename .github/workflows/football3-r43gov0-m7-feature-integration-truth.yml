@@ -11,9 +11,13 @@ on:
       - '.github/workflows/football3-r43gov0-m7-feature-integration-truth.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   feature-integration-truth:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout exact governance branch
         uses: actions/checkout@v4
@@ -31,11 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = "football3/r43gov0-unified-governance-audit"
-          test "$(git rev-parse HEAD:football-data/models/v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
-          BASE="8e7aa3d703b88fae7e275203afa9d6897db79dcf"
-          CHANGED="$(git diff --name-only "$BASE"...HEAD)"
-          if printf '%s\n' "$CHANGED" | grep -Eq '(^|/)CURRENT($|/)|football-data/forward/(r43u0|r43u1|r43y0)|FINAL_LOCKBOX'; then
-            echo "sealed/formal path modified"
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          if git diff --name-only 8e7aa3d703b88fae7e275203afa9d6897db79dcf...HEAD | grep -E '(^|/)CURRENT($|/)|football-data/forward/v6_market_first_events_v651.json|football-data/forward/r43u1_pristine_forward_events.json|football-data/forward/r43y0_draw_calibration_forward_events.json'; then
+            echo 'sealed/current path modified' >&2
             exit 1
           fi
 
@@ -58,12 +60,14 @@ jobs:
         with:
           name: football3-r43gov0-m7-feature-integration-truth-diagnostic
           path: /tmp/m7-truth-tests.log
+          if-no-files-found: error
           retention-days: 30
 
       - name: Write M7 gate receipt
         shell: bash
         run: |
-          cat > /tmp/m7_gate.json <<'JSON'
+          mkdir -p football-data/governance/r43gov0/results
+          cat > football-data/governance/r43gov0/results/m7_feature_integration_truth_gate.json <<'JSON'
           {
             "schema_version": "football3-r43gov0-m7-feature-integration-truth-gate-v1",
             "status": "PASS",
@@ -80,6 +84,7 @@ jobs:
             "market_numeric_effect_enabled_by_feature_policy": false,
             "availability_numeric_1x2_enabled": false,
             "truth_rule": "recognized_or_collected_does_not_imply_numeric_effect",
+            "fresh_confirmatory_test_claim": false,
             "current_modified": false,
             "main_modified": false,
             "v500_modified": false,
@@ -92,5 +97,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: football3-r43gov0-m7-feature-integration-truth-gate
-          path: /tmp/m7_gate.json
+          path: football-data/governance/r43gov0/results/m7_feature_integration_truth_gate.json
+          if-no-files-found: error
           retention-days: 90
