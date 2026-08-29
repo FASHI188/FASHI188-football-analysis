@@ -1,8 +1,8 @@
 """Governed registry for the existing R43Q/R/T/U/Y research components.
 
-The registry records exact source lineage, gate state, migration state and default
-enablement. Migration never implies promotion: every legacy component stays off
-unless a later explicit governance gate enables it.
+The registry records exact source lineage, historical gate state, migration state
+and native output contract. Migration never implies promotion: every legacy
+component stays off unless a later explicit governance gate enables it.
 """
 from __future__ import annotations
 
@@ -37,9 +37,9 @@ SPECS: dict[str, LegacyComponentSpec] = {
         False,
         False,
         False,
-        False,
         True,
-        "Same-snapshot frozen 1X2+AH+OU is legitimate prospective evidence, but R43Q architecture gate failed and the 53% target was not met. Keep as an inactive alternative baseline until exact migration/compatibility tests exist.",
+        True,
+        "Exact R43Q score-matrix core and draw-calibration primitives are migrated and source-compatibility gated, but historical architecture/53% gates were not passed. Keep disabled.",
     ),
     "R43R": LegacyComponentSpec(
         "R43R",
@@ -51,9 +51,9 @@ SPECS: dict[str, LegacyComponentSpec] = {
         False,
         True,
         False,
-        False,
         True,
-        "Native R43R output is 1X2, not a score matrix. Architecture gate failed on only 15 scored overlap rows; do not invent a matrix lifting rule or retune it.",
+        True,
+        "Exact residual transform and causal beta fit are migrated. Native R43R output remains 1X2; architecture failed on the 15-row scored overlap and the residual did not improve Top1 over market. No retuning on that overlap and no implicit matrix claim.",
     ),
     "R43T": LegacyComponentSpec(
         "R43T",
@@ -65,9 +65,9 @@ SPECS: dict[str, LegacyComponentSpec] = {
         False,
         False,
         False,
-        False,
         True,
-        "R43T uses prematch markets and causal state updates but its architecture gate failed; exact source may be migrated for compatibility only, never enabled by default.",
+        True,
+        "Exact R43T state lifecycle, including same-kickoff pre-update freezing and post-group simultaneous settlement, is migrated and compatibility gated. Historical architecture failed; keep disabled.",
     ),
     "R43U": LegacyComponentSpec(
         "R43U",
@@ -81,27 +81,27 @@ SPECS: dict[str, LegacyComponentSpec] = {
         False,
         True,
         True,
-        "Exact R43U diagonal operation has been migrated behind the unified component interface and compatibility-gated, but remains disabled. Its historical gate passed only on the already-consumed 53-row cohort and did not meet 53%; U0/Y0 stays sealed.",
+        "Single canonical exact 1.25 diagonal-inflation implementation is migrated and compatibility gated. Historical architecture passed on 53 consumed rows but 53% was not met; U1 has 41 locked and 0 settled confirmations at the evidence gate. Keep disabled and do not retune.",
     ),
     "R43Y": LegacyComponentSpec(
         "R43Y",
-        "draw_calibration",
-        None,
-        None,
-        None,
-        "unknown_until_source_resolved",
+        "draw_calibration_in_the_large_logit_intercept",
+        "football3/r43u1-pristine-forward-confirmation",
+        "football-data/experiments/r43y0_draw_calibration_forward/run_r43y0.py",
+        "a342138bef97eb4acb0bcba015dea251a3280fdf",
+        "1x2_probabilities",
         None,
         None,
         False,
-        False,
-        False,
-        "No independent R43Y branch, commit, or code path was resolved in the targeted repository search. Do not fabricate an implementation; resolve provenance first.",
+        True,
+        True,
+        "R43Y provenance is resolved at snapshot 7043d6f7788f05b958e2ab7ec743b982a54ec5aa. Exact fixed draw-logit intercept 0.1322913820792354 reproduces all 41 sealed predictions, including 3 natural draw Top1 changes. Native source is 1X2-only; no score-matrix lifting is claimed by the source migration.",
     ),
 }
 
 
 class DeclaredLegacyScoreMatrixComponent:
-    """Disabled declaration compatible with UnifiedInferenceEngine's component protocol."""
+    """Disabled declaration retained for compatibility; it never executes source logic."""
 
     def __init__(self, key: str):
         if key not in SPECS:
@@ -109,7 +109,7 @@ class DeclaredLegacyScoreMatrixComponent:
         spec = SPECS[key]
         self.spec = spec
         self.component_id = spec.component_id
-        self.component_version = "r43gov0-m5a-declaration-v1"
+        self.component_version = "r43gov0-m5g-declaration-v2"
         self.enabled = False
 
     def apply(self, matrix: list[dict[str, Any]], request: Any, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -123,4 +123,12 @@ def unresolved_sources() -> tuple[str, ...]:
 
 
 def migration_candidates() -> tuple[str, ...]:
-    return tuple(sorted(key for key, spec in SPECS.items() if spec.source_resolved and spec.native_output == "score_matrix" and not spec.implementation_migrated))
+    return tuple(sorted(key for key, spec in SPECS.items() if spec.source_resolved and not spec.implementation_migrated))
+
+
+def native_score_matrix_components() -> tuple[str, ...]:
+    return tuple(sorted(key for key, spec in SPECS.items() if spec.native_output == "score_matrix"))
+
+
+def native_probability_components() -> tuple[str, ...]:
+    return tuple(sorted(key for key, spec in SPECS.items() if spec.native_output == "1x2_probabilities"))
