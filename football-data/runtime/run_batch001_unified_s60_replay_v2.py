@@ -142,9 +142,13 @@ def resolve_targets(lock: dict, work: Path):
                 opponent_id=ar.canonical_team_id if ar.status == RESOLVED else None,
                 opponent_candidates=acand if ar.status != RESOLVED else None,
             )
+            contextual.append({
+                "side": "home", "alias_candidates": sorted(hcand),
+                "source_team_id": hid, "fixture_candidates": found,
+                "resolution_succeeded": hid is not None,
+            })
             if hid is not None:
                 hr = resolver.resolve(ns, hid, home_alias)
-                contextual.append({"side": "home", "source_team_id": hid, "fixture_candidates": found})
         if ar.status != RESOLVED:
             aid, found = _candidate_id_from_fixture(
                 fixtures, cid=cmap[div], date=z["date"], side="away",
@@ -152,9 +156,13 @@ def resolve_targets(lock: dict, work: Path):
                 opponent_id=hr.canonical_team_id if hr.status == RESOLVED else None,
                 opponent_candidates=hcand if hr.status != RESOLVED else None,
             )
+            contextual.append({
+                "side": "away", "alias_candidates": sorted(acand),
+                "source_team_id": aid, "fixture_candidates": found,
+                "resolution_succeeded": aid is not None,
+            })
             if aid is not None:
                 ar = resolver.resolve(ns, aid, away_alias)
-                contextual.append({"side": "away", "source_team_id": aid, "fixture_candidates": found})
 
         rec = {
             "batch_index": z["batch_index"], "division": div, "date": z["date"],
@@ -192,7 +200,7 @@ def resolve_targets(lock: dict, work: Path):
                       or r["away_resolution"]["status"] != RESOLVED
                       or len(r.get("fixture_candidates", [])) != 1]
         diagnostic = {
-            "schema_version": "football3-batch001-unified-mapping-diagnostic-v3",
+            "schema_version": "football3-batch001-unified-mapping-diagnostic-v4",
             "status": "FAIL_MAPPING_INCOMPLETE",
             "mapped": len(mapped), "expected": 100, "unresolved_count": len(unresolved),
             "competition_map": cmap, "unresolved": unresolved, "all_audit": audit,
