@@ -59,6 +59,18 @@ def top1(probabilities: Mapping[str, float]) -> str:
     return max(CLASSES, key=lambda k: (float(probabilities[k]), -CLASSES.index(k)))
 
 
+def _numerical_receipt(component: Any) -> Mapping[str, Any] | None:
+    provider = getattr(component, "numerical_receipt", None)
+    if not callable(provider):
+        return None
+    receipt = provider()
+    if receipt is None:
+        return None
+    if not isinstance(receipt, Mapping):
+        raise RuntimeError("component returned invalid numerical receipt")
+    return dict(receipt)
+
+
 @dataclass(frozen=True)
 class FixtureRequest:
     fixture_id: str
@@ -251,17 +263,24 @@ class UnifiedInferenceEngine:
             "enabled": True,
             "input_matrix_hash": None,
             "output_matrix_hash": baseline_hash,
+            "numerical_receipt": _numerical_receipt(self.baseline_component),
         }]
 
-        payload = component_payload or {}
+        payload = dict(component_payload or {})
+        # Canonical identities are resolved once by the unified engine and are the
+        # only team identities downstream numerical components may consume.
+        payload["canonical_home_team_id"] = home.canonical_team_id
+        payload["canonical_away_team_id"] = away.canonical_team_id
         for component in self.components:
             if not component.enabled:
+                current_hash = matrix_hash(matrix)
                 chain.append({
                     "component_id": component.component_id,
                     "component_version": component.component_version,
                     "enabled": False,
-                    "input_matrix_hash": matrix_hash(matrix),
-                    "output_matrix_hash": matrix_hash(matrix),
+                    "input_matrix_hash": current_hash,
+                    "output_matrix_hash": current_hash,
+                    "numerical_receipt": _numerical_receipt(component),
                 })
                 continue
             before = matrix_hash(matrix)
@@ -273,6 +292,7 @@ class UnifiedInferenceEngine:
                 "enabled": True,
                 "input_matrix_hash": before,
                 "output_matrix_hash": after,
+                "numerical_receipt": _numerical_receipt(component),
             })
 
         probs = one_x_two(matrix)
