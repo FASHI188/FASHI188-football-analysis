@@ -19,11 +19,30 @@ jobs:
           python-version: '3.11'
       - name: Install runtime dependencies
         run: python -m pip install --disable-pip-version-check pandas pyarrow numpy scikit-learn requests
-      - name: Run frozen six-fixture S60 live model
+      - name: Run frozen six-fixture S60 live model with adapter-only date repair
         env:
           S60_LIVE_INPUT: football-data/forward/inbox/user_s60_live_20260829.json
           S60_LIVE_OUT: s60_live_out
-        run: python football-data/forward/run_user_s60_live_20260829.py
+        run: |
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path('football-data/forward/run_user_s60_live_20260829.py')
+          spec = importlib.util.spec_from_file_location('s60_live_runner', path)
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+
+          original_map_targets = mod.map_targets
+          def map_targets_with_date(targets, history, teams, leagues):
+              mapped, audit, cmap = original_map_targets(targets, history, teams, leagues)
+              for row in mapped:
+                  row['date'] = mod.pd.Timestamp(row['kickoff_utc']).date().isoformat()
+              return mapped, audit, cmap
+
+          mod.map_targets = map_targets_with_date
+          raise SystemExit(mod.main())
+          PY
       - name: Print execution receipt
         if: always()
         run: |
