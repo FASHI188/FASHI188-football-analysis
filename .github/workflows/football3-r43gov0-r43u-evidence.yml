@@ -1,0 +1,111 @@
+name: football3 R43GOV0 M5E R43U evidence gate
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - football-data/components/r43u_fixed_diagonal.py
+      - football-data/tests/test_r43u_component_compat.py
+      - .github/workflows/football3-r43gov0-r43u-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  r43u-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact governance branch
+        uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime
+        run: python -m pip install --disable-pip-version-check numpy
+      - name: Verify governance isolation and frozen V500
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/validation/bayesian_dynamic_state_oof_v500.py)" = "9c302506c49aa1847e60cd7896fc1a80f3b6b457"
+          if git diff --name-only 8e7aa3d703b88fae7e275203afa9d6897db79dcf...HEAD | grep -E '(^|/)CURRENT($|/)|football-data/forward/v6_market_first_events_v651.json|football-data/forward/r43u1_pristine_forward_events.json'; then
+            echo 'sealed/current path modified' >&2
+            exit 1
+          fi
+      - name: Fetch pinned R43U evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r43u/evidence
+          curl -L --fail --retry 3 -o /tmp/r43u/source.py https://raw.githubusercontent.com/FASHI188/FASHI188-football-analysis/f6bc7a6d483c39a9513506f3fe1096d0aecbc668/football-data/experiments/r43u0_fixed_diagonal_inflation/run_r43u0.py
+          test "$(git hash-object /tmp/r43u/source.py)" = "4ad46cca4acb618068f6db2601cf96bad4109698"
+          curl -L --fail --retry 3 -o /tmp/r43u/evidence/u0.json https://raw.githubusercontent.com/FASHI188/FASHI188-football-analysis/3983d9168ca51234a810ede379d97c62afa3fff8/football-data/experiments/r43u0_fixed_diagonal_inflation/results/summary_r43u0_fixed_diagonal_inflation.json
+          test "$(git hash-object /tmp/r43u/evidence/u0.json)" = "56545fceb31a0720c4e9b5703423ba1a4b86264c"
+          curl -L --fail --retry 3 -o /tmp/r43u/evidence/u1.json https://raw.githubusercontent.com/FASHI188/FASHI188-football-analysis/c8da8807a4ee7226b50ed8c7fd2b73eb13f86687/football-data/experiments/r43u1_pristine_forward_confirmation/results/summary_r43u1_pristine_forward_evaluation.json
+          test "$(git hash-object /tmp/r43u/evidence/u1.json)" = "5dd2d37feb5c5357c298d720acf8f1a8b00cba30"
+      - name: Run existing exact R43U compatibility test
+        env:
+          R43U_SOURCE_FILE: /tmp/r43u/source.py
+        run: python -m unittest discover -s football-data/tests -p 'test_r43u_component_compat.py' -v
+      - name: Verify evidence contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          u0=json.load(open('/tmp/r43u/evidence/u0.json'))
+          u1=json.load(open('/tmp/r43u/evidence/u1.json'))
+          assert u0['design']['diagonal_factor'] == 1.25
+          assert u0['gate']['architecture_passed'] is True
+          assert u0['gate']['full_volume_53pct_target_met'] is False
+          assert u0['gate']['breakthrough_candidate'] is True
+          assert u0['gate']['action'] == 'FREEZE_DIAGONAL_INFLATION_FOR_NEW_FORWARD_CONFIRMATION'
+          assert u1['coverage']['locked_predictions'] == 41
+          assert u1['coverage']['settled_predictions'] == 0
+          assert u1['gate']['forward_confirmation_passed'] is False
+          assert u1['gate']['action'] == 'CONTINUE_FORWARD_ACCUMULATION_NO_RETUNING'
+          PY
+      - name: Write M5E gate receipt
+        shell: bash
+        run: |
+          mkdir -p football-data/governance/r43gov0/results
+          cat > football-data/governance/r43gov0/results/m5e_r43u_evidence_gate.json <<'JSON'
+          {
+            "schema_version": "football3-r43gov0-m5e-r43u-evidence-gate-v1",
+            "status": "PASS",
+            "scope": "research_governance_only",
+            "implementation_component": "football-data/components/r43u_fixed_diagonal.py",
+            "implementation_is_single_canonical_r43u_component": true,
+            "source_blob_sha": "4ad46cca4acb618068f6db2601cf96bad4109698",
+            "source_commit": "f6bc7a6d483c39a9513506f3fe1096d0aecbc668",
+            "diagonal_factor": 1.25,
+            "exact_source_compatibility_rechecked": true,
+            "enabled_by_default": false,
+            "historical_scored_n": 53,
+            "historical_architecture_gate_passed": true,
+            "historical_full_volume_53pct_target_met": false,
+            "historical_breakthrough_candidate": true,
+            "historical_action": "FREEZE_DIAGONAL_INFLATION_FOR_NEW_FORWARD_CONFIRMATION",
+            "forward_locked_predictions": 41,
+            "forward_settled_predictions": 0,
+            "forward_confirmation_passed": false,
+            "forward_action": "CONTINUE_FORWARD_ACCUMULATION_NO_RETUNING",
+            "fresh_confirmatory_test_claim": false,
+            "current_modified": false,
+            "main_modified": false,
+            "u0_y0_predictions_modified": false,
+            "next_step": "M5F_migrate_R43Y_draw_calibration_disabled"
+          }
+          JSON
+      - name: Upload M5E gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m5e-r43u-evidence-gate
+          path: football-data/governance/r43gov0/results/m5e_r43u_evidence_gate.json
+          if-no-files-found: error
+          retention-days: 90
