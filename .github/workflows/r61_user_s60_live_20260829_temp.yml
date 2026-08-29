@@ -1,0 +1,39 @@
+name: R61 User S60 Live 20260829 Six
+
+on:
+  push:
+    branches:
+      - run/r61-user-s60-live-20260829-6
+  workflow_dispatch:
+
+jobs:
+  run-s60-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact execution branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check pandas pyarrow numpy scikit-learn requests
+      - name: Run frozen six-fixture S60 live model
+        env:
+          S60_LIVE_INPUT: football-data/forward/inbox/user_s60_live_20260829.json
+          S60_LIVE_OUT: s60_live_out
+        run: python football-data/forward/run_user_s60_live_20260829.py
+      - name: Print execution receipt
+        if: always()
+        run: |
+          if [ -f s60_live_out/receipt.json ]; then cat s60_live_out/receipt.json; fi
+          if [ -f s60_live_out/mapping_diagnostic.json ]; then cat s60_live_out/mapping_diagnostic.json; fi
+      - name: Upload model artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r61-user-s60-live-20260829-six
+          path: s60_live_out/
+          if-no-files-found: warn
+          retention-days: 7
