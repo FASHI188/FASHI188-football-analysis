@@ -44,8 +44,8 @@ FEATURE_TRUTH: Mapping[str, FeatureIntegrationTruth] = {
         "R43E2 failed on an older disjoint 20k and current-match coach changes lack a verified prematch timestamp contract.",
     ),
     "market_1x2_ah_ou": FeatureIntegrationTruth(
-        "market_1x2_ah_ou", True, False, True, True, False, False, False,
-        "R43Q exact source compatibility is proven, but its historical architecture gate was not passed and the unified path is not yet PIT-bound.",
+        "market_1x2_ah_ou", True, False, True, True, True, False, False,
+        "M8 proves a PIT-bound R43Q research candidate with consumer-attested numerical activation. Default policy remains disabled; R43Q historical architecture gate remains false and formal promotion is forbidden.",
     ),
 }
 
@@ -62,4 +62,5 @@ def assert_no_false_numeric_claims() -> None:
 
 
 def numeric_enabled_families() -> tuple[str, ...]:
+    """Families enabled by the default governance policy, not research overrides."""
     return tuple(sorted(k for k, v in FEATURE_TRUTH.items() if v.numeric_effect_enabled))
