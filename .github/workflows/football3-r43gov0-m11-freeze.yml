@@ -1,0 +1,111 @@
+name: football3 R43GOV0 M11 fresh-forward freeze
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - 'football-data/governance/r43gov0/prereg/m11_fresh_forward_300.json'
+      - 'football-data/pipeline/runtime_authority.py'
+      - 'football-data/pipeline/s60_numerical_baseline.py'
+      - 'football-data/components/r43u_fixed_diagonal.py'
+      - 'football-data/components/r43_probability_matrix_adapters.py'
+      - '.github/workflows/football3-r43gov0-m11-freeze.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify prereg runtime and component contract
+        run: |
+          PYTHONPATH=football-data python - <<'PY'
+          import json
+          from pathlib import Path
+          from pipeline.runtime_authority import authority_receipt
+          from pipeline.s60_numerical_baseline import S60NumericalBaseline, HISTORY_ROWS, CLASSIFIER_TRAIN_ROWS
+          from components.r43u_fixed_diagonal import R43UFixedDiagonalInflationComponent, DIAGONAL_FACTOR
+          from components.r43_probability_matrix_adapters import R43YScoreMatrixTransportComponent
+          p = json.loads(Path('football-data/governance/r43gov0/prereg/m11_fresh_forward_300.json').read_text())
+          assert p['schema_version'] == 'football3-r43gov0-m11-fresh-forward-300-prereg-v2'
+          assert p['fresh_forward'] is True and p['target_settled_matches'] == 300
+          a = authority_receipt()
+          assert a['canonical_operational_baseline'] == 'S60'
+          assert a['v500_runtime_baseline_allowed'] is False and a['v500_formal_weight'] == 0
+          configs = p['fixed_configs']
+          assert list(configs) == ['operational_control_s60','mechanism_control_q','ablation_q_u','primary_candidate_q_u_y']
+          s = configs['operational_control_s60']
+          assert s['component_id'] == S60NumericalBaseline.component_id
+          assert s['history_rows'] == HISTORY_ROWS == 60000
+          assert s['classifier_training_rows'] == CLASSIFIER_TRAIN_ROWS == 24123
+          u = configs['ablation_q_u']
+          assert u['research_components'] == [R43UFixedDiagonalInflationComponent.component_id]
+          assert abs(float(u['r43u_diagonal_factor']) - DIAGONAL_FACTOR) < 1e-15
+          y = configs['primary_candidate_q_u_y']
+          assert y['research_components'] == [R43UFixedDiagonalInflationComponent.component_id, R43YScoreMatrixTransportComponent.component_id]
+          assert y['research_components'][1] == 'R43Y_draw_calibration_matrix_transport'
+          assert abs(float(y['r43y_draw_logit_intercept']) - 0.1322913820792354) < 1e-15
+          assert p['evaluation']['primary_control'] == 'operational_control_s60'
+          assert p['suspended_reference']['V500']['included_in_four_config_lockbox'] is False
+          for k in ('lineup_numeric_1x2_enabled','player_technical_numeric_1x2_enabled','head_coach_numeric_1x2_enabled','availability_numeric_1x2_enabled'):
+              assert p[k] is False
+          assert p['u0_y0_predictions_modified'] is False
+          print('M11_PREREG_CONTRACT_PASS')
+          PY
+      - name: Verify sealed CURRENT U0 Y0 paths unchanged from M10 lock head
+        run: |
+          set -euo pipefail
+          BASE=7c1815c47102412e88f72189e2b8f837d9b73a42
+          git fetch --depth=1 origin "$BASE"
+          for p in \
+            CURRENT \
+            football-data/forward/v6_market_first_events_v651.json \
+            football-data/forward/r43u1_pristine_forward_events.json \
+            football-data/forward/r43y0_draw_calibration_forward_events.json; do
+            old=$(git show "$BASE:$p" | git hash-object --stdin)
+            new=$(git hash-object "$p")
+            test "$old" = "$new" || { echo "sealed path drift: $p" >&2; exit 1; }
+          done
+      - name: Write M11 freeze receipt
+        run: |
+          mkdir -p m11_gate
+          PYTHONPATH=football-data python - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          p = Path('football-data/governance/r43gov0/prereg/m11_fresh_forward_300.json')
+          payload = json.loads(p.read_text())
+          receipt = {
+            'schema_version':'football3-r43gov0-m11-freeze-gate-v1',
+            'status':'PASS',
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'prereg_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
+            'prereg_schema':payload['schema_version'],
+            'target_settled_matches':300,
+            'four_config_lockbox':['operational_control_s60','mechanism_control_q','ablation_q_u','primary_candidate_q_u_y'],
+            'r43y_component_id':'R43Y_draw_calibration_matrix_transport',
+            'operational_control':'S60',
+            'v500_in_lockbox':False,
+            'sealed_current_u0_y0_unchanged':True,
+            'outcome_based_selection':False,
+            'retune_on_300':False,
+            'formal_promotion_allowed':False,
+            'next':'M11_ENROLLMENT_AND_FOUR_CONFIG_LOCKBOX'
+          }
+          Path('m11_gate/gate.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m11-freeze-gate
+          path: m11_gate/gate.json
+          if-no-files-found: error
+          retention-days: 90
