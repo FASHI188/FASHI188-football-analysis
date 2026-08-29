@@ -1,0 +1,130 @@
+name: football3 R43GOV0 M11 safe identity diagnostic
+
+on:
+  push:
+    branches:
+      - football3/r43gov0-unified-governance-audit
+    paths:
+      - 'football-data/governance/r43gov0/m11_identity_diag_heartbeat.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: football3/r43gov0-unified-governance-audit
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pandas==2.2.3 pyarrow==18.1.0
+      - name: Diagnose exact-name mapping misses without using outcomes
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import json, re, unicodedata, urllib.request
+          from difflib import SequenceMatcher
+          from pathlib import Path
+          import pandas as pd
+
+          HF='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main'
+          targets = json.loads(r'''[
+            {"provider_event_id":"1027976618","competition_id":"NED_Eredivisie","home_team":"PEC Zwolle","away_team":"NEC Nijmegen","kickoff_utc":"2026-08-29T19:00:00+00:00"},
+            {"provider_event_id":"1028208797","competition_id":"ESP_LaLiga","home_team":"Sevilla","away_team":"Atlético Madrid","kickoff_utc":"2026-08-29T19:30:00+00:00"},
+            {"provider_event_id":"1028656979","competition_id":"ARG_Primera","home_team":"Rosario Central","away_team":"Gimnasia La Plata","kickoff_utc":"2026-08-29T20:00:00+00:00"},
+            {"provider_event_id":"1025985651","competition_id":"BRA_SerieA","home_team":"Atlético-MG","away_team":"Vitória","kickoff_utc":"2026-08-29T21:30:00+00:00"},
+            {"provider_event_id":"1025985710","competition_id":"BRA_SerieA","home_team":"São Paulo","away_team":"Red Bull Bragantino","kickoff_utc":"2026-08-29T23:00:00+00:00"},
+            {"provider_event_id":"1025806530","competition_id":"USA_MLS","home_team":"Atlanta United FC","away_team":"Charlotte FC","kickoff_utc":"2026-08-29T23:30:00+00:00"},
+            {"provider_event_id":"1025806567","competition_id":"USA_MLS","home_team":"D.C. United","away_team":"LAFC","kickoff_utc":"2026-08-29T23:30:00+00:00"},
+            {"provider_event_id":"1025985708","competition_id":"BRA_SerieA","home_team":"Vasco da Gama","away_team":"Cruzeiro","kickoff_utc":"2026-08-30T00:20:00+00:00"},
+            {"provider_event_id":"1028565628","competition_id":"ARG_Primera","home_team":"Talleres (Córdoba)","away_team":"Central Córdoba (Santiago del Estero)","kickoff_utc":"2026-08-30T00:30:00+00:00"},
+            {"provider_event_id":"1028925478","competition_id":"KOR_KLeague1","home_team":"Gangwon FC","away_team":"Pohang Steelers","kickoff_utc":"2026-08-30T10:30:00+00:00"},
+            {"provider_event_id":"1026062513","competition_id":"SWE_Allsvenskan","home_team":"AIK","away_team":"Hammarby IF","kickoff_utc":"2026-08-30T12:00:00+00:00"},
+            {"provider_event_id":"1028072741","competition_id":"ENG_PremierLeague","home_team":"Leeds United","away_team":"Brentford","kickoff_utc":"2026-08-30T13:00:00+00:00"},
+            {"provider_event_id":"1028230351","competition_id":"GER_Bundesliga","home_team":"SC Freiburg","away_team":"Werder Bremen","kickoff_utc":"2026-08-30T13:30:00+00:00"},
+            {"provider_event_id":"1025985664","competition_id":"BRA_SerieA","home_team":"Athletico-PR","away_team":"Fluminense","kickoff_utc":"2026-08-30T14:00:00+00:00"},
+            {"provider_event_id":"1026062542","competition_id":"SWE_Allsvenskan","home_team":"IFK Göteborg","away_team":"Örgryte IS","kickoff_utc":"2026-08-30T14:30:00+00:00"},
+            {"provider_event_id":"1026027839","competition_id":"NOR_Eliteserien","home_team":"Viking FK","away_team":"Aalesund","kickoff_utc":"2026-08-30T15:00:00+00:00"},
+            {"provider_event_id":"1026027867","competition_id":"NOR_Eliteserien","home_team":"Hamarkameratene","away_team":"Kristiansund BK","kickoff_utc":"2026-08-30T15:00:00+00:00"},
+            {"provider_event_id":"1028072803","competition_id":"ENG_PremierLeague","home_team":"Manchester United","away_team":"Ipswich Town","kickoff_utc":"2026-08-30T15:30:00+00:00"}
+          ]''')
+
+          def dl(name):
+              p=Path('/tmp')/name
+              req=urllib.request.Request(f'{HF}/{name}?download=true',headers={'User-Agent':'football3-m11-identity-diagnostic/1'})
+              with urllib.request.urlopen(req,timeout=300) as r, p.open('wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      f.write(b)
+              return p
+
+          def norm(v):
+              s=unicodedata.normalize('NFKD',str(v)).encode('ascii','ignore').decode().casefold()
+              s=re.sub(r'[^a-z0-9]+',' ',s)
+              return re.sub(r'\s+',' ',s).strip()
+
+          teams=pd.read_parquet(dl('teams.parquet'))
+          fixtures=pd.read_parquet(dl('fixtures.parquet'),columns=['id','date_utc','league_id','home_team_id','away_team_id'])
+          fixtures['date_utc']=pd.to_datetime(fixtures['date_utc'],utc=True)
+          cols=[c for c in ['name','fd_name'] if c in teams.columns]
+          records=[]
+          for row in teams.itertuples(index=False):
+              d=row._asdict()
+              if d.get('id') is None: continue
+              names=[]
+              for c in cols:
+                  v=d.get(c)
+                  if v is not None and str(v).casefold()!='nan': names.append(str(v))
+              if names:
+                  records.append({'id':str(int(d['id'])),'name':d.get('name'),'fd_name':d.get('fd_name'),'norms':[norm(x) for x in names]})
+
+          def hints(query):
+              q=norm(query)
+              out=[]
+              qtok=set(q.split())
+              for r in records:
+                  best=0.0
+                  for rn in r['norms']:
+                      score=SequenceMatcher(None,q,rn).ratio()
+                      rtok=set(rn.split())
+                      if qtok and rtok:
+                          score=max(score, len(qtok & rtok)/max(len(qtok),len(rtok)))
+                      if q in rn or rn in q:
+                          score=max(score,0.90)
+                      best=max(best,score)
+                  if best>=0.45:
+                      out.append((best,r))
+              out.sort(key=lambda x:(-x[0],x[1]['id']))
+              return [{'score':round(s,4),'id':r['id'],'name':r['name'],'fd_name':r['fd_name']} for s,r in out[:10]]
+
+          result={'schema_version':'football3-r43gov0-m11-identity-diagnostic-v1','outcomes_read':False,'status_columns_read':False,'diagnostic_only':True,'targets':[]}
+          for t in targets:
+              hh=hints(t['home_team']); ah=hints(t['away_team'])
+              kickoff=pd.Timestamp(t['kickoff_utc'])
+              candidate_ids={x['id'] for x in hh[:5]}|{x['id'] for x in ah[:5]}
+              q=fixtures[(fixtures['date_utc']>=kickoff-pd.Timedelta(days=2))&(fixtures['date_utc']<=kickoff+pd.Timedelta(days=2))]
+              q=q[q['home_team_id'].astype(str).isin(candidate_ids)|q['away_team_id'].astype(str).isin(candidate_ids)].copy()
+              q['delta_seconds']=(q['date_utc']-kickoff).abs().dt.total_seconds()
+              q=q.sort_values(['delta_seconds','id']).head(20)
+              nearby=[]
+              byid={r['id']:r for r in records}
+              for r in q.itertuples(index=False):
+                  hid=str(int(r.home_team_id)); aid=str(int(r.away_team_id))
+                  nearby.append({'fixture_id':str(int(r.id)),'date_utc':r.date_utc.isoformat(),'league_id':str(int(r.league_id)),'home_team_id':hid,'away_team_id':aid,'home_name':(byid.get(hid) or {}).get('name'),'away_name':(byid.get(aid) or {}).get('name'),'delta_seconds':float(r.delta_seconds)})
+              result['targets'].append({**t,'home_hints':hh,'away_hints':ah,'nearby_fixture_hints':nearby})
+          Path('m11_identity_diagnostic.json').write_text(json.dumps(result,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps({'targets':len(result['targets']),'outcomes_read':False,'status_columns_read':False},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43gov0-m11-identity-diagnostic
+          path: m11_identity_diagnostic.json
+          if-no-files-found: error
+          retention-days: 30
