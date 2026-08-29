@@ -2,13 +2,14 @@
 
 All numerical predictions go through UnifiedInferenceEngine. Historical outcomes
 are attached only after every prediction in the same kickoff group has been
-frozen; enabled stateful components are updated only after that group boundary.
+frozen; enabled stateful baselines/components are updated only after that boundary.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import inspect
 import json
 from typing import Any, Iterable, Mapping
 
@@ -44,6 +45,14 @@ class SettledOutcome:
             raise ValueError("90-minute goals must be non-negative")
         object.__setattr__(self, "home_goals_90", int(self.home_goals_90))
         object.__setattr__(self, "away_goals_90", int(self.away_goals_90))
+
+    @property
+    def home_goals(self) -> int:
+        return self.home_goals_90
+
+    @property
+    def away_goals(self) -> int:
+        return self.away_goals_90
 
     @property
     def actual_result(self) -> str:
@@ -158,14 +167,46 @@ def _row_from_prediction(mode: str, case: PredictionCase, result: PredictionResu
     )
 
 
+def _call_begin_group(component: Any, group_key: str) -> None:
+    method = getattr(component, "begin_group")
+    params = inspect.signature(method).parameters
+    if len(params) == 0:
+        method()
+    elif len(params) == 1:
+        method(group_key)
+    else:
+        raise RuntimeError(f"unsupported begin_group signature on {component.component_id}")
+
+
+def _settlement_observation(
+    component: Any,
+    case: PredictionCase,
+    result: PredictionResult,
+) -> Mapping[str, Any]:
+    method = getattr(component, "settlement_observation")
+    params = inspect.signature(method).parameters
+    if case.outcome is None:
+        raise RuntimeError("settlement observation requested without outcome")
+    # Legacy R43T lifecycle: (component_payload, actual_result).
+    if len(params) == 2:
+        return method(case.component_payload or {}, case.outcome.to_dict())
+    # Unified lifecycle: (request, payload, SettledOutcome, PredictionResult).
+    if len(params) == 4:
+        return method(case.request, case.component_payload or {}, case.outcome, result)
+    raise RuntimeError(f"unsupported settlement_observation signature on {component.component_id}")
+
+
 class UnifiedDatasetGenerator:
     def __init__(self, engine: UnifiedInferenceEngine):
         self.engine = engine
 
     def _active_lifecycle_components(self) -> tuple[Any, ...]:
         out = []
-        for component in self.engine.components:
-            if not bool(getattr(component, "enabled", False)):
+        candidates = (self.engine.baseline_component, *self.engine.components)
+        for component in candidates:
+            # Baselines are active by definition unless they explicitly expose an
+            # enabled flag; score-matrix components must be enabled.
+            if hasattr(component, "enabled") and not bool(getattr(component, "enabled")):
                 continue
             begin = callable(getattr(component, "begin_group", None))
             settle = callable(getattr(component, "settle_group", None))
@@ -203,8 +244,9 @@ class UnifiedDatasetGenerator:
             if lifecycle and mode in HISTORICAL_MODES:
                 if any(case.outcome is None for case in group):
                     raise RuntimeError("historical stateful replay requires outcomes for every fixture in kickoff group")
+                group_key = _iso(kickoff)
                 for component in lifecycle:
-                    component.begin_group()
+                    _call_begin_group(component, group_key)
 
             frozen: list[tuple[PredictionCase, PredictionResult]] = []
             for case in group:
@@ -217,13 +259,14 @@ class UnifiedDatasetGenerator:
                 )
                 frozen.append((case, result))
 
-            # Results are accessed only after all predictions in this kickoff group are frozen.
+            # Outcomes are accessed only after every prediction in the kickoff group
+            # is frozen. This is the common lifecycle for stateful baselines and
+            # downstream state components.
             if lifecycle and mode in HISTORICAL_MODES:
                 for component in lifecycle:
                     observations = [
-                        component.settlement_observation(case.component_payload or {}, case.outcome.to_dict())
-                        for case, _ in frozen
-                        if case.outcome is not None
+                        _settlement_observation(component, case, result)
+                        for case, result in frozen
                     ]
                     component.settle_group(observations)
 
