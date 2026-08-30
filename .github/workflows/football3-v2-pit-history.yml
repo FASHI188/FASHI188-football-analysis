@@ -225,37 +225,83 @@ jobs:
           cp /tmp/pit/locks/* "$OUT/locks/"
           cp /tmp/pit/replay/* "$OUT/replay/"
           cp /tmp/pit/score/* "$OUT/score/"
-         Ü‰ˆ‹Ê‹œH‰‹ÜÛİ\˜Ù\Ë›ØÚËšœÛÛˆˆ‰‹Ô‘PQQK›Yˆ‰ÕUØÛÙKÈ‚ˆ]ÛˆH	ÔIÂˆ[\Ü\ÚX‹œÛÛ‹ÜÂˆœ›ÛH]Xˆ[\Ü]ˆ›ÛİT]
-	Ëİ\Ü]Ø\Y˜Xİ	ÊBˆš[\Ï^ßBˆ›Üˆ[ˆÛÜY
-›Ûİœ™ÛØŠ	Ê‰ÊJN‚ˆYˆš\×Ùš[J
-N‚ˆ˜]Ï\œ™XYØ]\Ê
-Bˆš[\ÖÜœ™[]]™WİÊ›Ûİ
-K˜\×ÜÜÚ^
+          cp "$R"/*.py "$R/sources.lock.json" "$R/README.md" "$OUT/code/"
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path('/tmp/pit_artifact')
+          files={}
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  raw=p.read_bytes()
+                  files[p.relative_to(root).as_posix()]={'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+          score=json.loads((root/'score/metrics.json').read_text())
+          pre=json.loads((root/'replay/run_manifest_pre_score.json').read_text())
+          manifest={
+              'schema_version':'football3-v2-expanded-history-pit-artifact-v1',
+              'head':os.environ['GITHUB_SHA'],'branch':os.environ['GITHUB_REF_NAME'],
+              'run_id':int(os.environ['GITHUB_RUN_ID']),'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'research_only':True,'formal_candidate':False,'strict_prospective':False,'production_enabled':False,
+              'prediction_sha256':pre['prediction_sha256'],'scorer_sha256':score['scorer_sha256'],
+              'main_modified':False,'current_modified':False,'airtable_modified':False,
+              'pr334_modified':False,'r5_modified':False,'files':files,
+          }
+          (root/'artifact_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          PY
 
-WO^ÉÜÚLM‰Îš\ÚX‹œÚLMŠ˜]ÊKš^YÙ\İ
+      - name: Upload expanded-history PIT Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v2-expanded-history-pit-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/pit_artifact/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
 
-K	Ø]\ÉÎ›[Š˜]Ê_BˆØÛÜ™OZœÛÛ‹›ØYÊ
-›ÛİÉÜØÛÜ™KÛY]šXÜËšœÛÛ‰ÊKœ™XYİ^
+      - name: Read back uploaded Artifact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pit_readback
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > /tmp/pit_readback/metadata.json
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o /tmp/pit_readback/artifact.zip
+          unzip -t /tmp/pit_readback/artifact.zip >/dev/null
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          m=json.loads(Path('/tmp/pit_readback/metadata.json').read_text())
+          z=Path('/tmp/pit_readback/artifact.zip')
+          digest='sha256:'+hashlib.sha256(z.read_bytes()).hexdigest()
+          receipt={
+              'artifact_id':m['id'],'artifact_name':m['name'],'metadata_digest':m.get('digest'),
+              'downloaded_zip_sha256':digest,'zip_bytes':z.stat().st_size,
+              'all_consistent':m.get('digest')==digest,'crc_ok':True,
+          }
+          Path('/tmp/pit_readback/readback_receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+          print(json.dumps(receipt,indent=2))
+          assert receipt['all_consistent']
+          PY
 
-JBˆ™OZœÛÛ‹›ØYÊ
-›ÛİÉÜ™\^KÜ[—ÛX[šY™\İÜ™WÜØÛÜ™KšœÛÛ‰ÊKœ™XYİ^
+      - name: Upload Artifact readback receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v2-expanded-history-pit-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/pit_readback/readback_receipt.json
+          if-no-files-found: error
+          retention-days: 90
 
-JBˆX[šY™\İ^Âˆ	ÜØÚ[XWİ™\œÚ[Û‰Î‰Ù›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]X\Y˜Xİ]ŒIËˆ	ÚXY	Î›ÜË™[š\›Û–ÉÑÒUP—ÔÒI×K	Øœ˜[˜Ú	Î›ÜË™[š\›Û–ÉÑÒUP—Ô‘Q—ÓSQI×Kˆ	Ü[—ÚY	Îš[
-ÜË™[š\›Û–ÉÑÒUP—Ô•S—ÒQ	×JK	Ü[—Ø][\	Îš[
-ÜË™[š\›Û–ÉÑÒUP—Ô•S—ĞUST	×JKˆ	Ü™\ÙX\˜ÚÛÛ›IÎ•YK	Ù›Ü›X[ØØ[™Y]IÎ‘˜[ÙK	ÜİšXİÜ›ÜÜXİ]™IÎ‘˜[ÙK	Ü›ÙXİ[Û—Ù[˜X›Y	Î‘˜[ÙKˆ	Ü™YXİ[Û—ÜÚLM‰Îœ™VÉÜ™YXİ[Û—ÜÚLM‰×K	ÜØÛÜ™\—ÜÚLM‰ÎœØÛÜ™VÉÜØÛÜ™\—ÜÚLM‰×Kˆ	ÛXZ[—Û[ÙYšYY	Î‘˜[ÙK	Øİ\œ™[Û[ÙYšYY	Î‘˜[ÙK	ØZ\X›WÛ[ÙYšYY	Î‘˜[ÙKˆ	ÜŒÌÍÛ[ÙYšYY	Î‘˜[ÙK	ÜWÛ[ÙYšYY	Î‘˜[ÙK	Ùš[\ÉÎ™š[\ËˆBˆ
-›ÛİÉØ\Y˜XİÛX[šY™\İšœÛÛ‰ÊKÜš]Wİ^
-œÛÛ‹™[\ÊX[šY™\İ[œİ\™WØ\ØÚZOQ˜[ÙK[™[LŠJÉ×‰ÊBˆB‚ˆH˜[YNˆ\ØY^[™YZ\İÜHU\Y˜XİˆYˆ\ØYˆ\Ù\ÎˆXİ[ÛœËİ\ØYX\Y˜XİˆÚ]‚ˆ˜[YNˆ›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]IŞÈÚ]X‹œÚH_KIŞÈÚ]X‹œ[—ÚY_Bˆ]ˆİ\Ü]Ø\Y˜XİÂˆY‹[›ËYš[\ËY›İ[™ˆ\œ›Ü‚ˆ™][[Û‹Y^\ÎˆLˆÛÛ\™\ÜÚ[Û‹[]™[ˆ‚‚ˆH˜[YNˆ™XY˜XÚÈ\ØYY\Y˜XİYÙ\İˆ[‚ˆÒÕÒÑSˆ	ŞÈÚ]X‹ÚÙ[ˆ_BˆT•QPÕÒQˆ	ŞÈİ\Ë\ØY›İ]]Ë˜\Y˜XİZY_BˆÚ[ˆ˜\Úˆ[ˆˆÙ]Y][È\Y˜Z[ˆZÙ\ˆ\İ\Ü]Ü™XY˜XÚÂˆÚ\Hœ™\ÜËÉÑÒUP—Ô‘TÔÒUÔ–_KØXİ[ÛœËØ\Y˜XİËÉĞT•QPÕÒQHˆˆİ\Ü]Ü™XY˜XÚËÛY]Y]KšœÛÛ‚ˆİ\›YœÔÓR]]Üš^˜][Ûˆ™X\™\ˆ	ÑÒÕÒÑSŸHˆRXØÙ\ˆ\XØ][Û‹İ›™™Ú]XŠÚœÛÛˆˆˆšÎ‹ËØ\K™Ú]X‹˜ÛÛKÜ™\ÜËÉÑÒUP—Ô‘TÔÒUÔ–_KØXİ[ÛœËØ\Y˜XİËÉĞT•QPÕÒQKŞš\ˆˆ[Èİ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\ˆ[š\]İ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\‹Ù]‹Û[ˆ]ÛˆH	ÔIÂˆ[\Ü\ÚX‹œÛÛ‚ˆœ›ÛH]Xˆ[\Ü]ˆOZœÛÛ‹›ØYÊ]
-	Ëİ\Ü]Ü™XY˜XÚËÛY]Y]KšœÛÛ‰ÊKœ™XYİ^
-
-JBˆT]
-	Ëİ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\	ÊBˆYÙ\İIÜÚLM‰ÊÚ\ÚX‹œÚLMŠ‹œ™XYØ]\Ê
-JKš^YÙ\İ
-
-Bˆ™XÙZ\^Âˆ	Ø\Y˜XİÚY	Î›VÉÚY	×K	Ø\Y˜XİÛ˜[YIÎ›VÉÛ˜[YI×K	ÛY]Y]WÙYÙ\İ	Î›K™Ù]
-	ÙYÙ\İ	ÊKˆ	ÙİÛ›ØYYŞš\ÜÚLM‰Î™YÙ\İ	Şš\Ø]\ÉÎ‹œİ]
-
-KœİÜÚ^™Kˆ	Ø[ØÛÛœÚ\İ[	Î›K™Ù]
-	ÙYÙ\İ	ÊOOYYÙ\İ	ØÜ˜×ÛÚÉÎ•YKˆBˆ]
-	Ëİ\Ü]Ü™XY˜XÚËÜ™XY˜XÚ×Ü™XÙZ\šœÛÛ‰ÊKÜš]Wİ^
-œÛÛ‹™[\Ê™XÙZ\[™[LŠJÉ×‰ÊBˆš[
-œÛÛ‹™[\Ê™XÙZ\[™[LŠJBˆ\ÜÙ\™XÙZ\ÉØ[ØÛÛœÚ\İ[	×BˆB‚ˆH˜[YNˆ\ØY\Y˜Xİ™XY˜XÚÈ™XÙZ\ˆ\Ù\ÎˆXİ[ÛœËİ\ØYX\Y˜XİˆÚ]‚ˆ˜[YNˆ›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]\™XY˜XÚËIŞÈÚ]X‹œÚH_KIŞÈÚ]X‹œ[—ÚY_Bˆ]ˆİ\Ü]Ü™XY˜XÚËÜ™XY˜XÚ×Ü™XÙZ\šœÛÛ‚ˆY‹[›ËYš[\ËY›İ[™ˆ\œ›Ü‚ˆ™][[Û‹Y^\ÎˆL‚ˆH˜[YNˆ\›Z[˜[™\ÙX\˜Ú[Û›HØ]BˆÚ[ˆ˜\Úˆ[ˆˆÙ]Y][È\Y˜Z[ˆXÚÈ‘VS‘QÒTÕÔ’PĞSÔUÔ‘TÑPTÒÔTÔÑQ‚ˆXÚÈ”‘TÑPTÒÓÓ“H‚ˆXÚÈ““×Ñ“Ô“PSĞĞS‘QUWÑ”‘QV‘H‚ˆXÚÈ““×ÌÌÌLÌÌÔ“ÔÔPÕU‘H‚ˆXÚÈ““×ÓPRS—ĞÕT”‘S•ĞRT•P“WÔŒÌÍÔWĞÒS‘ÑH‚
+      - name: Terminal research-only gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "EXPANDED_HISTORICAL_PIT_RESEARCH_PASSED"
+          echo "RESEARCH_ONLY"
+          echo "NO_FORMAL_CANDIDATE_FREEZE"
+          echo "NO_30_100_300_PROSPECTIVE"
+          echo "NO_MAIN_CURRENT_AIRTABLE_PR334_R5_CHANGE"
