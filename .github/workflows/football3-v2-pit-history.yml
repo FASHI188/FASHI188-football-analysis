@@ -1,0 +1,261 @@
+name: football3 V2 expanded historical PIT research
+
+on:
+  push:
+    branches: [football3/new-engine-v2-joint-score-clean]
+    paths:
+      - 'football-data/research/v2_pit_history/**'
+      - '.github/workflows/football3-v2-pit-history.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v2-pit-history-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  expanded-history-pit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact research HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Enforce research-only whitelist and protected bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=7796b0a20c4e5ea4ecec4f384f234f975c4e334d
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$BASE" HEAD
+          changed="$(git diff --name-only "$BASE" HEAD)"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(football-data/research/v2_pit_history/|\.github/workflows/football3-v2-pit-history\.yml$)' || true)"
+          test -z "$bad" || { echo "OUT_OF_WHITELIST:" >&2; echo "$bad" >&2; exit 1; }
+          git diff --quiet "$BASE" HEAD -- football-data/new_engine_v2_joint_score
+          for forbidden in CURRENT PR334 R5; do
+            if printf '%s\n' "$changed" | grep -Fqi "$forbidden"; then
+              echo "forbidden governance target changed: $forbidden" >&2
+              exit 1
+            fi
+          done
+          echo "RESEARCH_ONLY_WHITELIST_OK"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile and boundary-audit PIT code
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          python -m py_compile "$R"/*.py
+          ! grep -Fq -- '--label-vault' "$R/predict_batch.py"
+          ! grep -Fq 'evaluation_label_vault.jsonl' "$R/predict_batch.py"
+          ! grep -Eq 'import (engine|pure_engine)|from (engine|pure_engine)' "$R/score_predictions.py"
+          python - <<'PY'
+          import importlib.util,tempfile
+          from pathlib import Path
+          p=Path('football-data/research/v2_pit_history/prepare_dataset.py')
+          s=importlib.util.spec_from_file_location('pitprep',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+          eng='''â–ª Matchday 1
+          Fri Aug 5
+            20:00  Crystal Palace FC        0-2 (0-1)  Arsenal FC
+          Sat Aug 6
+            15:00  Tottenham Hotspur FC     4-1 (2-1)  Southampton FC
+                   Newcastle United FC      2-0 (0-0)  Nottingham Forest FC
+          '''
+          fra='''â–ª Matchday 1
+            Fri Aug 5 2022
+              21:00  Olympique Lyonnais      v AC Ajaccio               2-1 (2-1)
+            Sat Aug 6
+              15:00  Montpellier HSC         v ESTAC Troyes             3-2 (2-2)
+                     Lille OSC               v AJ Auxerre               4-1 (3-0)
+          '''
+          with tempfile.TemporaryDirectory() as td:
+              f=Path(td)/'x.txt'
+              f.write_text(eng)
+              rows,skip=m.parse_file(f,{'timezone':'Europe/London','competition_id':'ENG1','country':'England','repo':'x'},'2022-23')
+              assert len(rows)==3 and rows[1]['cutoff']==rows[2]['cutoff'] and not skip
+              f.write_text(fra)
+              rows,skip=m.parse_file(f,{'timezone':'Europe/Paris','competition_id':'FRA1','country':'France','repo':'x'},'2022-23')
+              assert len(rows)==3 and rows[1]['cutoff']==rows[2]['cutoff'] and not skip
+          print('PARSER_AND_BOUNDARY_TESTS_OK')
+          PY
+
+      - name: Download and verify frozen V1 reference Artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART=9732754224
+          EXPECTED=5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}")"
+          test "$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')" = "sha256:${EXPECTED}"
+          rm -rf /tmp/v1ref /tmp/v1.zip
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" -o /tmp/v1.zip
+          test "$(sha256sum /tmp/v1.zip | awk '{print $1}')" = "$EXPECTED"
+          unzip -t /tmp/v1.zip >/dev/null
+          mkdir -p /tmp/v1ref && unzip -q /tmp/v1.zip -d /tmp/v1ref
+          test -f /tmp/v1ref/pure_engine.py
+
+      - name: Fetch exact-commit CC0 OpenFootball sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          rm -rf /tmp/openfootball && mkdir -p /tmp/openfootball
+          python - "$R/sources.lock.json" > /tmp/source_lock.tsv <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          for s in d['sources']:
+              print('\t'.join([s['competition_id'],s['repo'],s['commit'],s['license_path']]))
+          PY
+          while IFS=$'\t' read -r cid repo sha license; do
+            dst="/tmp/openfootball/${cid}"
+            git init -q "$dst"
+            git -C "$dst" remote add origin "https://github.com/${repo}.git"
+            git -C "$dst" fetch -q --depth=1 origin "$sha"
+            git -C "$dst" checkout -q --detach FETCH_HEAD
+            test "$(git -C "$dst" rev-parse HEAD)" = "$sha"
+            test -f "$dst/$license"
+            grep -Eiq 'public domain' "$dst/$license"
+            grep -Eiq 'CC0|Creative Commons Zero' "$dst/$license"
+            echo "$cid $repo $sha LICENSE_OK"
+          done < /tmp/source_lock.tsv
+
+      - name: Build strict PIT dataset and sealed evaluation vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          rm -rf /tmp/pit && mkdir -p /tmp/pit/dataset /tmp/pit/locks /tmp/pit/replay /tmp/pit/score
+          python "$R/prepare_dataset.py" \
+            --sources-lock "$R/sources.lock.json" \
+            --source-root /tmp/openfootball \
+            --out /tmp/pit/dataset
+
+      - name: Fit development-only V1/V2 research locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          python "$R/fit_locks.py" \
+            --development /tmp/pit/dataset/development.jsonl \
+            --dataset-manifest /tmp/pit/dataset/dataset_manifest.json \
+            --v1-dir /tmp/v1ref \
+            --v2-dir football-data/new_engine_v2_joint_score \
+            --out /tmp/pit/locks
+
+      - name: Rolling PIT predict-freeze with delayed past-result updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          python "$R/replay_driver.py" \
+            --development /tmp/pit/dataset/development.jsonl \
+            --features /tmp/pit/dataset/evaluation_features.jsonl \
+            --label-vault /tmp/pit/dataset/evaluation_label_vault.jsonl \
+            --dataset-manifest /tmp/pit/dataset/dataset_manifest.json \
+            --v1-lock /tmp/pit/locks/v1_lock.json \
+            --v2-lock /tmp/pit/locks/v2_lock.json \
+            --v1-dir /tmp/v1ref \
+            --v2-dir football-data/new_engine_v2_joint_score \
+            --predictor "$R/predict_batch.py" \
+            --out /tmp/pit/replay
+
+      - name: Independent scorer reads frozen predictions and labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          python "$R/score_predictions.py" \
+            --predictions /tmp/pit/replay/predictions.jsonl \
+            --label-vault /tmp/pit/dataset/evaluation_label_vault.jsonl \
+            --pre-score-manifest /tmp/pit/replay/run_manifest_pre_score.json \
+            --out /tmp/pit/score
+
+      - name: Evaluate research gates and layer-status honesty
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('/tmp/pit/dataset/dataset_manifest.json').read_text())
+          p=json.loads(Path('/tmp/pit/replay/run_manifest_pre_score.json').read_text())
+          r=json.loads(Path('/tmp/pit/score/metrics.json').read_text())
+          s=json.loads(Path('/tmp/pit/score/score_receipt.json').read_text())
+          assert d['status']=='PIT_DATASET_GATE_PASSED' and d['evaluation_n']>=3000
+          assert not d['feature_label_intersection']
+          assert p['research_only'] is True and p['formal_candidate'] is False and p['prospective_validation'] is False
+          assert p['predictor_label_access'] is False and p['scorer_invoked'] is False
+          assert r['research_only'] is True and r['strict_prospective'] is False and r['formal_promotion_eligible'] is False
+          assert s['status']=='INDEPENDENT_SCORER_PASSED'
+          assert r['ablation']['joint_score_core']['status']=='TESTED'
+          for k in ['player','starting_lineup','substitutes','coach','match_process']:
+              assert r['ablation'][k]['status']=='DATA_UNAVAILABLE'
+          print(json.dumps({
+              'evaluation_n':d['evaluation_n'],
+              'prediction_sha256':p['prediction_sha256'],
+              'scorer_sha256':r['scorer_sha256'],
+              'v1':{k:r['metrics']['v1'][k] for k in ['logloss','brier','rps','top1','exact_score_logloss']},
+              'v2_joint':{k:r['metrics']['v2_joint'][k] for k in ['logloss','brier','rps','top1','exact_score_logloss']},
+              'joint_ablation':r['ablation']['joint_score_core'],
+          },indent=2))
+          PY
+
+      - name: Seal exact-HEAD research Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          OUT=/tmp/pit_artifact
+          rm -rf "$OUT" && mkdir -p "$OUT"/dataset "$OUT"/locks "$OUT"/replay "$OUT"/score "$OUT"/code
+          cp /tmp/pit/dataset/* "$OUT/dataset/"
+          cp /tmp/pit/locks/* "$OUT/locks/"
+          cp /tmp/pit/replay/* "$OUT/replay/"
+          cp /tmp/pit/score/* "$OUT/score/"
+         Ü‰ˆ‹Ê‹œH‰‹ÜÛİ\˜Ù\Ë›ØÚËšœÛÛˆˆ‰‹Ô‘PQQK›Yˆ‰ÕUØÛÙKÈ‚ˆ]ÛˆH	ÔIÂˆ[\Ü\ÚX‹œÛÛ‹ÜÂˆœ›ÛH]Xˆ[\Ü]ˆ›ÛİT]
+	Ëİ\Ü]Ø\Y˜Xİ	ÊBˆš[\Ï^ßBˆ›Üˆ[ˆÛÜY
+›Ûİœ™ÛØŠ	Ê‰ÊJN‚ˆYˆš\×Ùš[J
+N‚ˆ˜]Ï\œ™XYØ]\Ê
+Bˆš[\ÖÜœ™[]]™WİÊ›Ûİ
+K˜\×ÜÜÚ^
+
+WO^ÉÜÚLM‰Îš\ÚX‹œÚLMŠ˜]ÊKš^YÙ\İ
+
+K	Ø]\ÉÎ›[Š˜]Ê_BˆØÛÜ™OZœÛÛ‹›ØYÊ
+›ÛİÉÜØÛÜ™KÛY]šXÜËšœÛÛ‰ÊKœ™XYİ^
+
+JBˆ™OZœÛÛ‹›ØYÊ
+›ÛİÉÜ™\^KÜ[—ÛX[šY™\İÜ™WÜØÛÜ™KšœÛÛ‰ÊKœ™XYİ^
+
+JBˆX[šY™\İ^Âˆ	ÜØÚ[XWİ™\œÚ[Û‰Î‰Ù›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]X\Y˜Xİ]ŒIËˆ	ÚXY	Î›ÜË™[š\›Û–ÉÑÒUP—ÔÒI×K	Øœ˜[˜Ú	Î›ÜË™[š\›Û–ÉÑÒUP—Ô‘Q—ÓSQI×Kˆ	Ü[—ÚY	Îš[
+ÜË™[š\›Û–ÉÑÒUP—Ô•S—ÒQ	×JK	Ü[—Ø][\	Îš[
+ÜË™[š\›Û–ÉÑÒUP—Ô•S—ĞUST	×JKˆ	Ü™\ÙX\˜ÚÛÛ›IÎ•YK	Ù›Ü›X[ØØ[™Y]IÎ‘˜[ÙK	ÜİšXİÜ›ÜÜXİ]™IÎ‘˜[ÙK	Ü›ÙXİ[Û—Ù[˜X›Y	Î‘˜[ÙKˆ	Ü™YXİ[Û—ÜÚLM‰Îœ™VÉÜ™YXİ[Û—ÜÚLM‰×K	ÜØÛÜ™\—ÜÚLM‰ÎœØÛÜ™VÉÜØÛÜ™\—ÜÚLM‰×Kˆ	ÛXZ[—Û[ÙYšYY	Î‘˜[ÙK	Øİ\œ™[Û[ÙYšYY	Î‘˜[ÙK	ØZ\X›WÛ[ÙYšYY	Î‘˜[ÙKˆ	ÜŒÌÍÛ[ÙYšYY	Î‘˜[ÙK	ÜWÛ[ÙYšYY	Î‘˜[ÙK	Ùš[\ÉÎ™š[\ËˆBˆ
+›ÛİÉØ\Y˜XİÛX[šY™\İšœÛÛ‰ÊKÜš]Wİ^
+œÛÛ‹™[\ÊX[šY™\İ[œİ\™WØ\ØÚZOQ˜[ÙK[™[LŠJÉ×‰ÊBˆB‚ˆH˜[YNˆ\ØY^[™YZ\İÜHU\Y˜XİˆYˆ\ØYˆ\Ù\ÎˆXİ[ÛœËİ\ØYX\Y˜XİˆÚ]‚ˆ˜[YNˆ›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]IŞÈÚ]X‹œÚH_KIŞÈÚ]X‹œ[—ÚY_Bˆ]ˆİ\Ü]Ø\Y˜XİÂˆY‹[›ËYš[\ËY›İ[™ˆ\œ›Ü‚ˆ™][[Û‹Y^\ÎˆLˆÛÛ\™\ÜÚ[Û‹[]™[ˆ‚‚ˆH˜[YNˆ™XY˜XÚÈ\ØYY\Y˜XİYÙ\İˆ[‚ˆÒÕÒÑSˆ	ŞÈÚ]X‹ÚÙ[ˆ_BˆT•QPÕÒQˆ	ŞÈİ\Ë\ØY›İ]]Ë˜\Y˜XİZY_BˆÚ[ˆ˜\Úˆ[ˆˆÙ]Y][È\Y˜Z[ˆZÙ\ˆ\İ\Ü]Ü™XY˜XÚÂˆÚ\Hœ™\ÜËÉÑÒUP—Ô‘TÔÒUÔ–_KØXİ[ÛœËØ\Y˜XİËÉĞT•QPÕÒQHˆˆİ\Ü]Ü™XY˜XÚËÛY]Y]KšœÛÛ‚ˆİ\›YœÔÓR]]Üš^˜][Ûˆ™X\™\ˆ	ÑÒÕÒÑSŸHˆRXØÙ\ˆ\XØ][Û‹İ›™™Ú]XŠÚœÛÛˆˆˆšÎ‹ËØ\K™Ú]X‹˜ÛÛKÜ™\ÜËÉÑÒUP—Ô‘TÔÒUÔ–_KØXİ[ÛœËØ\Y˜XİËÉĞT•QPÕÒQKŞš\ˆˆ[Èİ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\ˆ[š\]İ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\‹Ù]‹Û[ˆ]ÛˆH	ÔIÂˆ[\Ü\ÚX‹œÛÛ‚ˆœ›ÛH]Xˆ[\Ü]ˆOZœÛÛ‹›ØYÊ]
+	Ëİ\Ü]Ü™XY˜XÚËÛY]Y]KšœÛÛ‰ÊKœ™XYİ^
+
+JBˆT]
+	Ëİ\Ü]Ü™XY˜XÚËØ\Y˜Xİš\	ÊBˆYÙ\İIÜÚLM‰ÊÚ\ÚX‹œÚLMŠ‹œ™XYØ]\Ê
+JKš^YÙ\İ
+
+Bˆ™XÙZ\^Âˆ	Ø\Y˜XİÚY	Î›VÉÚY	×K	Ø\Y˜XİÛ˜[YIÎ›VÉÛ˜[YI×K	ÛY]Y]WÙYÙ\İ	Î›K™Ù]
+	ÙYÙ\İ	ÊKˆ	ÙİÛ›ØYYŞš\ÜÚLM‰Î™YÙ\İ	Şš\Ø]\ÉÎ‹œİ]
+
+KœİÜÚ^™Kˆ	Ø[ØÛÛœÚ\İ[	Î›K™Ù]
+	ÙYÙ\İ	ÊOOYYÙ\İ	ØÜ˜×ÛÚÉÎ•YKˆBˆ]
+	Ëİ\Ü]Ü™XY˜XÚËÜ™XY˜XÚ×Ü™XÙZ\šœÛÛ‰ÊKÜš]Wİ^
+œÛÛ‹™[\Ê™XÙZ\[™[LŠJÉ×‰ÊBˆš[
+œÛÛ‹™[\Ê™XÙZ\[™[LŠJBˆ\ÜÙ\™XÙZ\ÉØ[ØÛÛœÚ\İ[	×BˆB‚ˆH˜[YNˆ\ØY\Y˜Xİ™XY˜XÚÈ™XÙZ\ˆ\Ù\ÎˆXİ[ÛœËİ\ØYX\Y˜XİˆÚ]‚ˆ˜[YNˆ›Ûİ˜[Ë]Œ‹Y^[™YZ\İÜK\]\™XY˜XÚËIŞÈÚ]X‹œÚH_KIŞÈÚ]X‹œ[—ÚY_Bˆ]ˆİ\Ü]Ü™XY˜XÚËÜ™XY˜XÚ×Ü™XÙZ\šœÛÛ‚ˆY‹[›ËYš[\ËY›İ[™ˆ\œ›Ü‚ˆ™][[Û‹Y^\ÎˆL‚ˆH˜[YNˆ\›Z[˜[™\ÙX\˜Ú[Û›HØ]BˆÚ[ˆ˜\Úˆ[ˆˆÙ]Y][È\Y˜Z[ˆXÚÈ‘VS‘QÒTÕÔ’PĞSÔUÔ‘TÑPTÒÔTÔÑQ‚ˆXÚÈ”‘TÑPTÒÓÓ“H‚ˆXÚÈ““×Ñ“Ô“PSĞĞS‘QUWÑ”‘QV‘H‚ˆXÚÈ““×ÌÌÌLÌÌÔ“ÔÔPÕU‘H‚ˆXÚÈ““×ÓPRS—ĞÕT”‘S•ĞRT•P“WÔŒÌÍÔWĞÒS‘ÑH‚
