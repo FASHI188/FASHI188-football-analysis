@@ -1,0 +1,1 @@
+Scoreline-family research may alter 0-0 and 1-1 mass only through a model fitted on past observations. Any direct adjustment keyed to observed future score frequencies in the evaluation segment is prohibited.
