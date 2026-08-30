@@ -1,0 +1,1 @@
+The first executable R44 result must be a baseline replay on the exact frozen 20k chronological sample. Candidate changes are only interpretable after that baseline is reproduced from the same source and folds.
