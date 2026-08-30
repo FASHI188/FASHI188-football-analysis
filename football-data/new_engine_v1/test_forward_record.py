@@ -61,6 +61,26 @@ class ForwardProtocolTests(unittest.TestCase):
         started = dict(base, provider_state="STARTED")
         self.assertEqual(forward.eligibility(started, lock)[1], "not_prematch")
 
+    def test_equivalent_utc_kickoff_representation_is_same_identity(self) -> None:
+        provider = {
+            "competition_id": "NED_Eredivisie",
+            "canonical_home": "FC Utrecht",
+            "canonical_away": "PSV Eindhoven",
+            "kickoff_utc": "2026-08-30T10:15:00Z",
+        }
+        ledger = dict(provider, kickoff_utc="2026-08-30T10:15:00+00:00")
+        self.assertEqual(forward.canonical_event_identity(provider), forward.canonical_event_identity(ledger))
+
+    def test_real_kickoff_change_is_identity_drift(self) -> None:
+        provider = {
+            "competition_id": "NED_Eredivisie",
+            "canonical_home": "FC Utrecht",
+            "canonical_away": "PSV Eindhoven",
+            "kickoff_utc": "2026-08-30T10:15:00Z",
+        }
+        changed = dict(provider, kickoff_utc="2026-08-30T10:16:00+00:00")
+        self.assertNotEqual(forward.canonical_event_identity(provider), forward.canonical_event_identity(changed))
+
     def test_ledger_rejects_top_level_labels(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "ledger.jsonl"

@@ -160,6 +160,22 @@ def eligibility(event: dict[str, Any], lock: dict[str, Any]) -> tuple[bool, str]
     return True, "eligible"
 
 
+def canonical_event_identity(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Canonicalize only representation, never identity semantics.
+
+    Provider event ids are compared separately. Competition/team strings remain
+    exact after whitespace trimming. Kickoff is normalized to one UTC ISO form so
+    equivalent `Z` and `+00:00` representations do not create false drift, while
+    any actual time change remains fail-closed.
+    """
+    return (
+        str(row.get("competition_id") or "").strip(),
+        str(row.get("canonical_home") or "").strip(),
+        str(row.get("canonical_away") or "").strip(),
+        dt(str(row.get("kickoff_utc") or "")).isoformat(),
+    )
+
+
 def append_predictions(engine: EngineState, lock: dict[str, Any], safe: dict[str, Any], ledger: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     existing = {str(r["provider_event_id"]): r for r in ledger}
     hints = season_hints()
@@ -173,9 +189,7 @@ def append_predictions(engine: EngineState, lock: dict[str, Any], safe: dict[str
         event_id = str(event["provider_event_id"])
         if event_id in existing:
             prior = existing[event_id]
-            identity_now = [str(event.get(k) or "") for k in ("competition_id", "canonical_home", "canonical_away", "kickoff_utc")]
-            identity_prior = [str(prior.get(k) or "") for k in ("competition_id", "canonical_home", "canonical_away", "kickoff_utc")]
-            if identity_now != identity_prior:
+            if canonical_event_identity(event) != canonical_event_identity(prior):
                 raise RuntimeError(f"provider event identity drift: {event_id}")
             continue
         if len(ledger) >= TARGET:

@@ -76,6 +76,52 @@ jobs:
           cd football-data/new_engine_v1
           python -m unittest test_new_engine.py test_forward_record.py -v
 
+      - name: Seed frozen 38-row prospective state on first final HEAD
+        if: ${{ github.run_attempt == 1 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED_RUN=33297040543
+          SEED_HEAD=150fad0ca60fd55d96b9f5b7bf45481b45538f24
+          SEED_NAME="football3-new-engine-v1-forward-${SEED_HEAD}-${SEED_RUN}-attempt-1"
+          rm -rf /tmp/seed
+          mkdir -p /tmp/seed
+          gh run download "$SEED_RUN" --repo "$GITHUB_REPOSITORY" --name "$SEED_NAME" --dir /tmp/seed
+          test -f /tmp/seed/artifact_manifest.json
+          test -f /tmp/seed/state/ledger.jsonl
+          test -f /tmp/seed/state/status.json
+          test -f /tmp/seed/state/checkpoint_30.json
+          test -f /tmp/seed/historical_gate_reaudit.json
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('/tmp/seed')
+          manifest=json.loads((root/'artifact_manifest.json').read_text())
+          status=json.loads((root/'state/status.json').read_text())
+          ledger=(root/'state/ledger.jsonl').read_bytes()
+          assert manifest['head']=='150fad0ca60fd55d96b9f5b7bf45481b45538f24'
+          assert manifest['run_id']==33297040543 and manifest['run_attempt']==1
+          assert manifest['candidate_source_head']=='7986b5b528338d1d359f1287677f4ab92e453f39'
+          assert manifest['candidate_source_artifact_digest']=='sha256:8dc51ac1f9b9352b2a61bbdf7d3ffa46ca2aa6c13cc390af783f5df2112ac3c3'
+          assert manifest['outcomes_read'] is False and manifest['labels_present'] is False
+          assert status['enrolled_rows']==38
+          assert status['ledger_sha256']=='b4eb2316608fa19a7e2d78226b4fa1152bfe5fa6e683a4db4b2800a34e7ef0f6'
+          assert hashlib.sha256(ledger).hexdigest()==status['ledger_sha256']
+          assert status['candidate_source_head']=='7986b5b528338d1d359f1287677f4ab92e453f39'
+          assert status['outcomes_read'] is False and status['labels_present'] is False
+          audit=json.loads((root/'historical_gate_reaudit.json').read_text())
+          assert audit['corrected_scientific_status']=='MODEL_CANDIDATE_PASSED'
+          assert hashlib.sha256((root/'historical_gate_reaudit.json').read_bytes()).hexdigest()=='8b6c4e3a3e193593ad384eb0c2b44c9a17cf92ba80ac3e3eab3a551ef6d360b7'
+          PY
+          mkdir -p football-data/new_engine_v1/forward football-data/new_engine_v1/evidence
+          cp /tmp/seed/state/ledger.jsonl football-data/new_engine_v1/forward/ledger.jsonl
+          cp /tmp/seed/state/status.json football-data/new_engine_v1/forward/status.json
+          cp /tmp/seed/state/checkpoint_30.json football-data/new_engine_v1/forward/checkpoint_30.json
+          if [ -f /tmp/seed/state/latest_audit.json ]; then cp /tmp/seed/state/latest_audit.json football-data/new_engine_v1/forward/latest_audit.json; fi
+          cp /tmp/seed/historical_gate_reaudit.json football-data/new_engine_v1/evidence/historical_gate_reaudit.json
+
       - name: Restore prior zero-label state on rerun
         if: ${{ github.run_attempt > 1 }}
         env:
@@ -219,6 +265,10 @@ jobs:
               'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
               'candidate_source_head':'7986b5b528338d1d359f1287677f4ab92e453f39',
               'candidate_source_artifact_digest':'sha256:8dc51ac1f9b9352b2a61bbdf7d3ffa46ca2aa6c13cc390af783f5df2112ac3c3',
+              'prospective_seed_run_id':33297040543,
+              'prospective_seed_head':'150fad0ca60fd55d96b9f5b7bf45481b45538f24',
+              'prospective_seed_rows':38,
+              'prospective_seed_ledger_sha256':'b4eb2316608fa19a7e2d78226b4fa1152bfe5fa6e683a4db4b2800a34e7ef0f6',
               'outcomes_read':False,
               'labels_present':False,
               'pycache_in_manifest':False,
