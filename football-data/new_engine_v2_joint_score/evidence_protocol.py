@@ -2,7 +2,7 @@
 """Evidence-only utilities for the V2 final-holdout protocol.
 
 This module must not train, tune, predict, unseal labels, score a final holdout,
-or alter model/rule bytes.  It only freezes and independently verifies evidence.
+or alter model/rule bytes. It only freezes and independently verifies evidence.
 """
 from __future__ import annotations
 
@@ -59,7 +59,6 @@ def assert_label_free_json(path: Path | str) -> None:
     """Reject explicit outcome-label keys in JSON or JSONL evidence inputs."""
     p = Path(path)
     text = p.read_text(encoding="utf-8")
-    values: list[Any]
     if p.suffix == ".jsonl":
         values = [json.loads(line) for line in text.splitlines() if line.strip()]
     else:
@@ -70,11 +69,17 @@ def assert_label_free_json(path: Path | str) -> None:
 
 
 def write_manifest(root: Path | str, metadata: dict[str, Any], manifest_name: str = "artifact_manifest.json") -> Path:
+    """Seal every file under root except the root manifest itself.
+
+    A nested artifact_manifest.json is payload of the outer artifact and MUST be
+    included; excluding by basename would create an unsealed extra file.
+    """
     root = Path(root)
     files: dict[str, Any] = {}
     for p in sorted(root.rglob("*")):
-        if p.is_file() and p.name != manifest_name:
-            files[p.relative_to(root).as_posix()] = file_record(p)
+        rel = p.relative_to(root).as_posix()
+        if p.is_file() and rel != manifest_name:
+            files[rel] = file_record(p)
     manifest = dict(metadata)
     manifest["files"] = files
     out = root / manifest_name
@@ -150,10 +155,7 @@ def build_blind_freeze_package(
     scorer_input_boundary: Path,
     final_rules_and_gates: Path,
 ) -> dict[str, Any]:
-    """Build a label-free evidence package from already-frozen inputs.
-
-    This function never opens a label file and never calls predictor/scorer code.
-    """
+    """Build a label-free evidence package from already-frozen inputs only."""
     if not HEX40.fullmatch(head) or not HEX40.fullmatch(parent):
         raise ValueError("head and parent must be exact 40-character lowercase git SHAs")
     assert_label_free_json(holdout_identity)
@@ -223,7 +225,7 @@ def record_v1_artifact_audit(
     zip_path: Path | str,
     output_file: Path | str,
 ) -> dict[str, Any]:
-    """Persist the raw API response and exact digest comparison without normalization."""
+    """Persist raw API evidence and exact, unnormalized digest comparison."""
     raw_path = Path(raw_metadata_file)
     raw_bytes = raw_path.read_bytes()
     metadata = json.loads(raw_bytes.decode("utf-8"))
@@ -256,18 +258,16 @@ def record_v1_artifact_audit(
 def _cli() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
-
     vz = sub.add_parser("verify-zip")
     vz.add_argument("zip")
     vz.add_argument("--output")
-
     va = sub.add_parser("record-v1-audit")
     va.add_argument("--raw-metadata-file", required=True)
     va.add_argument("--expected-digest", required=True)
     va.add_argument("--zip", required=True)
     va.add_argument("--output", required=True)
-
     args = parser.parse_args()
+
     if args.cmd == "verify-zip":
         result = verify_zip(args.zip)
         text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
