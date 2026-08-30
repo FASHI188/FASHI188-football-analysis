@@ -1,0 +1,133 @@
+name: football3 New Engine V1 scientific gate reaudit
+
+on:
+  push:
+    branches:
+      - football3/new-engine-v1
+    paths:
+      - 'football-data/new_engine_v1/historical_gate_reaudit.py'
+      - '.github/workflows/football3-new-engine-v1-reaudit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-new-engine-v1-reaudit-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  scientific-reaudit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact audit HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Bind candidate core and audit-only diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE=7986b5b528338d1d359f1287677f4ab92e453f39
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git merge-base --is-ancestor "$CANDIDATE" HEAD
+          test "$(sha256sum football-data/new_engine_v1/pure_engine.py | awk '{print $1}')" = "cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318"
+          test "$(sha256sum football-data/new_engine_v1/contracts/VALIDATION_PREREG.md | awk '{print $1}')" = "cf83987c37a375d03acbc06c696a102ffe13fd8ac460c50ec6e6d631111f8d3a"
+          bad="$(git diff --name-only "$CANDIDATE"...HEAD | grep -Ev '^(football-data/new_engine_v1/historical_gate_reaudit.py|\.github/workflows/football3-new-engine-v1-reaudit\.yml)$' || true)"
+          if [ -n "$bad" ]; then
+            echo "audit-only diff violation:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install frozen numerical runtime
+        run: python -m pip install --disable-pip-version-check --no-input numpy==2.3.2 scipy==1.16.1
+
+      - name: Reproduce frozen historical predictions and scores
+        run: python football-data/new_engine_v1/historical_eval.py
+
+      - name: Reaudit same-match promotion gate
+        run: |
+          cd football-data/new_engine_v1
+          python historical_gate_reaudit.py
+
+      - name: Verify corrected scientific status
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/new_engine_v1/evidence/historical_gate_reaudit.json')
+          x=json.loads(p.read_text())
+          assert x['candidate_source_head']=='7986b5b528338d1d359f1287677f4ab92e453f39'
+          assert x['corrected_scientific_status'] in {'MODEL_CANDIDATE_PASSED','NOT_PROMOTED'}
+          assert x['checks']['blind_predictions_reproduced_exactly'] is True
+          assert x['checks']['scored_labels_reproduced_exactly'] is True
+          assert x['same_match_underdog']['paired_events'] >= 100
+          PY
+
+      - name: Write self-contained audit manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,subprocess
+          from pathlib import Path
+          root=Path('football-data/new_engine_v1')
+          selected=[
+              root/'evidence/historical_oos_result.json',
+              root/'evidence/cold_start_audit.json',
+              root/'evidence/final_status.json',
+              root/'evidence/prereg_execution_receipt.json',
+              root/'evidence/holdout_batch_freeze.jsonl',
+              root/'evidence/holdout_predictions_blind.jsonl',
+              root/'evidence/holdout_scored.jsonl',
+              root/'evidence/historical_gate_reaudit.json',
+              root/'historical_gate_reaudit.py',
+              root/'pure_engine.py',
+              root/'contracts/VALIDATION_PREREG.md',
+          ]
+          files={}
+          for p in selected:
+              data=p.read_bytes()
+              files[str(p.relative_to(root))]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+          manifest={
+              'schema_version':'football3-new-engine-v1-reaudit-artifact-v1',
+              'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+              'candidate_source_head':'7986b5b528338d1d359f1287677f4ab92e453f39',
+              'branch':'football3/new-engine-v1',
+              'files':files,
+              'pycache_in_manifest':False,
+              'audit_only':True,
+          }
+          out=root/'evidence/reaudit_artifact_manifest.json'
+          out.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Upload reaudit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-new-engine-v1-reaudit-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            football-data/new_engine_v1/evidence/historical_oos_result.json
+            football-data/new_engine_v1/evidence/cold_start_audit.json
+            football-data/new_engine_v1/evidence/final_status.json
+            football-data/new_engine_v1/evidence/prereg_execution_receipt.json
+            football-data/new_engine_v1/evidence/holdout_batch_freeze.jsonl
+            football-data/new_engine_v1/evidence/holdout_predictions_blind.jsonl
+            football-data/new_engine_v1/evidence/holdout_scored.jsonl
+            football-data/new_engine_v1/evidence/historical_gate_reaudit.json
+            football-data/new_engine_v1/evidence/reaudit_artifact_manifest.json
+            football-data/new_engine_v1/historical_gate_reaudit.py
+            football-data/new_engine_v1/pure_engine.py
+            football-data/new_engine_v1/contracts/VALIDATION_PREREG.md
+          if-no-files-found: error
+          retention-days: 90
