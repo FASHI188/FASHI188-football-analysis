@@ -1,0 +1,3 @@
+- Reuse exact frozen R9b 20k materialization.
+- Reuse existing chronological evaluator where possible.
+- Run baseline first; then draw/calibration/team-strength candidates one factor at a time.
