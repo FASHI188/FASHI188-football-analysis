@@ -1,0 +1,1 @@
+Execution order: locate governed 20k source -> locate strict chronological evaluator -> replay baseline -> freeze baseline metrics -> run one-factor candidates -> untouched late holdout -> promotion decision.
