@@ -1,0 +1,1 @@
+Market-anchor fusion candidates must use only the market snapshot available at the designated pre-match cutoff and may not substitute closing odds unless closing odds are the declared prediction timestamp for that historical experiment.
