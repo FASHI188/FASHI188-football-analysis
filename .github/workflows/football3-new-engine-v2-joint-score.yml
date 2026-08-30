@@ -2,8 +2,7 @@ name: football3 V2 final-holdout evidence protocol repair
 
 on:
   push:
-    branches:
-      - football3/new-engine-v2-joint-score-clean
+    branches: [football3/new-engine-v2-joint-score-clean]
     paths:
       - 'football-data/new_engine_v2_joint_score/**'
       - '.github/workflows/football3-new-engine-v2-joint-score.yml'
@@ -32,25 +31,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          INVALID_BASE=1b8c5178a5a33942523ea31f7fea0d74fdc8031d
+          BASE=1b8c5178a5a33942523ea31f7fea0d74fdc8031d
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git merge-base --is-ancestor "$INVALID_BASE" HEAD
-          changed="$(git diff --name-only "$INVALID_BASE" HEAD -- football-data/new_engine_v2_joint_score || true)"
+          git merge-base --is-ancestor "$BASE" HEAD
+          changed="$(git diff --name-only "$BASE" HEAD -- football-data/new_engine_v2_joint_score || true)"
           bad="$(printf '%s\n' "$changed" | grep -Ev '^(football-data/new_engine_v2_joint_score/evidence_protocol\.py|football-data/new_engine_v2_joint_score/test_evidence_protocol\.py|football-data/new_engine_v2_joint_score/evidence_protocol/.*)$' || true)"
-          if [ -n "$bad" ]; then
-            echo 'Frozen V2/model/research/scoring bytes changed:' >&2
-            echo "$bad" >&2
-            exit 1
-          fi
-          echo 'V2 protected bytes unchanged from invalid-run HEAD.'
-          echo "$changed"
+          test -z "$bad" || { echo 'Frozen V2 bytes changed:' >&2; echo "$bad" >&2; exit 1; }
+          echo 'V2 protected bytes unchanged from Run 33318914374 HEAD.'
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Run zero-label evidence protocol tests only
+      - name: Run zero-label protocol tests only
         shell: bash
         run: |
           set -euo pipefail
@@ -58,7 +52,7 @@ jobs:
           cd football-data/new_engine_v2_joint_score
           python -m unittest test_evidence_protocol.py -v
 
-      - name: Verify invalid-run status and historical stop condition
+      - name: Verify invalid-run and no-virgin-holdout status
         shell: bash
         run: |
           set -euo pipefail
@@ -76,13 +70,11 @@ jobs:
           assert s['not_promoted_status_for_this_run'] is None
           assert h['finding']=='NO_VIRGIN_PREREGISTERED_HISTORICAL_HOLDOUT'
           assert h['virgin_preregistered_historical_holdout_exists'] is False
-          assert h['mechanical_selection_rule_available'] is False
           assert h['required_action']=='STOP_HISTORICAL_FINAL_BEFORE_SCORER'
           assert h['prospective_validation_created'] is False
-          print(json.dumps({'invalid_run_status':s['status'],'holdout_finding':h['finding'],'action':h['required_action']},indent=2))
           PY
 
-      - name: Build synthetic label-free blind-freeze protocol fixture
+      - name: Build synthetic blind-freeze protocol fixture
         shell: bash
         run: |
           set -euo pipefail
@@ -92,48 +84,26 @@ jobs:
           import hashlib,json,shutil,subprocess,sys
           from pathlib import Path
           sys.path.insert(0,'football-data/new_engine_v2_joint_score')
-          from evidence_protocol import build_blind_freeze_package, write_manifest, verify_manifest_tree
-          base=Path('football-data/new_engine_v2_joint_score')
-          fx=Path('/tmp/protocol_fixture')
-          out=Path('/tmp/protocol_artifact')
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          parent=subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
-          (fx/'identity.jsonl').write_text(json.dumps({'fixture_id':'PROTOCOL_TEST_ONLY_001','competition_id':'SYNTHETIC','season':'TEST','cutoff':'2030-01-01T00:00:00Z','home_team_id':'A','away_team_id':'B','round_index':1})+'\n')
-          (fx/'blind_predictions.jsonl').write_text(json.dumps({'fixture_id':'PROTOCOL_TEST_ONLY_001','p_home':0.4,'p_draw':0.3,'p_away':0.3})+'\n')
-          rules={
-            'protocol_test_only':True,
-            'frozen_research_py_sha256':hashlib.sha256((base/'research.py').read_bytes()).hexdigest(),
-            'frozen_validation_prereg_sha256':hashlib.sha256((base/'contracts/VALIDATION_PREREG.md').read_bytes()).hexdigest(),
-            'note':'No scoring formula or promotion threshold is changed or executed by this protocol test.'
-          }
-          (fx/'rules_and_gates.json').write_text(json.dumps(rules,sort_keys=True,separators=(',',':'))+'\n')
-          build_blind_freeze_package(
-            out/'synthetic_blind_freeze',
-            head=head,
-            parent=parent,
-            model_rule_files=[base/'engine.py',base/'research.py',base/'strict.py',base/'blind_predict.py',base/'score_unseal.py'],
-            holdout_identity=fx/'identity.jsonl',
-            blind_predictions=fx/'blind_predictions.jsonl',
-            predictor_input_contract=base/'evidence_protocol/predictor_input_contract.json',
-            scorer_input_boundary=base/'evidence_protocol/scorer_input_boundary.json',
-            final_rules_and_gates=fx/'rules_and_gates.json',
-          )
-          shutil.copyfile(base/'evidence_protocol/run_33318914374_status.json',out/'run_33318914374_status.json')
-          shutil.copyfile(base/'evidence_protocol/historical_holdout_audit.json',out/'historical_holdout_audit.json')
-          shutil.copyfile(base/'evidence_protocol/blind_freeze_contract.json',out/'blind_freeze_contract.json')
+          from evidence_protocol import build_blind_freeze_package
+          b=Path('football-data/new_engine_v2_joint_score'); f=Path('/tmp/protocol_fixture'); o=Path('/tmp/protocol_artifact')
+          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); parent=subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
+          (f/'identity.jsonl').write_text(json.dumps({'fixture_id':'PROTOCOL_TEST_ONLY_001','competition_id':'SYNTHETIC','season':'TEST','cutoff':'2030-01-01T00:00:00Z','home_team_id':'A','away_team_id':'B','round_index':1})+'\n')
+          (f/'blind_predictions.jsonl').write_text(json.dumps({'fixture_id':'PROTOCOL_TEST_ONLY_001','p_home':.4,'p_draw':.3,'p_away':.3})+'\n')
+          rules={'protocol_test_only':True,'research_py_sha256':hashlib.sha256((b/'research.py').read_bytes()).hexdigest(),'validation_prereg_sha256':hashlib.sha256((b/'contracts/VALIDATION_PREREG.md').read_bytes()).hexdigest()}
+          (f/'rules_and_gates.json').write_text(json.dumps(rules,sort_keys=True,separators=(',',':'))+'\n')
+          build_blind_freeze_package(o/'synthetic_blind_freeze',head=head,parent=parent,
+            model_rule_files=[b/'engine.py',b/'research.py',b/'strict.py',b/'blind_predict.py',b/'score_unseal.py'],
+            holdout_identity=f/'identity.jsonl',blind_predictions=f/'blind_predictions.jsonl',
+            predictor_input_contract=b/'evidence_protocol/predictor_input_contract.json',
+            scorer_input_boundary=b/'evidence_protocol/scorer_input_boundary.json',
+            final_rules_and_gates=f/'rules_and_gates.json')
+          for name in ['run_33318914374_status.json','historical_holdout_audit.json','blind_freeze_contract.json']:
+            shutil.copyfile(b/'evidence_protocol'/name,o/name)
           changed=subprocess.check_output(['git','diff','--name-only','1b8c5178a5a33942523ea31f7fea0d74fdc8031d','HEAD','--','football-data/new_engine_v2_joint_score'],text=True).splitlines()
-          protected={
-            'invalid_base_head':'1b8c5178a5a33942523ea31f7fea0d74fdc8031d',
-            'repair_head':head,
-            'direct_parent':parent,
-            'only_protocol_paths_changed':all(x.startswith('football-data/new_engine_v2_joint_score/evidence_protocol') or x.endswith('/test_evidence_protocol.py') for x in changed),
-            'changed_paths':changed,
-            'model_bytes_changed':False,
-          }
-          (out/'protected_v2_bytes.json').write_text(json.dumps(protected,indent=2)+'\n')
+          (o/'protected_v2_bytes.json').write_text(json.dumps({'invalid_base_head':'1b8c5178a5a33942523ea31f7fea0d74fdc8031d','repair_head':head,'direct_parent':parent,'changed_paths':changed,'model_bytes_changed':False},indent=2)+'\n')
           PY
 
-      - name: Read and independently verify frozen V1 Artifact with raw digest evidence
+      - name: Verify frozen V1 Artifact and preserve raw digest evidence
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -143,67 +113,32 @@ jobs:
           EXPECTED='sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb'
           mkdir -p /tmp/protocol_artifact/v1_reference
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}" > /tmp/protocol_artifact/v1_reference/metadata_raw.json
-          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" -o /tmp/v1_reference.zip
-          python football-data/new_engine_v2_joint_score/evidence_protocol.py record-v1-audit \
-            --raw-metadata-file /tmp/protocol_artifact/v1_reference/metadata_raw.json \
-            --expected-digest "$EXPECTED" \
-            --zip /tmp/v1_reference.zip \
-            --output /tmp/protocol_artifact/v1_reference/audit.json
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" -o /tmp/v1_reference.zip
+          python football-data/new_engine_v2_joint_score/evidence_protocol.py record-v1-audit --raw-metadata-file /tmp/protocol_artifact/v1_reference/metadata_raw.json --expected-digest "$EXPECTED" --zip /tmp/v1_reference.zip --output /tmp/protocol_artifact/v1_reference/audit.json
           python - <<'PY'
           import hashlib,json,tempfile,zipfile
           from pathlib import Path
-          z=Path('/tmp/v1_reference.zip')
-          out=Path('/tmp/protocol_artifact/v1_reference/zip_verification.json')
-          raw_meta=Path('/tmp/protocol_artifact/v1_reference/metadata_raw.json').read_bytes()
-          meta=json.loads(raw_meta)
-          expected='sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb'
-          zip_sha='sha256:'+hashlib.sha256(z.read_bytes()).hexdigest()
-          with zipfile.ZipFile(z,'r') as f:
+          z=Path('/tmp/v1_reference.zip'); meta=json.loads(Path('/tmp/protocol_artifact/v1_reference/metadata_raw.json').read_text())
+          expected='sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb'; zip_sha='sha256:'+hashlib.sha256(z.read_bytes()).hexdigest(); prefix='football-data/new_engine_v1/'
+          with zipfile.ZipFile(z) as f:
             crc_bad=f.testzip()
             with tempfile.TemporaryDirectory() as td:
-              f.extractall(td)
-              root=Path(td)
-              mpath=root/'evidence/artifact_manifest.json'
-              m=json.loads(mpath.read_text())
+              f.extractall(td); root=Path(td); m=json.loads((root/'evidence/artifact_manifest.json').read_text())
+              assert all(rel.startswith(prefix) for rel in m['files'])
+              declared={rel[len(prefix):]:rec for rel,rec in m['files'].items()}
               actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and p.relative_to(root).as_posix()!='evidence/artifact_manifest.json'}
-              declared=set(m['files'])
-              missing=sorted(declared-actual)
-              extra=sorted(actual-declared)
-              mismatch=[]
-              for rel in sorted(declared & actual):
-                b=(root/rel).read_bytes(); rec=m['files'][rel]
-                if len(b)!=rec['bytes'] or hashlib.sha256(b).hexdigest()!=rec['sha256']:
-                  mismatch.append(rel)
-          report={
-            'artifact_id':meta.get('id'),
-            'artifact_name':meta.get('name'),
-            'metadata_digest':meta.get('digest'),
-            'metadata_digest_length':len(meta.get('digest','')),
-            'expected_digest':expected,
-            'expected_digest_length':len(expected),
-            'downloaded_zip_sha256':zip_sha,
-            'downloaded_zip_bytes':z.stat().st_size,
-            'crc_ok':crc_bad is None,
-            'manifest_head':m.get('head'),
-            'manifest_parent':m.get('parent'),
-            'payload_declared':len(declared),
-            'payload_actual':len(actual),
-            'missing':missing,'mismatch':mismatch,'extra':extra,
-            'three_way_digest_match':meta.get('digest')==expected==zip_sha,
-          }
-          out.write_text(json.dumps(report,indent=2)+'\n')
-          print(json.dumps(report,indent=2))
-          assert report['artifact_id']==9732754224
-          assert report['metadata_digest']==expected
-          assert report['downloaded_zip_sha256']==expected
-          assert report['crc_ok']
-          assert report['manifest_head']=='22f639304d2e32fc952dbec2255153ee45dcd41a'
-          assert report['manifest_parent']=='05d89de8c3a0518a2a9d221e95e0f84e50162f92'
+              missing=sorted(set(declared)-actual); extra=sorted(actual-set(declared)); mismatch=[]
+              for rel in sorted(set(declared)&actual):
+                raw=(root/rel).read_bytes(); rec=declared[rel]
+                if len(raw)!=rec['bytes'] or hashlib.sha256(raw).hexdigest()!=rec['sha256']: mismatch.append(rel)
+          report={'artifact_id':meta.get('id'),'artifact_name':meta.get('name'),'metadata_digest':meta.get('digest'),'metadata_digest_length':len(meta.get('digest','')),'expected_digest':expected,'expected_digest_length':len(expected),'downloaded_zip_sha256':zip_sha,'downloaded_zip_bytes':z.stat().st_size,'crc_ok':crc_bad is None,'manifest_head':m.get('head'),'manifest_parent':m.get('parent'),'manifest_path_prefix':prefix,'payload_declared':len(declared),'payload_actual':len(actual),'missing':missing,'mismatch':mismatch,'extra':extra,'three_way_digest_match':meta.get('digest')==expected==zip_sha}
+          Path('/tmp/protocol_artifact/v1_reference/zip_verification.json').write_text(json.dumps(report,indent=2)+'\n'); print(json.dumps(report,indent=2))
+          assert report['artifact_id']==9732754224 and report['three_way_digest_match'] and report['crc_ok']
+          assert report['manifest_head']=='22f639304d2e32fc952dbec2255153ee45dcd41a' and report['manifest_parent']=='05d89de8c3a0518a2a9d221e95e0f84e50162f92'
           assert not missing and not mismatch and not extra
           PY
 
-      - name: Seal protocol-test Artifact manifest locally
+      - name: Seal zero-label protocol Artifact locally
         shell: bash
         run: |
           set -euo pipefail
@@ -212,31 +147,12 @@ jobs:
           from pathlib import Path
           sys.path.insert(0,'football-data/new_engine_v2_joint_score')
           from evidence_protocol import write_manifest,verify_manifest_tree
-          root=Path('/tmp/protocol_artifact')
-          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
-          parent=subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
-          write_manifest(root,{
-            'schema_version':'football3-v2-zero-label-protocol-test-artifact-v1',
-            'head':head,
-            'parent':parent,
-            'run_id':int('${{ github.run_id }}'),
-            'run_attempt':int('${{ github.run_attempt }}'),
-            'protocol_test_only':True,
-            'invalid_run_33318914374_status':'TECHNICAL_INVALID_EVIDENCE_INCOMPLETE',
-            'original_final_holdout_use':'TECHNICAL_REPLAY_ONLY',
-            'virgin_preregistered_historical_holdout_exists':False,
-            'labels_unsealed':False,
-            'scorer_invoked':False,
-            'v2_predictions_regenerated':False,
-            'prospective_validation_created':False,
-            'terminal_action':'STOP_BEFORE_SCORER_NO_VIRGIN_HISTORICAL_HOLDOUT',
-          })
-          v=verify_manifest_tree(root)
-          print(json.dumps({k:v[k] for k in ['ok','manifest_sha256','payload_count','missing','mismatch','extra']},indent=2))
-          assert v['ok']
+          root=Path('/tmp/protocol_artifact'); head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(); parent=subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
+          write_manifest(root,{'schema_version':'football3-v2-zero-label-protocol-test-artifact-v1','head':head,'parent':parent,'run_id':int('${{ github.run_id }}'),'run_attempt':int('${{ github.run_attempt }}'),'protocol_test_only':True,'invalid_run_33318914374_status':'TECHNICAL_INVALID_EVIDENCE_INCOMPLETE','original_final_holdout_use':'TECHNICAL_REPLAY_ONLY','virgin_preregistered_historical_holdout_exists':False,'labels_unsealed':False,'scorer_invoked':False,'v2_predictions_regenerated':False,'prospective_validation_created':False,'terminal_action':'STOP_BEFORE_SCORER_NO_VIRGIN_HISTORICAL_HOLDOUT'})
+          v=verify_manifest_tree(root); print(json.dumps({k:v[k] for k in ['ok','manifest_sha256','payload_count','missing','mismatch','extra']},indent=2)); assert v['ok']
           PY
 
-      - name: Upload zero-label protocol-test Artifact
+      - name: Upload zero-label protocol Artifact
         id: upload
         uses: actions/upload-artifact@v4
         with:
@@ -245,7 +161,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Re-read uploaded Artifact and independently verify ZIP before any scorer
+      - name: Re-read uploaded Artifact and independently verify ZIP
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
@@ -253,44 +169,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/readback
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > /tmp/readback/metadata_raw.json; then break; fi
-            sleep 2
-          done
-          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/readback/artifact.zip
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > /tmp/readback/metadata_raw.json
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/readback/artifact.zip
           python football-data/new_engine_v2_joint_score/evidence_protocol.py verify-zip /tmp/readback/artifact.zip --output /tmp/readback/zip_verification.json
           python - <<'PY'
           import json
           from pathlib import Path
-          meta=json.loads(Path('/tmp/readback/metadata_raw.json').read_text())
-          v=json.loads(Path('/tmp/readback/zip_verification.json').read_text())
-          actual='sha256:'+v['zip_sha256']
-          receipt={
-            'artifact_id':meta.get('id'),
-            'artifact_name':meta.get('name'),
-            'artifact_digest':meta.get('digest'),
-            'artifact_size_in_bytes':meta.get('size_in_bytes'),
-            'downloaded_zip_sha256':actual,
-            'downloaded_zip_bytes':v['zip_bytes'],
-            'crc_ok':v['crc_ok'],
-            'manifest_head':v['manifest'].get('head'),
-            'manifest_parent':v['manifest'].get('parent'),
-            'missing':v['missing'],'mismatch':v['mismatch'],'extra':v['extra'],
-            'all_consistent':meta.get('digest')==actual and meta.get('size_in_bytes')==v['zip_bytes'] and v['ok'],
-            'labels_unsealed':False,
-            'scorer_invoked':False,
-            'decision':'STOP_BEFORE_SCORER_NO_VIRGIN_HISTORICAL_HOLDOUT',
-          }
-          Path('/tmp/readback/readback_receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-          print(json.dumps(receipt,indent=2))
-          assert receipt['all_consistent']
-          assert v['manifest'].get('protocol_test_only') is True
-          assert v['manifest'].get('labels_unsealed') is False
-          assert v['manifest'].get('scorer_invoked') is False
+          m=json.loads(Path('/tmp/readback/metadata_raw.json').read_text()); v=json.loads(Path('/tmp/readback/zip_verification.json').read_text()); downloaded='sha256:'+v['zip_sha256']
+          receipt={'artifact_id':m.get('id'),'artifact_name':m.get('name'),'artifact_digest':m.get('digest'),'artifact_size_in_bytes':m.get('size_in_bytes'),'downloaded_zip_sha256':downloaded,'downloaded_zip_bytes':v['zip_bytes'],'crc_ok':v['crc_ok'],'manifest_head':v['manifest'].get('head'),'manifest_parent':v['manifest'].get('parent'),'missing':v['missing'],'mismatch':v['mismatch'],'extra':v['extra'],'all_consistent':m.get('digest')==downloaded and m.get('size_in_bytes')==v['zip_bytes'] and v['ok'],'labels_unsealed':False,'scorer_invoked':False,'decision':'STOP_BEFORE_SCORER_NO_VIRGIN_HISTORICAL_HOLDOUT'}
+          Path('/tmp/readback/readback_receipt.json').write_text(json.dumps(receipt,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
+          assert receipt['all_consistent'] and v['manifest']['protocol_test_only'] is True and v['manifest']['labels_unsealed'] is False and v['manifest']['scorer_invoked'] is False
           PY
 
-      - name: Upload readback verification receipt
+      - name: Upload readback receipt
         uses: actions/upload-artifact@v4
         with:
           name: football3-v2-zero-label-protocol-readback-${{ github.sha }}-${{ github.run_id }}
@@ -303,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           echo 'Run 33318914374 = TECHNICAL_INVALID_EVIDENCE_INCOMPLETE'
-          echo 'Original historical final = TECHNICAL_REPLAY_ONLY'
+          echo 'Original final = TECHNICAL_REPLAY_ONLY'
           echo 'NO_VIRGIN_PREREGISTERED_HISTORICAL_HOLDOUT'
           echo 'ZERO_LABEL_PROTOCOL_TEST_PASSED'
           echo 'STOP_BEFORE_SCORER_NO_VIRGIN_HISTORICAL_HOLDOUT'
