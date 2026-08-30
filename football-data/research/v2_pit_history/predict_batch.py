@@ -98,7 +98,7 @@ def main() -> int:
             lock["joint_family"],feat,
             dispersion_home=float(lock["dispersion_home"]),
             dispersion_away=float(lock["dispersion_away"]),
-            dependence=float(lock["dependency"]),max_goals=int(lock["max_goals"]),
+            dependence=float(lock["dependence"]),max_goals=int(lock["max_goals"]),
         )
         moff=v2.joint_matrix("INDEPENDENT_POISSON_FROZEN",feat,dependence=0.0,max_goals=int(lock["max_goals"]))
         pj=v2.matrix_1x2(mj); poff=v2.matrix_1x2(moff)

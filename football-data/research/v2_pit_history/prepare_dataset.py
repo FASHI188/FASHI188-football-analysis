@@ -15,11 +15,13 @@ DATE_RE = re.compile(
     r"(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})(?:\s+(?P<year>\d{4}))?\s*$"
 )
 MATCHDAY_RE = re.compile(r"^\s*[▪#]?\s*Matchday\s+(?P<round>\d+)\s*$", re.I)
+# Newer Football.TXT layout: [time] HOME  2-1 (1-0)  AWAY
 MIDDLE_RE = re.compile(
     r"^\s*(?:(?P<time>\d{1,2}:\d{2})\s+)?"
     r"(?P<home>.+?)\s{2,}(?P<hg>\d+)-(?P<ag>\d+)"
     r"(?:\s+\(\d+-\d+\))?\s{2,}(?P<away>.+?)\s*$"
 )
+# Older France layout: [time] HOME  v AWAY  2-1 (1-0)
 V_RE = re.compile(
     r"^\s*(?:(?P<time>\d{1,2}:\d{2})\s+)?"
     r"(?P<home>.+?)\s{2,}v\s+(?P<away>.+?)\s{2,}"
@@ -90,6 +92,7 @@ def parse_file(path: Path, source: dict, season: str) -> tuple[list[dict], dict]
 
         mm = V_RE.match(line) or MIDDLE_RE.match(line)
         if not mm:
+            # Only count plausible match-like lines; headers/tables are ignored.
             if re.search(r"\d+-\d+", line) or re.search(r"\bv\b", line, re.I):
                 skipped["unparsed_match_like"] += 1
             continue

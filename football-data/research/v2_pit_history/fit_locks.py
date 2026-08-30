@@ -151,13 +151,13 @@ def v2_candidates():
     for dep in (-0.12,-0.06,0.0,0.06,0.12):
         out.append({"joint_family":"DIXON_COLES_LOW_SCORE","dependence":dep,"dispersion":50.0})
     for dep in (-0.6,-0.3,0.0,0.3,0.6):
-        out.append({"joint_family":"DIAGONAL_INFLATION_BIVARIATE","dependency":dep,"dispersion":50.0})
+        out.append({"joint_family":"DIAGONAL_INFLATION_BIVARIATE","dependence":dep,"dispersion":50.0})
     for disp in (8.0,14.0,24.0,50.0):
         for dep in (-0.6,-0.3,0.0,0.3,0.6):
-            out.append({"joint_family":"DYNAMIC_NB_DIAGONAL","dependency":dep,"dispersion":disp})
+            out.append({"joint_family":"DYNAMIC_NB_DIAGONAL","dependence":dep,"dispersion":disp})
     for disp in (8.0,14.0,24.0,50.0):
         for dep in (-0.3,0.0,0.3):
-            out.append({"joint_family":"DYNAMIC_NB_MARCO","dependency":dep,"dispersion":disp})
+            out.append({"joint_family":"DYNAMIC_NB_MARCO","dependence":dep,"dispersion":disp})
     return out
 
 
@@ -180,7 +180,7 @@ def tune_v2(v2, rows, tune_start):
                     matrix=v2.joint_matrix(
                         cfg["joint_family"],feat,
                         dispersion_home=cfg["dispersion"],dispersion_away=cfg["dispersion"],
-                        dependency=cfg["dependence"],max_goals=base_params.max_goals,
+                        dependence=cfg["dependence"],max_goals=base_params.max_goals,
                     )
                     hg,ag=int(r["home_goals"]),int(r["away_goals"])
                     p=v2.exact_score_probability(matrix,hg,ag)
