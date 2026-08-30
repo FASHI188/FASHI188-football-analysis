@@ -1,0 +1,227 @@
+name: football3 New Engine V2 joint-score historical rebuild
+
+on:
+  push:
+    branches:
+      - football3/new-engine-v2-joint-score
+    paths:
+      - 'football-data/new_engine_v2_joint_score/**'
+      - '.github/workflows/football3-new-engine-v2-joint-score.yml'
+      - '.github/workflows/football3-new-engine-v2-joint-score-forward.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-new-engine-v2-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  historical-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact V2 HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Bind M10 anchor, contract parent and per-commit whitelist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANCHOR=7c1815c47102412e88f72189e2b8f837d9b73a42
+          CONTRACT=b0cc96085159b1d215589264fb3dad759a016c3f
+          V1=22f639304d2e32fc952dbec2255153ee45dcd41a
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "$CONTRACT^")" = "$ANCHOR"
+          git merge-base --is-ancestor "$ANCHOR" HEAD
+          git merge-base --is-ancestor "$CONTRACT" HEAD
+          if git merge-base --is-ancestor "$V1" HEAD; then
+            echo "V1 commit ancestry entered V2 branch" >&2
+            exit 1
+          fi
+          bad_contract="$(git diff-tree --no-commit-id --name-only -r "$CONTRACT" | grep -Ev '^football-data/new_engine_v2_joint_score/contracts/[^/]+\.md$' || true)"
+          test -z "$bad_contract" || { echo "$bad_contract" >&2; exit 1; }
+          for c in $(git rev-list --reverse "${ANCHOR}..HEAD"); do
+            bad="$(git diff-tree --no-commit-id --name-only -r "$c" | grep -Ev '^(football-data/new_engine_v2_joint_score/|\.github/workflows/football3-new-engine-v2-joint-score\.yml$|\.github/workflows/football3-new-engine-v2-joint-score-forward\.yml$)' || true)"
+            if [ -n "$bad" ]; then
+              echo "out-of-whitelist commit $c" >&2
+              echo "$bad" >&2
+              exit 1
+            fi
+          done
+          test "$(git cat-file -t "$ANCHOR")" = commit
+          test "$(git cat-file -t "$CONTRACT")" = commit
+          if grep -Eiq 'bayesian_dynamic_state_oof|v500|football3/new-engine-v1|closing[ _-]?odds|market_assist' football-data/new_engine_v2_joint_score/engine.py; then
+            echo "legacy/market token entered V2 pure core" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile, unit-test and adversarial probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/new_engine_v2_joint_score/*.py
+          cd football-data/new_engine_v2_joint_score
+          python -m unittest test_v2.py -v
+          python adversarial_probe.py
+          python cold_start_audit.py
+
+      - name: Freeze strict historical universe
+        run: python football-data/new_engine_v2_joint_score/dataset.py
+
+      - name: Run eight-fold research candidate competition and ablations
+        run: python football-data/new_engine_v2_joint_score/research.py
+
+      - name: Verify final rule frozen before label access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          b=Path('football-data/new_engine_v2_joint_score')
+          e=b/'evidence'
+          r=json.loads((e/'research_result.json').read_text())
+          f=json.loads((e/'final_rule_freeze.json').read_text())
+          u=json.loads((e/'universe_manifest.json').read_text())
+          assert r['outer_fold_count'] >= 8
+          assert f['status']=='FINAL_RULE_FROZEN_BEFORE_HOLDOUT_LABEL_ACCESS'
+          assert f['final_fixture_n']==u['final_n']
+          assert f['label_file_not_opened_by_research_stage'] is True
+          source=(b/'blind_predict.py').read_text().casefold()
+          assert 'final_labels.jsonl' not in source and '--label-file' not in source
+          assert r['layer_status']['match_process'].startswith('BLOCKED_DATA')
+          assert r['layer_status']['player_lineup'].startswith('BLOCKED_DATA')
+          print(json.dumps({'outer_folds':r['outer_fold_count'],'joint_winner':r['joint_winner'],'layer_status':r['layer_status']},indent=2))
+          PY
+
+      - name: Prepare research-only initial final state
+        run: python football-data/new_engine_v2_joint_score/prepare_final_state.py
+
+      - name: Execute blind predict then independent score-update batches
+        run: python football-data/new_engine_v2_joint_score/final_driver.py
+
+      - name: Download and verify frozen V1 reference Artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART=9732754224
+          EXPECTED=5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}")"
+          test "$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')" = "sha256:${EXPECTED}"
+          rm -rf /tmp/v1ref /tmp/v1.zip
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" -o /tmp/v1.zip
+          test "$(sha256sum /tmp/v1.zip | awk '{print $1}')" = "$EXPECTED"
+          unzip -t /tmp/v1.zip >/dev/null
+          mkdir -p /tmp/v1ref
+          unzip -q /tmp/v1.zip -d /tmp/v1ref
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('/tmp/v1ref')
+          m=json.loads((root/'evidence/artifact_manifest.json').read_text())
+          assert m['head']=='22f639304d2e32fc952dbec2255153ee45dcd41a'
+          assert m['parent']=='05d89de8c3a0518a2a9d221e95e0f84e50162f92'
+          for rel,meta in m['files'].items():
+              p=root/rel
+              assert p.is_file(), rel
+              raw=p.read_bytes()
+              assert len(raw)==meta['bytes'], rel
+              assert hashlib.sha256(raw).hexdigest()==meta['sha256'], rel
+          PY
+
+      - name: Score V2 final holdout and evaluate same-match baselines
+        run: python football-data/new_engine_v2_joint_score/final_evaluate.py --v1-dir /tmp/v1ref
+
+      - name: Verify historical scientific status is explicit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          e=Path('football-data/new_engine_v2_joint_score/evidence')
+          s=json.loads((e/'final_status.json').read_text())
+          r=json.loads((e/'historical_final_result.json').read_text())
+          assert s['scientific_status'] in {'MODEL_CANDIDATE_PASSED','NOT_PROMOTED'}
+          assert s['scientific_status']==r['scientific_status']
+          assert s['formal_activation'] is False
+          print(json.dumps({'scientific_status':s['scientific_status'],'failed_gates':[k for k,v in r['gates']['checks'].items() if not v]},indent=2))
+          PY
+
+      - name: Assemble self-contained exact-HEAD historical Artifact
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=football-data/new_engine_v2_joint_score
+          OUT=/tmp/v2_artifact
+          rm -rf "$OUT"
+          mkdir -p "$OUT/code" "$OUT/contracts" "$OUT/evidence/final_protocol/batches"
+          cp "$SRC"/*.py "$OUT/code/"
+          cp "$SRC"/contracts/*.md "$OUT/contracts/"
+          for f in universe_manifest.json universe_canonical.jsonl research_rows.jsonl final_features.jsonl final_labels.jsonl \
+                   research_result.json final_model_lock.json final_rule_freeze.json final_state_initial.json final_state_initial_manifest.json \
+                   cold_start_audit.json adversarial_probe.json historical_final_result.json final_status.json; do
+            cp "$SRC/evidence/$f" "$OUT/evidence/$f"
+          done
+          cp "$SRC/evidence/final_protocol/protocol_receipt.json" "$OUT/evidence/final_protocol/"
+          cp "$SRC/evidence/final_protocol/"state_*.json "$OUT/evidence/final_protocol/"
+          cp "$SRC/evidence/final_protocol/batches/"*_blind.json "$OUT/evidence/final_protocol/batches/"
+          cp "$SRC/evidence/final_protocol/batches/"*_blind_manifest.json "$OUT/evidence/final_protocol/batches/"
+          cp "$SRC/evidence/final_protocol/batches/"*_scored.json "$OUT/evidence/final_protocol/batches/"
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path('/tmp/v2_artifact')
+          files={}
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  raw=p.read_bytes()
+                  files[str(p.relative_to(root))]={'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+          status=json.loads((root/'evidence/final_status.json').read_text())
+          manifest={
+              'schema_version':'football3-v2-historical-artifact-v1',
+              'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+              'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+              'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+              'branch':os.environ['GITHUB_REF_NAME'],
+              'run_id':int(os.environ['GITHUB_RUN_ID']),
+              'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'anchor':'7c1815c47102412e88f72189e2b8f837d9b73a42',
+              'contract_commit':'b0cc96085159b1d215589264fb3dad759a016c3f',
+              'scientific_status':status['scientific_status'],
+              'formal_activation':False,
+              'main_modified':False,
+              'current_modified':False,
+              'airtable_modified':False,
+              'pr334_modified':False,
+              'r5_modified':False,
+              'pycache_in_manifest':False,
+              'files':files,
+          }
+          (root/'artifact_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          PY
+          find "$OUT" -type d -name '__pycache__' -print -quit | grep -q . && exit 1 || true
+
+      - name: Upload V2 historical evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-new-engine-v2-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/v2_artifact/
+          if-no-files-found: error
+          retention-days: 90
