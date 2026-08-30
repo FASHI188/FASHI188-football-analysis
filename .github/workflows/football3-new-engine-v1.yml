@@ -110,12 +110,60 @@ jobs:
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           parent=subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
           changed=subprocess.check_output(['git','diff','--name-only','7c1815c47102412e88f72189e2b8f837d9b73a42...HEAD'],text=True).splitlines()
+          selected=[]
+          for base in (root/'contracts', ev):
+              selected.extend(p for p in base.rglob('*') if p.is_file() and p.name != 'artifact_manifest.json')
+          selected.extend([
+              root/'pure_engine.py',
+              root/'market_assist.py',
+              root/'legacy_v500.py',
+              root/'historical_eval.py',
+              root/'test_new_engine.py',
+          ])
           files={}
-          for p in sorted(root.rglob('*')):
-              if p.is_file():
-                  data=p.read_bytes(); files[str(p)]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
-          manifest={'schema_version':'football3-new-engine-v1-artifact-v1','head':head,'parent':parent,'anchor':'7c1815c47102412e88f72189e2b8f837d9b73a42','branch':'football3/new-engine-v1','changed_paths':changed,'files':files,'formal_model_modified':False,'current_modified':False,'main_modified':False,'final_state':'GPT_REBUILT_PENDING_CODEX_RECHECK'}
+          for p in sorted(set(selected)):
+              data=p.read_bytes()
+              files[str(p)]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+          assert files
+          assert not any('__pycache__' in name for name in files)
+          assert not any('/forward/' in name for name in files)
+          manifest={
+              'schema_version':'football3-new-engine-v1-artifact-v1',
+              'head':head,
+              'parent':parent,
+              'anchor':'7c1815c47102412e88f72189e2b8f837d9b73a42',
+              'branch':'football3/new-engine-v1',
+              'changed_paths':changed,
+              'files':files,
+              'artifact_manifest_self_excluded':True,
+              'pycache_in_manifest':False,
+              'formal_model_modified':False,
+              'current_modified':False,
+              'main_modified':False,
+              'final_state':'GPT_REBUILT_PENDING_CODEX_RECHECK',
+          }
           (ev/'artifact_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Verify artifact manifest matches upload scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('football-data/new_engine_v1')
+          manifest=json.loads((root/'evidence/artifact_manifest.json').read_text())
+          expected=[]
+          for base in (root/'contracts', root/'evidence'):
+              expected.extend(p for p in base.rglob('*') if p.is_file() and p.name != 'artifact_manifest.json')
+          expected.extend([root/'pure_engine.py',root/'market_assist.py',root/'legacy_v500.py',root/'historical_eval.py',root/'test_new_engine.py'])
+          expected={str(p):p for p in expected}
+          assert set(manifest['files']) == set(expected)
+          for name,p in expected.items():
+              data=p.read_bytes()
+              assert manifest['files'][name]['sha256']==hashlib.sha256(data).hexdigest()
+              assert manifest['files'][name]['bytes']==len(data)
           PY
 
       - name: Upload New Engine V1 evidence
