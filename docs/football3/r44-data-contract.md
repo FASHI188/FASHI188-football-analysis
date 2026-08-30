@@ -1,0 +1,1 @@
+R44 historical inputs must retain match identity, competition identity, event timestamp, feature availability timestamp, prediction cutoff, outcome, and source hash. Any row lacking a defensible pre-match cutoff is excluded rather than imputed from future data.
