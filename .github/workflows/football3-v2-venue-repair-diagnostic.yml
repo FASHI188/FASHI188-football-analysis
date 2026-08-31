@@ -1,0 +1,168 @@
+name: football3 V2 venue baseline post-view diagnostic
+
+on:
+  push:
+    branches: [football3/new-engine-v2-joint-score-clean]
+    paths:
+      - 'football-data/research/v2_pit_history/venue_repair_diagnostic.py'
+      - '.github/workflows/football3-v2-venue-repair-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v2-venue-repair-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  venue-baseline-postview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact diagnostic HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Enforce research-only boundary and protected V2 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_ARTIFACT_HEAD=46597be75df48bfbf65c723b852524695360985c
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$BASE_ARTIFACT_HEAD" HEAD
+          git diff --quiet "$BASE_ARTIFACT_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          changed="$(git diff --name-only "$BASE_ARTIFACT_HEAD" HEAD)"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(football-data/research/v2_pit_history/venue_repair_diagnostic\.py|\.github/workflows/football3-v2-venue-repair-diagnostic\.yml)$' || true)"
+          test -z "$bad" || { echo "OUT_OF_DIAGNOSTIC_WHITELIST:" >&2; echo "$bad" >&2; exit 1; }
+          echo "RESEARCH_ONLY_DIAGNOSTIC_BOUNDARY_OK"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile diagnostic code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/v2_pit_history/venue_repair_diagnostic.py
+
+      - name: Download and verify sealed successful PIT Artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART=9742771164
+          EXPECTED=ddb8999ada449eb2a587c30bca61a88f7e612219abb9903ac07ca1be211b507a
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}")"
+          test "$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')" = "sha256:${EXPECTED}"
+          rm -rf /tmp/base /tmp/base.zip
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART}/zip" -o /tmp/base.zip
+          test "$(sha256sum /tmp/base.zip | awk '{print $1}')" = "$EXPECTED"
+          unzip -t /tmp/base.zip >/dev/null
+          mkdir -p /tmp/base && unzip -q /tmp/base.zip -d /tmp/base
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('/tmp/base')
+          a=json.loads((root/'artifact_manifest.json').read_text())
+          s=json.loads((root/'score/score_receipt.json').read_text())
+          d=json.loads((root/'dataset/dataset_manifest.json').read_text())
+          assert a['head']=='46597be75df48bfbf65c723b852524695360985c'
+          assert a['run_id']==33348219869 and a['research_only'] is True and a['formal_candidate'] is False
+          assert a['production_enabled'] is False and a['strict_prospective'] is False
+          assert s['status']=='INDEPENDENT_SCORER_PASSED' and s['n']==5256
+          assert d['status']=='PIT_DATASET_GATE_PASSED' and d['evaluation_n']==5256 and d['development_n']==1826
+          assert a['files']['score/metrics.json']['sha256']=='d60f6b535db74f7309bb9e4ec88306e941bbd4b8778f4e2cb1a77f37afb6debb'
+          print('SEALED_BASE_ARTIFACT_OK')
+          PY
+
+      - name: Run development-selected venue repair diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=football-data/research/v2_pit_history
+          rm -rf /tmp/venue_diag && mkdir -p /tmp/venue_diag
+          python "$R/venue_repair_diagnostic.py" \
+            --development /tmp/base/dataset/development.jsonl \
+            --features /tmp/base/dataset/evaluation_features.jsonl \
+            --label-vault /tmp/base/dataset/evaluation_label_vault.jsonl \
+            --v2-dir football-data/new_engine_v2_joint_score \
+            --baseline-metrics /tmp/base/score/metrics.json \
+            --out /tmp/venue_diag/venue_repair_diagnostic.json
+
+      - name: Gate diagnostic honesty and print decision metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/venue_diag/venue_repair_diagnostic.json')
+          d=json.loads(p.read_text())
+          assert d['status']=='POSTVIEW_DIAGNOSTIC_COMPLETE'
+          assert d['research_only'] is True and d['strict_prospective'] is False
+          assert d['formal_promotion_eligible'] is False
+          assert d['evaluation_reused_after_root_cause_discovery'] is True
+          assert d['development_only_selection'] is True
+          assert d['development_n']==1826 and d['evaluation_n']==5256
+          print(json.dumps({
+              'selected_gamma':d['selected_gamma'],
+              'selected_dependence':d['selected_dependence'],
+              'development_gamma_board':d['tuning']['gamma_board'],
+              'development_dependence_board':d['tuning']['dependence_board'],
+              'baseline_v1':d['baseline_v1'],
+              'repaired_independent':d['metrics']['independent'],
+              'repaired_joint':d['metrics']['joint'],
+              'comparison_to_v1':d['comparison_to_v1'],
+              'interpretation_guard':d['interpretation_guard'],
+          },indent=2))
+          PY
+
+      - name: Seal diagnostic Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp football-data/research/v2_pit_history/venue_repair_diagnostic.py /tmp/venue_diag/
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path('/tmp/venue_diag')
+          files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.iterdir()) if p.is_file()}
+          m={
+              'schema_version':'football3-v2-venue-repair-artifact-v1',
+              'head':os.environ['GITHUB_SHA'],'run_id':int(os.environ['GITHUB_RUN_ID']),
+              'research_only':True,'strict_prospective':False,'formal_promotion_eligible':False,
+              'base_artifact_id':9742771164,
+              'base_artifact_digest':'sha256:ddb8999ada449eb2a587c30bca61a88f7e612219abb9903ac07ca1be211b507a',
+              'protected_v2_bytes_modified':False,'main_modified':False,'current_modified':False,
+              'airtable_modified':False,'pr334_modified':False,'r5_modified':False,
+              'files':files,
+          }
+          (root/'diagnostic_artifact_manifest.json').write_text(json.dumps(m,indent=2)+'\n')
+          PY
+
+      - name: Upload venue repair diagnostic Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v2-venue-repair-postview-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/venue_diag/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Terminal diagnostic gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "VENUE_BASELINE_POSTVIEW_DIAGNOSTIC_PASSED"
+          echo "RESEARCH_ONLY"
+          echo "NO_FORMAL_PROMOTION"
+          echo "NO_30_100_300_PROSPECTIVE"
+          echo "PROTECTED_V2_CORE_UNCHANGED"
