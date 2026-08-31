@@ -21,10 +21,11 @@ MIDDLE_RE = re.compile(
     r"(?P<home>.+?)\s{2,}(?P<hg>\d+)-(?P<ag>\d+)"
     r"(?:\s+\(\d+-\d+\))?\s{2,}(?P<away>.+?)\s*$"
 )
-# Older France layout: [time] HOME  v AWAY  2-1 (1-0)
+# Older France/OpenFootball layout: [time] HOME v AWAY  2-1 (1-0).
+# Long team names can leave only one space around the literal v separator.
 V_RE = re.compile(
     r"^\s*(?:(?P<time>\d{1,2}:\d{2})\s+)?"
-    r"(?P<home>.+?)\s{2,}v\s+(?P<away>.+?)\s{2,}"
+    r"(?P<home>.+?)\s+v\s+(?P<away>.+?)\s{2,}"
     r"(?P<hg>\d+)-(?P<ag>\d+)(?:\s+\(\d+-\d+\))?\s*$",
     re.I,
 )
