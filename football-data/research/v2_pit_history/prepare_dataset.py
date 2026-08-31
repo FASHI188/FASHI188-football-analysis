@@ -179,7 +179,12 @@ def main() -> int:
         if not license_path.is_file():
             raise RuntimeError(f"missing license: {license_path}")
         license_text = license_path.read_text(encoding="utf-8", errors="replace").casefold()
-        if "public domain" not in license_text or ("cc0" not in license_text and "creative commons zero" not in license_text):
+        if not (
+            "cc0" in license_text
+            or "creative commons zero" in license_text
+            or "public domain" in license_text
+            or "publicdomain" in license_text
+        ):
             raise RuntimeError(f"license gate failed for {src['repo']}")
         for season in sorted(dev_seasons | eval_seasons):
             rel = src["path_template"].format(season=season)
