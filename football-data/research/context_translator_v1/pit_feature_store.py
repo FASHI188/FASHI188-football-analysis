@@ -19,9 +19,24 @@ def _dt(text: str) -> datetime:
 class PITFeatureStore:
     def __init__(self) -> None:
         self._facts: dict[tuple[str, str, str], list[RawFact]] = defaultdict(list)
+        self._seen_fact_sha256: set[str] = set()
+        self._seen_source_event: dict[tuple[str, str], str] = {}
 
     def append(self, fact: RawFact, cutoff: str) -> None:
         fact.validate(cutoff)
+        digest = fact.sha256()
+        if digest in self._seen_fact_sha256:
+            raise PITViolation("duplicate raw fact payload")
+        source_event_id = None
+        if isinstance(fact.value, dict):
+            source_event_id = fact.value.get("source_event_id")
+        if source_event_id:
+            key = (fact.provenance.immutable_source_ref, str(source_event_id))
+            previous = self._seen_source_event.get(key)
+            if previous is not None:
+                raise PITViolation(f"duplicate source event across facts source={key[0]} event={key[1]} prior_sha={previous}")
+            self._seen_source_event[key] = digest
+        self._seen_fact_sha256.add(digest)
         key = (fact.entity_type, fact.entity_id, fact.predicate)
         self._facts[key].append(fact)
         self._facts[key].sort(key=lambda f: (_dt(f.provenance.known_at), f.sha256()))
