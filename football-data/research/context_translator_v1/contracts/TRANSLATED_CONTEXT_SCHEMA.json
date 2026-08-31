@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "football3-context-translator-v1.schema.json",
+  "title": "Football3 Context Translator V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "research_status",
+    "match_id",
+    "cutoff",
+    "coverage_grade",
+    "provenance_manifest_sha256",
+    "team_state",
+    "player_state",
+    "lineup_scenarios",
+    "coach_tactical",
+    "match_context",
+    "process_hazard",
+    "scenario_outputs",
+    "uncertainty"
+  ],
+  "properties": {
+    "schema_version": {"const": "football3.context_translator.v1"},
+    "research_status": {"const": "RESEARCH_ONLY"},
+    "match_id": {"type": "string", "minLength": 1},
+    "cutoff": {"type": "string", "format": "date-time"},
+    "coverage_grade": {"enum": ["FULL_TRACKING", "FULL_EVENT", "LINEUP_STATS", "TEAM_ONLY", "HARD_FAIL"]},
+    "provenance_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "team_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["home", "away"],
+      "properties": {
+        "home": {"$ref": "#/$defs/teamState"},
+        "away": {"$ref": "#/$defs/teamState"}
+      }
+    },
+    "player_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "players_sha256"],
+      "properties": {
+        "status": {"enum": ["IMPLEMENTED", "REJECTED_ABLATION", "BLOCKED_DATA", "CONTRACT_ONLY"]},
+        "players_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "lineup_scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/lineupScenario"}
+    },
+    "coach_tactical": {"$ref": "#/$defs/layerState"},
+    "match_context": {"$ref": "#/$defs/layerState"},
+    "process_hazard": {"$ref": "#/$defs/layerState"},
+    "scenario_outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/scenarioOutput"}
+    },
+    "uncertainty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "components"],
+      "properties": {
+        "total": {"type": "number", "minimum": 0},
+        "components": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}}
+      }
+    }
+  },
+  "$defs": {
+    "teamState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team_id", "attack", "defence", "sample_size", "uncertainty", "state_sha256"],
+      "properties": {
+        "team_id": {"type": "string", "minLength": 1},
+        "attack": {"type": "number"},
+        "defence": {"type": "number"},
+        "sample_size": {"type": "number", "minimum": 0},
+        "uncertainty": {"type": "number", "minimum": 0},
+        "state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "layerState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "log_mu_home_delta", "log_mu_away_delta", "uncertainty", "evidence_sha256"],
+      "properties": {
+        "status": {"enum": ["IMPLEMENTED", "REJECTED_ABLATION", "BLOCKED_DATA", "CONTRACT_ONLY"]},
+        "log_mu_home_delta": {"type": "number"},
+        "log_mu_away_delta": {"type": "number"},
+        "uncertainty": {"type": "number", "minimum": 0},
+        "evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "lineupScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "route", "probability", "home_player_ids", "away_player_ids", "known_at_max", "uncertainty", "scenario_sha256"],
+      "properties": {
+        "scenario_id": {"type": "string", "minLength": 1},
+        "route": {"enum": ["EXPECTED_LINEUP", "CONFIRMED_LINEUP", "LINEUP_UNKNOWN"]},
+        "probability": {"type": "number", "minimum": 0, "maximum": 1},
+        "home_player_ids": {"type": "array", "items": {"type": "string"}},
+        "away_player_ids": {"type": "array", "items": {"type": "string"}},
+        "known_at_max": {"type": ["string", "null"], "format": "date-time"},
+        "uncertainty": {"type": "number", "minimum": 0},
+        "scenario_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "scenarioOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "probability", "base_mu_home", "base_mu_away", "translated_mu_home", "translated_mu_away", "score_matrix_sha256"],
+      "properties": {
+        "scenario_id": {"type": "string"},
+        "probability": {"type": "number", "minimum": 0, "maximum": 1},
+        "base_mu_home": {"type": "number", "exclusiveMinimum": 0},
+        "base_mu_away": {"type": "number", "exclusiveMinimum": 0},
+        "translated_mu_home": {"type": "number", "exclusiveMinimum": 0},
+        "translated_mu_away": {"type": "number", "exclusiveMinimum": 0},
+        "score_matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
