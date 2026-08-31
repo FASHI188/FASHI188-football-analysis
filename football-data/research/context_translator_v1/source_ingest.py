@@ -107,7 +107,6 @@ def _season(x:str)->str:
     x=x.replace("-","/")
     return x if len(x.split("/")[-1])==2 else f"{x.split('/')[0]}/{x.split('/')[1][-2:]}"
 
-# Step 1: exact source inventory only. Match listings are deleted after sanitisation.
 def inventory_statsbomb(root:Path)->dict[str,Any]:
     root.mkdir(parents=True,exist_ok=True);retrieved=_iso(datetime.now(timezone.utc));meta={};safe=[];items=[]
     comp_raw=_get("data/competitions.json");(root/"competitions.tmp.json").write_bytes(comp_raw);comps=json.loads(comp_raw)
@@ -122,39 +121,29 @@ def inventory_statsbomb(root:Path)->dict[str,Any]:
         meta[rel]={"url":_url(rel),"sha256":listing_sha,"bytes":len(raw)}
         for m in rows:
             safe.append({"match_id":int(m["match_id"]),"competition_id":t["competition_id"],"season_id":t["season_id"],"competition_name":t["competition_name"],"season_name":t["season_name"],"v2_competition_id":t["v2_competition_id"],"v2_season":t["v2_season"],"match_date":m["match_date"],"home_team_id":int(m["home_team"]["home_team_id"]),"home_team_name":m["home_team"]["home_team_name"],"away_team_id":int(m["away_team"]["away_team_id"]),"away_team_name":m["away_team"]["away_team_name"]})
-    (root/"competitions.tmp.json").unlink()
-    _dump(root/"safe_match_index.json",sorted(safe,key=lambda x:(x["competition_id"],x["season_id"],x["match_date"],x["match_id"])))
-    receipt={"schema_version":"football3-statsbomb-exact-inventory-v2","repository":SB_REPO,"exact_commit":SB_COMMIT,"retrieved_at":retrieved,"source_tier":"TIER_2_OPEN_STRUCTURED","provider_license":"StatsBomb Open Data; attribution required by exact-commit repository notice","selection_rule":"FOUR_USER_PREDECLARED_COMPETITION_SEASONS_ALL_MATCH_IDS_AS_PUBLISHED_AT_EXACT_COMMIT","no_result_or_metric_selection":True,"targets":items,"safe_match_index_sha256":_sha_file(root/"safe_match_index.json"),"raw_match_listings":meta,"raw_match_listings_retained":False}
-    receipt["inventory_sha256"]=canonical_sha(receipt);_dump(root/"statsbomb_source_inventory_receipt.json",receipt);return receipt
+    (root/"competitions.tmp.json").unlink();_dump(root/"safe_match_index.json",sorted(safe,key=lambda x:(x["competition_id"],x["season_id"],x["match_date"],x["match_id"])))
+    receipt={"schema_version":"football3-statsbomb-exact-inventory-v2","repository":SB_REPO,"exact_commit":SB_COMMIT,"retrieved_at":retrieved,"source_tier":"TIER_2_OPEN_STRUCTURED","provider_license":"StatsBomb Open Data; attribution required by exact-commit repository notice","selection_rule":"FOUR_USER_PREDECLARED_COMPETITION_SEASONS_ALL_MATCH_IDS_AS_PUBLISHED_AT_EXACT_COMMIT","no_result_or_metric_selection":True,"targets":items,"safe_match_index_sha256":_sha_file(root/"safe_match_index.json"),"raw_match_listings":meta,"raw_match_listings_retained":False};receipt["inventory_sha256"]=canonical_sha(receipt);_dump(root/"statsbomb_source_inventory_receipt.json",receipt);return receipt
 
-def _map_inventory(artifact:Path,source:Path,out:Path)->tuple[dict[str,Any],list[tuple[dict[str,Any],dict[str,Any]]]]:
+def _map_inventory(artifact:Path,source:Path,out:Path):
     inv=json.loads((source/"statsbomb_source_inventory_receipt.json").read_text());safe=json.loads((source/"safe_match_index.json").read_text())
     if inv["exact_commit"]!=SB_COMMIT or _sha_file(source/"safe_match_index.json")!=inv["safe_match_index_sha256"]:raise PITViolation("inventory receipt identity mismatch")
-    dev=_read_jsonl(artifact/"dataset/development.jsonl");ev=_read_jsonl(artifact/"dataset/evaluation_features.jsonl")
-    universe=[]
+    dev=_read_jsonl(artifact/"dataset/development.jsonl");ev=_read_jsonl(artifact/"dataset/evaluation_features.jsonl");universe=[]
     for split,rows in (("development",dev),("evaluation",ev)):
-        for r in rows:
-            universe.append({"split":split,"fixture_id":r["fixture_id"],"competition_id":str(r["competition_id"]),"season":_season(str(r["season"])),"date":str(r.get("date") or r["cutoff"][:10]),"home":str(r["home_team"]),"away":str(r["away_team"]),"row":r})
+        for r in rows:universe.append({"split":split,"fixture_id":r["fixture_id"],"competition_id":str(r["competition_id"]),"season":_season(str(r["season"])),"date":str(r.get("date") or r["cutoff"][:10]),"home":str(r["home_team"]),"away":str(r["away_team"]),"row":r})
     idx=defaultdict(list)
     for u in universe:idx[(u["competition_id"],u["season"],u["date"],_canon_team(u["home"]),_canon_team(u["away"]))].append(u)
     mapped=[];detail=[]
     for s in safe:
-        key=(s["v2_competition_id"],s["v2_season"],s["match_date"],_canon_team(s["home_team_name"]),_canon_team(s["away_team_name"]))
-        cand=idx.get(key,[])
+        key=(s["v2_competition_id"],s["v2_season"],s["match_date"],_canon_team(s["home_team_name"]),_canon_team(s["away_team_name"]));cand=idx.get(key,[])
         if len(cand)>1:raise PITViolation(f"ambiguous mechanical identity {key}")
         if cand:
-            u=cand[0];mapped.append((u["row"],s));status="MAPPED_EVALUATION" if u["split"]=="evaluation" else "MAPPED_DEVELOPMENT_OVERLAP"
-            detail.append({"match_id":s["match_id"],"source_key":list(key),"mapping_status":status,"v2_fixture_id":u["fixture_id"],"v2_split":u["split"]})
+            u=cand[0];mapped.append((u["row"],s));status="MAPPED_EVALUATION" if u["split"]=="evaluation" else "MAPPED_DEVELOPMENT_OVERLAP";detail.append({"match_id":s["match_id"],"source_key":list(key),"mapping_status":status,"v2_fixture_id":u["fixture_id"],"v2_split":u["split"]})
         else:
-            season_present=any(u["competition_id"]==s["v2_competition_id"] and u["season"]==s["v2_season"] for u in universe)
-            detail.append({"match_id":s["match_id"],"source_key":list(key),"mapping_status":"UNMAPPED_IDENTITY" if season_present else "V2_SEASON_ABSENT","v2_fixture_id":None,"v2_split":None})
+            season_present=any(u["competition_id"]==s["v2_competition_id"] and u["season"]==s["v2_season"] for u in universe);detail.append({"match_id":s["match_id"],"source_key":list(key),"mapping_status":"UNMAPPED_IDENTITY" if season_present else "V2_SEASON_ABSENT","v2_fixture_id":None,"v2_split":None})
     by_target=[]
     for t in inv["targets"]:
-        ids=set(t["actual_match_ids"]);ds=[x for x in detail if x["match_id"] in ids]
-        by_target.append({"competition_id":t["competition_id"],"season_id":t["season_id"],"v2_competition_id":t["v2_competition_id"],"v2_season":t["v2_season"],"actual_source_count":t["actual_match_count"],"mapped_evaluation":sum(x["mapping_status"]=="MAPPED_EVALUATION" for x in ds),"mapped_development_overlap":sum(x["mapping_status"]=="MAPPED_DEVELOPMENT_OVERLAP" for x in ds),"v2_season_absent":sum(x["mapping_status"]=="V2_SEASON_ABSENT" for x in ds),"unmapped_identity":sum(x["mapping_status"]=="UNMAPPED_IDENTITY" for x in ds),"mapped_source_match_ids":[x["match_id"] for x in ds if x["v2_fixture_id"]],"mapping_set_sha256":canonical_sha([x for x in ds if x["v2_fixture_id"]])})
-    receipt={"schema_version":"football3-statsbomb-v2-mechanical-mapping-v2","statsbomb_exact_commit":SB_COMMIT,"inventory_sha256":inv["inventory_sha256"],"identity_rule":"competition+season+date+canonical_home+canonical_away+home_away_direction; ASCII fold; frozen token/rewrite table in source_ingest.py","result_fields_used":False,"prediction_error_used":False,"metric_selection_used":False,"targets":by_target,"rows":detail}
-    receipt["mapping_sha256"]=canonical_sha(receipt);_dump(out/"statsbomb_v2_mapping_receipt.json",receipt)
-    # Any source match in a V2-present season must map mechanically; otherwise fail closed for identity repair.
+        ids=set(t["actual_match_ids"]);ds=[x for x in detail if x["match_id"] in ids];by_target.append({"competition_id":t["competition_id"],"season_id":t["season_id"],"v2_competition_id":t["v2_competition_id"],"v2_season":t["v2_season"],"actual_source_count":t["actual_match_count"],"mapped_evaluation":sum(x["mapping_status"]=="MAPPED_EVALUATION" for x in ds),"mapped_development_overlap":sum(x["mapping_status"]=="MAPPED_DEVELOPMENT_OVERLAP" for x in ds),"v2_season_absent":sum(x["mapping_status"]=="V2_SEASON_ABSENT" for x in ds),"unmapped_identity":sum(x["mapping_status"]=="UNMAPPED_IDENTITY" for x in ds),"mapped_source_match_ids":[x["match_id"] for x in ds if x["v2_fixture_id"]],"mapping_set_sha256":canonical_sha([x for x in ds if x["v2_fixture_id"]])})
+    receipt={"schema_version":"football3-statsbomb-v2-mechanical-mapping-v2","statsbomb_exact_commit":SB_COMMIT,"inventory_sha256":inv["inventory_sha256"],"identity_rule":"competition+season+date+canonical_home+canonical_away+home_away_direction; ASCII fold; frozen token/rewrite table in source_ingest.py","result_fields_used":False,"prediction_error_used":False,"metric_selection_used":False,"targets":by_target,"rows":detail};receipt["mapping_sha256"]=canonical_sha(receipt);_dump(out/"statsbomb_v2_mapping_receipt.json",receipt)
     bad=[x for x in by_target if x["unmapped_identity"]]
     if bad:raise PITViolation(f"mechanical mapping has identity misses: {bad}")
     return receipt,mapped
@@ -237,10 +226,9 @@ def predict(artifact:Path,source:Path,repo:Path,out:Path)->dict[str,Any]:
     from v2_translator_integration import integrate_plan
     out.mkdir(parents=True,exist_ok=True);am=json.loads((artifact/"artifact_manifest.json").read_text())
     if am["run_id"]!=33348991436 or am["prediction_sha256"]!="92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7":raise PITViolation("sealed V2 identity mismatch")
-    mapping,mapped=_map_inventory(artifact,source,out);targets=[(r,s) for r,s in mapped if str(r["season"])=="2023/24" and str(r["competition_id"])=="GER1"]
+    mapping,mapped=_map_inventory(artifact,source,out);targets=[(r,s) for r,s in mapped if _season(str(r["season"]))=="2023/24" and str(r["competition_id"])=="GER1"]
     if not targets:raise PITViolation("no mapped evaluation target rows")
     inv=json.loads((source/"statsbomb_source_inventory_receipt.json").read_text());dev,lock,beta,weights,threshold=_fit_dev(artifact,repo);pred_by={x["fixture_id"]:x for x in _read_jsonl(artifact/"replay/predictions.jsonl")};eval_rows=_read_jsonl(artifact/"dataset/evaluation_features.jsonl")
-    # Layer-7 tracker receives the complete V2 schedule, independent of StatsBomb event coverage.
     tr=ScheduleTracker()
     for r in sorted(dev,key=lambda x:(x["cutoff"],x["fixture_id"])):tr.observe_fixture(r["home_team_id"],r["away_team_id"],r["cutoff"])
     target_ids={r["fixture_id"] for r,_ in targets};sched={}
@@ -307,7 +295,6 @@ def score(artifact:Path,out:Path)->dict[str,Any]:
     for k in LAYERS:
         by[k].sort(key=lambda x:(x["cutoff"],x["fixture_id"]))
         if [x["fixture_id"] for x in by[k]]!=ids:raise PITViolation("layer pairing mismatch")
-    # Scorer opens labels only to verify target identities are scoreable; no promotion metric is computed for this partial subset.
     labels={x["fixture_id"] for x in _read_jsonl(artifact/"dataset/evaluation_label_vault.jsonl")}
     if not set(ids)<=labels:raise PITViolation("scorer label identity mismatch")
     eng={LAYERS[0]:"ENGINEERING/PIT_PASS",LAYERS[1]:"ENGINEERING/PIT_PASS" if pm["coverage_counts"][LAYERS[1]] else "INSUFFICIENT_SAMPLE",LAYERS[2]:"ENGINEERING/PIT_PASS" if pm["coverage_counts"][LAYERS[2]] else "INSUFFICIENT_SAMPLE",LAYERS[3]:"INSUFFICIENT_SAMPLE",LAYERS[4]:"INSUFFICIENT_SAMPLE",LAYERS[5]:"INSUFFICIENT_SAMPLE",LAYERS[6]:"INSUFFICIENT_SAMPLE",LAYERS[7]:"REJECTED_ABLATION",LAYERS[8]:"INSUFFICIENT_SAMPLE",LAYERS[9]:"INSUFFICIENT_SAMPLE"}
