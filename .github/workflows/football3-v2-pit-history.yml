@@ -113,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           R=football-data/research/v2_pit_history
-          rm -rf /tmp/openfootball && mkdir -p /tmp/openfootball
+          rm -rf /tmp/openfootball && mkdir -p /tmp/openfootball /tmp/openfootball-archives
           python - "$R/sources.lock.json" > /tmp/source_lock.tsv <<'PY'
           import json,sys
           d=json.load(open(sys.argv[1]))
@@ -122,15 +122,18 @@ jobs:
           PY
           while IFS=$'\t' read -r cid repo sha license; do
             dst="/tmp/openfootball/${cid}"
-            git init -q "$dst"
-            git -C "$dst" remote add origin "https://github.com/${repo}.git"
-            git -C "$dst" fetch -q --depth=1 origin "$sha"
-            git -C "$dst" checkout -q --detach FETCH_HEAD
-            test "$(git -C "$dst" rev-parse HEAD)" = "$sha"
+            arc="/tmp/openfootball-archives/${cid}-${sha}.tar.gz"
+            mkdir -p "$dst"
+            curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 \
+              "https://codeload.github.com/${repo}/tar.gz/${sha}" -o "$arc"
+            tar -tzf "$arc" >/dev/null
+            tar -xzf "$arc" --strip-components=1 -C "$dst"
+            printf '%s\n' "$sha" > "$dst/.source_commit"
+            test "$(cat "$dst/.source_commit")" = "$sha"
             test -f "$dst/$license"
             grep -Eiq 'public domain' "$dst/$license"
             grep -Eiq 'CC0|Creative Commons Zero' "$dst/$license"
-            echo "$cid $repo $sha LICENSE_OK"
+            echo "$cid $repo $sha SOURCE_ARCHIVE_LICENSE_OK sha256=$(sha256sum "$arc" | awk '{print $1}')"
           done < /tmp/source_lock.tsv
 
       - name: Build strict PIT dataset and sealed evaluation vault
