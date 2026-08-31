@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections import defaultdict
 from dataclasses import dataclass, asdict
@@ -13,6 +15,10 @@ DIMS = (
     "goalkeeper_distribution", "on_ball_contribution", "off_ball_contribution", "current_form",
 )
 PROHIBITED = {"market_value", "salary", "game_rating", "media_rating", "fantasy_rating", "reputation", "stars"}
+ATTACK_DIMS = ("shot_generation", "finishing", "chance_creation", "passing_progression", "carrying_progression", "set_piece", "on_ball_contribution")
+DEFENCE_DIMS = ("pressing", "tackling_interception", "defensive_position_protection", "aerial", "off_ball_contribution")
+GK_DIMS = ("goalkeeper_shot_stopping", "goalkeeper_sweeping", "goalkeeper_cross_claiming", "goalkeeper_distribution")
+ESTIMATOR_VERSION = "football3-player-capability-v1-replacement-relative-20260831"
 
 
 class PlayerStrengthError(RuntimeError):
@@ -28,6 +34,10 @@ def _parse(text: str) -> datetime:
 
 def _decay(days: float, half_life: float) -> float:
     return math.exp(-math.log(2.0) * max(days, 0.0) / half_life)
+
+
+def _sha(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
 def _solve_ridge(rows: list[dict[str, float]], y: list[float], keys: list[str], ridge: float) -> dict[str, float]:
@@ -65,11 +75,15 @@ class PlayerVector:
     team_id: str
     league_id: str
     role: str
+    role_distribution: dict[str, float]
     values: dict[str, float]
     effective_exposure: float
     uncertainty: float
     state_timestamp: str
     coverage_grade: str
+    source_sha256s: list[str]
+    estimator_sha256: str
+    migration_count: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -82,7 +96,9 @@ def estimate_player_vectors(events: list[dict[str, Any]], segments: list[dict[st
     league_strength = league_strength or {}
     agg: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     exposure: dict[str, float] = defaultdict(float)
-    meta: dict[str, tuple[str, str, str]] = {}
+    meta_history: dict[str, list[tuple[datetime, str, str, str]]] = defaultdict(list)
+    role_weight: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    source_shas: dict[str, set[str]] = defaultdict(set)
     for e in events:
         if PROHIBITED.intersection(e):
             raise PlayerStrengthError("prohibited player proxy present")
@@ -97,15 +113,19 @@ def estimate_player_vectors(events: list[dict[str, Any]], segments: list[dict[st
             raise PlayerStrengthError("unknown player dimension")
         minutes = max(float(e["minutes_exposure"]), 0.0)
         poss = max(float(e["possession_opportunity"]), 1e-6)
-        w = _decay((cutoff - known).total_seconds() / 86400.0, half_life_days)
-        pid = str(e["player_id"])
-        meta[pid] = (str(e["team_id"]), str(e["league_id"]), str(e["role"]))
-        opportunity = max(minutes / 90.0, 1e-3) * poss
-        exposure[pid] += w * max(minutes, 1.0)
+        decay = _decay((cutoff - known).total_seconds() / 86400.0, half_life_days)
+        match_equiv = decay * max(minutes / 90.0, 1e-3)
+        pid = str(e["player_id"]); team = str(e["team_id"]); league = str(e["league_id"]); role = str(e["role"])
+        meta_history[pid].append((known, team, league, role))
+        role_weight[pid][role] += match_equiv
+        exposure[pid] += match_equiv
+        sha = str(e.get("source_sha256", ""))
+        if len(sha) == 64:
+            source_shas[pid].add(sha)
         for dim, value in vals.items():
-            agg[pid][dim] += w * float(value) / opportunity
+            agg[pid][dim] += decay * float(value) / poss
 
-    player_ids = sorted(meta)
+    player_ids = sorted(meta_history)
     apm_rows: list[dict[str, float]] = []
     apm_y: list[float] = []
     for s in segments:
@@ -119,58 +139,93 @@ def estimate_player_vectors(events: list[dict[str, Any]], segments: list[dict[st
         w = math.sqrt(max(mins, 1.0) / 90.0) * _decay((cutoff-known).total_seconds()/86400.0, half_life_days)
         row: dict[str, float] = {}
         for pid in s["home_player_ids"]:
-            if pid in meta:
+            if pid in meta_history:
                 row[pid] = row.get(pid, 0.0) + w
         for pid in s["away_player_ids"]:
-            if pid in meta:
+            if pid in meta_history:
                 row[pid] = row.get(pid, 0.0) - w
         if row:
-            apm_rows.append(row)
-            apm_y.append(float(s["impact"]) * w)
+            apm_rows.append(row); apm_y.append(float(s["impact"]) * w)
     apm = _solve_ridge(apm_rows, apm_y, player_ids, ridge)
 
-    role_sum: dict[tuple[str, str], float] = defaultdict(float)
-    role_n: dict[tuple[str, str], int] = defaultdict(int)
-    global_sum: dict[str, float] = defaultdict(float)
-    global_n: dict[str, int] = defaultdict(int)
     raw_rates: dict[str, dict[str, float]] = {}
+    latest_meta: dict[str, tuple[str, str, str]] = {}
     for pid in player_ids:
-        denom = max(exposure[pid] / 90.0, 1e-6)
-        vals = {d: agg[pid].get(d, 0.0) / denom for d in DIMS}
-        raw_rates[pid] = vals
-        role = meta[pid][2]
-        for d, v in vals.items():
-            role_sum[(role, d)] += v; role_n[(role, d)] += 1
+        latest = max(meta_history[pid], key=lambda x: x[0])
+        latest_meta[pid] = (latest[1], latest[2], latest[3])
+        denom = max(exposure[pid], 1e-6)
+        raw_rates[pid] = {d: agg[pid].get(d, 0.0) / denom for d in DIMS}
+
+    role_sum: dict[tuple[str, str], float] = defaultdict(float); role_n: dict[tuple[str, str], int] = defaultdict(int)
+    team_sum: dict[tuple[str, str], float] = defaultdict(float); team_n: dict[tuple[str, str], int] = defaultdict(int)
+    league_sum: dict[tuple[str, str], float] = defaultdict(float); league_n: dict[tuple[str, str], int] = defaultdict(int)
+    global_sum: dict[str, float] = defaultdict(float); global_n: dict[str, int] = defaultdict(int)
+    for pid in player_ids:
+        team, league, role = latest_meta[pid]
+        for d, v in raw_rates[pid].items():
+            role_sum[(role,d)] += v; role_n[(role,d)] += 1
+            team_sum[(team,d)] += v; team_n[(team,d)] += 1
+            league_sum[(league,d)] += v; league_n[(league,d)] += 1
             global_sum[d] += v; global_n[d] += 1
 
+    estimator_sha = _sha({"version": ESTIMATOR_VERSION, "dims": DIMS, "half_life_days": half_life_days, "ridge": ridge})
     out: dict[str, PlayerVector] = {}
     for pid in player_ids:
-        team, league, role = meta[pid]
-        eff_matches = exposure[pid] / 90.0
+        team, league, role = latest_meta[pid]
+        eff_matches = exposure[pid]
         shrink = eff_matches / (eff_matches + 12.0)
         vals: dict[str, float] = {}
         for d in DIMS:
-            role_prior = role_sum[(role, d)] / max(role_n[(role, d)], 1)
-            global_prior = global_sum[d] / max(global_n[d], 1)
-            prior = 0.7 * role_prior + 0.3 * global_prior
-            v = shrink * raw_rates[pid][d] + (1.0 - shrink) * prior
+            rp = role_sum[(role,d)] / max(role_n[(role,d)],1)
+            tp = team_sum[(team,d)] / max(team_n[(team,d)],1)
+            lp = league_sum[(league,d)] / max(league_n[(league,d)],1)
+            gp = global_sum[d] / max(global_n[d],1)
+            prior = 0.45*rp + 0.25*tp + 0.20*lp + 0.10*gp
+            v = shrink*raw_rates[pid][d] + (1.0-shrink)*prior
             if d in {"on_ball_contribution", "off_ball_contribution", "current_form"}:
-                v += 0.20 * apm.get(pid, 0.0)
-            vals[d] = v * float(league_strength.get(league, 1.0))
-        unc = min(2.0, 1.0 / math.sqrt(1.0 + eff_matches) + 1.0 / math.sqrt(1.0 + len(apm_rows)))
-        out[pid] = PlayerVector(pid, team, league, role, vals, exposure[pid], unc, as_of,
-                                "FULL_EVENT" if events else "LINEUP_STATS")
+                v += 0.20*apm.get(pid,0.0)
+            vals[d] = v*float(league_strength.get(league,1.0))
+        rw = role_weight[pid]; rtot = max(sum(rw.values()),1e-9); rdist = {k:v/rtot for k,v in sorted(rw.items()) if v>0}
+        contexts = {(x[1],x[2]) for x in meta_history[pid]}; migrations = max(0,len(contexts)-1)
+        unc = 1.0/math.sqrt(1.0+eff_matches) + 0.75/math.sqrt(1.0+len(apm_rows)) + min(0.35,0.12*migrations)
+        out[pid] = PlayerVector(pid,team,league,role,rdist,vals,eff_matches,min(2.0,unc),as_of,
+                                "FULL_EVENT" if events else "LINEUP_STATS",sorted(source_shas[pid]),estimator_sha,migrations)
+    return out
+
+
+def _score(v: PlayerVector) -> tuple[float,float,float]:
+    attack = sum(v.values[d] for d in ATTACK_DIMS)/len(ATTACK_DIMS)
+    defence = sum(v.values[d] for d in DEFENCE_DIMS)/len(DEFENCE_DIMS)
+    keeper = sum(v.values[d] for d in GK_DIMS)/len(GK_DIMS) if v.role == "GK" else 0.0
+    return attack,defence,keeper
+
+
+def player_replacement_deltas(vectors: dict[str, PlayerVector], player_ids: list[str]) -> list[dict[str, float | str]]:
+    chosen = [vectors[p] for p in player_ids if p in vectors]
+    chosen_ids = {v.player_id for v in chosen}
+    out: list[dict[str,float|str]] = []
+    for v in chosen:
+        pool = [x for x in vectors.values() if x.team_id == v.team_id and x.role == v.role and x.player_id not in chosen_ids]
+        if not pool:
+            pool = [x for x in vectors.values() if x.team_id == v.team_id and x.player_id not in chosen_ids]
+        va,vd,vg = _score(v)
+        if pool:
+            ps = [_score(x) for x in pool]
+            ba = sum(x[0] for x in ps)/len(ps); bd = sum(x[1] for x in ps)/len(ps); bg = sum(x[2] for x in ps)/len(ps)
+        else:
+            ba,bd,bg = va,vd,vg
+        out.append({"player_id":v.player_id,"role":v.role,"attack_delta":va-ba,"defence_delta":vd-bd,"keeper_delta":vg-bg})
     return out
 
 
 def lineup_components(vectors: dict[str, PlayerVector], player_ids: list[str]) -> tuple[float, float, float, float]:
     chosen = [vectors[p] for p in player_ids if p in vectors]
     if not chosen:
-        return 0.0, 0.0, 0.0, 1.0
-    attack_dims = {"shot_generation", "finishing", "chance_creation", "passing_progression", "carrying_progression", "set_piece", "on_ball_contribution"}
-    defence_dims = {"pressing", "tackling_interception", "defensive_position_protection", "aerial", "off_ball_contribution"}
-    attack = sum(sum(v.values[d] for d in attack_dims) for v in chosen) / (len(chosen) * len(attack_dims))
-    defence = sum(sum(v.values[d] for d in defence_dims) for v in chosen) / (len(chosen) * len(defence_dims))
-    keeper = max((v.values["goalkeeper_shot_stopping"] + v.values["goalkeeper_sweeping"] + v.values["goalkeeper_cross_claiming"]) / 3.0 for v in chosen)
-    unc = sum(v.uncertainty for v in chosen) / len(chosen)
-    return max(-0.25, min(0.25, 0.015 * attack)), max(-0.25, min(0.25, 0.015 * defence)), max(-0.20, min(0.20, 0.015 * keeper)), unc
+        return 0.0,0.0,0.0,1.0
+    deltas = player_replacement_deltas(vectors,player_ids)
+    denom = max(len(chosen),1)
+    attack = sum(float(x["attack_delta"]) for x in deltas)/denom
+    defence = sum(float(x["defence_delta"]) for x in deltas)/denom
+    keeper = sum(float(x["keeper_delta"]) for x in deltas)/denom
+    unc = sum(v.uncertainty for v in chosen)/denom
+    return max(-0.25,min(0.25,0.020*attack)), max(-0.25,min(0.25,0.020*defence)), max(-0.20,min(0.20,0.020*keeper)), unc
