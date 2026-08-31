@@ -12,7 +12,7 @@ permissions:
 jobs:
   translator-v1:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       BASE_HEAD: 9a03c3aaab5d1f095d53eabd64fd03018850ed13
       FREEZE_HEAD: 477f7dc380b000d4449c0b59d2aac9402f1918af
@@ -22,6 +22,7 @@ jobs:
       - name: Checkout exact Translator HEAD
         uses: actions/checkout@v4
         with: {fetch-depth: 0}
+
       - name: Enforce frozen whitelist and V2 byte isolation
         shell: bash
         run: |
@@ -34,24 +35,23 @@ jobs:
             p="football-data/research/context_translator_v1/contracts/$f"
             test "$(git show "$FREEZE_HEAD:$p" | sha256sum | awk '{print $1}')" = "$(sha256sum "$p" | awk '{print $1}')" || { echo "FROZEN_CONTRACT_DRIFT $p"; exit 1; }
           done
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
+
       - name: Compile, unit tests and adversarial probes
         run: |
           set -euo pipefail
           python -m py_compile football-data/research/context_translator_v1/*.py
           PYTHONPATH=football-data/research/context_translator_v1 python football-data/research/context_translator_v1/test_translator.py --unit
           PYTHONPATH=football-data/research/context_translator_v1 python football-data/research/context_translator_v1/translator_adversarial_probe.py
-      - name: Download and verify sealed V2 expanded-history Artifact
+
+      - name: Download sealed V2 Artifact
         uses: actions/github-script@v7
         with:
           script: |
             const fs=require('fs');
             const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.V2_ARTIFACT_ID),archive_format:'zip'});
             fs.writeFileSync('v2_artifact.zip',Buffer.from(data));
-      - name: Verify Artifact digest and identity
-        shell: bash
+
+      - name: Verify sealed V2 Artifact
         run: |
           set -euo pipefail
           test "$(sha256sum v2_artifact.zip | awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
@@ -64,47 +64,68 @@ jobs:
           assert m['prediction_sha256']=='92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7'
           assert m['research_only'] is True and m['formal_candidate'] is False
           PY
-      - name: Run fixed-scope historical PIT ablation acceptance
-        env:
-          PYTHONPATH: football-data/research/context_translator_v1
+
+      - name: Fetch StatsBomb exact commit
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-download statsbomb_source
+
+      - name: Predict before update and freeze SHA
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
         run: |
-          set -euo pipefail
-          mkdir -p translator_out
-          python football-data/research/context_translator_v1/test_translator.py --artifact-dir v2_artifact --repo-root . --out translator_out/translator_validation.json
-      - name: Gate honesty and frozen prereg
+          python football-data/research/context_translator_v1/source_ingest.py --statsbomb-predict \
+            --artifact-dir v2_artifact --source-dir statsbomb_source --repo-root . --out-dir translator_out
+
+      - name: Independent scorer opens labels
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-score --artifact-dir v2_artifact --out-dir translator_out
+
+      - name: Gate round-2 prereg and isolation
         run: |
-          set -euo pipefail
           python - <<'PY'
           import json
-          r=json.load(open('translator_out/translator_validation.json'))
-          assert r['research_only'] is True and r['strict_prospective'] is False and r['formal_promotion_eligible'] is False
-          assert r['n']==5256 and r['development_n']==1826
-          assert r['adversarial_probe']['passed'] is True
-          allowed={'ACCEPTED','REJECTED_ABLATION','BLOCKED_DATA','REFERENCE'}
-          assert set(r['layer_status'].values()) <= allowed
-          for k in ('1_player_capability','2_expected_lineup','3_confirmed_lineup','4_bench_substitution','5_coach_regime','6_tactical_matchup','8_referee_competition_environment','9_pre_match_process_hazard'):
+          r=json.load(open('translator_out/statsbomb_round2_validation_report.json'))
+          pm=json.load(open('translator_out/statsbomb_round2_predictor_manifest.json'))
+          assert r['research_only'] is True and r['strict_prospective'] is False
+          assert r['formal_promotion_eligible'] is False and r['formal_weight']==0
+          assert r['statsbomb_exact_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          assert r['n']==306 and r['common_cohort']=='GER1 2023/24'
+          assert r['pit_ledger_gate']['passed'] is True
+          assert r['predictor_scorer_separation']['passed'] is True and pm['label_access_in_predict_process']=='NONE'
+          assert r['layer_status']['7_fitness_schedule_travel']=='REJECTED_ABLATION'
+          assert r['layer7_lock']['formal_revival_allowed'] is False
+          for k in ('3_confirmed_lineup','4_bench_substitution','5_coach_regime','6_tactical_matchup','8_referee_competition_environment','9_pre_match_process_hazard'):
               assert r['layer_status'][k]=='BLOCKED_DATA'
+          assert set(r['layer_status'].values()) <= {'ACCEPTED','REJECTED_ABLATION','BLOCKED_DATA','REFERENCE'}
+          assert not r['protected_v2_core_modified'] and not r['frozen_contracts_modified']
+          assert not r['current_modified'] and not r['main_modified'] and not r['source_raw_in_artifact']
           PY
-      - name: Seal Translator V1 validation Artifact
-        shell: bash
+
+      - name: Seal derived round-2 Artifact
         run: |
-          set -euo pipefail
           python - <<'PY'
           import hashlib,json,pathlib,subprocess
-          files={}
-          for p in sorted(pathlib.Path('football-data/research/context_translator_v1').rglob('*')):
-              if p.is_file(): files[str(p)]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
-          w=pathlib.Path('.github/workflows/football3-context-translator-v1.yml'); files[str(w)]={'sha256':hashlib.sha256(w.read_bytes()).hexdigest(),'bytes':w.stat().st_size}
-          report=pathlib.Path('translator_out/translator_validation.json')
-          manifest={'schema_version':'football3-context-translator-v1-artifact-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'branch':'football3/context-translator-v1','research_only':True,'base_head':'9a03c3aaab5d1f095d53eabd64fd03018850ed13','freeze_head':'477f7dc380b000d4449c0b59d2aac9402f1918af','validation_sha256':hashlib.sha256(report.read_bytes()).hexdigest(),'files':files}
-          pathlib.Path('translator_out/artifact_manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          outputs={}
+          for p in sorted(pathlib.Path('translator_out').glob('*')):
+              if p.is_file(): outputs[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          pm=json.load(open('translator_out/statsbomb_round2_predictor_manifest.json'))
+          rp=pathlib.Path('translator_out/statsbomb_round2_validation_report.json')
+          manifest={'schema_version':'football3-context-translator-v1-round2-artifact-v1',
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'branch':'football3/context-translator-v1','research_only':True,'formal_weight':0,
+            'base_head':'9a03c3aaab5d1f095d53eabd64fd03018850ed13','freeze_head':'477f7dc380b000d4449c0b59d2aac9402f1918af',
+            'statsbomb_exact_commit':pm['statsbomb_exact_commit'],'statsbomb_manifest_sha256':pm['statsbomb_manifest_sha256'],
+            'prediction_sha256':pm['prediction_sha256'],'pit_ledger_sha256':pm['pit_ledger_sha256'],
+            'validation_sha256':hashlib.sha256(rp.read_bytes()).hexdigest(),'source_raw_in_artifact':False,'derived_outputs':outputs}
+          pathlib.Path('translator_out/artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
           PY
-      - name: Upload Translator V1 validation Artifact
+
+      - name: Upload derived round-2 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: football3-context-translator-v1-${{ github.sha }}-${{ github.run_id }}
+          name: football3-context-translator-v1-round2-${{ github.sha }}-${{ github.run_id }}
           path: translator_out/
           if-no-files-found: error
           retention-days: 90
-      - name: Terminal research-only gate
-        run: echo 'TRANSLATOR_V1_RESEARCH_VALIDATION_COMPLETE'
+
+      - name: Terminal gate
+        run: echo TRANSLATOR_V1_ROUND2_RESEARCH_VALIDATION_COMPLETE
