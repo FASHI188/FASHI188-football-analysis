@@ -26,7 +26,7 @@ Selection ordering is deterministic: lowest pooled outer-fold LogLoss; tie withi
 ## Strict-time 8-fold outer validation
 Sort unique kickoff/cutoff batches chronologically. Split into 8 contiguous outer test blocks after an expanding warm-up of at least 20% of batches. For fold k, fit/replay state using only labels released before each test cutoff; no random split and no test-label state update before its result_available_at. Fold metrics are computed from predictions frozen before corresponding labels.
 
-V1 comparison in development uses the frozen V1 prediction contained in the sealed development record when present; if unavailable, the workflow must fail closed rather than synthesize a V1 baseline.
+V1 comparison in development must use the immutable frozen V1 reference Artifact 9732754224 (digest sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb), its pure_engine.py bytes, and the sealed v1_lock.json bound to the exact same development SHA. The comparator is replayed under the same delayed-result PIT schedule; no synthetic or refit V1 is allowed.
 
 ## Metrics
 For every comparator/model: 1X2 LogLoss, Brier, ordinal RPS, Top1, predicted mean home/away goals and actual mean home/away goals. Competition×season predicted/actual home-away direction is audited. Matrix invariants, PIT identity, batch and serialization guards are mandatory.
