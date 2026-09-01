@@ -1,0 +1,203 @@
+name: football3 V1 Error Atlas read-only diagnostic
+
+on:
+  push:
+    branches: [football3/v1-error-atlas-v1]
+    paths:
+      - 'football-data/v1_error_atlas_v1/**'
+      - '.github/workflows/football3-v1-error-atlas-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v1-error-atlas-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 22f639304d2e32fc952dbec2255153ee45dcd41a
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  DATA_ARTIFACT_ID: '9743018815'
+  DATA_ARTIFACT_DIGEST: sha256:36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838
+
+jobs:
+  diagnose-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage and read-only file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          python - <<'PY'
+          import subprocess
+          allowed={
+            '.github/workflows/football3-v1-error-atlas-v1.yml',
+            'football-data/v1_error_atlas_v1/ERROR_ATLAS_CONTRACT.md',
+            'football-data/v1_error_atlas_v1/v1_error_atlas.py',
+            'football-data/v1_error_atlas_v1/test_v1_error_atlas.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{__import__('os').environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          forbidden=('football-data/new_engine_v1/','football-data/new_engine_v2_joint_score/','football-data/v1_1_dynamic_base/')
+          assert not any(any(p.startswith(x) for x in forbidden) for p in got)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download and verify frozen V1 and already-unsealed data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs/v1 _inputs/data
+          for kind in V1 DATA; do
+            if [ "$kind" = V1 ]; then id="$V1_ARTIFACT_ID"; expected="$V1_ARTIFACT_DIGEST"; out=/tmp/v1.zip; else id="$DATA_ARTIFACT_ID"; expected="$DATA_ARTIFACT_DIGEST"; out=/tmp/data.zip; fi
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$out"
+            actual="sha256:$(sha256sum "$out" | awk '{print $1}')"
+            test "$actual" = "$expected"
+            unzip -t "$out" >/dev/null
+          done
+          unzip -q /tmp/v1.zip -d _inputs/v1
+          unzip -q /tmp/data.zip -d _inputs/data
+          python - <<'PY'
+          import hashlib,json,pathlib
+          v=pathlib.Path('_inputs/v1'); d=pathlib.Path('_inputs/data')
+          m=json.loads((v/'evidence/artifact_manifest.json').read_text())
+          assert m['head']=='22f639304d2e32fc952dbec2255153ee45dcd41a' and m['branch']=='football3/new-engine-v1'
+          assert hashlib.sha256((v/'pure_engine.py').read_bytes()).hexdigest()=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          dm=json.loads((d/'dataset/dataset_manifest.json').read_text())
+          assert dm['development_n']==1826 and dm['evaluation_n']==5256
+          assert dm['development_sha256']=='b8713ceed6d57ead7b2aadbb24d3154bf5cb5df0d45eef0e762b5c395d6d4fab'
+          assert dm['evaluation_features_sha256']=='10620687f988ff942d1e56d372f6b7e2721aa65654f9665e982ae27232b472a9'
+          assert dm['evaluation_label_vault_sha256']=='e82b612d6e6b974c5f4695f29551830beaec87804429e586cd821aef7e7dff2a'
+          PY
+
+      - name: Compile and deterministic diagnostic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/v1_error_atlas_v1/v1_error_atlas.py football-data/v1_error_atlas_v1/test_v1_error_atlas.py
+          cd football-data/v1_error_atlas_v1
+          python -m unittest -v test_v1_error_atlas.py | tee /tmp/tests.txt
+
+      - name: Replay frozen V1 and build separate development / POST_VIEW atlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python football-data/v1_error_atlas_v1/v1_error_atlas.py \
+            --v1-engine _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --development _inputs/data/dataset/development.jsonl \
+            --features _inputs/data/dataset/evaluation_features.jsonl \
+            --labels _inputs/data/dataset/evaluation_label_vault.jsonl \
+            --out _atlas
+          python - <<'PY'
+          import json
+          r=json.load(open('_atlas/error_atlas.json'))
+          assert r['status']=='COMPLETE_READ_ONLY_DIAGNOSTIC'
+          assert r['development_n']==1826 and r['postview_n']==5256
+          assert r['not_blind'] is True and r['formal_weight']==0 and r['formal_enablement'] is False
+          assert r['decision']['recommendation'] in {'V1_JOINT_SCORE_CHALLENGER','V1_2_MULTICLASS_CALIBRATION_LAYER','STOP_NO_STABLE_ERROR_TARGET'}
+          print(json.dumps({'recommendation':r['decision']['recommendation'],'development':r['development']['overall'],'postview':r['postview']['overall']},indent=2))
+          PY
+
+      - name: Seal diagnostic Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/code _seal/contracts _seal/evidence
+          cp football-data/v1_error_atlas_v1/v1_error_atlas.py _seal/code/
+          cp football-data/v1_error_atlas_v1/test_v1_error_atlas.py _seal/code/
+          cp football-data/v1_error_atlas_v1/ERROR_ATLAS_CONTRACT.md _seal/contracts/
+          cp _atlas/*.json _seal/evidence/
+          cp _atlas/*predictions.jsonl _seal/evidence/
+          cp /tmp/tests.txt _seal/evidence/deterministic_tests.txt
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path('_seal')
+          files={}
+          for p in sorted(root.rglob('*')):
+            if p.is_file():
+              rel=p.relative_to(root).as_posix(); b=p.read_bytes(); files[rel]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          manifest={'schema_version':'football3-v1-error-atlas-artifact-v1','status':'COMPLETE_READ_ONLY_DIAGNOSTIC','recommendation':json.load(open('_atlas/decision.json'))['recommendation'],'head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':os.environ['BASE_HEAD'],'v1_artifact_id':int(os.environ['V1_ARTIFACT_ID']),'v1_artifact_digest':os.environ['V1_ARTIFACT_DIGEST'],'data_artifact_id':int(os.environ['DATA_ARTIFACT_ID']),'data_artifact_digest':os.environ['DATA_ARTIFACT_DIGEST'],'development_n':1826,'postview_n':5256,'postview_already_unsealed':True,'no_model_files_modified':True,'formal_weight':0,'formal_enablement':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload Error Atlas Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v1-error-atlas-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: diagnose-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Remote ZIP digest CRC manifest payload readback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.diagnose-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.diagnose-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          unzip -t /tmp/a.zip >/dev/null; rm -rf /tmp/r; mkdir /tmp/r; unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['GITHUB_SHA'] and m['status']=='COMPLETE_READ_ONLY_DIAGNOSTIC'
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==exp,(got^exp)
+          for x,v in m['files'].items():
+            b=(r/x).read_bytes(); assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256']
+          d=os.environ['DIGEST']; d=d.split(':',1)[-1]; z=hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(); assert z==d,(z,d)
+          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['DIGEST'],'zip_sha256':z,'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp),'recommendation':m['recommendation']}
+          pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
+          PY
+      - name: Upload readback receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v1-error-atlas-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/readback.json
+          retention-days: 90
