@@ -1,0 +1,484 @@
+name: football3 Candidate C Historical Lineup Oracle v1
+
+on:
+  push:
+    branches: [football3/context-translator-lineup-oracle-v1]
+    paths:
+      - '.github/workflows/football3-context-translator-lineup-oracle-v1.yml'
+      - 'football-data/research/context_translator_v1/lineup_oracle.py'
+      - 'football-data/research/context_translator_v1/test_lineup_oracle.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-lineup-oracle-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 'a58c530501e51a29ac448ed2ee2f50f36795d2d9'
+  COHORT_SHA: '4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+  BASE_ARTIFACT_ID: '9798682425'
+  BASE_ARTIFACT_DIGEST: '01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  PRIOR_MERGED_ID: '9799605534'
+  PRIOR_MERGED_DIGEST: '2766d22a0d1c1e6179c84783fa8680467a9b380ee32242a18b0695e652eceaa2'
+  V2_ARTIFACT_ID: '9743018815'
+  V2_ARTIFACT_DIGEST: '36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838'
+  PYTHONPATH: football-data/research/context_translator_v1
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Governance, scope, leakage and regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/context-translator-lineup-oracle-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t got < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          expected=(
+            '.github/workflows/football3-context-translator-lineup-oracle-v1.yml'
+            'football-data/research/context_translator_v1/lineup_oracle.py'
+            'football-data/research/context_translator_v1/test_lineup_oracle.py'
+          )
+          mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${got[@]}")
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c.py
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_b.py
+          git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || exit 1
+          python -m py_compile football-data/research/context_translator_v1/lineup_oracle.py football-data/research/context_translator_v1/test_lineup_oracle.py
+          python football-data/research/context_translator_v1/test_lineup_oracle.py -v
+          python football-data/research/context_translator_v1/test_candidate_c.py -v
+          python football-data/research/context_translator_v1/test_candidate_b.py -v
+          python - <<'PY'
+          import pathlib
+          p=pathlib.Path('football-data/research/context_translator_v1/lineup_oracle.py')
+          text=p.read_text()
+          assert 'api/v1/matches/{id}/events' not in text
+          assert '/stats' not in text
+          assert 'Ocp-Apim-Subscription-Key' not in text
+          assert 'Authorization' not in text
+          assert 'HISTORICAL_LINEUP_ORACLE' in text
+          assert 'UPPER_BOUND_ONLY' in text
+          assert 'NOT_STRICT_PIT' in text
+          assert 'NOT_PROMOTION_ELIGIBLE' in text
+          assert 'POST_VIEW_RESEARCH' in text
+          print('ORACLE_GOVERNANCE_CODE_GATE=PASS')
+          PY
+
+      - name: Verify reused immutable Artifact identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          expected={
+            9798682425:('01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba',33503552079,'c5c2bec26c165680f7625a49b145719e0d0e7130'),
+            9799605534:('2766d22a0d1c1e6179c84783fa8680467a9b380ee32242a18b0695e652eceaa2',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799585282:('666ac303da99294f0978c40edff2e8394510f8dbe891559f4b4de4a861bd326f',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799587219:('3e531bf084f138771b6fd28197eafc09c6620eb9bb62d295a8622528f34061f0',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799589807:('7d455a8fe63cabb819c087541ed1385c926bef36e00082769d77501064e57fb7',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799587878:('3528b724891eb21a2b878635186fa068030cf547ecaa7cea63f355fadde44a40',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799589262:('7578348fac164ad515dc90dda8c7933ca49b95c853d83dd1b262c2f10874e67c',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799585360:('6bd8bb556660eb1933abdd5c5f61f8039ebddfabfd6754b18807eaaf3af7da0f',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9743018815:('36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838',33348991436,'ef830299e8ee37749ac083e007b4947f8e72d7b7'),
+          }
+          for aid,(digest,run,head) in expected.items():
+              req=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}',headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=15) as r: meta=json.load(r)
+              assert meta['expired'] is False
+              assert meta['digest']==f'sha256:{digest}'
+              assert meta['workflow_run']['id']==run
+              assert meta['workflow_run']['head_sha']==head
+          print(f'REUSED_ARTIFACT_IDENTITIES_VERIFIED={len(expected)}')
+          PY
+
+  source_index:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen label-free base Artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.BASE_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('base.zip',Buffer.from(data));
+      - name: Verify base and fetch official keyless PL match identity index
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          unzip -tq base.zip >/dev/null
+          mkdir base_freeze
+          unzip -q base.zip -d base_freeze
+          python football-data/research/context_translator_v1/lineup_oracle.py collect-index --base base_freeze --out source_index_out
+          python - <<'PY'
+          import json
+          m=json.load(open('source_index_out/source_index_manifest.json'))
+          assert m['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert m['n']==300 and m['external_api_key_used'] is False and m['provider_secret_used'] is False
+          assert m['source_auth']=='NONE'
+          print('ORACLE_SOURCE_INDEX=PASS raw_files=',len(m['raw_payload']))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-source-index-${{ github.sha }}-${{ github.run_id }}
+          path: source_index_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  source_shard:
+    needs: source_index
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen base Artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.BASE_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('base.zip',Buffer.from(data));
+      - name: Download current-run source index
+        uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-index-${{ github.sha }}-${{ github.run_id }}
+          path: source_index_in
+      - name: Fetch and sanitize 50 official PL lineup packets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          unzip -tq base.zip >/dev/null
+          mkdir base_freeze
+          unzip -q base.zip -d base_freeze
+          python football-data/research/context_translator_v1/lineup_oracle.py collect-lineup-shard --base base_freeze --index source_index_in --shard '${{ matrix.shard }}' --out source_out
+          python - <<'PY'
+          import json
+          m=json.load(open('source_out/oracle_source_shard_manifest.json'))
+          assert m['n']==50 and m['external_api_key_used'] is False and m['provider_secret_used'] is False
+          assert m['forbidden_target_fields_persisted'] is False
+          assert m['target_match_event_or_stat_endpoint_called'] is False
+          assert m['actual_substitution_usage_persisted'] is False
+          print('ORACLE_SOURCE_SHARD=PASS',m['shard'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-source-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}
+          path: source_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  source_merge:
+    needs: source_shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen base Artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.BASE_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('base.zip',Buffer.from(data));
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lineup-oracle-source-shard-*-${{ github.sha }}-${{ github.run_id }}
+          path: source_shards
+      - name: Merge exact 300 sanitized Oracle source packets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          unzip -tq base.zip >/dev/null
+          mkdir base_freeze
+          unzip -q base.zip -d base_freeze
+          python football-data/research/context_translator_v1/lineup_oracle.py merge-source --base base_freeze --shards source_shards --out source_merged
+          python - <<'PY'
+          import json
+          m=json.load(open('source_merged/oracle_source_manifest.json'))
+          assert m['n']==300 and m['source_shard_n']==6
+          assert m['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert m['external_api_key_used'] is False and m['provider_secret_used'] is False
+          print('ORACLE_SOURCE_MERGE=PASS raw_files=',m['raw_source_file_n'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_merged/
+          if-no-files-found: error
+          retention-days: 90
+
+  predict_shard:
+    needs: source_merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {shard: 0, state_id: 9799585282, state_digest: 666ac303da99294f0978c40edff2e8394510f8dbe891559f4b4de4a861bd326f}
+          - {shard: 1, state_id: 9799587219, state_digest: 3e531bf084f138771b6fd28197eafc09c6620eb9bb62d295a8622528f34061f0}
+          - {shard: 2, state_id: 9799589807, state_digest: 7d455a8fe63cabb819c087541ed1385c926bef36e00082769d77501064e57fb7}
+          - {shard: 3, state_id: 9799587878, state_digest: 3528b724891eb21a2b878635186fa068030cf547ecaa7cea63f355fadde44a40}
+          - {shard: 4, state_id: 9799589262, state_digest: 7578348fac164ad515dc90dda8c7933ca49b95c853d83dd1b262c2f10874e67c}
+          - {shard: 5, state_id: 9799585360, state_digest: 6bd8bb556660eb1933abdd5c5f61f8039ebddfabfd6754b18807eaaf3af7da0f}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable base, prior pre-score and repaired state by exact Artifact ID
+        uses: actions/github-script@v7
+        env:
+          STATE_ID: ${{ matrix.state_id }}
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.BASE_ARTIFACT_ID),'base.zip'],[Number(process.env.PRIOR_MERGED_ID),'prior.zip'],[Number(process.env.STATE_ID),'state.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_in
+      - name: Strict offline Oracle prediction shard
+        env:
+          STATE_DIGEST: ${{ matrix.state_digest }}
+          FOOTBALL3_ORACLE_PREDICTION_NETWORK_POLICY: FORBIDDEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          test "$(sha256sum prior.zip|awk '{print $1}')" = "$PRIOR_MERGED_DIGEST"
+          test "$(sha256sum state.zip|awk '{print $1}')" = "$STATE_DIGEST"
+          unzip -tq base.zip >/dev/null; unzip -tq prior.zip >/dev/null; unzip -tq state.zip >/dev/null
+          mkdir base_freeze prior_in state_in
+          unzip -q base.zip -d base_freeze
+          unzip -q prior.zip -d prior_in
+          unzip -q state.zip -d state_in
+          python - <<'PY'
+          import inspect,lineup_oracle as o
+          for fn in (o.predict_shard,o.merge_predictions):
+              t=inspect.getsource(fn).lower()
+              assert 'urlopen' not in t and 'requests.' not in t and 'pulselive.com' not in t
+          PY
+          python football-data/research/context_translator_v1/lineup_oracle.py predict-shard --base base_freeze --prior prior_in --source source_in --state state_in --shard '${{ matrix.shard }}' --out prediction_out
+          python - <<'PY'
+          import json
+          m=json.load(open('prediction_out/oracle_prediction_shard_manifest.json'))
+          assert m['n']==50 and m['state_sha_checked_n']==50 and m['state_sha_mismatch_n']==0
+          assert m['labels_read']==0 and m['scorer_invoked'] is False and m['external_network_requests']==0
+          assert m['target_match_result_score_read'] is False and m['target_match_event_stats_read'] is False
+          print('ORACLE_PREDICTION_SHARD=PASS',m['shard'],m['model_activation_n'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-prediction-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  merge_predictions:
+    needs: predict_shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Download immutable base and prior pre-score Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.BASE_ARTIFACT_ID),'base.zip'],[Number(process.env.PRIOR_MERGED_ID),'prior.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_in
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lineup-oracle-prediction-shard-*-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_shards
+      - name: Freeze exact HEAD, parent, source/rules and all five model prediction SHAs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          test "$(sha256sum prior.zip|awk '{print $1}')" = "$PRIOR_MERGED_DIGEST"
+          unzip -tq base.zip >/dev/null; unzip -tq prior.zip >/dev/null
+          mkdir base_freeze prior_in
+          unzip -q base.zip -d base_freeze
+          unzip -q prior.zip -d prior_in
+          parent="$(git rev-parse HEAD^)"
+          python football-data/research/context_translator_v1/lineup_oracle.py merge-predictions --base base_freeze --prior prior_in --source source_in --predictions prediction_shards --out frozen_out --head "$GITHUB_SHA" --parent "$parent" --code-path football-data/research/context_translator_v1/lineup_oracle.py --code-path football-data/research/context_translator_v1/candidate_c.py --code-path football-data/research/context_translator_v1/candidate_b.py --code-path football-data/research/context_translator_v1/player_strength.py --code-path football-data/research/context_translator_v1/historical_pit_replay.py --code-path football-data/research/context_translator_v1/candidate_b_diagnostic.py --code-path base_freeze/v2_lock.json
+          python - <<'PY'
+          import json
+          p=json.load(open('frozen_out/oracle_pre_score_manifest.json'))
+          assert p['head'] and p['parent']
+          assert p['n']==300 and p['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert set(p['model_prediction_sha256'])=={'protected_v2','candidate_c_no_lineup','oracle_confirmed_xi','oracle_confirmed_xi_bench','oracle_full'}
+          assert p['labels_read_in_prediction_phase'] is False and p['scorer_invoked'] is False
+          assert p['external_data_api_key_used'] is False and p['provider_secret_used'] is False
+          assert p['target_result_score_read'] is False and p['target_events_stats_ratings_read'] is False
+          print('ORACLE_PRE_SCORE_FREEZE=PASS',p['model_prediction_sha256'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-predictions-frozen-${{ github.sha }}-${{ github.run_id }}
+          path: frozen_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  score:
+    needs: merge_predictions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-predictions-frozen-${{ github.sha }}-${{ github.run_id }}
+          path: frozen_in
+      - name: Download protected V2 label vault only after all five model prediction SHAs are frozen
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.V2_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('v2.zip',Buffer.from(data));
+      - name: Independent offline scorer and fixed Oracle decision
+        env:
+          FOOTBALL3_ORACLE_SCORER_NETWORK_POLICY: FORBIDDEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2.zip|awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
+          unzip -tq v2.zip >/dev/null
+          mkdir v2_artifact label_hold
+          unzip -q v2.zip -d v2_artifact
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_hold/evaluation_label_vault.jsonl
+          git diff --name-only "$BASE_HEAD"...HEAD | sort > changed_paths.txt
+          parent="$(git rev-parse HEAD^)"
+          python football-data/research/context_translator_v1/lineup_oracle.py score-final --frozen frozen_in --label-vault label_hold/evaluation_label_vault.jsonl --out final_out --head "$GITHUB_SHA" --parent "$parent" --run-id "$GITHUB_RUN_ID" --changed-paths changed_paths.txt
+          rm label_hold/evaluation_label_vault.jsonl
+          rmdir label_hold
+          python - <<'PY'
+          import json,pathlib,hashlib
+          m=json.load(open('final_out/artifact_manifest.json'))
+          s=json.load(open('final_out/oracle_score.json'))
+          r=json.load(open('final_out/label_access_receipt.json'))
+          assert m['status']==s['status']
+          assert m['status'] in {'ORACLE_NO_INCREMENT_STOP_TRANSLATOR','ORACLE_INCREMENT_FOUND_DATA_ACQUISITION_REQUIRED'}
+          assert m['n']==300 and m['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert r['prediction_phase_label_reads']==0 and r['historical_selected_cohort_labels_scored_after_total_prediction_freeze_n']==300
+          assert r['scorer_network_requests']==0
+          assert m['formal_weight']==0 and m['formal_promotion_eligible'] is False and m['formal_enablement'] is False
+          assert not any(m[k] for k in ('protected_v2_modified','main_modified','current_modified','airtable_modified','pr334_modified','r5_modified','merge_used','ready_used','force_used'))
+          expected=set(m['payload'])|{'artifact_manifest.json'}
+          actual={p.name for p in pathlib.Path('final_out').iterdir() if p.is_file()}
+          assert actual==expected,(sorted(actual),sorted(expected))
+          for name,meta in m['payload'].items():
+              raw=pathlib.Path('final_out',name).read_bytes()
+              assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
+          print('ORACLE_SCORER_FINAL=',m['status'])
+          print('ORACLE_MODELS=',s['models'])
+          print('ORACLE_BOOTSTRAP=',s['bootstrap_oracle_full_vs_protected_v2'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-lineup-oracle-v1-${{ github.sha }}-${{ github.run_id }}
+          path: final_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  remote_readback:
+    needs: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remote Artifact metadata, ZIP digest, CRC, manifest and payload SHA/bytes readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          name="football3-context-translator-lineup-oracle-v1-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          for i in $(seq 1 12); do
+            curl -fsSL --max-time 15 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > artifacts.json
+            aid="$(python - "$name" <<'PY'
+          import json,sys
+          name=sys.argv[1]
+          xs=[x for x in json.load(open('artifacts.json'))['artifacts'] if x['name']==name]
+          print(xs[0]['id'] if len(xs)==1 else '')
+          PY
+          )"
+            test -n "$aid" && break
+            sleep 5
+          done
+          test -n "${aid:-}"
+          python - "$name" <<'PY'
+          import json,sys
+          name=sys.argv[1]
+          xs=[x for x in json.load(open('artifacts.json'))['artifacts'] if x['name']==name]
+          assert len(xs)==1 and xs[0]['expired'] is False
+          open('artifact_id.txt','w').write(str(xs[0]['id']))
+          open('metadata_digest.txt','w').write(xs[0]['digest'])
+          PY
+          aid="$(cat artifact_id.txt)"
+          curl -fL --max-time 60 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/artifacts/$aid/zip" -o final.zip
+          zip_sha="$(sha256sum final.zip|awk '{print $1}')"
+          test "sha256:$zip_sha" = "$(cat metadata_digest.txt)"
+          unzip -tq final.zip >/dev/null
+          mkdir remote_final
+          unzip -q final.zip -d remote_final
+          python - <<'PY'
+          import hashlib,json,pathlib
+          candidates=list(pathlib.Path('remote_final').rglob('artifact_manifest.json'))
+          assert len(candidates)==1
+          root=candidates[0].parent
+          m=json.load(open(candidates[0]))
+          expected=set(m['payload'])|{'artifact_manifest.json'}
+          actual={p.name for p in root.iterdir() if p.is_file()}
+          assert actual==expected,(sorted(actual),sorted(expected))
+          for name,meta in m['payload'].items():
+              raw=(root/name).read_bytes()
+              assert len(raw)==meta['bytes']
+              assert hashlib.sha256(raw).hexdigest()==meta['sha256']
+          receipt={'schema_version':'football3-lineup-oracle-remote-readback-v1','artifact_id':int(open('artifact_id.txt').read()),'metadata_digest':open('metadata_digest.txt').read().strip(),'zip_sha256':hashlib.sha256(pathlib.Path('final.zip').read_bytes()).hexdigest(),'zip_crc':'PASS','artifact_manifest_sha256':hashlib.sha256(candidates[0].read_bytes()).hexdigest(),'payload_exact_set':True,'payload_sha_and_bytes_verified':True,'status':m['status'],'head':m['head'],'parent':m['parent'],'run_id':m['run_id'],'n':m['n']}
+          pathlib.Path('remote_readback_receipt.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(receipt,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-remote-readback-${{ github.sha }}-${{ github.run_id }}
+          path: remote_readback_receipt.json
+          if-no-files-found: error
+          retention-days: 90
