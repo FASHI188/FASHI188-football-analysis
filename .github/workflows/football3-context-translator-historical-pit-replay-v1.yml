@@ -8,19 +8,32 @@ on:
       - 'football-data/research/context_translator_v1/historical_pit_replay.py'
       - 'football-data/research/context_translator_v1/understat_compat.py'
       - 'football-data/research/context_translator_v1/test_historical_pit_replay.py'
+      - 'football-data/research/context_translator_v1/historical_pit_sharded_common.py'
+      - 'football-data/research/context_translator_v1/historical_pit_sharded_source.py'
+      - 'football-data/research/context_translator_v1/historical_pit_sharded_predict.py'
+      - 'football-data/research/context_translator_v1/historical_pit_sharded.py'
+      - 'football-data/research/context_translator_v1/test_historical_pit_sharded.py'
   workflow_dispatch:
-permissions: {contents: read, actions: read}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: football3-historical-pit-sharded-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  BASE_HEAD: '6880c1ac8db1e4a56e83e129188dec85b13bb5db'
+  OLD_TECH_HEAD: 'f02f6780067bf076501bb173226c02795d68d8f0'
+  OLD_TECH_RUN: '33485502884'
+  V2_ARTIFACT_ID: '9743018815'
+  V2_ARTIFACT_DIGEST: '36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838'
+  CANDIDATE_C_ARTIFACT_ID: '9789696828'
+  CANDIDATE_C_ARTIFACT_DIGEST: 'a5f6bc91d09c36537679ddccafe03e6e20de81d4e67bb749cc2b6a58f4a747ad'
+  PYTHONPATH: football-data/research/context_translator_v1
+
 jobs:
-  historical_pit_replay:
+  prepare_source_base:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      BASE_HEAD: '6880c1ac8db1e4a56e83e129188dec85b13bb5db'
-      V2_ARTIFACT_ID: '9743018815'
-      V2_ARTIFACT_DIGEST: '36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838'
-      CANDIDATE_C_ARTIFACT_ID: '9789696828'
-      CANDIDATE_C_ARTIFACT_DIGEST: 'a5f6bc91d09c36537679ddccafe03e6e20de81d4e67bb749cc2b6a58f4a747ad'
-      PYTHONPATH: football-data/research/context_translator_v1
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
@@ -30,6 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF_NAME" = 'football3/context-translator-historical-pit-replay-v1'
+          test "$(git merge-base "$OLD_TECH_HEAD" HEAD)" = "$OLD_TECH_HEAD"
           test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
           mapfile -t got < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
           expected=(
@@ -38,23 +52,52 @@ jobs:
             'football-data/research/context_translator_v1/historical_pit_replay.py'
             'football-data/research/context_translator_v1/understat_compat.py'
             'football-data/research/context_translator_v1/test_historical_pit_replay.py'
+            'football-data/research/context_translator_v1/historical_pit_sharded_common.py'
+            'football-data/research/context_translator_v1/historical_pit_sharded_source.py'
+            'football-data/research/context_translator_v1/historical_pit_sharded_predict.py'
+            'football-data/research/context_translator_v1/historical_pit_sharded.py'
+            'football-data/research/context_translator_v1/test_historical_pit_sharded.py'
           )
           mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
           diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${got[@]}")
+          git diff --quiet "$OLD_TECH_HEAD" HEAD -- \
+            football-data/research/context_translator_v1/candidate_c_historical.py \
+            football-data/research/context_translator_v1/historical_pit_replay.py \
+            football-data/research/context_translator_v1/understat_compat.py \
+            football-data/research/context_translator_v1/test_historical_pit_replay.py
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c.py
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c_diagnostic.py
           git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || exit 1
-          python -m py_compile football-data/research/context_translator_v1/{candidate_c_historical,historical_pit_replay,understat_compat,test_historical_pit_replay}.py
+          python -m py_compile football-data/research/context_translator_v1/{candidate_c_historical,historical_pit_replay,understat_compat,historical_pit_sharded_common,historical_pit_sharded_source,historical_pit_sharded_predict,historical_pit_sharded,test_historical_pit_replay,test_historical_pit_sharded}.py
+          python football-data/research/context_translator_v1/test_historical_pit_sharded.py -v
           python football-data/research/context_translator_v1/test_historical_pit_replay.py -v
           python football-data/research/context_translator_v1/test_candidate_c.py -v
           python football-data/research/context_translator_v1/test_candidate_b.py -v
+
+      - name: Verify old timeout is technical no-score
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          curl -fsSL --max-time 15 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$OLD_TECH_RUN" > old_run.json
+          curl -fsSL --max-time 15 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$OLD_TECH_RUN/jobs?per_page=100" > old_jobs.json
+          curl -fsSL --max-time 15 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$OLD_TECH_RUN/artifacts?per_page=100" > old_artifacts.json
           python - <<'PY'
-          import json,pathlib,subprocess
-          out=pathlib.Path('historical_pit_out');out.mkdir()
-          base='6880c1ac8db1e4a56e83e129188dec85b13bb5db'
-          obj={'schema_version':'football3-historical-pit-governance-v1','status':'HISTORICAL_PIT_REPLAY','branch':'football3/context-translator-historical-pit-replay-v1','base_head':base,'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'changed_paths':sorted(subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines()),'protected_v2_modified':False,'candidate_c_original_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'global_fixture_consumption_registry_extended':False,'force_used':False,'merge_used':False,'ready_used':False,'formal_enablement':False,'formal_weight_changed':False,'api_football_requests':0,'api_keys_or_secrets_used':0,'eightbo_translator_input':False}
-          (out/'governance_report.json').write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+          import json
+          run=json.load(open('old_run.json')); jobs=json.load(open('old_jobs.json')); arts=json.load(open('old_artifacts.json'))
+          assert run['head_sha']=='f02f6780067bf076501bb173226c02795d68d8f0'
+          assert run['status']=='completed' and run['conclusion']=='cancelled'
+          assert arts['total_count']==0 and arts['artifacts']==[]
+          job=next(x for x in jobs['jobs'] if x['name']=='historical_pit_replay')
+          steps={x['name']:x for x in job['steps']}
+          assert steps['Predict historical PIT with labels absent']['conclusion']=='cancelled'
+          assert steps['Score frozen historical cohort']['conclusion']=='skipped'
+          assert steps['Seal Artifact']['conclusion']=='skipped'
+          assert steps['Upload Artifact']['conclusion']=='skipped'
+          print('TECHNICAL_TIMEOUT_NO_SCORE')
           PY
 
       - name: Download sealed starting Artifacts
@@ -62,96 +105,260 @@ jobs:
         with:
           script: |
             const fs=require('fs');
-            for (const [id,name] of [[Number(process.env.V2_ARTIFACT_ID),'v2.zip'],[Number(process.env.CANDIDATE_C_ARTIFACT_ID),'c.zip']]) {
+            for (const [id,name] of [[Number(process.env.V2_ARTIFACT_ID),'v2.zip'],[Number(process.env.CANDIDATE_C_ARTIFACT_ID),'candidate_c.zip']]) {
               const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
               fs.writeFileSync(name,Buffer.from(data));
             }
 
-      - name: Verify starts and quarantine labels
+      - name: Verify starts, quarantine labels, and freeze source base
         shell: bash
         run: |
           set -euo pipefail
           test "$(sha256sum v2.zip|awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
-          test "$(sha256sum c.zip|awk '{print $1}')" = "$CANDIDATE_C_ARTIFACT_DIGEST"
-          unzip -tq v2.zip >/dev/null; unzip -tq c.zip >/dev/null
-          mkdir v2_artifact candidate_c_start label_hold
-          unzip -q v2.zip -d v2_artifact; unzip -q c.zip -d candidate_c_start
+          test "$(sha256sum candidate_c.zip|awk '{print $1}')" = "$CANDIDATE_C_ARTIFACT_DIGEST"
+          unzip -tq v2.zip >/dev/null
+          unzip -tq candidate_c.zip >/dev/null
+          mkdir v2_artifact candidate_c_start
+          unzip -q v2.zip -d v2_artifact
+          unzip -q candidate_c.zip -d candidate_c_start
           python - <<'PY'
           import json
-          v=json.load(open('v2_artifact/artifact_manifest.json'));c=json.load(open('candidate_c_start/artifact_manifest.json'))
+          v=json.load(open('v2_artifact/artifact_manifest.json'))
+          c=json.load(open('candidate_c_start/artifact_manifest.json'))
           assert (v['run_id'],v['head'],v['prediction_sha256'])==(33348991436,'ef830299e8ee37749ac083e007b4947f8e72d7b7','92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7')
-          assert c['head']=='6880c1ac8db1e4a56e83e129188dec85b13bb5db' and c['run_id']==33480349073 and c['formal_weight']==0
-          rows=[json.loads(x) for x in open('v2_artifact/dataset/evaluation_features.jsonl') if x.strip()]
-          assert sum(str(x['competition_id'])=='ENG1' and str(x['season'])=='2023-24' for x in rows)==380
+          assert (c['run_id'],c['head'],c['formal_weight'])==(33480349073,'6880c1ac8db1e4a56e83e129188dec85b13bb5db',0)
           PY
-          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_hold/evaluation_label_vault.jsonl
+          rm v2_artifact/dataset/evaluation_label_vault.jsonl
           test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
-
-      - name: Predict historical PIT with labels absent
-        shell: bash
-        run: |
-          set -euo pipefail
-          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
-          python football-data/research/context_translator_v1/understat_compat.py predict --v2 v2_artifact --out historical_pit_out
+          python football-data/research/context_translator_v1/historical_pit_sharded.py prepare --v2 v2_artifact --out base_freeze
           python - <<'PY'
-          import json,hashlib,pathlib
-          p=json.load(open('historical_pit_out/pre_score_manifest.json'));c=json.load(open('historical_pit_out/cohort_manifest.json'));g=json.load(open('historical_pit_out/historical_pit_gate.json'))
-          assert p['labels_read_in_prediction_phase'] is False and p['new_or_target_labels_read_n']==0
-          assert p['n']==300 and c['n']==300 and c['full_season_n']==380
-          assert p['cohort_identity_sha256']==c['cohort_identity_sha256']
-          assert p['uncertainty_contract_monotonic'] is True and p['uncertainty_monotonicity_observed'] is True
-          assert p['api_football_requests']==0 and p['api_keys_or_secrets_used']==0 and p['probability_mass_redistribution_active_n']==0
-          assert g['status']=='HISTORICAL_PIT_REPLAY_PREDICTIONS_FROZEN'
-          assert hashlib.sha256(pathlib.Path('historical_pit_out/historical_pit_predictions.jsonl').read_bytes()).hexdigest()==p['prediction_sha256']
+          import json
+          m=json.load(open('base_freeze/base_freeze_manifest.json'))
+          t=json.load(open('base_freeze/technical_timeout_record.json'))
+          assert m['n']==300 and m['full_season_n']==380 and m['labels_read']==0 and m['scorer_invoked'] is False
+          assert t['status']=='TECHNICAL_TIMEOUT_NO_SCORE' and t['run_id']==33485502884 and t['historical_labels_read']==0 and t['artifact_count']==0
+          assert t['model_pass_fail_claim'] is None
           PY
 
-      - name: Score frozen historical cohort
-        shell: bash
-        run: |
-          set -euo pipefail
-          python football-data/research/context_translator_v1/understat_compat.py score --v2 v2_artifact --label-vault label_hold/evaluation_label_vault.jsonl --out historical_pit_out
-          python - <<'PY'
-          import json,pathlib
-          s=json.load(open('historical_pit_out/historical_pit_score.json'))
-          assert s['n']==300 and s['status'] in {'HISTORICAL_PIT_NOT_PROMOTED','HISTORICAL_PIT_CANDIDATE_PASSED'}
-          assert s['labels_read_only_after_prediction_sha_freeze'] is True and s['formal_weight']==0 and s['formal_promotion_eligible'] is False
-          pathlib.Path('historical_pit_out/label_access_receipt.json').write_text(json.dumps({'schema_version':'football3-historical-pit-label-access-v1','prediction_phase_label_reads':0,'historical_selected_cohort_labels_scored_after_prediction_freeze_n':300,'selection_changed_after_label_access':False,'scoring_only':True},indent=2,sort_keys=True)+'\n')
-          PY
-          rm label_hold/evaluation_label_vault.jsonl; rmdir label_hold
-
-      - name: Seal Artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib,json,os,pathlib,subprocess
-          out=pathlib.Path('historical_pit_out');pre=json.load(open(out/'pre_score_manifest.json'));score=json.load(open(out/'historical_pit_score.json'));gov=json.load(open(out/'governance_report.json'))
-          payload={k:hashlib.sha256((out/f).read_bytes()).hexdigest() for k,f in {'cohort_manifest':'cohort_manifest.json','pit_roster_packets':'pit_roster_packets.jsonl','predictions':'historical_pit_predictions.jsonl','pit_ledger':'historical_pit_ledger.jsonl','pre_score_manifest':'pre_score_manifest.json','score':'historical_pit_score.json','gate':'historical_pit_gate.json','label_access_receipt':'label_access_receipt.json'}.items()}
-          files={p.name:{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in sorted(out.iterdir()) if p.is_file()}
-          m={'schema_version':'football3-context-translator-historical-pit-replay-artifact-v1','status':score['status'],'scientific_claim':'HISTORICAL_PIT_REPLAY_ONLY_NOT_FUTURE_PROSPECTIVE_NOT_NEW_BLIND_TEST','branch':gov['branch'],'base_head':gov['base_head'],'head':gov['head'],'parent':gov['parent'],'run_id':int(os.environ['GITHUB_RUN_ID']),'n':300,'full_season_n':380,'league':'ENG1','season':'2023-24','prediction_cutoff':'kickoff_minus_15_minutes','cohort_identity_sha256':pre['cohort_identity_sha256'],'evidence_grade_counts':pre['evidence_grade_counts'],'component_activation_n':pre['component_activation_n'],'model_activation_n':pre['model_activation_n'],'fallback_n':pre['candidate_c_fallback_n'],'identity_match_rate':pre['identity_match_rate'],'historical_capability_coverage_rate':pre['historical_capability_coverage_rate'],'uncertainty_monotonicity':pre['uncertainty_monotonicity_observed'],'prediction_phase_label_reads':0,'historical_selected_cohort_labels_scored_after_prediction_freeze_n':300,'api_football_requests':0,'api_keys_or_secrets_used':0,'global_fixture_consumption_registry_extended':False,'protected_v2_modified':False,'candidate_c_original_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'formal_weight':0,'formal_promotion_eligible':False,'formal_enablement':False,'force_used':False,'merge_used':False,'ready_used':False,'starting_candidate_c_artifact_id':9789696828,'protected_v2_artifact_id':9743018815,'changed_paths':gov['changed_paths'],'payload_sha256':payload,'files':files}
-          (out/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
-          PY
-
-      - name: Upload Artifact
+      - name: Upload immutable source base
         uses: actions/upload-artifact@v4
         with:
-          name: football3-context-translator-historical-pit-replay-v1-${{ github.sha }}-${{ github.run_id }}
-          path: historical_pit_out/
+          name: historical-pit-source-base-${{ github.sha }}-${{ github.run_id }}
+          path: base_freeze/
           if-no-files-found: error
           retention-days: 90
 
-      - name: Terminal integrity gate
+  source_freeze:
+    needs: prepare_source_base
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: 0, tag: shard-000-049}
+          - {shard: 1, tag: shard-050-099}
+          - {shard: 2, tag: shard-100-149}
+          - {shard: 3, tag: shard-150-199}
+          - {shard: 4, tag: shard-200-249}
+          - {shard: 5, tag: shard-250-299}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable source base
+        uses: actions/download-artifact@v4
+        with:
+          name: historical-pit-source-base-${{ github.sha }}-${{ github.run_id }}
+          path: base_freeze
+      - name: Freeze structured PIT source facts
         shell: bash
         run: |
           set -euo pipefail
+          python football-data/research/context_translator_v1/historical_pit_sharded.py source-freeze --base base_freeze --shard '${{ matrix.shard }}' --out source_out
           python - <<'PY'
-          import json,pathlib,hashlib
-          out=pathlib.Path('historical_pit_out');m=json.load(open(out/'artifact_manifest.json'));s=json.load(open(out/'historical_pit_score.json'));g=json.load(open(out/'historical_pit_gate.json'));p=json.load(open(out/'pre_score_manifest.json'));gov=json.load(open(out/'governance_report.json'))
-          assert m['status']==s['status']==g['status'] and s['status'] in {'HISTORICAL_PIT_NOT_PROMOTED','HISTORICAL_PIT_CANDIDATE_PASSED'}
-          assert p['labels_read_in_prediction_phase'] is False and m['prediction_phase_label_reads']==0 and p['uncertainty_monotonicity_observed'] is True
+          import json
+          m=json.load(open('source_out/source_freeze_manifest.json'))
+          assert m['n']==50 and len(m['fixture_ids'])==50 and len(set(m['fixture_ids']))==50
+          assert m['labels_read']==0 and m['scorer_invoked'] is False and m['raw_webpage_body_persisted'] is False
+          assert m['request_timeout_seconds']==15 and m['max_attempts']==2
+          PY
+      - name: Upload source-freeze checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-pit-source-freeze-${{ matrix.tag }}-${{ github.sha }}-${{ github.run_id }}
+          path: source_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  offline_prediction:
+    needs: [prepare_source_base, source_freeze]
+    if: ${{ always() && needs.prepare_source_base.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: 0, tag: shard-000-049}
+          - {shard: 1, tag: shard-050-099}
+          - {shard: 2, tag: shard-100-149}
+          - {shard: 3, tag: shard-150-199}
+          - {shard: 4, tag: shard-200-249}
+          - {shard: 5, tag: shard-250-299}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable source base
+        uses: actions/download-artifact@v4
+        with:
+          name: historical-pit-source-base-${{ github.sha }}-${{ github.run_id }}
+          path: base_freeze
+      - name: Download matching source checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: historical-pit-source-freeze-${{ matrix.tag }}-${{ github.sha }}-${{ github.run_id }}
+          path: source_in
+      - name: Strict offline prediction
+        shell: bash
+        env:
+          FOOTBALL3_PREDICTION_NETWORK_POLICY: FORBIDDEN
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import inspect,historical_pit_sharded_predict as p
+          text=inspect.getsource(p).lower()
+          forbidden=('urllib','urlopen','requests.','sportsmole.co.uk','web.archive.org','kaggle.com','bounded_fetch')
+          assert not any(x in text for x in forbidden)
+          PY
+          python football-data/research/context_translator_v1/historical_pit_sharded.py predict-shard --base base_freeze --source source_in --out prediction_out
+          python - <<'PY'
+          import json
+          m=json.load(open('prediction_out/prediction_shard_manifest.json'))
+          assert m['n']==50 and len(m['fixture_ids'])==50 and len(set(m['fixture_ids']))==50
+          assert m['labels_read']==0 and m['scorer_invoked'] is False and m['external_network_requests']==0
+          PY
+      - name: Upload prediction checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-pit-prediction-${{ matrix.tag }}-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  merge_predictions:
+    needs: [prepare_source_base, source_freeze, offline_prediction]
+    if: ${{ needs.prepare_source_base.result == 'success' && needs.source_freeze.result == 'success' && needs.offline_prediction.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable source base
+        uses: actions/download-artifact@v4
+        with:
+          name: historical-pit-source-base-${{ github.sha }}-${{ github.run_id }}
+          path: base_freeze
+      - name: Download all source checkpoints
+        uses: actions/download-artifact@v4
+        with:
+          pattern: historical-pit-source-freeze-*-${{ github.sha }}-${{ github.run_id }}
+          path: source_artifacts
+      - name: Download all prediction checkpoints
+        uses: actions/download-artifact@v4
+        with:
+          pattern: historical-pit-prediction-*-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_artifacts
+      - name: Merge and freeze exact 300 predictions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python football-data/research/context_translator_v1/historical_pit_sharded.py merge --base base_freeze --sources source_artifacts --predictions prediction_artifacts --out merged_out
+          python - <<'PY'
+          import hashlib,json,pathlib
+          m=json.load(open('merged_out/merged_prediction_manifest.json'))
+          p=json.load(open('merged_out/pre_score_manifest.json'))
+          i=json.load(open('merged_out/merge_integrity_report.json'))
+          assert m['n']==300 and m['source_shard_n']==6 and m['prediction_shard_n']==6 and m['labels_read']==0 and m['scorer_invoked'] is False
+          assert i['n']==300 and i['missing_n']==i['duplicate_n']==i['extra_n']==0 and i['order_exact'] is True
+          assert p['labels_read_in_prediction_phase'] is False and p['scorer_invoked'] is False and p['n']==300
+          assert p['uncertainty_contract_monotonic'] is True and p['uncertainty_monotonicity_observed'] is True
+          assert hashlib.sha256(pathlib.Path('merged_out/historical_pit_predictions.jsonl').read_bytes()).hexdigest()==m['prediction_sha256']==p['prediction_sha256']
+          PY
+      - name: Upload merged prediction freeze
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-pit-merged-predictions-${{ github.sha }}-${{ github.run_id }}
+          path: merged_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  score:
+    needs: merge_predictions
+    if: ${{ needs.merge_predictions.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Download frozen 300 predictions
+        uses: actions/download-artifact@v4
+        with:
+          name: historical-pit-merged-predictions-${{ github.sha }}-${{ github.run_id }}
+          path: merged_in
+      - name: Verify total prediction SHA before label materialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e label_vault.jsonl
+          python - <<'PY'
+          import hashlib,json,pathlib
+          m=json.load(open('merged_in/merged_prediction_manifest.json'))
+          assert m['n']==300 and m['labels_read']==0 and m['scorer_invoked'] is False
+          assert hashlib.sha256(pathlib.Path('merged_in/historical_pit_predictions.jsonl').read_bytes()).hexdigest()==m['prediction_sha256']
+          PY
+
+      - name: Materialize only historical labels after freeze
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.V2_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('v2_score.zip',Buffer.from(data));
+
+      - name: Score without source-network or reprediction
+        shell: bash
+        env:
+          FOOTBALL3_SCORER_NETWORK_POLICY: FORBIDDEN
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2_score.zip|awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
+          unzip -tq v2_score.zip >/dev/null
+          unzip -p v2_score.zip dataset/evaluation_label_vault.jsonl > label_vault.jsonl
+          test -s label_vault.jsonl
+          git diff --name-only "$BASE_HEAD"...HEAD | sort > changed_paths.txt
+          head_sha="$(git rev-parse HEAD)"
+          parent_sha="$(git rev-parse HEAD^)"
+          python football-data/research/context_translator_v1/historical_pit_sharded.py score-final \
+            --merged merged_in --label-vault label_vault.jsonl --out final_out \
+            --head "$head_sha" --parent "$parent_sha" --run-id "$GITHUB_RUN_ID" --changed-paths changed_paths.txt
+          rm label_vault.jsonl
+          python - <<'PY'
+          import hashlib,json,pathlib
+          out=pathlib.Path('final_out')
+          m=json.load(open(out/'artifact_manifest.json')); s=json.load(open(out/'historical_pit_score.json')); g=json.load(open(out/'historical_pit_gate.json'))
+          assert m['status']==s['status']==g['status']
+          assert s['status'] in {'HISTORICAL_PIT_CANDIDATE_PASSED','HISTORICAL_PIT_NOT_PROMOTED'}
+          assert m['n']==300 and m['source_shard_n']==6 and m['prediction_shard_n']==6
+          assert m['old_timeout_status']=='TECHNICAL_TIMEOUT_NO_SCORE' and m['old_timeout_run_id']==33485502884 and m['old_timeout_model_pass_fail_claim'] is None
+          assert m['prediction_phase_label_reads']==0 and m['historical_selected_cohort_labels_scored_after_prediction_freeze_n']==300
           assert m['formal_weight']==0 and m['formal_promotion_eligible'] is False and m['formal_enablement'] is False
-          assert not any(gov[k] for k in ('protected_v2_modified','candidate_c_original_modified','main_modified','current_modified','airtable_modified','pr334_modified','r5_modified','global_fixture_consumption_registry_extended','force_used','merge_used','ready_used','formal_enablement','formal_weight_changed'))
-          for name,meta in m['files'].items():
-              raw=(out/name).read_bytes(); assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
+          for name,meta in m['payload'].items():
+              raw=(out/name).read_bytes()
+              assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
           print(s['status'])
           PY
+
+      - name: Upload final scored Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-historical-pit-replay-v1-${{ github.sha }}-${{ github.run_id }}
+          path: final_out/
+          if-no-files-found: error
+          retention-days: 90
