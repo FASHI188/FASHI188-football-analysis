@@ -1,0 +1,160 @@
+name: football3 Context Translator Candidate B post-view diagnostic
+on:
+  push:
+    branches: [football3/context-translator-candidate-b-v1]
+    paths:
+      - '.github/workflows/football3-context-translator-candidate-b-v1.yml'
+      - 'football-data/research/context_translator_v1/candidate_b.py'
+      - 'football-data/research/context_translator_v1/candidate_b_diagnostic.py'
+      - 'football-data/research/context_translator_v1/test_candidate_b.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  candidate_b_post_view_diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BASE_HEAD: c1b07e7504e6f1eb5cc35053d1994a98878a85cb
+      V2_ARTIFACT_ID: '9743018815'
+      V2_ARTIFACT_DIGEST: 36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838
+      PRIOR_ARTIFACT_ID: '9784288326'
+      PRIOR_ARTIFACT_DIGEST: 8d43190eb1676508bae00494f64d90ca07e06f2115779362e2a0dad9c043e397
+      POOL_SHA: 2b4fe4be50cf4639624a2e31b3a7651ffc01ccf8afe6b7d58845fa4871aa4334
+    steps:
+      - name: Checkout Candidate B branch
+        uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+
+      - name: Enforce research-only branch boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = 'football3/context-translator-candidate-b-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          expected=(
+            '.github/workflows/football3-context-translator-candidate-b-v1.yml'
+            'football-data/research/context_translator_v1/candidate_b.py'
+            'football-data/research/context_translator_v1/candidate_b_diagnostic.py'
+            'football-data/research/context_translator_v1/test_candidate_b.py'
+          )
+          mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${changed[@]}")
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          git diff --quiet "$BASE_HEAD" HEAD -- .github/workflows/football3-context-translator-v1.yml
+          git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || { echo CURRENT_DRIFT; exit 1; }
+          mkdir -p candidate_b_out
+          python - <<'PY'
+          import json,pathlib,subprocess
+          base='c1b07e7504e6f1eb5cc35053d1994a98878a85cb'
+          changed=sorted(subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines())
+          obj={'schema_version':'football3-context-translator-candidate-b-governance-v1','status':'RESEARCH_ONLY_POST_VIEW_DIAGNOSTIC','branch':'football3/context-translator-candidate-b-v1','base_head':base,'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'changed_paths':changed,'global_fixture_consumption_registry_extended':False,'protected_v2_core_modified':False,'existing_context_translator_v1_workflow_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'force_used':False,'merge_used':False,'formal_enablement':False,'formal_weight_changed':False}
+          pathlib.Path('candidate_b_out/governance_report.json').write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Compile and unit-test Candidate B
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/context_translator_v1/candidate_b.py football-data/research/context_translator_v1/candidate_b_diagnostic.py football-data/research/context_translator_v1/test_candidate_b.py
+          python football-data/research/context_translator_v1/test_candidate_b.py -v
+
+      - name: Download protected V2 and already-unsealed 272-fixture Artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.V2_ARTIFACT_ID),'v2_artifact.zip'],[Number(process.env.PRIOR_ARTIFACT_ID),'prior_artifact.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+
+      - name: Verify Artifacts and physically quarantine labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2_artifact.zip | awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
+          test "$(sha256sum prior_artifact.zip | awk '{print $1}')" = "$PRIOR_ARTIFACT_DIGEST"
+          mkdir v2_artifact prior_artifact label_vault_hold
+          unzip -q v2_artifact.zip -d v2_artifact
+          unzip -q prior_artifact.zip -d prior_artifact
+          python - <<'PY'
+          import hashlib,json
+          a=json.load(open('v2_artifact/artifact_manifest.json'));p=json.load(open('prior_artifact/blind_pool_manifest.json'))
+          assert a['run_id']==33348991436 and a['head']=='ef830299e8ee37749ac083e007b4947f8e72d7b7' and a['prediction_sha256']=='92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7'
+          assert p['n']==272 and p['pool_sha256']=='2b4fe4be50cf4639624a2e31b3a7651ffc01ccf8afe6b7d58845fa4871aa4334'
+          assert hashlib.sha256(open('prior_artifact/blind_predictions.jsonl','rb').read()).hexdigest()=='313cdf1c449fc23a6ac6820e9cf71883e83305e9f3f981034ed48e255835899d'
+          PY
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_vault_hold/evaluation_label_vault.jsonl
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+
+      - name: Build exact immutable StatsBomb inventory
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-inventory statsbomb_source
+
+      - name: Produce Candidate B predictions with labels absent
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+          python football-data/research/context_translator_v1/candidate_b_diagnostic.py predict --v2-artifact v2_artifact --prior-artifact prior_artifact --source statsbomb_source --out candidate_b_out
+          python - <<'PY'
+          import json
+          p=json.load(open('candidate_b_out/pre_score_diagnostic.json'))
+          assert p['status']=='RESEARCH_ONLY_POST_VIEW_DIAGNOSTIC' and p['formal_promotion_eligible'] is False and p['formal_weight']==0
+          assert p['labels_read_in_prediction_phase'] is False and p['n']==272 and p['allowed_fixture_pool_sha256']=='2b4fe4be50cf4639624a2e31b3a7651ffc01ccf8afe6b7d58845fa4871aa4334'
+          PY
+
+      - name: Score only the already-unsealed 272 whitelist
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python football-data/research/context_translator_v1/candidate_b_diagnostic.py score --prior-artifact prior_artifact --label-vault label_vault_hold/evaluation_label_vault.jsonl --out candidate_b_out
+          rm -f label_vault_hold/evaluation_label_vault.jsonl
+          rmdir label_vault_hold
+          python - <<'PY'
+          import json
+          s=json.load(open('candidate_b_out/candidate_b_score.json'))
+          assert s['status']=='POST_VIEW_DIAGNOSTIC' and s['research_only'] is True and s['formal_promotion_eligible'] is False and s['formal_weight']==0
+          assert s['n']==272 and s['new_fixture_labels_parsed_n']==0
+          assert set(s['models'])=={'baseline','old_l1_l2','candidate_b1','candidate_b1_b2'}
+          assert 'actual_draw' in s['subgroups'] and 'weak_team_win' in s['subgroups']
+          PY
+
+      - name: Seal diagnostic Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp statsbomb_source/statsbomb_source_inventory_receipt.json candidate_b_out/
+          cp statsbomb_source/safe_match_index.json candidate_b_out/statsbomb_safe_match_index.json
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess
+          out=pathlib.Path('candidate_b_out');files={}
+          for p in sorted(out.iterdir()):
+              if p.is_file():files[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          m={'schema_version':'football3-context-translator-candidate-b-artifact-v1','branch':'football3/context-translator-candidate-b-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'base_head':'c1b07e7504e6f1eb5cc35053d1994a98878a85cb','status':'RESEARCH_ONLY_POST_VIEW_DIAGNOSTIC','formal_promotion_eligible':False,'formal_weight':0,'allowed_pool_sha256':'2b4fe4be50cf4639624a2e31b3a7651ffc01ccf8afe6b7d58845fa4871aa4334','n':272,'protected_v2_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'formal_enablement':False,'source_raw_in_artifact':False,'files':files}
+          (out/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload Candidate B Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-candidate-b-v1-${{ github.sha }}-${{ github.run_id }}
+          path: candidate_b_out/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Terminal integrity gate
+        run: |
+          python - <<'PY'
+          import json
+          g=json.load(open('candidate_b_out/candidate_b_gate.json'));v=json.load(open('candidate_b_out/governance_report.json'))
+          assert g['pipeline_integrity']=='PASS' and g['status']=='POST_VIEW_DIAGNOSTIC_COMPLETE_NO_ENABLEMENT' and g['formal_promotion_eligible'] is False
+          assert v['global_fixture_consumption_registry_extended'] is False
+          assert not any(v[k] for k in ('protected_v2_core_modified','existing_context_translator_v1_workflow_modified','main_modified','current_modified','airtable_modified','force_used','merge_used','formal_enablement','formal_weight_changed'))
+          print('CANDIDATE_B_POST_VIEW_DIAGNOSTIC_COMPLETE_NO_ENABLEMENT')
+          PY
