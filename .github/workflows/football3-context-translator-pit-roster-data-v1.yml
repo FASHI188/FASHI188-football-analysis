@@ -18,29 +18,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
-      - name: Probe public source archives without labels
+      - name: Audit public preview URL coverage and allowed-section parser
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p pit_roster_out
           python - <<'PY'
-          import json,urllib.request,xml.etree.ElementTree as ET,hashlib,datetime
-          ua={'User-Agent':'football3-research-pit-audit/1.0 (+public research; no result ingestion)'}
+          import datetime,hashlib,html,json,re,urllib.request,xml.etree.ElementTree as ET
+          UA={'User-Agent':'football3-research-pit-audit/1.0 (+public research; no result ingestion)'}
           def get(url):
-              req=urllib.request.Request(url,headers=ua)
-              with urllib.request.urlopen(req,timeout=30) as r:return r.read(),dict(r.headers)
-          out={'schema_version':'football3-pit-roster-source-probe-v1','collected_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sources':{}}
-          for name,url in [('sportsmole_robots','https://www.sportsmole.co.uk/robots.txt'),('sportsmole_sitemap_index','https://www.sportsmole.co.uk/sitemap_index.xml')]:
-              try:
-                  b,h=get(url);out['sources'][name]={'ok':True,'url':url,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'content_type':h.get('Content-Type'),'preview':b[:5000].decode('utf-8','replace')}
-              except Exception as e:out['sources'][name]={'ok':False,'url':url,'error':repr(e)}
-          sample='https://www.sportsmole.co.uk/football/wolfsburg/preview/wolfsburg-vs-hoffenheim-prediction-team-news-lineups_535813.html'
-          cdx='https://web.archive.org/cdx/search/cdx?url='+urllib.parse.quote(sample,safe='')+'&output=json&fl=timestamp,original,statuscode,digest&filter=statuscode:200&from=2024&to=2024'
-          try:
-              b,h=get(cdx);out['sources']['wayback_cdx_sample']={'ok':True,'url':cdx,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'preview':b[:10000].decode('utf-8','replace')}
-          except Exception as e:out['sources']['wayback_cdx_sample']={'ok':False,'url':cdx,'error':repr(e)}
+              req=urllib.request.Request(url,headers=UA)
+              with urllib.request.urlopen(req,timeout=45) as r:return r.read(),dict(r.headers)
+          def strip_tags(x):
+              x=re.sub(r'(?is)<script.*?</script>|<style.*?</style>',' ',x)
+              x=re.sub(r'(?s)<[^>]+>',' ',x)
+              return re.sub(r'\s+',' ',html.unescape(x)).strip()
+          urls=[];sitemaps={}
+          for year in (2023,2024):
+              u=f'https://www.sportsmole.co.uk/sitemap-articles-{year}.xml';b,h=get(u);root=ET.fromstring(b)
+              loc=[e.text.strip() for e in root.iter() if e.tag.endswith('loc') and e.text]
+              previews=[x for x in loc if '/football/' in x and '/preview/' in x and x.endswith('.html')]
+              urls.extend(previews);sitemaps[str(year)]={'url':u,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'all_urls':len(loc),'preview_urls':len(previews)}
+          keys=['wolfsburg-vs-hoffenheim','hoffenheim-vs-mainz','koln-vs-rb-leipzig','stuttgart-vs-freiburg','bayern-munich-vs-union-berlin']
+          matches={k:[u for u in urls if k in u.lower()] for k in keys}
+          sample=next((x[0] for x in matches.values() if x),None)
+          parse={}
+          if sample:
+              b,h=get(sample);txt=b.decode('utf-8','replace')
+              # Parse only the article's explicitly prematch Team News -> next section boundary.
+              pub=[]
+              for pat in [r'(?i)Published:\s*</?[^>]*>?\s*([^<]{8,80})',r'(?i)<time[^>]*datetime=["\']([^"\']+)',r'(?i)(\d{1,2}\s+[A-Z][a-z]{2}\s+20\d{2}\s+\d{1,2}:\d{2})']:
+                  pub += re.findall(pat,txt)
+              m=re.search(r'(?is)(?:<h[1-6][^>]*>\s*)?Team News\s*(?:</h[1-6]>)?(.*?)(?=<h[1-6][^>]*>|We say:|What is your prediction|Data Analysis|Previews by email)',txt)
+              frag=m.group(1) if m else ''
+              allowed=strip_tags(frag)
+              parse={'url':sample,'page_bytes':len(b),'publication_candidates':pub[:10],'team_news_found':bool(m),'allowed_fragment_bytes':len(frag.encode()),'allowed_fragment_sha256':hashlib.sha256(frag.encode()).hexdigest() if frag else None,'allowed_text_preview':allowed[:5000],'has_possible_starting_lineup':bool(re.search(r'(?i)possible starting lineup',allowed)),'forbidden_token_scan':{t:bool(re.search(t,allowed,re.I)) for t in ['final score','full[- ]time','match stats','player ratings','post[- ]match']}}
+          out={'schema_version':'football3-pit-roster-source-coverage-probe-v2','collected_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sitemaps':sitemaps,'preview_url_total':len(set(urls)),'query_matches':matches,'sample_parse':parse}
           open('pit_roster_out/source_probe.json','w').write(json.dumps(out,indent=2,sort_keys=True)+'\n')
-          print(json.dumps(out,indent=2)[:20000])
+          print(json.dumps(out,indent=2)[:30000])
           PY
       - uses: actions/upload-artifact@v4
         with:
