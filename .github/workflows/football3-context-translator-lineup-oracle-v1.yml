@@ -1,112 +1,523 @@
-name: football3 Candidate C Historical Lineup Oracle v1 identity enumeration
+name: football3 Candidate C Historical Lineup Oracle v1
 
 on:
   push:
     branches: [football3/context-translator-lineup-oracle-v1]
     paths:
       - '.github/workflows/football3-context-translator-lineup-oracle-v1.yml'
+      - 'football-data/research/context_translator_v1/lineup_oracle.py'
+      - 'football-data/research/context_translator_v1/test_lineup_oracle.py'
+      - 'football-data/research/context_translator_v1/lineup_oracle_team_identity_bridge.json'
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: football3-lineup-oracle-v1-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   BASE_HEAD: 'a58c530501e51a29ac448ed2ee2f50f36795d2d9'
   COHORT_SHA: '4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
   BASE_ARTIFACT_ID: '9798682425'
   BASE_ARTIFACT_DIGEST: '01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  PRIOR_MERGED_ID: '9799605534'
+  PRIOR_MERGED_DIGEST: '2766d22a0d1c1e6179c84783fa8680467a9b380ee32242a18b0695e652eceaa2'
+  V2_ARTIFACT_ID: '9743018815'
+  V2_ARTIFACT_DIGEST: '36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838'
+  IDENTITY_ENUM_ARTIFACT_ID: '9802840352'
+  IDENTITY_ENUM_ARTIFACT_DIGEST: 'ad3ea8d62c91b7723f531494fa5a56f779dbdc95a982d462a554663ce79adfe6'
+  IDENTITY_ENUM_SHA: '256f39c832ce92485983abcc15a9ef97c86f5f60d4d049009536fed924e1b1ec'
+  PYTHONPATH: football-data/research/context_translator_v1
 
 jobs:
-  enumerate_identity:
+  gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Verify branch and unchanged Oracle scope
+      - name: Governance, four-file scope, leakage and regression gates
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF_NAME" = 'football3/context-translator-lineup-oracle-v1'
           test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t got < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          expected=(
+            '.github/workflows/football3-context-translator-lineup-oracle-v1.yml'
+            'football-data/research/context_translator_v1/lineup_oracle.py'
+            'football-data/research/context_translator_v1/test_lineup_oracle.py'
+            'football-data/research/context_translator_v1/lineup_oracle_team_identity_bridge.json'
+          )
+          mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${got[@]}")
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c.py
           git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_b.py
           git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || exit 1
-      - name: Download frozen label-free cohort base
+          python -m py_compile football-data/research/context_translator_v1/lineup_oracle.py football-data/research/context_translator_v1/test_lineup_oracle.py
+          python football-data/research/context_translator_v1/test_lineup_oracle.py -v
+          python football-data/research/context_translator_v1/test_candidate_c.py -v
+          python football-data/research/context_translator_v1/test_candidate_b.py -v
+          python - <<'PY'
+          import json,pathlib
+          code=pathlib.Path('football-data/research/context_translator_v1/lineup_oracle.py').read_text()
+          assert 'api/v1/matches/{id}/events' not in code and '/stats' not in code
+          assert 'Ocp-Apim-Subscription-Key' not in code and 'Authorization' not in code
+          for tag in ('HISTORICAL_LINEUP_ORACLE','UPPER_BOUND_ONLY','NOT_STRICT_PIT','NOT_PROMOTION_ELIGIBLE','POST_VIEW_RESEARCH'):
+              assert tag in code
+          b=json.load(open('football-data/research/context_translator_v1/lineup_oracle_team_identity_bridge.json'))
+          assert b['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert b['mapping_policy']=='EXPLICIT_RECORDS_ONLY_NO_FUZZY_NO_SIMILARITY_NO_STRIP_FC_RUNTIME_JOIN_NO_FIRST_SEARCH_RESULT'
+          assert len(b['records'])==20
+          assert len({x['cohort_team_id'] for x in b['records']})==20
+          assert len({x['premier_league_official_team_id'] for x in b['records']})==20
+          assert all(x['mapping_status']=='VERIFIED_UNIQUE_2023_24_SEASON_MEMBER' for x in b['records'])
+          print('ORACLE_GOVERNANCE_AND_BRIDGE_STATIC_GATE=PASS')
+          PY
+      - name: Verify reused immutable Artifact identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          expected={
+            9798682425:('01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba',33503552079,'c5c2bec26c165680f7625a49b145719e0d0e7130'),
+            9799605534:('2766d22a0d1c1e6179c84783fa8680467a9b380ee32242a18b0695e652eceaa2',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799585282:('666ac303da99294f0978c40edff2e8394510f8dbe891559f4b4de4a861bd326f',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799587219:('3e531bf084f138771b6fd28197eafc09c6620eb9bb62d295a8622528f34061f0',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799589807:('7d455a8fe63cabb819c087541ed1385c926bef36e00082769d77501064e57fb7',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799587878:('3528b724891eb21a2b878635186fa068030cf547ecaa7cea63f355fadde44a40',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799589262:('7578348fac164ad515dc90dda8c7933ca49b95c853d83dd1b262c2f10874e67c',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9799585360:('6bd8bb556660eb1933abdd5c5f61f8039ebddfabfd6754b18807eaaf3af7da0f',33505906281,'a58c530501e51a29ac448ed2ee2f50f36795d2d9'),
+            9743018815:('36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838',33348991436,'ef830299e8ee37749ac083e007b4947f8e72d7b7'),
+            9802840352:('ad3ea8d62c91b7723f531494fa5a56f779dbdc95a982d462a554663ce79adfe6',33514077564,'9b32d1b3d65a52c8dd1bfe8ea2ac48687ac658ab'),
+          }
+          for aid,(digest,run,head) in expected.items():
+              req=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}',headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=15) as r: meta=json.load(r)
+              assert meta['expired'] is False and meta['digest']==f'sha256:{digest}'
+              assert meta['workflow_run']['id']==run and meta['workflow_run']['head_sha']==head
+          print(f'REUSED_ARTIFACT_IDENTITIES_VERIFIED={len(expected)}')
+          PY
+
+  source_index:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen cohort and immutable official identity enumeration
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.BASE_ARTIFACT_ID),'base.zip'],[Number(process.env.IDENTITY_ENUM_ARTIFACT_ID),'enum.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+      - name: Build deterministic official-ID bridge join and freeze 300/300 identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          test "$(sha256sum enum.zip|awk '{print $1}')" = "$IDENTITY_ENUM_ARTIFACT_DIGEST"
+          unzip -tq base.zip >/dev/null; unzip -tq enum.zip >/dev/null
+          mkdir base_freeze enum_in source_index_out
+          unzip -q base.zip -d base_freeze
+          unzip -q enum.zip -d enum_in
+          python - <<'PY'
+          import hashlib,json,pathlib
+          COHORT_SHA='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          BR=pathlib.Path('football-data/research/context_translator_v1/lineup_oracle_team_identity_bridge.json')
+          def sha(p):return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          def canon(x):return hashlib.sha256(json.dumps(x,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+          def writejl(path,rows):pathlib.Path(path).write_text(''.join(json.dumps(x,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n' for x in rows),encoding='utf-8')
+          cm=json.load(open('base_freeze/cohort_manifest.json')); cohort=cm['rows']
+          assert cm['cohort_identity_sha256']==COHORT_SHA and len(cohort)==300
+          enum_path=next(pathlib.Path('enum_in').rglob('identity_enumeration.json'))
+          enum=json.load(open(enum_path)); assert sha(enum_path)=='256f39c832ce92485983abcc15a9ef97c86f5f60d4d049009536fed924e1b1ec'
+          assert enum['cohort_sha256']==COHORT_SHA and enum['official_team_n']==20 and enum['match_index_n']==380
+          bridge=json.load(open(BR)); recs=bridge['records']
+          assert len(recs)==20 and bridge['cohort_identity_sha256']==COHORT_SHA
+          cohort_teams={}
+          for r in cohort:
+              for s in ('home','away'):
+                  tid=str(r[f'{s}_team_id']); name=str(r[f'{s}_team'])
+                  if tid in cohort_teams: assert cohort_teams[tid]==name
+                  cohort_teams[tid]=name
+          assert len(cohort_teams)==20
+          b_by_c={str(x['cohort_team_id']):x for x in recs}
+          assert len(b_by_c)==20 and set(b_by_c)==set(cohort_teams)
+          assert all(b_by_c[k]['cohort_team_name']==v for k,v in cohort_teams.items())
+          official_by_id={str(x['premier_league_official_team_id']):x for x in enum['official_teams']}
+          assert len(official_by_id)==20
+          official_ids={str(x['premier_league_official_team_id']) for x in recs}
+          assert len(official_ids)==20 and official_ids==set(official_by_id)==set(enum['official_season_team_ids'])
+          for x in recs:
+              o=official_by_id[str(x['premier_league_official_team_id'])]
+              assert x['premier_league_official_name']==o['premier_league_official_name']
+              assert x['source_url']==o['source_url'] and x['season_membership_source_url']==o['season_membership_source_url']
+              assert x['mapping_status']=='VERIFIED_UNIQUE_2023_24_SEASON_MEMBER'
+          match_files=sorted(pathlib.Path('enum_in').rglob('official_matches_*.json'))
+          receipts={pathlib.Path(x['url']).name if False else x['page']:x for x in enum['match_page_receipts']}
+          matches=[]
+          assert len(match_files)==4
+          for i,p in enumerate(match_files):
+              assert sha(p)==receipts[i]['sha256']; payload=json.load(open(p)); rows=payload['data']; assert len(rows)==receipts[i]['n']; matches.extend(rows)
+          assert len(matches)==380
+          idx={}
+          for m in matches:
+              mid=str(m.get('matchId') or m.get('id') or '')
+              ko=str(m.get('kickoff') or '')
+              h=str((m.get('homeTeam') or {}).get('id') or '')
+              a=str((m.get('awayTeam') or {}).get('id') or '')
+              assert mid and ko and h and a
+              key=(ko[:10],h,a); idx.setdefault(key,[]).append(m)
+          mapped=[]; used=set(); missing=[]; ambiguous=[]; swapped=[]
+          for r in cohort:
+              hb=b_by_c[str(r['home_team_id'])]; ab=b_by_c[str(r['away_team_id'])]
+              key=(str(r['kickoff_utc'])[:10],str(hb['premier_league_official_team_id']),str(ab['premier_league_official_team_id']))
+              cand=idx.get(key,[])
+              reverse=idx.get((key[0],key[2],key[1]),[])
+              if len(cand)==0: missing.append({'fixture_id':str(r['fixture_id']),'key':key,'reverse_candidates':len(reverse)}); continue
+              if len(cand)!=1: ambiguous.append({'fixture_id':str(r['fixture_id']),'key':key,'candidates':len(cand)}); continue
+              m=cand[0]; mid=str(m.get('matchId') or m.get('id'))
+              if mid in used: raise AssertionError('duplicate official match id in cohort join')
+              used.add(mid)
+              if reverse and not cand: swapped.append(str(r['fixture_id']))
+              mapped.append({'fixture_id':str(r['fixture_id']),'pl_match_id':mid,'kickoff_utc':str(r['kickoff_utc']),'home_team_id':str(r['home_team_id']),'away_team_id':str(r['away_team_id']),'home_team':str(r['home_team']),'away_team':str(r['away_team']),'official_home_team_id':key[1],'official_away_team_id':key[2],'official_home_team_name':hb['premier_league_official_name'],'official_away_team_name':ab['premier_league_official_name']})
+          expected_ids=[str(r['fixture_id']) for r in cohort]; got=[x['fixture_id'] for x in mapped]
+          duplicate_n=len(got)-len(set(got)); extra=sorted(set(got)-set(expected_ids)); missing_ids=sorted(set(expected_ids)-set(got))
+          audit={'schema_version':'football3-lineup-oracle-team-identity-gate-v1','status':'PASS' if len(mapped)==300 and not missing and not ambiguous and duplicate_n==0 and not extra and not missing_ids and not swapped else 'FAIL','cohort_identity_sha256':COHORT_SHA,'cohort_team_n':20,'official_season_team_n':20,'bridge_coverage_rate':len(b_by_c)/20,'unique_cohort_team_ids':len(b_by_c),'unique_official_team_ids':len(official_ids),'joined_n':len(mapped),'missing_n':len(missing_ids),'duplicate_n':duplicate_n,'ambiguous_n':len(ambiguous),'extra_n':len(extra),'home_away_swap_n':len(swapped),'missing':missing,'ambiguous':ambiguous,'extra':extra,'swapped':swapped,'join_rule':'kickoff calendar date + explicit frozen official home team ID + explicit frozen official away team ID','fuzzy_matching_used':False,'runtime_name_normalization_join_used':False,'labels_read':0,'scorer_invoked':False}
+          assert audit['status']=='PASS',audit
+          writejl('source_index_out/match_identity_index.jsonl',mapped)
+          pathlib.Path('source_index_out/lineup_oracle_team_identity_bridge.json').write_bytes(BR.read_bytes())
+          bridge_raw_sha=sha(BR); mapping_sha=canon(sorted(recs,key=lambda x:x['cohort_team_id'])); join_sha=sha('source_index_out/match_identity_index.jsonl')
+          bridge_receipt={'schema_version':'football3-lineup-oracle-team-identity-bridge-receipt-v1','bridge_raw_sha256':bridge_raw_sha,'mapping_set_sha256':mapping_sha,'record_n':20,'cohort_identity_sha256':COHORT_SHA,'identity_enumeration_artifact_id':9802840352,'identity_enumeration_sha256':sha(enum_path),'official_teams_raw_sha256':enum['teams_raw_sha256'],'mapping_policy':bridge['mapping_policy'],'labels_read':0,'scorer_invoked':False}
+          pathlib.Path('source_index_out/team_identity_bridge_receipt.json').write_text(json.dumps(bridge_receipt,indent=2,sort_keys=True)+'\n')
+          audit['bridge_raw_sha256']=bridge_raw_sha; audit['mapping_set_sha256']=mapping_sha; audit['identity_join_sha256']=join_sha
+          pathlib.Path('source_index_out/match_identity_join_audit.json').write_text(json.dumps(audit,indent=2,sort_keys=True)+'\n')
+          source_receipts={'schema_version':'football3-lineup-oracle-identity-source-receipts-v1','identity_enumeration_artifact_id':9802840352,'identity_enumeration_artifact_zip_sha256':'ad3ea8d62c91b7723f531494fa5a56f779dbdc95a982d462a554663ce79adfe6','identity_enumeration_sha256':sha(enum_path),'official_teams_raw_sha256':enum['teams_raw_sha256'],'official_matches_page_receipts':enum['match_page_receipts'],'labels_read':0}
+          pathlib.Path('source_index_out/raw_source_receipts.json').write_text(json.dumps(source_receipts,indent=2,sort_keys=True)+'\n')
+          files=['match_identity_index.jsonl','lineup_oracle_team_identity_bridge.json','team_identity_bridge_receipt.json','match_identity_join_audit.json','raw_source_receipts.json']
+          manifest={'schema_version':'football3-lineup-oracle-source-index-v2-explicit-team-bridge','status':'HISTORICAL_LINEUP_ORACLE_SOURCE_INDEX_FROZEN','tags':['HISTORICAL_LINEUP_ORACLE','UPPER_BOUND_ONLY','NOT_STRICT_PIT','NOT_PROMOTION_ELIGIBLE','POST_VIEW_RESEARCH'],'cohort_identity_sha256':COHORT_SHA,'n':300,'source':'OFFICIAL_PREMIER_LEAGUE_PUBLIC_WEBSITE_SDP','source_auth':'NONE','external_api_key_used':False,'provider_secret_used':False,'match_identity_rule':'kickoff date + frozen explicit official home/away IDs; no fuzzy/name join','bridge_raw_sha256':bridge_raw_sha,'mapping_set_sha256':mapping_sha,'identity_join_sha256':join_sha,'identity_gate':audit,'raw_source_sha256':canon(source_receipts),'payload':{n:{'sha256':sha(pathlib.Path('source_index_out')/n),'bytes':(pathlib.Path('source_index_out')/n).stat().st_size} for n in files},'raw_payload':{}}
+          pathlib.Path('source_index_out/source_index_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          print('ORACLE_IDENTITY_GATE=PASS bridge='+bridge_raw_sha+' map='+mapping_sha+' join='+join_sha)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-source-index-${{ github.sha }}-${{ github.run_id }}
+          path: source_index_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  source_shard:
+    needs: source_index
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen base Artifact
         uses: actions/github-script@v7
         with:
           script: |
             const fs=require('fs');
             const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.BASE_ARTIFACT_ID),archive_format:'zip'});
             fs.writeFileSync('base.zip',Buffer.from(data));
-      - name: Enumerate frozen cohort teams and official PL 2023-24 teams read-only
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-index-${{ github.sha }}-${{ github.run_id }}
+          path: source_index_in
+      - name: Fetch, sanitize and official-ID bind 50 lineup packets
         shell: bash
         run: |
           set -euo pipefail
           test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
-          unzip -tq base.zip >/dev/null
-          mkdir base_freeze identity_enum
-          unzip -q base.zip -d base_freeze
+          unzip -tq base.zip >/dev/null; mkdir base_freeze; unzip -q base.zip -d base_freeze
+          python football-data/research/context_translator_v1/lineup_oracle.py collect-lineup-shard --base base_freeze --index source_index_in --shard '${{ matrix.shard }}' --out source_out
           python - <<'PY'
-          import hashlib,json,pathlib,urllib.parse,urllib.request
-          COHORT_SHA='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
-          BASE='https://sdp-prem-prod.premier-league-prod.pulselive.com'
-          teams_url=BASE+'/api/v1/competitions/8/seasons/2023/teams?_limit=60'
-          matches_base=BASE+'/api/v2/matches?competition=8&season=2023&_limit=100'
-          cm=json.load(open('base_freeze/cohort_manifest.json'))
-          assert cm['cohort_identity_sha256']==COHORT_SHA and cm['n']==300
-          c={}
-          for r in cm['rows']:
-              for side in ('home','away'):
-                  c[str(r[f'{side}_team_id'])]=str(r[f'{side}_team'])
-          assert len(c)==20
-          cohort=[{'cohort_team_id':k,'cohort_team_name':v} for k,v in sorted(c.items(),key=lambda z:z[1])]
-          def get(url):
-              req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'football3-oracle-identity-enum/1.0'})
-              with urllib.request.urlopen(req,timeout=20) as r:return r.read()
-          traw=get(teams_url)
-          pathlib.Path('identity_enum/official_teams_raw.json').write_bytes(traw)
-          tp=json.loads(traw); teams=tp.get('data',tp)
-          assert isinstance(teams,list) and len(teams)==20, len(teams)
-          official=[]
-          for t in teams:
-              official.append({'premier_league_official_team_id':str(t['id']),'premier_league_official_name':str(t.get('name') or ''),'short_name':str(t.get('shortName') or ''),'abbr':str(t.get('abbr') or ''),'source_url':BASE+f"/api/v1/competitions/8/teams/{t['id']}",'season_membership_source_url':teams_url})
-          ids=[x['premier_league_official_team_id'] for x in official]
-          assert len(set(ids))==20
-          matches=[]; match_receipts=[]; nxt=None
-          for page in range(10):
-              url=matches_base if not nxt else matches_base+'&_next='+urllib.parse.quote(str(nxt),safe='')
-              raw=get(url)
-              pathlib.Path(f'identity_enum/official_matches_{page:02d}.json').write_bytes(raw)
-              p=json.loads(raw); data=p.get('data')
-              assert isinstance(data,list)
-              matches.extend(data)
-              match_receipts.append({'page':page,'url':url,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'n':len(data)})
-              nxt=(p.get('pagination') or {}).get('_next')
-              if not nxt: break
-          assert len(matches)==380, len(matches)
-          mids=[str(m.get('matchId') or m.get('id')) for m in matches]
-          assert len(set(mids))==380
-          match_team_ids=sorted({str((m.get(s) or {}).get('id')) for m in matches for s in ('homeTeam','awayTeam')})
-          assert set(match_team_ids)==set(ids),(match_team_ids,ids)
-          out={'schema_version':'football3-pl-2023-24-team-identity-enumeration-v1','cohort_sha256':COHORT_SHA,'cohort_team_n':20,'cohort_teams':cohort,'official_team_n':20,'official_teams':sorted(official,key=lambda x:x['premier_league_official_name']),'official_season_team_ids':sorted(ids),'match_index_n':380,'match_index_team_ids':match_team_ids,'teams_source_url':teams_url,'matches_source_base_url':matches_base,'teams_raw_sha256':hashlib.sha256(traw).hexdigest(),'match_page_receipts':match_receipts,'matches_pages_aggregate_sha256':hashlib.sha256(json.dumps(match_receipts,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'labels_read':0,'scorer_invoked':False,'api_key_used':False,'secret_used':False}
-          raw=json.dumps(out,sort_keys=True,ensure_ascii=False,indent=2).encode()+b'\n'
-          pathlib.Path('identity_enum/identity_enumeration.json').write_bytes(raw)
-          print(json.dumps(out,sort_keys=True))
-          PY
-          python - <<'PY'
-          import hashlib,json,pathlib
-          p=pathlib.Path('identity_enum/identity_enumeration.json'); x=json.load(open(p))
-          assert x['cohort_team_n']==20 and x['official_team_n']==20 and x['match_index_n']==380
-          assert x['labels_read']==0 and x['scorer_invoked'] is False and x['api_key_used'] is False and x['secret_used'] is False
-          print('IDENTITY_ENUMERATION_SHA256='+hashlib.sha256(p.read_bytes()).hexdigest())
+          import json,pathlib
+          bridge=json.load(open('source_index_in/lineup_oracle_team_identity_bridge.json')); bm={str(x['cohort_team_id']):str(x['premier_league_official_team_id']) for x in bridge['records']}
+          rows=[json.loads(x) for x in pathlib.Path('source_out/oracle_lineup_packets.jsonl').read_text().splitlines() if x]
+          assert len(rows)==50
+          for r in rows:
+              assert str(r['home']['source_team_id'])==bm[str(r['home_team_id'])]
+              assert str(r['away']['source_team_id'])==bm[str(r['away_team_id'])]
+              assert str(r['home']['source_team_id'])!=bm[str(r['away_team_id'])]
+              assert str(r['away']['source_team_id'])!=bm[str(r['home_team_id'])]
+          m=json.load(open('source_out/oracle_source_shard_manifest.json'))
+          assert m['n']==50 and m['external_api_key_used'] is False and m['provider_secret_used'] is False
+          assert m['forbidden_target_fields_persisted'] is False and m['target_match_event_or_stat_endpoint_called'] is False and m['actual_substitution_usage_persisted'] is False
+          print('ORACLE_SOURCE_SHARD_IDENTITY=PASS',m['shard'])
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: lineup-oracle-identity-enumeration-${{ github.sha }}-${{ github.run_id }}
-          path: identity_enum/
+          name: lineup-oracle-source-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}
+          path: source_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  source_merge:
+    needs: source_shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen base Artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.BASE_ARTIFACT_ID),archive_format:'zip'});
+            fs.writeFileSync('base.zip',Buffer.from(data));
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lineup-oracle-source-shard-*-${{ github.sha }}-${{ github.run_id }}
+          path: source_shards
+      - name: Merge exact 300 sanitized Oracle source packets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          unzip -tq base.zip >/dev/null; mkdir base_freeze; unzip -q base.zip -d base_freeze
+          python football-data/research/context_translator_v1/lineup_oracle.py merge-source --base base_freeze --shards source_shards --out source_merged
+          python - <<'PY'
+          import json
+          m=json.load(open('source_merged/oracle_source_manifest.json'))
+          assert m['n']==300 and m['source_shard_n']==6 and m['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert m['external_api_key_used'] is False and m['provider_secret_used'] is False
+          print('ORACLE_SOURCE_MERGE=PASS',m['raw_source_file_n'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_merged/
+          if-no-files-found: error
+          retention-days: 90
+
+  predict_shard:
+    needs: source_merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - {shard: 0, state_id: 9799585282, state_digest: 666ac303da99294f0978c40edff2e8394510f8dbe891559f4b4de4a861bd326f}
+          - {shard: 1, state_id: 9799587219, state_digest: 3e531bf084f138771b6fd28197eafc09c6620eb9bb62d295a8622528f34061f0}
+          - {shard: 2, state_id: 9799589807, state_digest: 7d455a8fe63cabb819c087541ed1385c926bef36e00082769d77501064e57fb7}
+          - {shard: 3, state_id: 9799587878, state_digest: 3528b724891eb21a2b878635186fa068030cf547ecaa7cea63f355fadde44a40}
+          - {shard: 4, state_id: 9799589262, state_digest: 7578348fac164ad515dc90dda8c7933ca49b95c853d83dd1b262c2f10874e67c}
+          - {shard: 5, state_id: 9799585360, state_digest: 6bd8bb556660eb1933abdd5c5f61f8039ebddfabfd6754b18807eaaf3af7da0f}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable base, prior pre-score and repaired state
+        uses: actions/github-script@v7
+        env:
+          STATE_ID: ${{ matrix.state_id }}
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.BASE_ARTIFACT_ID),'base.zip'],[Number(process.env.PRIOR_MERGED_ID),'prior.zip'],[Number(process.env.STATE_ID),'state.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'}); fs.writeFileSync(name,Buffer.from(data));
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_in
+      - name: Strict offline Oracle prediction shard
+        env:
+          STATE_DIGEST: ${{ matrix.state_digest }}
+          FOOTBALL3_ORACLE_PREDICTION_NETWORK_POLICY: FORBIDDEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"
+          test "$(sha256sum prior.zip|awk '{print $1}')" = "$PRIOR_MERGED_DIGEST"
+          test "$(sha256sum state.zip|awk '{print $1}')" = "$STATE_DIGEST"
+          unzip -tq base.zip >/dev/null; unzip -tq prior.zip >/dev/null; unzip -tq state.zip >/dev/null
+          mkdir base_freeze prior_in state_in; unzip -q base.zip -d base_freeze; unzip -q prior.zip -d prior_in; unzip -q state.zip -d state_in
+          python - <<'PY'
+          import inspect,lineup_oracle as o
+          for fn in (o.predict_shard,o.merge_predictions):
+              t=inspect.getsource(fn).lower(); assert 'urlopen' not in t and 'requests.' not in t and 'pulselive.com' not in t
+          PY
+          python football-data/research/context_translator_v1/lineup_oracle.py predict-shard --base base_freeze --prior prior_in --source source_in --state state_in --shard '${{ matrix.shard }}' --out prediction_out
+          python - <<'PY'
+          import json
+          m=json.load(open('prediction_out/oracle_prediction_shard_manifest.json'))
+          assert m['n']==50 and m['state_sha_checked_n']==50 and m['state_sha_mismatch_n']==0
+          assert m['labels_read']==0 and m['scorer_invoked'] is False and m['external_network_requests']==0
+          assert m['target_match_result_score_read'] is False and m['target_match_event_stats_read'] is False
+          print('ORACLE_PREDICTION_SHARD=PASS',m['shard'],m['model_activation_n'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-prediction-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  merge_predictions:
+    needs: predict_shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Download immutable base and prior pre-score Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.BASE_ARTIFACT_ID),'base.zip'],[Number(process.env.PRIOR_MERGED_ID),'prior.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'}); fs.writeFileSync(name,Buffer.from(data));
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-merged-${{ github.sha }}-${{ github.run_id }}
+          path: source_in
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-source-index-${{ github.sha }}-${{ github.run_id }}
+          path: source_index_in
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lineup-oracle-prediction-shard-*-${{ github.sha }}-${{ github.run_id }}
+          path: prediction_shards
+      - name: Freeze exact HEAD, identity bridge, rules and all model prediction SHAs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum base.zip|awk '{print $1}')" = "$BASE_ARTIFACT_DIGEST"; test "$(sha256sum prior.zip|awk '{print $1}')" = "$PRIOR_MERGED_DIGEST"
+          unzip -tq base.zip >/dev/null; unzip -tq prior.zip >/dev/null; mkdir base_freeze prior_in; unzip -q base.zip -d base_freeze; unzip -q prior.zip -d prior_in
+          parent="$(git rev-parse HEAD^)"
+          python football-data/research/context_translator_v1/lineup_oracle.py merge-predictions --base base_freeze --prior prior_in --source source_in --predictions prediction_shards --out frozen_out --head "$GITHUB_SHA" --parent "$parent" --code-path football-data/research/context_translator_v1/lineup_oracle.py --code-path football-data/research/context_translator_v1/candidate_c.py --code-path football-data/research/context_translator_v1/candidate_b.py --code-path football-data/research/context_translator_v1/player_strength.py --code-path football-data/research/context_translator_v1/historical_pit_replay.py --code-path football-data/research/context_translator_v1/candidate_b_diagnostic.py --code-path football-data/research/context_translator_v1/lineup_oracle_team_identity_bridge.json --code-path base_freeze/v2_lock.json
+          cp source_index_in/lineup_oracle_team_identity_bridge.json frozen_out/
+          cp source_index_in/team_identity_bridge_receipt.json frozen_out/
+          cp source_index_in/match_identity_join_audit.json frozen_out/
+          cp source_index_in/match_identity_index.jsonl frozen_out/
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('frozen_out'); p=json.load(open(root/'oracle_pre_score_manifest.json')); br=json.load(open(root/'team_identity_bridge_receipt.json')); ja=json.load(open(root/'match_identity_join_audit.json'))
+          assert ja['status']=='PASS' and ja['joined_n']==300 and all(ja[k]==0 for k in ('missing_n','duplicate_n','ambiguous_n','extra_n','home_away_swap_n'))
+          assert p['cohort_identity_sha256']==ja['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          extra=['lineup_oracle_team_identity_bridge.json','team_identity_bridge_receipt.json','match_identity_join_audit.json','match_identity_index.jsonl']
+          for n in extra:
+              raw=(root/n).read_bytes(); p['payload'][n]={'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+          p['team_identity_bridge_raw_sha256']=br['bridge_raw_sha256']; p['team_identity_mapping_set_sha256']=br['mapping_set_sha256']; p['identity_join_sha256']=ja['identity_join_sha256']; p['identity_gate']=ja
+          (root/'oracle_pre_score_manifest.json').write_text(json.dumps(p,indent=2,sort_keys=True)+'\n')
+          assert p['n']==300 and set(p['model_prediction_sha256'])=={'protected_v2','candidate_c_no_lineup','oracle_confirmed_xi','oracle_confirmed_xi_bench','oracle_full'}
+          assert p['labels_read_in_prediction_phase'] is False and p['scorer_invoked'] is False and p['external_data_api_key_used'] is False and p['provider_secret_used'] is False
+          print('ORACLE_PRE_SCORE_FREEZE=PASS',p['team_identity_bridge_raw_sha256'],p['team_identity_mapping_set_sha256'],p['identity_join_sha256'],p['model_prediction_sha256'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-predictions-frozen-${{ github.sha }}-${{ github.run_id }}
+          path: frozen_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  score:
+    needs: merge_predictions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineup-oracle-predictions-frozen-${{ github.sha }}-${{ github.run_id }}
+          path: frozen_in
+      - name: Download protected V2 label vault only after every Oracle prediction SHA is frozen
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs'); const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.V2_ARTIFACT_ID),archive_format:'zip'}); fs.writeFileSync('v2.zip',Buffer.from(data));
+      - name: Independent offline scorer and fixed Oracle decision
+        env:
+          FOOTBALL3_ORACLE_SCORER_NETWORK_POLICY: FORBIDDEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2.zip|awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"; unzip -tq v2.zip >/dev/null; mkdir v2_artifact label_hold; unzip -q v2.zip -d v2_artifact
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_hold/evaluation_label_vault.jsonl
+          git diff --name-only "$BASE_HEAD"...HEAD | sort > changed_paths.txt; parent="$(git rev-parse HEAD^)"
+          python football-data/research/context_translator_v1/lineup_oracle.py score-final --frozen frozen_in --label-vault label_hold/evaluation_label_vault.jsonl --out final_out --head "$GITHUB_SHA" --parent "$parent" --run-id "$GITHUB_RUN_ID" --changed-paths changed_paths.txt
+          rm label_hold/evaluation_label_vault.jsonl; rmdir label_hold
+          python - <<'PY'
+          import json,pathlib,hashlib
+          m=json.load(open('final_out/artifact_manifest.json')); s=json.load(open('final_out/oracle_score.json')); r=json.load(open('final_out/label_access_receipt.json')); p=json.load(open('final_out/oracle_pre_score_manifest.json'))
+          assert m['status']==s['status'] and m['status'] in {'ORACLE_NO_INCREMENT_STOP_TRANSLATOR','ORACLE_INCREMENT_FOUND_DATA_ACQUISITION_REQUIRED'}
+          assert m['n']==300 and m['cohort_identity_sha256']=='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
+          assert r['prediction_phase_label_reads']==0 and r['historical_selected_cohort_labels_scored_after_total_prediction_freeze_n']==300 and r['scorer_network_requests']==0
+          for k in ('team_identity_bridge_raw_sha256','team_identity_mapping_set_sha256','identity_join_sha256','identity_gate'): m[k]=p[k]
+          pathlib.Path('final_out/artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          expected=set(m['payload'])|{'artifact_manifest.json'}; actual={x.name for x in pathlib.Path('final_out').iterdir() if x.is_file()}; assert actual==expected,(sorted(actual),sorted(expected))
+          for n,meta in m['payload'].items(): raw=pathlib.Path('final_out',n).read_bytes(); assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
+          print('ORACLE_SCORER_FINAL=',m['status']); print('ORACLE_MODELS=',s['models']); print('ORACLE_BOOTSTRAP=',s['bootstrap_oracle_full_vs_protected_v2'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-lineup-oracle-v1-${{ github.sha }}-${{ github.run_id }}
+          path: final_out/
+          if-no-files-found: error
+          retention-days: 90
+
+  remote_readback:
+    needs: score
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remote Artifact metadata, ZIP digest, CRC, manifest and payload SHA/bytes readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"; name="football3-context-translator-lineup-oracle-v1-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          for i in $(seq 1 12); do
+            curl -fsSL --max-time 15 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > artifacts.json
+            aid="$(python - "$name" <<'PY'
+          import json,sys
+          xs=[x for x in json.load(open('artifacts.json'))['artifacts'] if x['name']==sys.argv[1]]; print(xs[0]['id'] if len(xs)==1 else '')
+          PY
+          )"; test -n "$aid" && break; sleep 5
+          done
+          test -n "${aid:-}"
+          python - "$name" <<'PY'
+          import json,sys
+          xs=[x for x in json.load(open('artifacts.json'))['artifacts'] if x['name']==sys.argv[1]]; assert len(xs)==1 and xs[0]['expired'] is False
+          open('artifact_id.txt','w').write(str(xs[0]['id'])); open('metadata_digest.txt','w').write(xs[0]['digest'])
+          PY
+          aid="$(cat artifact_id.txt)"; curl -fL --max-time 60 --retry 2 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/artifacts/$aid/zip" -o final.zip
+          zip_sha="$(sha256sum final.zip|awk '{print $1}')"; test "sha256:$zip_sha" = "$(cat metadata_digest.txt)"; unzip -tq final.zip >/dev/null; mkdir remote_final; unzip -q final.zip -d remote_final
+          python - <<'PY'
+          import hashlib,json,pathlib
+          candidates=list(pathlib.Path('remote_final').rglob('artifact_manifest.json')); assert len(candidates)==1; root=candidates[0].parent; m=json.load(open(candidates[0]))
+          expected=set(m['payload'])|{'artifact_manifest.json'}; actual={p.name for p in root.iterdir() if p.is_file()}; assert actual==expected,(sorted(actual),sorted(expected))
+          for n,meta in m['payload'].items(): raw=(root/n).read_bytes(); assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
+          receipt={'schema_version':'football3-lineup-oracle-remote-readback-v2','artifact_id':int(open('artifact_id.txt').read()),'metadata_digest':open('metadata_digest.txt').read().strip(),'zip_sha256':hashlib.sha256(pathlib.Path('final.zip').read_bytes()).hexdigest(),'zip_crc':'PASS','artifact_manifest_sha256':hashlib.sha256(candidates[0].read_bytes()).hexdigest(),'payload_exact_set':True,'payload_sha_and_bytes_verified':True,'status':m['status'],'head':m['head'],'parent':m['parent'],'run_id':m['run_id'],'n':m['n'],'team_identity_bridge_raw_sha256':m['team_identity_bridge_raw_sha256'],'team_identity_mapping_set_sha256':m['team_identity_mapping_set_sha256'],'identity_join_sha256':m['identity_join_sha256'],'identity_gate_status':m['identity_gate']['status']}
+          pathlib.Path('remote_readback_receipt.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n'); print(json.dumps(receipt,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineup-oracle-remote-readback-${{ github.sha }}-${{ github.run_id }}
+          path: remote_readback_receipt.json
           if-no-files-found: error
           retention-days: 90
