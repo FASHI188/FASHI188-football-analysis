@@ -1,0 +1,245 @@
+name: football3 V1.1 Dynamic Base development closure
+
+on:
+  push:
+    branches: [football3/v1-1-dynamic-base-v1]
+    paths:
+      - 'football-data/v1_1_dynamic_base/contracts/V1_1_DYNAMIC_BASE_DESIGN_CONTRACT.md'
+      - 'football-data/v1_1_dynamic_base/contracts/V1_1_DYNAMIC_BASE_PREREGISTRATION.md'
+      - 'football-data/v1_1_dynamic_base/contracts/V1_1_FILE_WHITELIST.md'
+      - 'football-data/v1_1_dynamic_base/v1_1_dynamic_base.py'
+      - 'football-data/v1_1_dynamic_base/test_v1_1_dynamic_base.py'
+      - 'football-data/v1_1_dynamic_base/validate_v1_1_dynamic_base.py'
+      - '.github/workflows/football3-v1-1-dynamic-base-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v1-1-dynamic-base-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 22f639304d2e32fc952dbec2255153ee45dcd41a
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_SHA256: 5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  V1_ENGINE_SHA256: cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318
+  DATA_ARTIFACT_ID: '9742771164'
+  DATA_ARTIFACT_SHA256: ddb8999ada449eb2a587c30bca61a88f7e612219abb9903ac07ca1be211b507a
+  DEVELOPMENT_SHA256: b8713ceed6d57ead7b2aadbb24d3154bf5cb5df0d45eef0e762b5c395d6d4fab
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage and frozen file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$BASE_HEAD" HEAD
+          test "$(git rev-list --count "${BASE_HEAD}..HEAD")" -eq 7
+          changed="$(git diff --name-only "$BASE_HEAD" HEAD)"
+          expected="$(cat <<'EOF'
+          .github/workflows/football3-v1-1-dynamic-base-v1.yml
+          football-data/v1_1_dynamic_base/contracts/V1_1_DYNAMIC_BASE_DESIGN_CONTRACT.md
+          football-data/v1_1_dynamic_base/contracts/V1_1_DYNAMIC_BASE_PREREGISTRATION.md
+          football-data/v1_1_dynamic_base/contracts/V1_1_FILE_WHITELIST.md
+          football-data/v1_1_dynamic_base/test_v1_1_dynamic_base.py
+          football-data/v1_1_dynamic_base/v1_1_dynamic_base.py
+          football-data/v1_1_dynamic_base/validate_v1_1_dynamic_base.py
+          EOF
+          )"
+          test "$(printf '%s\n' "$changed" | sort)" = "$(printf '%s\n' "$expected" | sed 's/^          //' | sort)" || {
+            echo 'OUT_OF_FROZEN_WHITELIST' >&2; printf '%s\n' "$changed" >&2; exit 1;
+          }
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v1
+          printf '%s\n' "$changed" | grep -Eqi '(^|/)(CURRENT|R5)(/|$)|translator|oracle|PR.?334|formal.?weight|global.?registry' && exit 1 || true
+          mkdir -p /tmp/v11/evidence
+          python - <<'PY'
+          import json,os,subprocess
+          changed=subprocess.check_output(['git','diff','--name-only',os.environ['BASE_HEAD'],'HEAD'],text=True).splitlines()
+          r={'status':'FROZEN_FILE_SCOPE_PASS','head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':os.environ['BASE_HEAD'],'changed_files':sorted(changed),'changed_file_n':len(changed),'original_v1_bytes_modified':False}
+          open('/tmp/v11/evidence/governance_receipt.json','w').write(json.dumps(r,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download immutable V1 and development-only evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v1 /tmp/data
+          for spec in "${V1_ARTIFACT_ID}:${V1_ARTIFACT_SHA256}:/tmp/v1.zip" "${DATA_ARTIFACT_ID}:${DATA_ARTIFACT_SHA256}:/tmp/data.zip"; do
+            IFS=: read -r aid sha dst <<< "$spec"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${aid}")"
+            md="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+            case "$md" in sha256:*) ;; *) md="sha256:${md}";; esac
+            test "$md" = "sha256:${sha}"
+            curl -fsSL --retry 2 --connect-timeout 20 -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${aid}/zip" -o "$dst"
+            test "$(sha256sum "$dst" | awk '{print $1}')" = "$sha"
+            unzip -t "$dst" >/dev/null
+          done
+          unzip -q /tmp/v1.zip 'pure_engine.py' 'evidence/historical_oos_result.json' 'evidence/artifact_manifest.json' -d /tmp/v1
+          unzip -q /tmp/data.zip 'dataset/development.jsonl' -d /tmp/data
+          test ! -e /tmp/data/dataset/evaluation_label_vault.jsonl
+          test ! -e /tmp/data/dataset/evaluation_features.jsonl
+          test "$(sha256sum /tmp/v1/pure_engine.py | awk '{print $1}')" = "$V1_ENGINE_SHA256"
+          test "$(sha256sum /tmp/data/dataset/development.jsonl | awk '{print $1}')" = "$DEVELOPMENT_SHA256"
+          python - <<'PY'
+          import json,os
+          a=json.load(open('/tmp/v1/evidence/artifact_manifest.json'))
+          h=json.load(open('/tmp/v1/evidence/historical_oos_result.json'))
+          assert a['head']==os.environ['BASE_HEAD'] and a['branch']=='football3/new-engine-v1'
+          assert h['selected_parameters']=={'half_life_days':260.0,'competition_half_life_days':720.0,'prior_matches':10.0,'competition_prior_matches':28.0,'global_team_prior_matches':14.0,'cross_season_shrink':0.66,'global_team_weight':0.35,'strength_exponent':0.82,'min_rate':0.12,'max_rate':5.5}
+          print('FROZEN_V1_AND_DEVELOPMENT_ONLY_EVIDENCE_PASS')
+          PY
+
+      - name: Compile and run exact-byte deterministic tests
+        shell: bash
+        env:
+          PYTHONPATH: football-data/v1_1_dynamic_base
+          V1_ENGINE_PATH: /tmp/v1/pure_engine.py
+        run: |
+          set -euo pipefail
+          D=football-data/v1_1_dynamic_base
+          python -m py_compile "$D/v1_1_dynamic_base.py" "$D/test_v1_1_dynamic_base.py" "$D/validate_v1_1_dynamic_base.py"
+          python "$D/test_v1_1_dynamic_base.py" -v 2>&1 | tee /tmp/v11/test.log
+          python - <<'PY'
+          import hashlib,json,pathlib
+          log=pathlib.Path('/tmp/v11/test.log').read_text()
+          assert 'Ran 13 tests' in log and '\nOK\n' in log
+          D=pathlib.Path('football-data/v1_1_dynamic_base')
+          files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in [D/'v1_1_dynamic_base.py',D/'test_v1_1_dynamic_base.py',D/'validate_v1_1_dynamic_base.py']}
+          json.dump({'status':'DETERMINISTIC_TESTS_PASS','tests':13,'compiled':True,'file_sha256':files},open('/tmp/v11/evidence/test_receipt.json','w'),indent=2,sort_keys=True); open('/tmp/v11/evidence/test_receipt.json','a').write('\n')
+          PY
+
+      - name: Run frozen development protocol and stop on rejection
+        shell: bash
+        env:
+          PYTHONPATH: football-data/v1_1_dynamic_base
+        run: |
+          set -euo pipefail
+          D=football-data/v1_1_dynamic_base
+          python "$D/validate_v1_1_dynamic_base.py" development \
+            --v1-engine /tmp/v1/pure_engine.py \
+            --v1-result /tmp/v1/evidence/historical_oos_result.json \
+            --development /tmp/data/dataset/development.jsonl \
+            --out-dir /tmp/v11/evidence
+          test ! -e /tmp/data/dataset/evaluation_label_vault.jsonl
+          test ! -e /tmp/v11/evidence/postview_predictions.jsonl
+          test ! -e /tmp/v11/evidence/postview_score.json
+          python - <<'PY'
+          import json,math
+          d=json.load(open('/tmp/v11/evidence/development_result.json'))
+          g=json.load(open('/tmp/v11/evidence/development_gate.json'))
+          assert d['status']=='V1_1_DYNAMIC_BASE_REJECTED' and g['status']=='V1_1_DYNAMIC_BASE_REJECTED'
+          assert d['development_only'] is True and d['postview_labels_read'] is False and d['new_blind_pool_started'] is False
+          assert d['development_n']==1826 and d['candidate_grid_size']==54
+          assert d['outer_v1']['n']==929 and d['outer_v1_1']['n']==929 and len(d['folds'])==8
+          assert d['gates']['fold_nondegrade_n']==4 and d['gates']['fold_nondegrade_at_least_6_of_8'] is False
+          assert abs(d['gates']['pooled_logloss_gain_v1_minus_v1_1']-(-0.001554370221606094))<1e-12
+          assert d['gates']['pooled_logloss_gain_at_least_0_001'] is False
+          assert d['gates']['brier_not_worse'] is False and d['gates']['rps_not_worse'] is False
+          assert d['gates']['top1_delta_at_least_minus_0_0015'] is False
+          assert d['gates']['worst_group_logloss_gate'] is True and d['gates']['competition_season_home_direction_gate'] is True and d['gates']['overall_home_direction_gate'] is True
+          assert d['selected_parameters']=={'dynamic_beta':0.15,'dynamic_cross_season_shrink':0.4,'dynamic_half_life_days':90.0,'dynamic_prior_matches':4.0,'min_effective_evidence':2.0,'pooled_prior_weight':0.5,'residual_clip':2.5}
+          assert g['postview_allowed'] is False
+          print('V1_1_DYNAMIC_BASE_REJECTED_AS_PREREGISTERED; POSTVIEW_NOT_OPENED')
+          PY
+
+      - name: Seal rejected development Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/v11artifact
+          rm -rf "$OUT" && mkdir -p "$OUT/contracts" "$OUT/code" "$OUT/evidence"
+          cp football-data/v1_1_dynamic_base/contracts/*.md "$OUT/contracts/"
+          cp football-data/v1_1_dynamic_base/v1_1_dynamic_base.py football-data/v1_1_dynamic_base/test_v1_1_dynamic_base.py football-data/v1_1_dynamic_base/validate_v1_1_dynamic_base.py "$OUT/code/"
+          cp /tmp/v11/evidence/*.json "$OUT/evidence/"
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path('/tmp/v11artifact'); files={}
+          for p in sorted(root.rglob('*')):
+            if p.is_file():
+              b=p.read_bytes(); files[p.relative_to(root).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          dev=json.load(open(root/'evidence/development_result.json'))
+          m={'schema_version':'football3-v1-1-dynamic-base-artifact-v1','status':'V1_1_DYNAMIC_BASE_REJECTED','head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':os.environ['BASE_HEAD'],'branch':os.environ['GITHUB_REF_NAME'],'run_id':int(os.environ['GITHUB_RUN_ID']),'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),'v1_artifact_id':int(os.environ['V1_ARTIFACT_ID']),'v1_artifact_digest':'sha256:'+os.environ['V1_ARTIFACT_SHA256'],'development_data_artifact_id':int(os.environ['DATA_ARTIFACT_ID']),'development_data_artifact_digest':'sha256:'+os.environ['DATA_ARTIFACT_SHA256'],'development_sha256':os.environ['DEVELOPMENT_SHA256'],'development_n':dev['development_n'],'outer_validation_n':dev['outer_v1_1']['n'],'postview_labels_extracted':False,'postview_labels_read':False,'postview_scored':False,'new_blind_pool_started':False,'formal_weight':0,'formal_enablement':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'original_v1_modified':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload final rejected Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v1-1-dynamic-base-rejected-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/v11artifact/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - name: Remote ZIP digest CRC manifest payload readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.validate-and-seal.outputs.artifact_id }}
+          ART_DIGEST: ${{ needs.validate-and-seal.outputs.artifact_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$ART_DIGEST"; case "$expected" in sha256:*) ;; *) expected="sha256:${expected}";; esac
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"; case "$md" in sha256:*) ;; *) md="sha256:${md}";; esac
+          test "$md" = "$expected"
+          curl -fsSL --retry 2 --connect-timeout 20 -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/final.zip
+          actual="sha256:$(sha256sum /tmp/final.zip | awk '{print $1}')"; test "$actual" = "$expected"
+          unzip -t /tmp/final.zip >/dev/null; mkdir -p /tmp/final; unzip -q /tmp/final.zip -d /tmp/final
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/final'); m=json.load(open(r/'artifact_manifest.json'))
+          assert m['status']=='V1_1_DYNAMIC_BASE_REJECTED' and m['head']==os.environ['GITHUB_SHA'] and m['postview_labels_extracted'] is False and m['postview_labels_read'] is False and m['postview_scored'] is False
+          expected=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==expected
+          for name,rec in m['files'].items():
+            b=(r/name).read_bytes(); assert len(b)==rec['bytes'] and hashlib.sha256(b).hexdigest()==rec['sha256']
+          d=json.load(open(r/'evidence/development_result.json')); t=json.load(open(r/'evidence/test_receipt.json'))
+          assert d['status']=='V1_1_DYNAMIC_BASE_REJECTED' and d['postview_labels_read'] is False and len(d['folds'])==8 and d['gates']['fold_nondegrade_n']==4
+          assert t['status']=='DETERMINISTIC_TESTS_PASS' and t['tests']==13
+          assert not any('postview' in p.name.lower() for p in (r/'evidence').iterdir())
+          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['ART_DIGEST'],'zip_sha256':hashlib.sha256(pathlib.Path('/tmp/final.zip').read_bytes()).hexdigest(),'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(expected)}
+          pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n'); print(json.dumps(receipt,indent=2))
+          PY
+
+      - name: Upload readback receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v1-1-dynamic-base-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/readback.json
+          if-no-files-found: error
+          retention-days: 90
