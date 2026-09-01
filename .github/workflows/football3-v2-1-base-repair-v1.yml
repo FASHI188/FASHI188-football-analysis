@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           BASE=9a03c3aaab5d1f095d53eabd64fd03018850ed13
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = "b381927840a907f5d2951a65acd0c029517880c3"
+          test "$(git rev-parse HEAD^)" = "a58994cff95023b82cc51348a8d2c93627851153"
           git merge-base --is-ancestor "$BASE" HEAD
           git diff --name-only "$BASE"...HEAD > /tmp/changed.txt
           python - <<'PY'
@@ -118,7 +118,7 @@ jobs:
           for k,x in expb.items(): assert abs(b[k]-x)<=1e-12
           fc=[]; gains=[]; nd=0
           for i in range(8):
-            g=a_f=float(af[i]['logloss'])-float(bf[i]['logloss']); gains.append(g); ok=bf[i]['logloss']<=af[i]['logloss']+1e-12; nd+=int(ok); fc.append({'fold':i,'v1':af[i],'v2_1':bf[i],'logloss_gain_v1_minus_v2_1':g,'nondegrade':ok})
+            g=float(af[i]['logloss'])-float(bf[i]['logloss']); gains.append(g); ok=bf[i]['logloss']<=af[i]['logloss']+1e-12; nd+=int(ok); fc.append({'fold':i,'v1':af[i],'v2_1':bf[i],'logloss_gain_v1_minus_v2_1':g,'nondegrade':ok})
           gates={'fold_nondegrade_n':nd,'fold_nondegrade_at_least_6_of_8':nd>=6,'median_fold_logloss_gain':statistics.median(gains),'median_fold_gain_gt_zero':statistics.median(gains)>0,'overall_logloss_gain_v1_minus_v2_1':a['logloss']-b['logloss'],'overall_logloss_gain_at_least_0_001':a['logloss']-b['logloss']>=0.001,'brier_not_worse':b['brier']<=a['brier']+1e-12,'rps_not_worse':b['rps']<=a['rps']+1e-12,'top1_delta':b['top1']-a['top1'],'top1_delta_at_least_minus_0_0015':b['top1']-a['top1']>=-0.0015}
           assert nd==2 and abs(gates['median_fold_logloss_gain']+0.003947912867743153)<=1e-12 and abs(gates['overall_logloss_gain_v1_minus_v2_1']+0.0012031452261345166)<=1e-12
           out={'schema_version':'football3-v2-1-development-fixed-selection-verification-v1','status':'V2_1_DEVELOPMENT_SELECTION_FROZEN','selection_origin':'PREVIOUSLY_FROZEN_DO_NOT_RESELECT','selection_reperformed':False,'development_only':True,'postview_labels_read':False,'development_n':len(dev),'development_sha256':q.sha_file(devp),'v1_lock_sha256':q.sha_file(pathlib.Path('/tmp/base/locks/v1_lock.json')),'v1_engine_sha256':q.sha_file(pathlib.Path('/tmp/v1/pure_engine.py')),'fold_spec':fspec,'selected_parameters':p.__dict__,'v1_overall':a,'v2_1_overall':b,'fold_comparison':fc,'development_gates':gates,'formal_weight':0,'formal_enablement':False}
@@ -186,15 +186,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"; test "$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "$DIGEST"
-          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip; test "sha256:$(sha256sum /tmp/a.zip|awk '{print $1}')" = "$DIGEST"; unzip -t /tmp/a.zip >/dev/null; mkdir /tmp/r; unzip -q /tmp/a.zip -d /tmp/r
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"; test "$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "sha256:${DIGEST}"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip; test "sha256:$(sha256sum /tmp/a.zip|awk '{print $1}')" = "sha256:${DIGEST}"; unzip -t /tmp/a.zip >/dev/null; mkdir /tmp/r; unzip -q /tmp/a.zip -d /tmp/r
           python - <<'PY'
           import hashlib,json,os,pathlib
-          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text()); assert m['status']=='V2_1_BASE_REPAIR_REJECTED' and m['head']==os.environ['GITHUB_SHA'] and m['direct_parent']=='b381927840a907f5d2951a65acd0c029517880c3'
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text()); assert m['status']=='V2_1_BASE_REPAIR_REJECTED' and m['head']==os.environ['GITHUB_SHA'] and m['direct_parent']=='a58994cff95023b82cc51348a8d2c93627851153'
           exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==exp
           for x,v in m['files'].items(): b=(r/x).read_bytes(); assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256']
           s=json.loads((r/'evidence/v2_1_score.json').read_text()); d=json.loads((r/'evidence/development_selection_frozen.json').read_text()); assert s['status']=='V2_1_BASE_REPAIR_REJECTED' and len(s['competition_season'])==15 and all(x['direction_pass'] for x in s['competition_season'].values()); assert len(d['fold_comparison'])==8 and d['development_gates']['fold_nondegrade_n']==2
-          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['DIGEST'],'zip_sha256':hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(),'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp)}; pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
+          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':'sha256:'+os.environ['DIGEST'],'zip_sha256':hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(),'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp)}; pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         with:
