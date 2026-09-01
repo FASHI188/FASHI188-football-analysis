@@ -28,7 +28,8 @@ jobs:
         run: |
           set -euo pipefail
           test "${GITHUB_REF_NAME}" = 'football3/context-translator-v1-confirmation'
-          test "$(git rev-parse HEAD^)" = "$CONFIRMATION_BASE"
+          test "$(git merge-base "$CONFIRMATION_BASE" HEAD)" = "$CONFIRMATION_BASE"
+          test "$(git rev-list --count "$CONFIRMATION_BASE"..HEAD)" -ge 1
           mapfile -t changed < <(git diff --name-only "$CONFIRMATION_BASE"...HEAD)
           test "${#changed[@]}" -eq 1
           test "${changed[0]}" = '.github/workflows/football3-context-translator-v1.yml'
@@ -50,6 +51,7 @@ jobs:
             'base_head':base,
             'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
             'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+            'commit_count_from_base':int(subprocess.check_output(['git','rev-list','--count',base+'..HEAD'],text=True).strip()),
             'changed_paths':changed,
             'only_workflow_changed':changed==['.github/workflows/football3-context-translator-v1.yml'],
             'protected_v2_core_modified':False,'main_modified':False,'current_modified':False,
@@ -183,8 +185,8 @@ jobs:
               else:l1,z1=fallback,None
               full=bool(vectors and len(he)>=11 and len(ae)>=11)
               if full:
-                  sc2=build_lineup_scenarios(he,ae,cutoff=r['cutoff']);l2,z2=run(sc2,'IMPLEMENTED','FULL_EVENT_EXPECTED_LINEUP')
-                  return l1,l2,True,'FULL_EVENT_EXPECTED_LINEUP',float(z2['translated_context']['uncertainty']['total'])
+                  sc2=build_lineup_scenarios(he,ae,cutoff=r['cutoff']);l2,z2=run(sc2,'IMPLEMENTED','FULL_EVENT')
+                  return l1,l2,True,'FULL_EVENT',float(z2['translated_context']['uncertainty']['total'])
               return l1,fallback,False,'FALLBACK_PROTECTED_V2',None
           # Reconstruct protected V2 development predictions with fixed lock; development only.
           ep=ROOT/'football-data/new_engine_v2_joint_score';sys.path.insert(0,str(ep));sys.modules.pop('engine',None);eng=importlib.import_module('engine');sys.path.pop(0)
@@ -271,7 +273,6 @@ jobs:
               vals.sort();lo=vals[int(.025*(reps-1))];hi=vals[int(.975*(reps-1))]
               return {'seed':20260831,'replicates':reps,'point_delta_logloss':sum(d)/n,'ci95':[lo,hi],'p_delta_le_minus_0_001':sum(x<=-.001 for x in vals)/reps}
           boot_l1=boot('layer1','baseline');boot_c=boot('candidate','baseline')
-          def delta(x,y,k):return x[k]-y[k]
           diag={
             'delta_logloss':c['logloss']-b['logloss'],'delta_brier':c['brier']-b['brier'],'delta_rps':c['rps']-b['rps'],'delta_top1':c['top1']-b['top1'],
             'delta_draw_binary_logloss':c['draw']['binary_logloss']-b['draw']['binary_logloss'],'delta_draw_ece':c['draw']['calibration']['ece']-b['draw']['calibration']['ece'],'delta_exact_score_logloss':c['exact_score_logloss']-b['exact_score_logloss'],
