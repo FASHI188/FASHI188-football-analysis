@@ -12,54 +12,171 @@ permissions:
   contents: read
   actions: read
 jobs:
-  source_probe:
+  pit_roster_feasibility:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 90
+    env:
+      BASE_HEAD: 08022b68f58de2445f9ecb88aced0e16b24bb50e
+      V2_ARTIFACT_ID: '9743018815'
+      V2_ARTIFACT_DIGEST: 36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838
+      CANDIDATE_B_ARTIFACT_ID: '9788241266'
+      CANDIDATE_B_ARTIFACT_DIGEST: 33b75e8dca68bf4ad6d00466116c412885355bfa46619bd8bf28f52c3205d961
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact Candidate B PIT roster branch
+        uses: actions/checkout@v4
         with: {fetch-depth: 0}
-      - name: Audit public preview URL coverage and allowed-section parser
+
+      - name: Enforce branch and file governance boundary
         shell: bash
         run: |
           set -euo pipefail
+          test "${GITHUB_REF_NAME}" = 'football3/context-translator-pit-roster-data-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          expected=(
+            '.github/workflows/football3-context-translator-pit-roster-data-v1.yml'
+            'football-data/research/context_translator_v1/pit_roster_candidate_b_diagnostic.py'
+            'football-data/research/context_translator_v1/pit_roster_data.py'
+            'football-data/research/context_translator_v1/test_pit_roster_data.py'
+          )
+          mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${changed[@]}")
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_b.py
+          git diff --quiet "$BASE_HEAD" HEAD -- .github/workflows/football3-context-translator-candidate-b-v1.yml
+          git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || { echo CURRENT_DRIFT; exit 1; }
           mkdir -p pit_roster_out
           python - <<'PY'
-          import datetime,hashlib,html,json,re,urllib.request,xml.etree.ElementTree as ET
-          UA={'User-Agent':'football3-research-pit-audit/1.0 (+public research; no result ingestion)'}
-          def get(url):
-              req=urllib.request.Request(url,headers=UA)
-              with urllib.request.urlopen(req,timeout=45) as r:return r.read(),dict(r.headers)
-          def strip_tags(x):
-              x=re.sub(r'(?is)<script.*?</script>|<style.*?</style>',' ',x)
-              x=re.sub(r'(?s)<[^>]+>',' ',x)
-              return re.sub(r'\s+',' ',html.unescape(x)).strip()
-          urls=[];sitemaps={}
-          for year in (2023,2024):
-              u=f'https://www.sportsmole.co.uk/sitemap-articles-{year}.xml';b,h=get(u);root=ET.fromstring(b)
-              loc=[e.text.strip() for e in root.iter() if e.tag.endswith('loc') and e.text]
-              previews=[x for x in loc if '/football/' in x and '/preview/' in x and x.endswith('.html')]
-              urls.extend(previews);sitemaps[str(year)]={'url':u,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'all_urls':len(loc),'preview_urls':len(previews)}
-          keys=['wolfsburg-vs-hoffenheim','hoffenheim-vs-mainz','koln-vs-rb-leipzig','stuttgart-vs-freiburg','bayern-munich-vs-union-berlin']
-          matches={k:[u for u in urls if k in u.lower()] for k in keys}
-          sample=next((x[0] for x in matches.values() if x),None)
-          parse={}
-          if sample:
-              b,h=get(sample);txt=b.decode('utf-8','replace')
-              # Parse only the article's explicitly prematch Team News -> next section boundary.
-              pub=[]
-              for pat in [r'(?i)Published:\s*</?[^>]*>?\s*([^<]{8,80})',r'(?i)<time[^>]*datetime=["\']([^"\']+)',r'(?i)(\d{1,2}\s+[A-Z][a-z]{2}\s+20\d{2}\s+\d{1,2}:\d{2})']:
-                  pub += re.findall(pat,txt)
-              m=re.search(r'(?is)(?:<h[1-6][^>]*>\s*)?Team News\s*(?:</h[1-6]>)?(.*?)(?=<h[1-6][^>]*>|We say:|What is your prediction|Data Analysis|Previews by email)',txt)
-              frag=m.group(1) if m else ''
-              allowed=strip_tags(frag)
-              parse={'url':sample,'page_bytes':len(b),'publication_candidates':pub[:10],'team_news_found':bool(m),'allowed_fragment_bytes':len(frag.encode()),'allowed_fragment_sha256':hashlib.sha256(frag.encode()).hexdigest() if frag else None,'allowed_text_preview':allowed[:5000],'has_possible_starting_lineup':bool(re.search(r'(?i)possible starting lineup',allowed)),'forbidden_token_scan':{t:bool(re.search(t,allowed,re.I)) for t in ['final score','full[- ]time','match stats','player ratings','post[- ]match']}}
-          out={'schema_version':'football3-pit-roster-source-coverage-probe-v2','collected_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sitemaps':sitemaps,'preview_url_total':len(set(urls)),'query_matches':matches,'sample_parse':parse}
-          open('pit_roster_out/source_probe.json','w').write(json.dumps(out,indent=2,sort_keys=True)+'\n')
-          print(json.dumps(out,indent=2)[:30000])
+          import json,pathlib,subprocess
+          base='08022b68f58de2445f9ecb88aced0e16b24bb50e'
+          changed=sorted(subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines())
+          obj={'schema_version':'football3-pit-roster-governance-v1','status':'RESEARCH_ONLY_POST_VIEW_DATA_FEASIBILITY','branch':'football3/context-translator-pit-roster-data-v1','base_head':base,'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'changed_paths':changed,'global_fixture_consumption_registry_extended':False,'protected_v2_core_modified':False,'candidate_b_thresholds_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'force_used':False,'merge_used':False,'formal_enablement':False,'formal_weight_changed':False}
+          pathlib.Path('pit_roster_out/governance_report.json').write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
           PY
-      - uses: actions/upload-artifact@v4
+
+      - name: Compile and unit-test PIT roster gate
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/context_translator_v1/pit_roster_data.py football-data/research/context_translator_v1/pit_roster_candidate_b_diagnostic.py football-data/research/context_translator_v1/test_pit_roster_data.py
+          python football-data/research/context_translator_v1/test_pit_roster_data.py -v
+          python football-data/research/context_translator_v1/test_candidate_b.py -v
+
+      - name: Download sealed protected V2 and Candidate B Artifact
+        uses: actions/github-script@v7
         with:
-          name: football3-pit-roster-source-probe-${{ github.sha }}-${{ github.run_id }}
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [[Number(process.env.V2_ARTIFACT_ID),'v2_artifact.zip'],[Number(process.env.CANDIDATE_B_ARTIFACT_ID),'candidate_b_artifact.zip']]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+
+      - name: Verify starting Artifacts and physically quarantine labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2_artifact.zip | awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
+          test "$(sha256sum candidate_b_artifact.zip | awk '{print $1}')" = "$CANDIDATE_B_ARTIFACT_DIGEST"
+          mkdir v2_artifact candidate_b_artifact label_vault_hold
+          unzip -q v2_artifact.zip -d v2_artifact
+          unzip -q candidate_b_artifact.zip -d candidate_b_artifact
+          python - <<'PY'
+          import json
+          v=json.load(open('v2_artifact/artifact_manifest.json'));c=json.load(open('candidate_b_artifact/artifact_manifest.json'));g=json.load(open('candidate_b_artifact/candidate_b_gate.json'));s=json.load(open('candidate_b_artifact/candidate_b_score.json'))
+          assert v['run_id']==33348991436 and v['head']=='ef830299e8ee37749ac083e007b4947f8e72d7b7'
+          assert c['head']=='08022b68f58de2445f9ecb88aced0e16b24bb50e' and c['n']==272 and c['formal_weight']==0 and c['formal_promotion_eligible'] is False
+          assert g['candidate_b1_active_n']==0 and g['candidate_b1_b2_active_n']==0 and g['n']==272
+          assert s['formal_weight']==0 and s['formal_promotion_eligible'] is False
+          PY
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_vault_hold/evaluation_label_vault.jsonl
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+
+      - name: Build exact immutable StatsBomb identity inventory
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-inventory statsbomb_source
+
+      - name: Mechanically acquire first 100 PIT roster previews with labels absent
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+          python - <<'PY'
+          import json,pathlib
+          from pit_roster_data import collect
+          a=collect(pathlib.Path('v2_artifact'),pathlib.Path('candidate_b_artifact'),pathlib.Path('statsbomb_source'),pathlib.Path('pit_roster_out'),100)
+          assert a['inventory_n']==100 and a['confirmed_lineup_fixture_n']==0 and a['bench_fixture_n']==0
+          assert a['postmatch_result_fields_persisted'] is False and a['t15_cutoff_used'] is False
+          print(json.dumps(a,indent=2))
+          PY
+
+      - name: Connect PIT roster data to Candidate B with labels absent
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+          python football-data/research/context_translator_v1/pit_roster_candidate_b_diagnostic.py predict --v2 v2_artifact --candidate candidate_b_artifact --source statsbomb_source --roster-out pit_roster_out --out pit_roster_out
+          python - <<'PY'
+          import json
+          p=json.load(open('pit_roster_out/pit_candidate_b_pre_score.json'))
+          assert p['labels_read_in_prediction_phase'] is False and p['new_fixture_labels_read_n']==0 and p['inventory_n']==100
+          assert p['formal_weight']==0 and p['formal_promotion_eligible'] is False
+          PY
+
+      - name: Conditional POST_VIEW scoring on already-unsealed GER1-272 only
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          active=$(python - <<'PY'
+          import json
+          print(json.load(open('pit_roster_out/pit_candidate_b_pre_score.json'))['candidate_b_pit_stack_active_n'])
+          PY
+          )
+          if [ "$active" -ge 30 ]; then
+            python football-data/research/context_translator_v1/pit_roster_candidate_b_diagnostic.py score --candidate candidate_b_artifact --label-vault label_vault_hold/evaluation_label_vault.jsonl --out pit_roster_out
+          else
+            echo "INSUFFICIENT_PIT_ROSTER_DATA active=$active threshold=30; labels remain unopened"
+          fi
+          rm -f label_vault_hold/evaluation_label_vault.jsonl
+          rmdir label_vault_hold
+
+      - name: Seal PIT roster Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp statsbomb_source/statsbomb_source_inventory_receipt.json pit_roster_out/
+          cp statsbomb_source/safe_match_index.json pit_roster_out/statsbomb_safe_match_index.json
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess,os
+          out=pathlib.Path('pit_roster_out');files={}
+          for p in sorted(out.iterdir()):
+              if p.is_file():files[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          gate=json.load(open(out/'pit_roster_gate.json'));audit=json.load(open(out/'pit_roster_inventory_audit.json'));pre=json.load(open(out/'pit_candidate_b_pre_score.json'));gov=json.load(open(out/'governance_report.json'))
+          status=gate['status']
+          assert status in {'INSUFFICIENT_PIT_ROSTER_DATA','PIT_ROSTER_DATA_FEASIBLE_POST_VIEW_COMPLETE'}
+          m={'schema_version':'football3-pit-roster-data-artifact-v1','branch':'football3/context-translator-pit-roster-data-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':'08022b68f58de2445f9ecb88aced0e16b24bb50e','run_id':int(os.environ['GITHUB_RUN_ID']),'status':status,'research_only':True,'formal_promotion_eligible':False,'formal_weight':0,'inventory_n':audit['inventory_n'],'pit_legal_roster_packet_n':audit['pit_legal_roster_packet_n'],'candidate_b_pit_b1_active_n':pre['candidate_b_pit_b1_active_n'],'candidate_b_pit_b2_active_n':pre['candidate_b_pit_b2_active_n'],'candidate_b_pit_stack_active_n':pre['candidate_b_pit_stack_active_n'],'new_fixture_labels_read_n':pre['new_fixture_labels_read_n'],'global_fixture_consumption_registry_extended':False,'protected_v2_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'force_used':False,'merge_used':False,'formal_enablement':False,'source_raw_full_pages_in_artifact':False,'payload_sha256':{'roster_packets':audit['packet_payload_sha256'],'candidate_b_predictions':pre['prediction_payload_sha256'],'gate':hashlib.sha256((out/'pit_roster_gate.json').read_bytes()).hexdigest()},'changed_paths':gov['changed_paths'],'files':files}
+          (out/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload PIT roster feasibility Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-pit-roster-data-v1-${{ github.sha }}-${{ github.run_id }}
           path: pit_roster_out/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+      - name: Terminal integrity gate
+        run: |
+          python - <<'PY'
+          import json
+          g=json.load(open('pit_roster_out/pit_roster_gate.json'));gov=json.load(open('pit_roster_out/governance_report.json'));m=json.load(open('pit_roster_out/artifact_manifest.json'))
+          assert g['pipeline_integrity']=='PASS' and g['status'] in {'INSUFFICIENT_PIT_ROSTER_DATA','PIT_ROSTER_DATA_FEASIBLE_POST_VIEW_COMPLETE'}
+          assert m['head']==gov['head'] and m['parent']==gov['parent'] and m['formal_weight']==0 and m['new_fixture_labels_read_n']==0
+          assert gov['global_fixture_consumption_registry_extended'] is False
+          assert not any(gov[k] for k in ('protected_v2_core_modified','candidate_b_thresholds_modified','main_modified','current_modified','airtable_modified','pr334_modified','r5_modified','force_used','merge_used','formal_enablement','formal_weight_changed'))
+          print(g['status'])
+          PY
