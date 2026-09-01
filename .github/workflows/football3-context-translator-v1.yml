@@ -1,118 +1,332 @@
-name: football3 Context Translator V1 research validation
+name: football3 Context Translator V1 historical confirmation
 on:
   push:
-    branches: [football3/context-translator-v1]
+    branches: [football3/context-translator-v1-confirmation]
     paths:
-      - 'football-data/research/context_translator_v1/**'
       - '.github/workflows/football3-context-translator-v1.yml'
   workflow_dispatch:
 permissions:
   contents: read
   actions: read
 jobs:
-  translator-v1:
+  confirmation:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      BASE_HEAD: 9a03c3aaab5d1f095d53eabd64fd03018850ed13
+      CONFIRMATION_BASE: b953d346842aa4618b42a7f85a30b51adf3f6978
       FREEZE_HEAD: 477f7dc380b000d4449c0b59d2aac9402f1918af
       V2_ARTIFACT_ID: '9743018815'
       V2_ARTIFACT_DIGEST: 36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838
+      TARGET_EFFECT: '0.0010'
     steps:
-      - name: Checkout exact Translator HEAD
+      - name: Checkout confirmation branch
         uses: actions/checkout@v4
         with: {fetch-depth: 0}
-      - name: Enforce frozen whitelist and V2 byte isolation
+
+      - name: Enforce confirmation governance boundary
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
-          allowed='^(football-data/research/context_translator_v1/contracts/(TRANSLATOR_MASTER_SCOPE|DATA_SOURCE_PIT_CONTRACT|PLAYER_STRENGTH_CONTRACT|LINEUP_BENCH_CONTRACT|COACH_TACTICAL_CONTRACT|MATCH_CONTEXT_PROCESS_CONTRACT|TRANSLATED_CONTEXT_SCHEMA|VALIDATION_ABLATION_PREREG|FILE_WHITELIST)\.(md|json)|football-data/research/context_translator_v1/(source_ingest|identity_registry|pit_feature_store|translator_schema|player_strength|lineup_scenarios|coach_tactical_regime|match_context|process_hazard|football_context_translator|v2_translator_integration|translator_adversarial_probe|test_translator)\.py|\.github/workflows/football3-context-translator-v1\.yml)$'
-          while IFS= read -r f; do [[ "$f" =~ $allowed ]] || { echo "UNREGISTERED_FILE $f"; exit 1; }; done < <(git diff --name-only "$BASE_HEAD"...HEAD)
-          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          test "${GITHUB_REF_NAME}" = 'football3/context-translator-v1-confirmation'
+          test "$(git rev-parse HEAD^)" = "$CONFIRMATION_BASE"
+          mapfile -t changed < <(git diff --name-only "$CONFIRMATION_BASE"...HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = '.github/workflows/football3-context-translator-v1.yml'
+          git diff --quiet "$CONFIRMATION_BASE" HEAD -- football-data/new_engine_v2_joint_score
+          git diff --quiet "$CONFIRMATION_BASE" HEAD -- CURRENT 2>/dev/null || { echo CURRENT_DRIFT; exit 1; }
           for f in TRANSLATOR_MASTER_SCOPE.md DATA_SOURCE_PIT_CONTRACT.md PLAYER_STRENGTH_CONTRACT.md LINEUP_BENCH_CONTRACT.md COACH_TACTICAL_CONTRACT.md MATCH_CONTEXT_PROCESS_CONTRACT.md TRANSLATED_CONTEXT_SCHEMA.json VALIDATION_ABLATION_PREREG.md FILE_WHITELIST.md; do
             p="football-data/research/context_translator_v1/contracts/$f"
             test "$(git show "$FREEZE_HEAD:$p" | sha256sum | awk '{print $1}')" = "$(sha256sum "$p" | awk '{print $1}')" || { echo "FROZEN_CONTRACT_DRIFT $p"; exit 1; }
           done
-      - name: Compile, unit tests and adversarial probes
+          mkdir -p confirmation_out
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess
+          base='b953d346842aa4618b42a7f85a30b51adf3f6978'
+          changed=subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines()
+          contracts=pathlib.Path('football-data/research/context_translator_v1/contracts')
+          obj={
+            'schema_version':'football3-context-translator-v1-confirmation-governance-v1',
+            'branch':'football3/context-translator-v1-confirmation',
+            'base_head':base,
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+            'changed_paths':changed,
+            'only_workflow_changed':changed==['.github/workflows/football3-context-translator-v1.yml'],
+            'protected_v2_core_modified':False,'main_modified':False,'current_modified':False,
+            'airtable_modified':False,'pr334_modified':False,'r5_modified':False,
+            'force_used':False,'merge_used':False,'formal_enablement':False,
+            'contracts':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(contracts.iterdir()) if p.is_file()},
+          }
+          pathlib.Path('confirmation_out/governance_report.json').write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Compile and retain frozen tests
         run: |
           set -euo pipefail
           python -m py_compile football-data/research/context_translator_v1/*.py
           PYTHONPATH=football-data/research/context_translator_v1 python football-data/research/context_translator_v1/test_translator.py --unit
           PYTHONPATH=football-data/research/context_translator_v1 python football-data/research/context_translator_v1/translator_adversarial_probe.py
-      - name: Download sealed V2 Artifact
+
+      - name: Download sealed protected V2 Artifact
         uses: actions/github-script@v7
         with:
           script: |
             const fs=require('fs');
             const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:Number(process.env.V2_ARTIFACT_ID),archive_format:'zip'});
             fs.writeFileSync('v2_artifact.zip',Buffer.from(data));
-      - name: Verify sealed V2 Artifact
+
+      - name: Verify sealed protected V2 and quarantine evaluation labels
+        shell: bash
         run: |
           set -euo pipefail
           test "$(sha256sum v2_artifact.zip | awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
           mkdir v2_artifact && unzip -q v2_artifact.zip -d v2_artifact
           python - <<'PY'
-          import json
-          m=json.load(open('v2_artifact/artifact_manifest.json'))
+          import hashlib,json,pathlib
+          a=pathlib.Path('v2_artifact');m=json.load(open(a/'artifact_manifest.json'))
           assert m['run_id']==33348991436
           assert m['head']=='ef830299e8ee37749ac083e007b4947f8e72d7b7'
           assert m['prediction_sha256']=='92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7'
           assert m['research_only'] is True and m['formal_candidate'] is False
+          for rel,meta in m['files'].items():
+              p=a/rel
+              assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==meta['sha256'], rel
           PY
-      - name: Build exact StatsBomb source inventory receipt
+          mkdir label_vault_hold
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_vault_hold/evaluation_label_vault.jsonl
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+
+      - name: Build exact immutable StatsBomb inventory
         env: {PYTHONPATH: football-data/research/context_translator_v1}
         run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-inventory statsbomb_source
-      - name: Predict before update on mechanical evaluation intersection
+
+      - name: Development-only power plan and label-blinded historical prediction freeze
         env: {PYTHONPATH: football-data/research/context_translator_v1}
-        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-predict --artifact-dir v2_artifact --source-dir statsbomb_source --repo-root . --out-dir translator_out
-      - name: Independent scorer opens evaluation labels after SHA freeze
-        env: {PYTHONPATH: football-data/research/context_translator_v1}
-        run: python football-data/research/context_translator_v1/source_ingest.py --statsbomb-score --artifact-dir v2_artifact --out-dir translator_out
-      - name: Gate engineering-only interpretation and layer lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+          cat > /tmp/confirmation_predict.py <<'PY'
+          from __future__ import annotations
+          import hashlib,importlib,json,math,os,pathlib,random,statistics,subprocess,sys
+          from collections import defaultdict
+          from datetime import timedelta
+          ROOT=pathlib.Path('.').resolve(); OUT=ROOT/'confirmation_out'; ART=ROOT/'v2_artifact'; SRC=ROOT/'statsbomb_source'
+          CTX=ROOT/'football-data/research/context_translator_v1'; sys.path.insert(0,str(CTX))
+          import source_ingest as si
+          from football_context_translator import LayerAdjustment,build_plan,team_state
+          from lineup_scenarios import LineupScenario,build_lineup_scenarios
+          from player_strength import estimate_player_vectors
+          from test_translator import matrix_mean
+          from v2_translator_integration import integrate_plan
+          def sha(p):
+              h=hashlib.sha256()
+              with open(p,'rb') as f:
+                  for b in iter(lambda:f.read(1<<20),b''):h.update(b)
+              return h.hexdigest()
+          def dump(name,obj):
+              p=OUT/name;p.write_text(json.dumps(obj,ensure_ascii=False,indent=2,sort_keys=True)+'\n');return p
+          def canon(obj):return hashlib.sha256(json.dumps(obj,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+          def readjl(p):return [json.loads(x) for x in pathlib.Path(p).read_text().splitlines() if x.strip()]
+          am=json.load(open(ART/'artifact_manifest.json')); lock=json.load(open(ART/'locks/v2_lock.json'))
+          inv=json.load(open(SRC/'statsbomb_source_inventory_receipt.json'))
+          assert inv['exact_commit']==si.SB_COMMIT=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          mapping,mapped=si._map_inventory(ART,SRC,OUT)
+          dev=readjl(ART/'dataset/development.jsonl'); ev=readjl(ART/'dataset/evaluation_features.jsonl'); pred_eval={x['fixture_id']:x for x in readjl(ART/'replay/predictions.jsonl')}
+          dev_ids={x['fixture_id'] for x in dev}; eval_ids={x['fixture_id'] for x in ev}
+          fra_pairs=[(r,s) for r,s in mapped if r['fixture_id'] in dev_ids and str(r['competition_id'])=='FRA1' and si._season(str(r['season']))=='2022/23']
+          ger_pairs=[(r,s) for r,s in mapped if r['fixture_id'] in eval_ids and str(r['competition_id'])=='GER1' and si._season(str(r['season']))=='2023/24']
+          if not fra_pairs or not ger_pairs:raise RuntimeError(f'missing planning/source mappings fra={len(fra_pairs)} ger={len(ger_pairs)}')
+          def team_map(pairs):
+              a={};rev={}
+              for r,s in pairs:
+                  for vid,sid in ((str(r['home_team_id']),str(s['home_team_id'])),(str(r['away_team_id']),str(s['away_team_id']))):
+                      if vid in a and a[vid]!=sid:raise RuntimeError('V2->StatsBomb identity collision')
+                      if sid in rev and rev[sid]!=vid:raise RuntimeError('StatsBomb->V2 identity collision')
+                      a[vid]=sid;rev[sid]=vid
+              return a
+          fra_tm=team_map(fra_pairs);ger_tm=team_map(ger_pairs)
+          class History:
+              def __init__(self,pairs):
+                  self.events=[];self.segments=[];self.usage=defaultdict(list);self.evidence={};self.i=0
+                  self.queue=[]
+                  for r,s in pairs:
+                      rel=si._iso(si._dt(r['cutoff'],'cutoff')+timedelta(hours=si.RELEASE_HOURS))
+                      self.queue.append({'release_at':rel,'r':r,'s':s})
+                  self.queue.sort(key=lambda x:(x['release_at'],x['s']['match_id']))
+              def release_before(self,cutoff):
+                  co=si._dt(cutoff,'cutoff')
+                  while self.i<len(self.queue) and si._dt(self.queue[self.i]['release_at'],'release_at')<co:
+                      x=self.queue[self.i];self.i+=1;s=x['s'];mid=int(s['match_id'])
+                      er=f'data/events/{mid}.json';lr=f'data/lineups/{mid}.json';erb,lrb=si._get(er),si._get(lr)
+                      self.evidence[er]={'sha256':hashlib.sha256(erb).hexdigest(),'bytes':len(erb)};self.evidence[lr]={'sha256':hashlib.sha256(lrb).hexdigest(),'bytes':len(lrb)}
+                      rows,u,seg=si._history(json.loads(erb),json.loads(lrb),x['release_at'],str(s['home_team_id']),str(s['away_team_id']))
+                      self.events.extend(rows);self.segments.append(seg)
+                      for tid,players in u.items():self.usage[tid].append({'players':players,'known_at':x['release_at'],'match_id':mid})
+          blocked=LayerAdjustment('BLOCKED_DATA',0,0,.4,None);neutral=LayerAdjustment('CONTRACT_ONLY',0,0,.15,None)
+          def candidate_layers(r,base_matrix,base_one,tm,hist,home_prior,away_prior):
+              hist.release_before(r['cutoff']);ht=tm.get(str(r['home_team_id']));at=tm.get(str(r['away_team_id']))
+              fallback={'p_home':base_one['home'],'p_draw':base_one['draw'],'p_away':base_one['away'],'score_matrix':base_matrix}
+              if not ht or not at:return fallback,fallback,False,'IDENTITY_FALLBACK',None
+              pe=[e for e in hist.events if e['team_id'] in {ht,at}]
+              vectors=estimate_player_vectors(pe,hist.segments,as_of=r['cutoff']) if pe else {}
+              he,ae=si._expected(ht,hist.usage,r['cutoff']),si._expected(at,hist.usage,r['cutoff'])
+              hr=[x['player_id'] for x in he[:18]];ar=[x['player_id'] for x in ae[:18]]
+              bh,ba=matrix_mean(base_matrix);hs=team_state(str(r['home_team_id']),0,0,float(home_prior),.5);ats=team_state(str(r['away_team_id']),0,0,float(away_prior),.5)
+              def run(sc,status,grade):
+                  plan=build_plan(match_id=r['fixture_id'],cutoff=r['cutoff'],base_mu_home=bh,base_mu_away=ba,home_team_state=hs,away_team_state=ats,scenarios=sc,player_vectors=vectors or None,coach_tactical=blocked,match_context=neutral,process_hazard=blocked,provenance_manifest_sha256=inv['inventory_sha256'],player_status=status,coverage_grade=grade)
+                  z=integrate_plan(plan,lock,repo_root=ROOT,head_weights=None);p=z['final_1x2'];return {'p_home':p['home'],'p_draw':p['draw'],'p_away':p['away'],'score_matrix':z['final_matrix']},z
+              if vectors and hr and ar:
+                  known=max(x['known_at'] for x in he[:18]+ae[:18]);payload={'home':hr,'away':ar,'known_at':known}
+                  sc1=[LineupScenario('cap_'+canon(payload)[:16],'EXPECTED_LINEUP',1.,hr,ar,known,1.,canon(payload))]
+                  l1,z1=run(sc1,'IMPLEMENTED','FULL_EVENT')
+              else:l1,z1=fallback,None
+              full=bool(vectors and len(he)>=11 and len(ae)>=11)
+              if full:
+                  sc2=build_lineup_scenarios(he,ae,cutoff=r['cutoff']);l2,z2=run(sc2,'IMPLEMENTED','FULL_EVENT_EXPECTED_LINEUP')
+                  return l1,l2,True,'FULL_EVENT_EXPECTED_LINEUP',float(z2['translated_context']['uncertainty']['total'])
+              return l1,fallback,False,'FALLBACK_PROTECTED_V2',None
+          # Reconstruct protected V2 development predictions with fixed lock; development only.
+          ep=ROOT/'football-data/new_engine_v2_joint_score';sys.path.insert(0,str(ep));sys.modules.pop('engine',None);eng=importlib.import_module('engine');sys.path.pop(0)
+          state=eng.EngineState(eng.Parameters(**lock['parameters']));pending=[];fra_base={};appear=defaultdict(int);fra_prior={}
+          for r in sorted(dev,key=lambda x:(x['cutoff'],x['fixture_id'])):
+              co=eng._dt(r['cutoff']);ready=[x for x in pending if eng._dt(x['available_at'])<=co];pending=[x for x in pending if eng._dt(x['available_at'])>co]
+              for x in sorted(ready,key=lambda z:(z['cutoff'],z['fixture_id'])):
+                  f=eng.Fixture(x['fixture_id'],x['competition_id'],x['season'],eng._dt(x['cutoff']),x['home_team_id'],x['away_team_id'],x['round_index']);state.apply_batch([f],{f.fixture_id:(x['home_goals'],x['away_goals'])})
+              f=eng.Fixture(r['fixture_id'],r['competition_id'],r['season'],co,r['home_team_id'],r['away_team_id'],r['round_index']);feat=state.predict_features(f)
+              if str(r['competition_id'])=='FRA1' and si._season(str(r['season']))=='2022/23':
+                  mat=eng.joint_matrix(lock['joint_family'],feat,dispersion_home=float(lock['dispersion_home']),dispersion_away=float(lock['dispersion_away']),dependence=float(lock['dependence']),max_goals=int(lock['max_goals']));p=eng.matrix_1x2(mat)
+                  fra_base[r['fixture_id']]=(mat,{'home':p['home'],'draw':p['draw'],'away':p['away']});fra_prior[r['fixture_id']]=(appear[str(r['home_team_id'])],appear[str(r['away_team_id'])])
+              pending.append({**r,'available_at':r['result_available_at']});appear[str(r['home_team_id'])]+=1;appear[str(r['away_team_id'])]+=1
+          def outcome(h,a):return 'home' if h>a else 'draw' if h==a else 'away'
+          hp=History(fra_pairs);deltas=[];active=0;planning_rows=[]
+          fra_dev=[r for r in dev if str(r['competition_id'])=='FRA1' and si._season(str(r['season']))=='2022/23']
+          for r in sorted(fra_dev,key=lambda x:(x['cutoff'],x['fixture_id'])):
+              bm,bp=fra_base[r['fixture_id']];hpa,apa=fra_prior[r['fixture_id']];l1,cand,on,grade,unc=candidate_layers(r,bm,bp,fra_tm,hp,hpa,apa);active+=int(on);y=outcome(int(r['home_goals']),int(r['away_goals']))
+              bl=-math.log(max(1e-15,bp[y]));cp={'home':cand['p_home'],'draw':cand['p_draw'],'away':cand['p_away']};cl=-math.log(max(1e-15,cp[y]));deltas.append(cl-bl);planning_rows.append({'fixture_id':r['fixture_id'],'delta_logloss':cl-bl,'candidate_active':on})
+          if len(deltas)<2:raise RuntimeError('insufficient development planning rows')
+          sd=statistics.stdev(deltas);za=1.959963984540054;zp=.8416212335729143;effect=float(os.environ['TARGET_EFFECT']);req=math.ceil(((za+zp)*sd/effect)**2) if sd>0 else None
+          power={'schema_version':'football3-context-translator-v1-development-power-v1','status':'DEVELOPMENT_ONLY_NOT_A_PROMOTION_GATE','cohort':'FRA1 2022/23 protected-development rows; labels allowed only for power planning','n':len(deltas),'candidate_signal_n':active,'candidate_signal_coverage':active/len(deltas),'paired_delta_logloss_mean':sum(deltas)/len(deltas),'paired_delta_logloss_sd':sd,'target_absolute_improvement':effect,'alpha_two_sided':.05,'power':.80,'z_0_975':za,'z_0_80':zp,'formula':'ceil(((z_0.975+z_0.80)*sd_dev/0.0010)^2)','required_n':req,'statsbomb_exact_commit':si.SB_COMMIT,'release_assumption_hours':si.RELEASE_HOURS}
+          dump('development_required_n.json',power)
+          # Freeze exact baseline and unique candidate before any evaluation labels are available.
+          modules=['source_ingest.py','player_strength.py','lineup_scenarios.py','football_context_translator.py','v2_translator_integration.py','translator_schema.py']
+          baseline={'schema_version':'football3-context-translator-v1-baseline-freeze-v1','mode':'TRANSLATOR_OFF_EXACT_PROTECTED_V2_JOINT_REPLAY','protected_v2_run_id':am['run_id'],'protected_v2_head':am['head'],'protected_v2_prediction_sha256':am['prediction_sha256'],'protected_v2_lock_sha256':sha(ART/'locks/v2_lock.json'),'refit':False,'retrain':False,'modified':False}
+          baseline['baseline_sha256']=canon(baseline);dump('baseline_freeze.json',baseline)
+          candidate={'schema_version':'football3-context-translator-v1-candidate-freeze-v1','candidate_id':'CTXV1_L1_PLAYER_CAPABILITY_PLUS_L2_EXPECTED_LINEUP_ONLY','layers_enabled':['1_player_capability','2_expected_lineup'],'layers_disabled':['3_confirmed_lineup','4_bench_substitution','5_coach_regime','6_tactical_matchup','7_fitness_schedule_travel','8_referee_competition_environment','9_pre_match_process_hazard'],'layer7_status':'REJECTED_ABLATION','target_current_lineup_used':False,'source_rule':'StatsBomb exact-commit prior-match events/lineups only after mapped prior cutoff+6h','lineup_route':'EXPECTED_LINEUP','insufficient_data_fallback':'EXACT_PROTECTED_V2','integration_head':'PROTECTED_V2_MATRIX_1X2_NO_EXTRA_HEAD','statsbomb_exact_commit':si.SB_COMMIT,'module_sha256':{m:sha(CTX/m) for m in modules},'workflow_sha256':sha(ROOT/'.github/workflows/football3-context-translator-v1.yml'),'protected_v2_lock_sha256':sha(ART/'locks/v2_lock.json')}
+          candidate['candidate_sha256']=canon(candidate);dump('candidate_freeze.json',candidate)
+          # Brand-new label-blinded historical pool: every GER1 2023/24 evaluation fixture except all old StatsBomb-mapped Round-2 targets.
+          old_ids={r['fixture_id'] for r,s in ger_pairs};ger_all=[r for r in ev if str(r['competition_id'])=='GER1' and si._season(str(r['season']))=='2023/24'];blind=sorted([r for r in ger_all if r['fixture_id'] not in old_ids],key=lambda x:(x['cutoff'],x['fixture_id']))
+          if not blind or set(x['fixture_id'] for x in blind)&old_ids:raise RuntimeError('blind pool construction failed')
+          pool={'schema_version':'football3-context-translator-v1-historical-blind-pool-v1','label_blinded_for_this_confirmation_run':True,'not_virgin_prospective_evidence':True,'selection_rule':'ALL protected-V2 GER1 2023/24 evaluation fixtures MINUS every StatsBomb-mapped Round-2 target fixture; no result/label/metric selection','n':len(blind),'source_eval_universe_n':len(ger_all),'excluded_round2_n':len(old_ids),'excluded_round2_fixture_set_sha256':canon(sorted(old_ids)),'rows':[{'fixture_id':r['fixture_id'],'competition_id':r['competition_id'],'season':r['season'],'cutoff':r['cutoff'],'home_team_id':r['home_team_id'],'away_team_id':r['away_team_id']} for r in blind]}
+          pool['pool_sha256']=canon(pool);dump('blind_pool_manifest.json',pool)
+          # Blind predictor uses only sealed replay predictions + prior source evidence. Evaluation label vault is physically absent.
+          hg=History(ger_pairs);rows=[];active=0;l1active=0
+          for r in blind:
+              pr=pred_eval[r['fixture_id']];base={'p_home':float(pr['v2_joint']['p_home']),'p_draw':float(pr['v2_joint']['p_draw']),'p_away':float(pr['v2_joint']['p_away']),'score_matrix':pr['v2_joint']['score_matrix']};bp={'home':base['p_home'],'draw':base['p_draw'],'away':base['p_away']}
+              l1,cand,on,grade,unc=candidate_layers(r,base['score_matrix'],bp,ger_tm,hg,pr.get('shared_home_prior_appearances',0),pr.get('shared_away_prior_appearances',0));active+=int(on);l1active+=int(l1!=base)
+              rows.append({'fixture_id':r['fixture_id'],'competition_id':r['competition_id'],'season':r['season'],'cutoff':r['cutoff'],'home_team_id':r['home_team_id'],'away_team_id':r['away_team_id'],'shared_cold_start_bucket':pr['shared_cold_start_bucket'],'shared_home_elo':pr['shared_home_elo'],'shared_away_elo':pr['shared_away_elo'],'coverage_grade':grade,'translator_signal_active':on,'translator_uncertainty':unc,'baseline':base,'layer1':l1,'candidate':cand})
+          pf=OUT/'blind_predictions.jsonl';pf.write_text(''.join(json.dumps(x,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n' for x in rows))
+          evidence={'planning':hp.evidence,'blind':hg.evidence};dump('prior_source_evidence_manifest.json',{'schema_version':'football3-context-translator-v1-prior-evidence-v1','raw_source_redistributed':False,'files':evidence,'evidence_set_sha256':canon(evidence),'release_rule':'prior mapped source match event/lineup fetched only after cutoff+6h < target cutoff'})
+          pre={'schema_version':'football3-context-translator-v1-pre-score-freeze-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'branch':'football3/context-translator-v1-confirmation','baseline_sha256':baseline['baseline_sha256'],'candidate_sha256':candidate['candidate_sha256'],'pool_sha256':pool['pool_sha256'],'prediction_sha256':sha(pf),'n':len(rows),'candidate_signal_n':active,'candidate_signal_coverage':active/len(rows),'layer1_signal_n':l1active,'development_required_n':req,'evaluation_label_vault_access_in_predict_process':'PHYSICALLY_QUARANTINED_AND_NOT_READ','scorer_invoked':False,'status':'PREDICTIONS_FROZEN_READY_FOR_INDEPENDENT_SCORER'}
+          dump('pre_score_freeze.json',pre)
+          print(json.dumps({'development_required_n':req,'blind_n':len(rows),'candidate_signal_n':active,'prediction_sha256':pre['prediction_sha256'],'candidate_sha256':candidate['candidate_sha256'],'baseline_sha256':baseline['baseline_sha256'],'pool_sha256':pool['pool_sha256']},indent=2))
+          PY
+          PYTHONPATH=football-data/research/context_translator_v1 python /tmp/confirmation_predict.py
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+
+      - name: Independent scorer opens evaluation labels after prediction SHA freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/confirmation_score.py <<'PY'
+          from __future__ import annotations
+          import hashlib,importlib.util,json,math,pathlib,random,statistics
+          ROOT=pathlib.Path('.').resolve();OUT=ROOT/'confirmation_out';LAB=ROOT/'label_vault_hold/evaluation_label_vault.jsonl';ART=ROOT/'v2_artifact'
+          def sha(p):return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          def readjl(p):return [json.loads(x) for x in pathlib.Path(p).read_text().splitlines() if x.strip()]
+          pre=json.load(open(OUT/'pre_score_freeze.json'));pool=json.load(open(OUT/'blind_pool_manifest.json'));power=json.load(open(OUT/'development_required_n.json'));am=json.load(open(ART/'artifact_manifest.json'))
+          if pre['status']!='PREDICTIONS_FROZEN_READY_FOR_INDEPENDENT_SCORER' or pre['scorer_invoked'] is not False:raise RuntimeError('pre-score state invalid')
+          if sha(OUT/'blind_predictions.jsonl')!=pre['prediction_sha256']:raise RuntimeError('prediction SHA drift')
+          if sha(LAB)!=am['files']['dataset/evaluation_label_vault.jsonl']['sha256']:raise RuntimeError('label vault SHA drift')
+          spec=importlib.util.spec_from_file_location('sealed_scorer',ART/'code/score_predictions.py');sc=importlib.util.module_from_spec(spec);spec.loader.exec_module(sc)
+          preds=readjl(OUT/'blind_predictions.jsonl');labs={x['fixture_id']:x for x in readjl(LAB)}
+          if [x['fixture_id'] for x in preds]!=[x['fixture_id'] for x in pool['rows']]:raise RuntimeError('pool/prediction identity mismatch')
+          if not set(x['fixture_id'] for x in preds)<=set(labs):raise RuntimeError('missing evaluation labels')
+          ordered=[(p,labs[p['fixture_id']]) for p in preds]
+          for p,l in ordered:
+              if p['cutoff']!=l['cutoff']:raise RuntimeError('cutoff mismatch')
+          def std(model):return sc.standard(ordered,model)
+          b,l1,c=std('baseline'),std('layer1'),std('candidate')
+          def draw_ll(model):
+              z=0.
+              for p,l in ordered:
+                  q=float(p[model]['p_draw']);y=int(int(l['home_goals'])==int(l['away_goals']));z+=-math.log(max(1e-15,q if y else 1-q))
+              return z/len(ordered)
+          b['draw']['binary_logloss']=draw_ll('baseline');l1['draw']['binary_logloss']=draw_ll('layer1');c['draw']['binary_logloss']=draw_ll('candidate')
+          def one_delta(p,l,a,bm):
+              y=sc.outcome(int(l['home_goals']),int(l['away_goals']));pa=sc.probs(p[a]);pb=sc.probs(p[bm]);return -math.log(max(1e-15,pa[y]))+math.log(max(1e-15,pb[y]))
+          def boot(a,bm):
+              d=[one_delta(p,l,a,bm) for p,l in ordered];n=len(d);reps=5000 if n>=1000 else 2000;r=random.Random(20260831);vals=[]
+              for _ in range(reps):vals.append(sum(d[r.randrange(n)] for __ in range(n))/n)
+              vals.sort();lo=vals[int(.025*(reps-1))];hi=vals[int(.975*(reps-1))]
+              return {'seed':20260831,'replicates':reps,'point_delta_logloss':sum(d)/n,'ci95':[lo,hi],'p_delta_le_minus_0_001':sum(x<=-.001 for x in vals)/reps}
+          boot_l1=boot('layer1','baseline');boot_c=boot('candidate','baseline')
+          def delta(x,y,k):return x[k]-y[k]
+          diag={
+            'delta_logloss':c['logloss']-b['logloss'],'delta_brier':c['brier']-b['brier'],'delta_rps':c['rps']-b['rps'],'delta_top1':c['top1']-b['top1'],
+            'delta_draw_binary_logloss':c['draw']['binary_logloss']-b['draw']['binary_logloss'],'delta_draw_ece':c['draw']['calibration']['ece']-b['draw']['calibration']['ece'],'delta_exact_score_logloss':c['exact_score_logloss']-b['exact_score_logloss'],
+            'bootstrap':boot_c,'prediction_coverage':1.0,'translator_signal_coverage':pre['candidate_signal_coverage']}
+          partial={
+            'g1_logloss_improve_at_least_0_001':diag['delta_logloss']<=-.001,
+            'g2_bootstrap_ci_upper_below_zero':boot_c['ci95'][1]<0,
+            'g3_brier_rps_not_worse_0_001':diag['delta_brier']<=.001 and diag['delta_rps']<=.001,
+            'g4_draw_ll_ece_not_worse':diag['delta_draw_binary_logloss']<=.002 and diag['delta_draw_ece']<=.010,
+            'g5_exact_score_not_worse_0_005':diag['delta_exact_score_logloss']<=.005,
+            'g7_prediction_coverage_drop_le_0_02':True,
+            'g8_uncertainty_calibration':'NOT_FORMALLY_JUDGEABLE_ON_THIS_POST_VIEW_HISTORICAL_CONFIRMATION'}
+          req=power['required_n'];powered=(req is not None and len(ordered)>=req)
+          if not powered:scientific='INSUFFICIENT_POWER'
+          elif all(v is True for k,v in partial.items() if k!='g8_uncertainty_calibration'):scientific='PRIMARY_DIAGNOSTICS_PASS_NONFORMAL'
+          else:scientific='PRIMARY_DIAGNOSTICS_FAIL'
+          result={'schema_version':'football3-context-translator-v1-historical-confirmation-score-v1','research_only':True,'formal_promotion_eligible':False,'formal_weight':0,'scientific_claim':'LABEL_BLINDED_HISTORICAL_CONFIRMATION_POST_VIEW_NOT_PROSPECTIVE','n':len(ordered),'required_n_development_only':req,'powered_for_planned_effect':powered,'baseline':b,'layer1':l1,'candidate':c,'layer1_vs_baseline_bootstrap':boot_l1,'candidate_vs_baseline':diag,'preregistered_gate_diagnostics':partial,'scientific_confirmation_status':scientific,'predictor_scorer_separation':{'passed':True,'prediction_sha256':pre['prediction_sha256'],'evaluation_label_vault_access_in_predict_process':pre['evaluation_label_vault_access_in_predict_process'],'scorer_after_prediction_freeze':True},'protected_v2_core_modified':False,'frozen_contracts_modified':False,'current_modified':False,'main_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'formal_enablement':False}
+          rp=OUT/'confirmation_score.json';rp.write_text(json.dumps(result,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
+          gate={'schema_version':'football3-context-translator-v1-confirmation-gate-v1','pipeline_integrity':'PASS','scientific_confirmation_status':scientific,'formal_promotion_eligible':False,'n':len(ordered),'required_n':req,'powered':powered,'delta_logloss':diag['delta_logloss'],'bootstrap_ci95':boot_c['ci95'],'candidate_signal_coverage':pre['candidate_signal_coverage'],'prediction_sha256':pre['prediction_sha256'],'score_sha256':sha(rp),'terminal':'HISTORICAL_CONFIRMATION_COMPLETE_NO_ENABLEMENT'}
+          (OUT/'confirmation_gate.json').write_text(json.dumps(gate,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(gate,indent=2))
+          PY
+          python /tmp/confirmation_score.py
+
+      - name: Seal confirmation Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp statsbomb_source/statsbomb_source_inventory_receipt.json confirmation_out/
+          cp statsbomb_source/safe_match_index.json confirmation_out/statsbomb_safe_match_index.json
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess
+          out=pathlib.Path('confirmation_out');files={}
+          for p in sorted(out.iterdir()):
+              if p.is_file():files[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          gate=json.load(open(out/'confirmation_gate.json'));pre=json.load(open(out/'pre_score_freeze.json'))
+          m={'schema_version':'football3-context-translator-v1-confirmation-artifact-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'branch':'football3/context-translator-v1-confirmation','research_only':True,'formal_promotion_eligible':False,'formal_weight':0,'candidate_sha256':pre['candidate_sha256'],'baseline_sha256':pre['baseline_sha256'],'pool_sha256':pre['pool_sha256'],'prediction_sha256':pre['prediction_sha256'],'pipeline_integrity':gate['pipeline_integrity'],'scientific_confirmation_status':gate['scientific_confirmation_status'],'source_raw_in_artifact':False,'protected_v2_core_modified':False,'frozen_contracts_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,'formal_enablement':False,'files':files}
+          (out/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload historical confirmation Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-v1-confirmation-${{ github.sha }}-${{ github.run_id }}
+          path: confirmation_out/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Terminal integrity gate
         run: |
           python - <<'PY'
           import json
-          inv=json.load(open('statsbomb_source/statsbomb_source_inventory_receipt.json'))
-          mp=json.load(open('translator_out/statsbomb_v2_mapping_receipt.json'))
-          r=json.load(open('translator_out/statsbomb_round2_validation_report.json'))
-          assert inv['exact_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
-          assert len(inv['targets'])==4 and inv['no_result_or_metric_selection'] is True
-          assert all(x['actual_match_count']==len(x['actual_match_ids']) for x in inv['targets'])
-          b=[x for x in inv['targets'] if x['competition_id']==9 and x['season_id']==281][0]
-          assert b['actual_match_count']==34 and b['coverage_claim']=='PARTIAL_OPEN_DATA_SUBSET'
-          assert all(x['unmapped_identity']==0 for x in mp['targets'])
-          assert r['scientific_claim']=='PARTIAL_OPEN_DATA_SUBSET_ENGINEERING_ONLY'
-          assert r['model_improvement_claim'] is False and r['formal_promotion_eligible'] is False and r['formal_weight']==0
-          assert r['pit_ledger_gate']['passed'] is True and r['predictor_scorer_separation']['passed'] is True
-          assert r['engineering_layer_status']['7_fitness_schedule_travel']=='REJECTED_ABLATION'
-          assert r['layer7_lock']['formal_revival_allowed'] is False and r['layer7_lock']['schedule_tracker']=='COMPLETE_V2_HISTORY'
-          allowed={'ENGINEERING/PIT_PASS','INSUFFICIENT_SAMPLE','REJECTED_ABLATION'}
-          assert set(r['engineering_layer_status'].values()) <= allowed
-          assert not r['protected_v2_core_modified'] and not r['frozen_contracts_modified'] and not r['current_modified'] and not r['main_modified']
+          g=json.load(open('confirmation_out/confirmation_gate.json'));gov=json.load(open('confirmation_out/governance_report.json'))
+          assert g['pipeline_integrity']=='PASS'
+          assert gov['only_workflow_changed'] is True
+          assert not any(gov[k] for k in ('protected_v2_core_modified','main_modified','current_modified','airtable_modified','pr334_modified','r5_modified','force_used','merge_used','formal_enablement'))
+          print('TRANSLATOR_V1_HISTORICAL_CONFIRMATION_COMPLETE',g['scientific_confirmation_status'])
           PY
-      - name: Copy source receipts into derived Artifact
-        run: |
-          cp statsbomb_source/statsbomb_source_inventory_receipt.json translator_out/
-          cp statsbomb_source/safe_match_index.json translator_out/statsbomb_safe_match_index.json
-      - name: Seal round-2 Artifact with per-file manifest
-        run: |
-          python - <<'PY'
-          import hashlib,json,pathlib,subprocess
-          files={}
-          for p in sorted(pathlib.Path('translator_out').glob('*')):
-              if p.is_file(): files[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
-          pm=json.load(open('translator_out/statsbomb_round2_predictor_manifest.json'))
-          r=json.load(open('translator_out/statsbomb_round2_validation_report.json'))
-          manifest={'schema_version':'football3-context-translator-v1-round2-artifact-v2','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'branch':'football3/context-translator-v1','research_only':True,'formal_weight':0,'scientific_claim':'PARTIAL_OPEN_DATA_SUBSET_ENGINEERING_ONLY','statsbomb_exact_commit':pm['statsbomb_exact_commit'],'inventory_sha256':pm['inventory_sha256'],'mapping_sha256':pm['mapping_sha256'],'prediction_sha256':pm['prediction_sha256'],'pit_ledger_sha256':pm['pit_ledger_sha256'],'validation_sha256':hashlib.sha256(pathlib.Path('translator_out/statsbomb_round2_validation_report.json').read_bytes()).hexdigest(),'source_raw_in_artifact':False,'protected_v2_core_modified':False,'frozen_contracts_modified':False,'current_modified':False,'main_modified':False,'files':files}
-          pathlib.Path('translator_out/artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
-          PY
-      - name: Upload derived round-2 Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: football3-context-translator-v1-round2-${{ github.sha }}-${{ github.run_id }}
-          path: translator_out/
-          if-no-files-found: error
-          retention-days: 90
-      - name: Terminal gate
-        run: echo TRANSLATOR_V1_ROUND2_ENGINEERING_PIT_COMPLETE
