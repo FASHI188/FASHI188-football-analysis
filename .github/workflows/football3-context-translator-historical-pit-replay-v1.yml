@@ -1,0 +1,258 @@
+name: football3 Context Translator Historical PIT Replay v1
+on:
+  push:
+    branches: [football3/context-translator-historical-pit-replay-v1]
+    paths:
+      - '.github/workflows/football3-context-translator-historical-pit-replay-v1.yml'
+      - 'football-data/research/context_translator_v1/candidate_c_historical.py'
+      - 'football-data/research/context_translator_v1/historical_pit_replay.py'
+      - 'football-data/research/context_translator_v1/test_historical_pit_replay.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  historical_pit_replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      BASE_HEAD: '6880c1ac8db1e4a56e83e129188dec85b13bb5db'
+      V2_ARTIFACT_ID: '9743018815'
+      V2_ARTIFACT_DIGEST: '36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838'
+      CANDIDATE_C_ARTIFACT_ID: '9789696828'
+      CANDIDATE_C_ARTIFACT_DIGEST: 'a5f6bc91d09c36537679ddccafe03e6e20de81d4e67bb749cc2b6a58f4a747ad'
+    steps:
+      - name: Checkout exact historical PIT branch
+        uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+
+      - name: Enforce exact branch and governance boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/context-translator-historical-pit-replay-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          expected=(
+            '.github/workflows/football3-context-translator-historical-pit-replay-v1.yml'
+            'football-data/research/context_translator_v1/candidate_c_historical.py'
+            'football-data/research/context_translator_v1/historical_pit_replay.py'
+            'football-data/research/context_translator_v1/test_historical_pit_replay.py'
+          )
+          mapfile -t exp < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${exp[@]}") <(printf '%s\n' "${changed[@]}")
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/new_engine_v2_joint_score
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c.py
+          git diff --quiet "$BASE_HEAD" HEAD -- football-data/research/context_translator_v1/candidate_c_diagnostic.py
+          git diff --quiet "$BASE_HEAD" HEAD -- CURRENT 2>/dev/null || { echo CURRENT_DRIFT; exit 1; }
+          mkdir -p historical_pit_out
+          python - <<'PY'
+          import json,pathlib,subprocess
+          base='6880c1ac8db1e4a56e83e129188dec85b13bb5db'
+          changed=sorted(subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines())
+          obj={
+            'schema_version':'football3-historical-pit-governance-v1',
+            'status':'HISTORICAL_PIT_REPLAY',
+            'branch':'football3/context-translator-historical-pit-replay-v1',
+            'base_head':base,
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+            'changed_paths':changed,
+            'protected_v2_modified':False,'candidate_c_original_modified':False,'main_modified':False,
+            'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,
+            'global_fixture_consumption_registry_extended':False,'force_used':False,'merge_used':False,
+            'ready_used':False,'formal_enablement':False,'formal_weight_changed':False,
+            'api_football_requests':0,'api_keys_or_secrets_used':0,'eightbo_translator_input':False,
+          }
+          pathlib.Path('historical_pit_out/governance_report.json').write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Compile and unit-test historical PIT contracts
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/context_translator_v1/candidate_c_historical.py \
+            football-data/research/context_translator_v1/historical_pit_replay.py \
+            football-data/research/context_translator_v1/test_historical_pit_replay.py
+          python football-data/research/context_translator_v1/test_historical_pit_replay.py -v
+          python football-data/research/context_translator_v1/test_candidate_c.py -v
+          python football-data/research/context_translator_v1/test_candidate_b.py -v
+
+      - name: Download sealed starting Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            for (const [id,name] of [
+              [Number(process.env.V2_ARTIFACT_ID),'v2_artifact.zip'],
+              [Number(process.env.CANDIDATE_C_ARTIFACT_ID),'candidate_c_start.zip']
+            ]) {
+              const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:id,archive_format:'zip'});
+              fs.writeFileSync(name,Buffer.from(data));
+            }
+
+      - name: Verify start identities and physically quarantine outcome labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum v2_artifact.zip | awk '{print $1}')" = "$V2_ARTIFACT_DIGEST"
+          test "$(sha256sum candidate_c_start.zip | awk '{print $1}')" = "$CANDIDATE_C_ARTIFACT_DIGEST"
+          unzip -tq v2_artifact.zip >/dev/null
+          unzip -tq candidate_c_start.zip >/dev/null
+          mkdir v2_artifact candidate_c_start label_vault_hold
+          unzip -q v2_artifact.zip -d v2_artifact
+          unzip -q candidate_c_start.zip -d candidate_c_start
+          python - <<'PY'
+          import json
+          v=json.load(open('v2_artifact/artifact_manifest.json'))
+          c=json.load(open('candidate_c_start/artifact_manifest.json'))
+          assert v['run_id']==33348991436 and v['head']=='ef830299e8ee37749ac083e007b4947f8e72d7b7'
+          assert v['prediction_sha256']=='92dc38866e6e46b167ed6bf0bcfc6f6e0e8b85e57e68cb3a571d3c44fc9461a7'
+          assert c['head']=='6880c1ac8db1e4a56e83e129188dec85b13bb5db' and c['run_id']==33480349073
+          assert c['formal_weight']==0 and c['formal_promotion_eligible'] is False
+          rows=[]
+          for line in open('v2_artifact/dataset/evaluation_features.jsonl'):
+              z=json.loads(line)
+              if str(z['competition_id'])=='ENG1' and str(z['season'])=='2023-24': rows.append(z)
+          assert len(rows)==380
+          PY
+          mv v2_artifact/dataset/evaluation_label_vault.jsonl label_vault_hold/evaluation_label_vault.jsonl
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+
+      - name: Run strict historical PIT predictor with labels absent
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e v2_artifact/dataset/evaluation_label_vault.jsonl
+          python football-data/research/context_translator_v1/historical_pit_replay.py predict --v2 v2_artifact --out historical_pit_out
+          python - <<'PY'
+          import json,pathlib,hashlib
+          p=json.load(open('historical_pit_out/pre_score_manifest.json'))
+          c=json.load(open('historical_pit_out/cohort_manifest.json'))
+          g=json.load(open('historical_pit_out/historical_pit_gate.json'))
+          assert p['labels_read_in_prediction_phase'] is False
+          assert p['new_or_target_labels_read_n']==0
+          assert p['n']==300 and c['n']==300 and c['full_season_n']==380
+          assert c['selection_rule']=='COMPLETE_ENG1_2023_24_SORT_KICKOFF_ASC_FIXTURE_ID_ASC_FIRST_300'
+          assert p['cohort_identity_sha256']==c['cohort_identity_sha256']
+          assert p['uncertainty_contract_monotonic'] is True and p['uncertainty_monotonicity_observed'] is True
+          assert p['api_football_requests']==0 and p['api_keys_or_secrets_used']==0
+          assert p['probability_mass_redistribution_active_n']==0
+          assert g['pipeline_integrity']=='PASS' and g['status']=='HISTORICAL_PIT_REPLAY_PREDICTIONS_FROZEN'
+          assert hashlib.sha256(pathlib.Path('historical_pit_out/historical_pit_predictions.jsonl').read_bytes()).hexdigest()==p['prediction_sha256']
+          PY
+
+      - name: Independently score frozen historical cohort only
+        env: {PYTHONPATH: football-data/research/context_translator_v1}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e label_vault_hold/evaluation_label_vault.jsonl
+          python football-data/research/context_translator_v1/historical_pit_replay.py score --v2 v2_artifact --label-vault label_vault_hold/evaluation_label_vault.jsonl --out historical_pit_out
+          python - <<'PY'
+          import json
+          s=json.load(open('historical_pit_out/historical_pit_score.json'))
+          g=json.load(open('historical_pit_out/historical_pit_gate.json'))
+          assert s['n']==300
+          assert s['status'] in {'HISTORICAL_PIT_NOT_PROMOTED','HISTORICAL_PIT_CANDIDATE_PASSED'}
+          assert s['labels_read_only_after_prediction_sha_freeze'] is True
+          assert s['formal_weight']==0 and s['formal_promotion_eligible'] is False and s['formal_enablement'] is False
+          assert g['status']==s['status']
+          PY
+          python - <<'PY'
+          import json,pathlib
+          pathlib.Path('historical_pit_out/label_access_receipt.json').write_text(json.dumps({
+            'schema_version':'football3-historical-pit-label-access-v1',
+            'prediction_phase_label_reads':0,
+            'historical_selected_cohort_labels_scored_after_prediction_freeze_n':300,
+            'selection_changed_after_label_access':False,
+            'scoring_only':True,
+          },indent=2,sort_keys=True)+'\n')
+          PY
+          rm -f label_vault_hold/evaluation_label_vault.jsonl
+          rmdir label_vault_hold
+
+      - name: Seal historical PIT Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          out=pathlib.Path('historical_pit_out')
+          pre=json.load(open(out/'pre_score_manifest.json'))
+          score=json.load(open(out/'historical_pit_score.json'))
+          gate=json.load(open(out/'historical_pit_gate.json'))
+          gov=json.load(open(out/'governance_report.json'))
+          assert score['status'] in {'HISTORICAL_PIT_NOT_PROMOTED','HISTORICAL_PIT_CANDIDATE_PASSED'}
+          payload={
+            'cohort_manifest':hashlib.sha256((out/'cohort_manifest.json').read_bytes()).hexdigest(),
+            'pit_roster_packets':hashlib.sha256((out/'pit_roster_packets.jsonl').read_bytes()).hexdigest(),
+            'predictions':hashlib.sha256((out/'historical_pit_predictions.jsonl').read_bytes()).hexdigest(),
+            'pit_ledger':hashlib.sha256((out/'historical_pit_ledger.jsonl').read_bytes()).hexdigest(),
+            'pre_score_manifest':hashlib.sha256((out/'pre_score_manifest.json').read_bytes()).hexdigest(),
+            'score':hashlib.sha256((out/'historical_pit_score.json').read_bytes()).hexdigest(),
+            'gate':hashlib.sha256((out/'historical_pit_gate.json').read_bytes()).hexdigest(),
+            'label_access_receipt':hashlib.sha256((out/'label_access_receipt.json').read_bytes()).hexdigest(),
+          }
+          files={}
+          for p in sorted(out.iterdir()):
+              if p.is_file(): files[p.name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          m={
+            'schema_version':'football3-context-translator-historical-pit-replay-artifact-v1',
+            'status':score['status'],'scientific_claim':'HISTORICAL_PIT_REPLAY_ONLY_NOT_FUTURE_PROSPECTIVE_NOT_NEW_BLIND_TEST',
+            'branch':'football3/context-translator-historical-pit-replay-v1',
+            'base_head':'6880c1ac8db1e4a56e83e129188dec85b13bb5db',
+            'head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+            'run_id':int(os.environ['GITHUB_RUN_ID']),
+            'n':300,'full_season_n':380,'league':'ENG1','season':'2023-24','prediction_cutoff':'kickoff_minus_15_minutes',
+            'cohort_identity_sha256':pre['cohort_identity_sha256'],
+            'evidence_grade_counts':pre['evidence_grade_counts'],'component_activation_n':pre['component_activation_n'],
+            'model_activation_n':pre['model_activation_n'],'fallback_n':pre['candidate_c_fallback_n'],
+            'identity_match_rate':pre['identity_match_rate'],'historical_capability_coverage_rate':pre['historical_capability_coverage_rate'],
+            'uncertainty_monotonicity':pre['uncertainty_monotonicity_observed'],
+            'historical_selected_cohort_labels_scored_after_prediction_freeze_n':300,
+            'prediction_phase_label_reads':0,'api_football_requests':0,'api_keys_or_secrets_used':0,
+            'global_fixture_consumption_registry_extended':False,'protected_v2_modified':False,'candidate_c_original_modified':False,
+            'main_modified':False,'current_modified':False,'airtable_modified':False,'pr334_modified':False,'r5_modified':False,
+            'formal_weight':0,'formal_promotion_eligible':False,'formal_enablement':False,'force_used':False,'merge_used':False,'ready_used':False,
+            'starting_candidate_c_artifact_id':9789696828,'starting_candidate_c_artifact_digest':'sha256:a5f6bc91d09c36537679ddccafe03e6e20de81d4e67bb749cc2b6a58f4a747ad',
+            'protected_v2_artifact_id':9743018815,'protected_v2_artifact_digest':'sha256:36c33be9370abceb65cef5c9c8891dfa053c398e3fe9b7c0b81fa07e18114838',
+            'changed_paths':gov['changed_paths'],'payload_sha256':payload,'files':files,
+          }
+          (out/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload historical PIT Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-context-translator-historical-pit-replay-v1-${{ github.sha }}-${{ github.run_id }}
+          path: historical_pit_out/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Terminal integrity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e label_vault_hold/evaluation_label_vault.jsonl 2>/dev/null || exit 1
+          python - <<'PY'
+          import json,pathlib,hashlib
+          out=pathlib.Path('historical_pit_out')
+          m=json.load(open(out/'artifact_manifest.json'));s=json.load(open(out/'historical_pit_score.json'));g=json.load(open(out/'historical_pit_gate.json'));p=json.load(open(out/'pre_score_manifest.json'));gov=json.load(open(out/'governance_report.json'))
+          assert m['status']==s['status']==g['status']
+          assert s['status'] in {'HISTORICAL_PIT_NOT_PROMOTED','HISTORICAL_PIT_CANDIDATE_PASSED'}
+          assert m['head']==gov['head'] and m['parent']==gov['parent']
+          assert p['labels_read_in_prediction_phase'] is False and m['prediction_phase_label_reads']==0
+          assert m['historical_selected_cohort_labels_scored_after_prediction_freeze_n']==300
+          assert p['uncertainty_contract_monotonic'] is True and p['uncertainty_monotonicity_observed'] is True
+          assert m['formal_weight']==0 and m['formal_promotion_eligible'] is False and m['formal_enablement'] is False
+          assert not any(gov[k] for k in ('protected_v2_modified','candidate_c_original_modified','main_modified','current_modified','airtable_modified','pr334_modified','r5_modified','global_fixture_consumption_registry_extended','force_used','merge_used','ready_used','formal_enablement','formal_weight_changed'))
+          for name,meta in m['files'].items():
+              raw=(out/name).read_bytes();assert len(raw)==meta['bytes'] and hashlib.sha256(raw).hexdigest()==meta['sha256']
+          for key,name in {'cohort_manifest':'cohort_manifest.json','pit_roster_packets':'pit_roster_packets.jsonl','predictions':'historical_pit_predictions.jsonl','pit_ledger':'historical_pit_ledger.jsonl','pre_score_manifest':'pre_score_manifest.json','score':'historical_pit_score.json','gate':'historical_pit_gate.json','label_access_receipt':'label_access_receipt.json'}.items():
+              assert hashlib.sha256((out/name).read_bytes()).hexdigest()==m['payload_sha256'][key]
+          print(s['status'])
+          PY
