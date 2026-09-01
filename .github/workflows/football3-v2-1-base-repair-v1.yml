@@ -1,0 +1,204 @@
+name: football3 V2.1 Base Repair engineering closure
+
+on:
+  push:
+    branches: [football3/new-engine-v2-1-base-repair-v1]
+    paths:
+      - 'football-data/new_engine_v2_joint_score/contracts/V2_1_*.md'
+      - 'football-data/new_engine_v2_joint_score/v2_1_base.py'
+      - 'football-data/new_engine_v2_joint_score/test_v2_1_base.py'
+      - 'football-data/research/v2_pit_history/v2_1_base_validate.py'
+      - '.github/workflows/football3-v2-1-base-repair-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v2-1-base-repair-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage and frozen file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=9a03c3aaab5d1f095d53eabd64fd03018850ed13
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "b381927840a907f5d2951a65acd0c029517880c3"
+          git merge-base --is-ancestor "$BASE" HEAD
+          git diff --name-only "$BASE"...HEAD > /tmp/changed.txt
+          python - <<'PY'
+          from pathlib import Path
+          got={x for x in Path('/tmp/changed.txt').read_text().splitlines() if x}
+          allowed={
+          'football-data/new_engine_v2_joint_score/contracts/V2_1_BASE_DESIGN_CONTRACT.md',
+          'football-data/new_engine_v2_joint_score/contracts/V2_1_STATE_SIGN_CONTRACT.md',
+          'football-data/new_engine_v2_joint_score/contracts/V2_1_PIT_UPDATE_CONTRACT.md',
+          'football-data/new_engine_v2_joint_score/contracts/V2_1_FILE_WHITELIST.md',
+          'football-data/new_engine_v2_joint_score/contracts/V2_1_VALIDATION_PREREGISTRATION.md',
+          'football-data/new_engine_v2_joint_score/v2_1_base.py',
+          'football-data/new_engine_v2_joint_score/test_v2_1_base.py',
+          'football-data/research/v2_pit_history/v2_1_base_validate.py',
+          '.github/workflows/football3-v2-1-base-repair-v1.yml'}
+          assert got==allowed,(sorted(got-allowed),sorted(allowed-got))
+          PY
+          git diff --quiet "$BASE" HEAD -- football-data/new_engine_v2_joint_score/engine.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile and run exact-byte deterministic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=football-data/new_engine_v2_joint_score
+          R=football-data/research/v2_pit_history
+          mkdir -p /tmp/v21/evidence
+          python -m py_compile "$E/v2_1_base.py" "$E/test_v2_1_base.py" "$R/v2_1_base_validate.py"
+          (cd "$E" && python test_v2_1_base.py -v 2>&1) | tee /tmp/v21/evidence/deterministic_tests.txt
+          grep -Eq '^Ran 13 tests' /tmp/v21/evidence/deterministic_tests.txt
+          grep -Eq '^OK$' /tmp/v21/evidence/deterministic_tests.txt
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          paths=['football-data/new_engine_v2_joint_score/v2_1_base.py','football-data/new_engine_v2_joint_score/test_v2_1_base.py','football-data/research/v2_pit_history/v2_1_base_validate.py']
+          d={'status':'V2_1_EXACT_BYTES_TESTS_PASS','tests':13,'compile_pass':True,'head':os.environ['GITHUB_SHA'],'files':{}}
+          for p in paths:
+            b=pathlib.Path(p).read_bytes(); d['files'][p]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          pathlib.Path('/tmp/v21/evidence/exact_bytes_test_receipt.json').write_text(json.dumps(d,indent=2)+'\n')
+          PY
+
+      - name: Download immutable V1 and old-V2 evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v1 /tmp/base
+          get_art(){ art=$1; sha=$2; zip=$3; dst=$4; meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${art}")"; test "$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "sha256:${sha}"; curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${art}/zip" -o "$zip"; test "$(sha256sum "$zip"|awk '{print $1}')" = "$sha"; unzip -t "$zip" >/dev/null; unzip -q "$zip" -d "$dst"; }
+          get_art 9732754224 5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb /tmp/v1.zip /tmp/v1
+          get_art 9742771164 ddb8999ada449eb2a587c30bca61a88f7e612219abb9903ac07ca1be211b507a /tmp/base.zip /tmp/base
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads((Path('/tmp/base')/'dataset/dataset_manifest.json').read_text()); s=json.loads((Path('/tmp/base')/'score/score_receipt.json').read_text())
+          assert d['development_n']==1826 and d['evaluation_n']==5256 and s['status']=='INDEPENDENT_SCORER_PASSED' and s['n']==5256
+          assert (Path('/tmp/v1')/'pure_engine.py').is_file()
+          PY
+
+      - name: Verify frozen development selection without reselecting parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=football-data/new_engine_v2_joint_score; R=football-data/research/v2_pit_history
+          PYTHONPATH="$E:$R" python - <<'PY'
+          import json,pathlib,statistics
+          import v2_1_base as v
+          import v2_1_base_validate as q
+          devp=pathlib.Path('/tmp/base/dataset/development.jsonl'); dev=q.read_jsonl(devp); fmap,fspec=q.fold_assignment(dev)
+          v1=q.import_v1(pathlib.Path('/tmp/v1')); lock=json.loads(pathlib.Path('/tmp/base/locks/v1_lock.json').read_text()); a,af=q.replay_v1(dev,v1,lock,fmap)
+          p=v.Parameters(team_half_life_days=480.0,competition_half_life_days=540.0,team_prior_matches=6.0,competition_prior_matches=48.0,residual_strength=0.85,cross_season_shrink=0.40,global_home_rate=1.38,global_away_rate=1.12,min_rate=0.08,max_rate=6.0,max_goals=14,team_venue_bias_enabled=False)
+          b,bf,_=q.replay21(dev,p,fmap,finish_all=False)
+          expa={'logloss':1.0145581447898933,'brier':0.6075262128372859,'rps':0.21187793293498597,'top1':0.5087623220153341}; expb={'logloss':1.0157612900160278,'brier':0.6082162288134821,'rps':0.212219984308986,'top1':0.5186199342825849}
+          for k,x in expa.items(): assert abs(a[k]-x)<=1e-12
+          for k,x in expb.items(): assert abs(b[k]-x)<=1e-12
+          fc=[]; gains=[]; nd=0
+          for i in range(8):
+            g=a_f=float(af[i]['logloss'])-float(bf[i]['logloss']); gains.append(g); ok=bf[i]['logloss']<=af[i]['logloss']+1e-12; nd+=int(ok); fc.append({'fold':i,'v1':af[i],'v2_1':bf[i],'logloss_gain_v1_minus_v2_1':g,'nondegrade':ok})
+          gates={'fold_nondegrade_n':nd,'fold_nondegrade_at_least_6_of_8':nd>=6,'median_fold_logloss_gain':statistics.median(gains),'median_fold_gain_gt_zero':statistics.median(gains)>0,'overall_logloss_gain_v1_minus_v2_1':a['logloss']-b['logloss'],'overall_logloss_gain_at_least_0_001':a['logloss']-b['logloss']>=0.001,'brier_not_worse':b['brier']<=a['brier']+1e-12,'rps_not_worse':b['rps']<=a['rps']+1e-12,'top1_delta':b['top1']-a['top1'],'top1_delta_at_least_minus_0_0015':b['top1']-a['top1']>=-0.0015}
+          assert nd==2 and abs(gates['median_fold_logloss_gain']+0.003947912867743153)<=1e-12 and abs(gates['overall_logloss_gain_v1_minus_v2_1']+0.0012031452261345166)<=1e-12
+          out={'schema_version':'football3-v2-1-development-fixed-selection-verification-v1','status':'V2_1_DEVELOPMENT_SELECTION_FROZEN','selection_origin':'PREVIOUSLY_FROZEN_DO_NOT_RESELECT','selection_reperformed':False,'development_only':True,'postview_labels_read':False,'development_n':len(dev),'development_sha256':q.sha_file(devp),'v1_lock_sha256':q.sha_file(pathlib.Path('/tmp/base/locks/v1_lock.json')),'v1_engine_sha256':q.sha_file(pathlib.Path('/tmp/v1/pure_engine.py')),'fold_spec':fspec,'selected_parameters':p.__dict__,'v1_overall':a,'v2_1_overall':b,'fold_comparison':fc,'development_gates':gates,'formal_weight':0,'formal_enablement':False}
+          q.write_json(pathlib.Path('/tmp/v21/development_selection_frozen.json'),out)
+          PY
+
+      - name: Freeze post-view predictions and score once
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=football-data/new_engine_v2_joint_score; R=football-data/research/v2_pit_history
+          PYTHONPATH="$E:$R" python "$R/v2_1_base_validate.py" predict-postview --development /tmp/base/dataset/development.jsonl --features /tmp/base/dataset/evaluation_features.jsonl --label-vault /tmp/base/dataset/evaluation_label_vault.jsonl --selection /tmp/v21/development_selection_frozen.json --out-dir /tmp/v21/postpred
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/v21/postpred/pre_score_manifest.json').read_text()); assert p['status']=='V2_1_POSTVIEW_PREDICTIONS_FROZEN' and p['n']==5256 and p['target_label_reads_before_own_prediction']==0
+          PY
+          PYTHONPATH="$E:$R" python "$R/v2_1_base_validate.py" score-postview --predictions /tmp/v21/postpred/v2_1_postview_predictions.jsonl --pre-score /tmp/v21/postpred/pre_score_manifest.json --label-vault /tmp/base/dataset/evaluation_label_vault.jsonl --base-metrics /tmp/base/score/metrics.json --base-predictions /tmp/base/replay/predictions.jsonl --selection /tmp/v21/development_selection_frozen.json --out-dir /tmp/v21/postscore
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('/tmp/v21/postscore/v2_1_score.json').read_text()); g=json.loads(Path('/tmp/v21/postscore/v2_1_gate.json').read_text())
+          assert s['status']==g['status']=='V2_1_BASE_REPAIR_REJECTED'; assert s['n']==5256; assert s['postview_gates']['competition_season_group_n']==15 and s['postview_gates']['competition_season_direction_all_pass'] is True; assert len(s['competition_season'])==15 and all(x['direction_pass'] for x in s['competition_season'].values())
+          PY
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          O=/tmp/art; mkdir -p "$O/contracts" "$O/code" "$O/evidence"
+          cp football-data/new_engine_v2_joint_score/contracts/V2_1_*.md "$O/contracts/"; cp football-data/new_engine_v2_joint_score/v2_1_base.py football-data/new_engine_v2_joint_score/test_v2_1_base.py "$O/code/"; cp football-data/research/v2_pit_history/v2_1_base_validate.py "$O/code/"; cp .github/workflows/football3-v2-1-base-repair-v1.yml "$O/code/workflow.yml"
+          cp /tmp/v21/evidence/* /tmp/v21/development_selection_frozen.json /tmp/v21/postpred/pre_score_manifest.json /tmp/v21/postpred/pit_release_audit.json /tmp/v21/postscore/v2_1_score.json /tmp/v21/postscore/v2_1_gate.json "$O/evidence/"; cp /tmp/base/score/metrics.json "$O/evidence/frozen_old_v2_metrics.json"
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('/tmp/art'); files={}
+          for p in sorted(r.rglob('*')):
+            if p.is_file(): b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          m={'schema_version':'football3-v2-1-base-repair-artifact-v1','status':'V2_1_BASE_REPAIR_REJECTED','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':'9a03c3aaab5d1f095d53eabd64fd03018850ed13','run_id':int(os.environ['GITHUB_RUN_ID']),'development_selection_reperformed':False,'post_view_diagnostic':True,'strict_prospective':False,'new_confirmation_cohort_opened':False,'formal_weight':0,'formal_enablement':False,'protected_v2_modified':False,'main_modified':False,'current_modified':False,'airtable_modified':False,'oracle_modified':False,'translator_modified':False,'pr334_modified':False,'r5_modified':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload final rejected Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v2-1-base-repair-rejected-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/art/
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Remote digest CRC manifest payload readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.validate-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.validate-and-seal.outputs.artifact_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"; test "$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "$DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip; test "sha256:$(sha256sum /tmp/a.zip|awk '{print $1}')" = "$DIGEST"; unzip -t /tmp/a.zip >/dev/null; mkdir /tmp/r; unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text()); assert m['status']=='V2_1_BASE_REPAIR_REJECTED' and m['head']==os.environ['GITHUB_SHA'] and m['direct_parent']=='b381927840a907f5d2951a65acd0c029517880c3'
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==exp
+          for x,v in m['files'].items(): b=(r/x).read_bytes(); assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256']
+          s=json.loads((r/'evidence/v2_1_score.json').read_text()); d=json.loads((r/'evidence/development_selection_frozen.json').read_text()); assert s['status']=='V2_1_BASE_REPAIR_REJECTED' and len(s['competition_season'])==15 and all(x['direction_pass'] for x in s['competition_season'].values()); assert len(d['fold_comparison'])==8 and d['development_gates']['fold_nondegrade_n']==2
+          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['DIGEST'],'zip_sha256':hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(),'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp)}; pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v2-1-base-repair-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/readback.json
+          if-no-files-found: error
+          retention-days: 90
