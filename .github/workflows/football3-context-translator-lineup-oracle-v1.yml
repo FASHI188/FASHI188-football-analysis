@@ -51,11 +51,11 @@ jobs:
           mkdir base_freeze identity_enum
           unzip -q base.zip -d base_freeze
           python - <<'PY'
-          import hashlib,json,pathlib,urllib.request
+          import hashlib,json,pathlib,urllib.parse,urllib.request
           COHORT_SHA='4663d6a534840e4b80975ee104e86bed0b5402cb332ee28d46c9cac4da2c9cba'
           BASE='https://sdp-prem-prod.premier-league-prod.pulselive.com'
           teams_url=BASE+'/api/v1/competitions/8/seasons/2023/teams?_limit=60'
-          matches_url=BASE+'/api/v2/matches?competition=8&season=2023&_limit=500'
+          matches_base=BASE+'/api/v2/matches?competition=8&season=2023&_limit=100'
           cm=json.load(open('base_freeze/cohort_manifest.json'))
           assert cm['cohort_identity_sha256']==COHORT_SHA and cm['n']==300
           c={}
@@ -67,9 +67,8 @@ jobs:
           def get(url):
               req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'football3-oracle-identity-enum/1.0'})
               with urllib.request.urlopen(req,timeout=20) as r:return r.read()
-          traw=get(teams_url); mraw=get(matches_url)
+          traw=get(teams_url)
           pathlib.Path('identity_enum/official_teams_raw.json').write_bytes(traw)
-          pathlib.Path('identity_enum/official_matches_raw.json').write_bytes(mraw)
           tp=json.loads(traw); teams=tp.get('data',tp)
           assert isinstance(teams,list) and len(teams)==20, len(teams)
           official=[]
@@ -77,11 +76,23 @@ jobs:
               official.append({'premier_league_official_team_id':str(t['id']),'premier_league_official_name':str(t.get('name') or ''),'short_name':str(t.get('shortName') or ''),'abbr':str(t.get('abbr') or ''),'source_url':BASE+f"/api/v1/competitions/8/teams/{t['id']}",'season_membership_source_url':teams_url})
           ids=[x['premier_league_official_team_id'] for x in official]
           assert len(set(ids))==20
-          mp=json.loads(mraw); matches=mp.get('data',mp)
-          assert isinstance(matches,list) and len(matches)==380, len(matches)
+          matches=[]; match_receipts=[]; nxt=None
+          for page in range(10):
+              url=matches_base if not nxt else matches_base+'&_next='+urllib.parse.quote(str(nxt),safe='')
+              raw=get(url)
+              pathlib.Path(f'identity_enum/official_matches_{page:02d}.json').write_bytes(raw)
+              p=json.loads(raw); data=p.get('data')
+              assert isinstance(data,list)
+              matches.extend(data)
+              match_receipts.append({'page':page,'url':url,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'n':len(data)})
+              nxt=(p.get('pagination') or {}).get('_next')
+              if not nxt: break
+          assert len(matches)==380, len(matches)
+          mids=[str(m.get('matchId') or m.get('id')) for m in matches]
+          assert len(set(mids))==380
           match_team_ids=sorted({str((m.get(s) or {}).get('id')) for m in matches for s in ('homeTeam','awayTeam')})
-          assert set(match_team_ids)==set(ids)
-          out={'schema_version':'football3-pl-2023-24-team-identity-enumeration-v1','cohort_sha256':COHORT_SHA,'cohort_team_n':20,'cohort_teams':cohort,'official_team_n':20,'official_teams':sorted(official,key=lambda x:x['premier_league_official_name']),'official_season_team_ids':sorted(ids),'match_index_n':380,'match_index_team_ids':match_team_ids,'teams_source_url':teams_url,'matches_source_url':matches_url,'teams_raw_sha256':hashlib.sha256(traw).hexdigest(),'matches_raw_sha256':hashlib.sha256(mraw).hexdigest(),'labels_read':0,'scorer_invoked':False,'api_key_used':False,'secret_used':False}
+          assert set(match_team_ids)==set(ids),(match_team_ids,ids)
+          out={'schema_version':'football3-pl-2023-24-team-identity-enumeration-v1','cohort_sha256':COHORT_SHA,'cohort_team_n':20,'cohort_teams':cohort,'official_team_n':20,'official_teams':sorted(official,key=lambda x:x['premier_league_official_name']),'official_season_team_ids':sorted(ids),'match_index_n':380,'match_index_team_ids':match_team_ids,'teams_source_url':teams_url,'matches_source_base_url':matches_base,'teams_raw_sha256':hashlib.sha256(traw).hexdigest(),'match_page_receipts':match_receipts,'matches_pages_aggregate_sha256':hashlib.sha256(json.dumps(match_receipts,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'labels_read':0,'scorer_invoked':False,'api_key_used':False,'secret_used':False}
           raw=json.dumps(out,sort_keys=True,ensure_ascii=False,indent=2).encode()+b'\n'
           pathlib.Path('identity_enum/identity_enumeration.json').write_bytes(raw)
           print(json.dumps(out,sort_keys=True))
