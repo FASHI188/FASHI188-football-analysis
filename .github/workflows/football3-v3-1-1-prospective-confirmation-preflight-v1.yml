@@ -1,0 +1,267 @@
+name: football3 V3.1.1 Prospective Confirmation Preflight
+
+on:
+  push:
+    branches: ['football3/v3-1-1-prospective-confirmation-v1']
+    paths:
+      - '.github/workflows/football3-v3-1-1-prospective-confirmation-preflight-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-1-1-prospective-preflight-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  JOINT_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  V31_HEAD: 7689ec0726fbed6fd2474e1a237b49ab7ad768c7
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_BLOB: 0dfbe39b7cbc97e09034871e427ff60895fffcdc
+  STATE_BLOB: 000c092b7b0c29a05dee7a70d0b59ead722f8f4e
+  STATE_PAYLOAD_SHA256: 22332a2053451a1a749b6dbc2818fa12cb21d68295510097a87dbbdb20d9f8ea
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+  JOINT_ARTIFACT_ID: '9856755439'
+  JOINT_ARTIFACT_DIGEST: sha256:f118ffa5d09c40bbefc3f18788e534e4e6b7504744a6976f78f157ce09abf305
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+
+jobs:
+  preflight-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      terminal_status: ${{ steps.source.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage frozen contract state and whitelist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/v3-1-1-prospective-confirmation-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$JOINT_HEAD" HEAD)" = "$JOINT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$JOINT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-low-variance-v1 | cut -f1)" = "$V31_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git hash-object football-data/research/v3_1_1_prospective_confirmation/PROSPECTIVE_CONFIRMATION_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/v3_1_1_prospective_confirmation/FROZEN_CANDIDATE_STATE.json)" = "$STATE_BLOB"
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          allowed={
+            '.github/workflows/football3-v3-1-1-prospective-confirmation-preflight-v1.yml',
+            'football-data/research/v3_1_1_prospective_confirmation/PROSPECTIVE_CONFIRMATION_CONTRACT.json',
+            'football-data/research/v3_1_1_prospective_confirmation/FROZEN_CANDIDATE_STATE.json',
+            'football-data/research/v3_1_1_prospective_confirmation/understat_source_preflight.py',
+            'football-data/research/v3_1_1_prospective_confirmation/test_prospective_confirmation_preflight.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['JOINT_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.load(open('football-data/research/v3_1_1_prospective_confirmation/PROSPECTIVE_CONFIRMATION_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_TARGET_ENROLLMENT'
+          assert c['required_n']==1603 and c['target_cutoff_utc']=='2026-09-02T17:00:00Z'
+          assert c['frozen_candidate']['head']==os.environ['JOINT_HEAD']
+          assert c['formal_v2']['head']==os.environ['FORMAL_HEAD']
+          assert c['label_policy']['interim_aggregate_performance']=='FORBIDDEN'
+          s=json.load(open('football-data/research/v3_1_1_prospective_confirmation/FROZEN_CANDIDATE_STATE.json'))
+          raw=json.dumps(s['payload'],sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
+          assert hashlib.sha256(raw).hexdigest()==os.environ['STATE_PAYLOAD_SHA256']
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh deterministic confirmation preflight tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/v3_1_1_prospective_confirmation/understat_source_preflight.py football-data/research/v3_1_1_prospective_confirmation/test_prospective_confirmation_preflight.py
+          python football-data/research/v3_1_1_prospective_confirmation/test_prospective_confirmation_preflight.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 8 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen research evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{v31,joint,v2,old,v1,xg,usr1}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          verify_one "$JOINT_ARTIFACT_ID" "$JOINT_ARTIFACT_DIGEST" /tmp/joint.zip _inputs/joint
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          python - <<'PY'
+          import json
+          assert json.load(open('_inputs/v31/evidence/final_status.json'))['status']=='V3_1_RESEARCH_CANDIDATE_READY_CONFIRMATION_REQUIRED'
+          assert json.load(open('_inputs/joint/evidence/final_status.json'))['status']=='V3_1_1_JOINT_SCORE_RESEARCH_CANDIDATE_READY_CONFIRMATION_REQUIRED'
+          PY
+
+      - name: Recompute exact frozen candidate state from historical artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import ast,base64,hashlib,importlib.util,json,pathlib,sys,zlib
+          w=pathlib.Path('_inputs/v31/code/historical_fusion_v3_1.py').read_text()
+          tree=ast.parse(w); payload=None
+          for node in tree.body:
+              if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='_PAYLOAD' for t in node.targets): payload=ast.literal_eval(node.value)
+          assert payload is not None
+          src=zlib.decompress(base64.b85decode(payload)).decode(); pathlib.Path('/tmp/v31_source.py').write_text(src)
+          spec=importlib.util.spec_from_file_location('v31_recompute','/tmp/v31_source.py'); v31=importlib.util.module_from_spec(spec); sys.modules['v31_recompute']=v31; spec.loader.exec_module(v31)
+          xg=v31.loadmod('xg_recompute','_inputs/xg/code/historical_xg_challenger.py')
+          v2=v31.loadmod('v2_recompute','_inputs/v2/code/historical_xg_fusion_v2.py')
+          usr=v31.loadmod('usr_recompute','_inputs/usr1/code/historical_fusion_v3_upset_safe.py')
+          rows,_,_,_=v31.build_rows_to_2023(xg,v2,pathlib.Path('_inputs/v1/pure_engine.py'),pathlib.Path('_inputs/v1/evidence/historical_oos_result.json'),pathlib.Path('_inputs/old/understat_frozen.db'),pathlib.Path('_inputs/xg/data/XG_DATA_IDENTITY.json'))
+          proc,_=v31.process_features_ext(usr,pathlib.Path('_inputs/old/understat_frozen.db'),rows,2023)
+          model,meta=usr.fit([r for r in rows if 2018<=r['season']<=2022],proc)
+          payload={
+            'feature_names':['formal_v2_abs_home_away_gap','formal_v2_draw_probability','formal_v2_entropy','formal_v2_predicted_total_goals','xg_active_flag','cold_start_sparse_flag','cold_start_zero_flag','favorite_minus_weak_rolling_npxg_for','weak_minus_favorite_rolling_npxg_against','favorite_minus_weak_rolling_nonpenalty_shots_for','weak_minus_favorite_rolling_nonpenalty_shots_against','favorite_minus_weak_rolling_npxg_per_shot','favorite_minus_weak_rolling_open_play_share','favorite_minus_weak_rolling_set_piece_share'],
+            'means':model.means,'sds':model.sds,'active_columns':model.cols,'beta':model.beta,'lambda':model.lam,'fit_n':meta['fit_n'],
+            'training_seasons':[2018,2019,2020,2021,2022],'residual_scale':0.25,'half_life_days':90.0,'prior_matches_league_shrinkage':12.0,'minimum_profile_weight':3.0,'same_kickoff_release':'kickoff+3h after whole kickoff batch snapshot'
+          }
+          frozen=json.load(open('football-data/research/v3_1_1_prospective_confirmation/FROZEN_CANDIDATE_STATE.json'))
+          assert payload==frozen['payload'],(payload,frozen['payload'])
+          raw=json.dumps(payload,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
+          got=hashlib.sha256(raw).hexdigest(); assert got==frozen['canonical_payload_sha256']==__import__('os').environ['STATE_PAYLOAD_SHA256']
+          pathlib.Path('/tmp/state_recompute.json').write_text(json.dumps({'status':'PASS','canonical_payload_sha256':got,'fit_meta':meta},sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Online current Big-5 shot-source preflight without target match pages
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          set +e
+          python football-data/research/v3_1_1_prospective_confirmation/understat_source_preflight.py --out _run/source_preflight.json > /tmp/source_stdout.txt 2> /tmp/source_stderr.txt
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            python - <<'PY'
+          import json
+          r=json.load(open('_run/source_preflight.json'))
+          assert r['source_preflight_status']=='PASS'
+          assert r['all_five_current_big5_operational'] is True
+          assert r['field_semantics_gate'] is True
+          assert r['capacity_gate'] is True
+          assert r['total_future_post_cutoff_n']>=1603
+          assert all(x['post_cutoff_match_pages_fetched']==0 for x in r['leagues'].values())
+          PY
+            status='V3_1_1_PROSPECTIVE_CONFIRMATION_PREFLIGHT_PASSED'
+          else
+            python - <<'PY'
+          import json,pathlib
+          err=pathlib.Path('/tmp/source_stderr.txt').read_text(errors='replace')[-8000:]
+          out={'schema_version':'football3-v3-1-1-source-preflight-blocker-v1','source_preflight_status':'BLOCKED','terminal':'V3_1_1_CONFIRMATION_BLOCKED_FEATURE_SOURCE','reason':err,'raw_target_match_pages_fetched':0}
+          pathlib.Path('_run/source_preflight.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n')
+          PY
+            status='V3_1_1_CONFIRMATION_BLOCKED_FEATURE_SOURCE'
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "$status"
+
+      - name: Seal preflight artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,state,code,evidence}
+          cp football-data/research/v3_1_1_prospective_confirmation/PROSPECTIVE_CONFIRMATION_CONTRACT.json _seal/contracts/
+          cp football-data/research/v3_1_1_prospective_confirmation/FROZEN_CANDIDATE_STATE.json _seal/state/
+          cp football-data/research/v3_1_1_prospective_confirmation/understat_source_preflight.py football-data/research/v3_1_1_prospective_confirmation/test_prospective_confirmation_preflight.py _seal/code/
+          cp _run/source_preflight.json /tmp/state_recompute.json /tmp/tests.txt /tmp/source_stdout.txt /tmp/source_stderr.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          sr=json.load(open('_run/source_preflight.json'))
+          status='V3_1_1_PROSPECTIVE_CONFIRMATION_PREFLIGHT_PASSED' if sr.get('source_preflight_status')=='PASS' else 'V3_1_1_CONFIRMATION_BLOCKED_FEATURE_SOURCE'
+          m={'schema_version':'football3-v3-1-1-prospective-preflight-artifact-v1','status':status,'head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'joint_candidate_head':os.environ['JOINT_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'target_cutoff_utc':'2026-09-02T17:00:00Z','required_n':1603,'target_labels_read':False,'target_match_pages_fetched':0,'candidate_modified':False,'formal_v2_modified':False,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload prospective preflight artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-1-1-prospective-preflight-${{ steps.source.outputs.status }}-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: preflight-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Remote ZIP digest CRC manifest exact-set SHA bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.preflight-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.preflight-and-seal.outputs.artifact_digest }}
+          STATUS: ${{ needs.preflight-and-seal.outputs.terminal_status }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$md" = "$DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          test "sha256:$(sha256sum /tmp/a.zip | awk '{print $1}')" = "$DIGEST"
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.load(open(r/'artifact_manifest.json'))
+          assert m['status']==os.environ['STATUS']
+          assert m['head']==os.environ['GITHUB_SHA']
+          assert m['target_labels_read'] is False and m['target_match_pages_fetched']==0
+          expected=set(m['files'])|{'artifact_manifest.json'}
+          got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file()}
+          assert got==expected,(got,expected)
+          for name,v in m['files'].items():
+              b=(r/name).read_bytes(); assert len(b)==v['bytes']; assert hashlib.sha256(b).hexdigest()==v['sha256']
+          PY
