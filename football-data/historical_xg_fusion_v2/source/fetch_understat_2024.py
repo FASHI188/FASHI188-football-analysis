@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import pathlib
@@ -33,6 +34,7 @@ ASSETS = (
     "https://understat.com/js/calendar.min.js?t=1765138215",
     "https://understat.com/js/main.min.js?t=1765138215",
 )
+FETCH_META: dict[str, dict] = {}
 
 
 def sha_bytes(b: bytes) -> str:
@@ -61,10 +63,23 @@ def fetch(url: str, *, min_bytes: int = 100) -> bytes:
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=60) as r:
-                raw = r.read()
-            if len(raw) < min_bytes:
-                raise RuntimeError(f"response too small: {len(raw)}")
-            return raw
+                transport = r.read()
+                content_encoding = (r.headers.get("Content-Encoding") or "").strip().lower()
+                content_type = (r.headers.get("Content-Type") or "").strip()
+            gzip_encoded = content_encoding == "gzip" or transport[:2] == b"\x1f\x8b"
+            logical = gzip.decompress(transport) if gzip_encoded else transport
+            if len(logical) < min_bytes:
+                raise RuntimeError(f"response too small after transport decode: {len(logical)}")
+            FETCH_META[url] = {
+                "transport_sha256": sha_bytes(transport),
+                "transport_bytes": len(transport),
+                "logical_sha256": sha_bytes(logical),
+                "logical_bytes": len(logical),
+                "content_encoding": content_encoding,
+                "content_type": content_type,
+                "gzip_decompressed": gzip_encoded,
+            }
+            return logical
         except Exception as exc:
             last = exc
             if attempt < 3:
@@ -223,7 +238,16 @@ def main() -> int:
         if len(result_rows) != expected:
             raise RuntimeError(f"{league} completed-result count mismatch: {len(result_rows)} != {expected}")
         counts[league] = len(result_rows)
-        page_receipts.append({"league": league, "url": url, "request_mode": "understat_current_public_getLeagueData", "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
+        transport_meta = dict(FETCH_META[url])
+        page_receipts.append({
+            "league": league,
+            "url": url,
+            "request_mode": "understat_current_public_getLeagueData",
+            "logical_source_sha256": sha_bytes(raw),
+            "logical_source_bytes": len(raw),
+            "result_n": len(result_rows),
+            **transport_meta,
+        })
         for x in result_rows:
             fid = str(x["id"])
             ko = source_kickoff(str(x["datetime"]))
@@ -275,7 +299,8 @@ def main() -> int:
         "n": len(identities),
         "league_counts": counts,
         "source_pages": page_receipts,
-        "source_page_set_sha256": sha_bytes(canon(sorted((x["url"], x["raw_sha256"]) for x in page_receipts))),
+        "source_page_set_sha256": sha_bytes(canon(sorted((x["url"], x["logical_source_sha256"]) for x in page_receipts))),
+        "source_transport_set_sha256": sha_bytes(canon(sorted((x["url"], x["transport_sha256"]) for x in page_receipts))),
         "identity_sha256": sha_bytes(identity_path.read_bytes()),
         "vault_sha256": sha_bytes(vault_path.read_bytes()),
         "fixture_identity_set_sha256": sha_bytes(canon(sorted(ids))),
