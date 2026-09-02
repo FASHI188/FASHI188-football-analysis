@@ -145,7 +145,7 @@ def parse_dates_data(raw: bytes) -> list[dict]:
     marker = text.find("datesData")
     if marker < 0:
         probe_current_assets()
-        raise RuntimeError("Understat response has neither AJAX dates JSON nor datesData HTML marker")
+        raise RuntimeError("Understat response has neither league-data JSON nor datesData HTML marker")
     parse_at = text.find("JSON.parse", marker)
     if parse_at < 0:
         raise RuntimeError("Understat datesData JSON.parse marker not found")
@@ -215,15 +215,15 @@ def main() -> int:
     counts = {}
 
     for slug, (league, expected) in LEAGUES.items():
-        url = f"https://understat.com/league/{slug}/{YEAR}"
+        url = f"https://understat.com/getLeagueData/{slug}/{YEAR}"
         raw = fetch(url, min_bytes=5000)
-        (raw_dir / f"{slug}_{YEAR}.response").write_bytes(raw)
+        (raw_dir / f"{slug}_{YEAR}.json").write_bytes(raw)
         data = parse_dates_data(raw)
         result_rows = [x for x in data if bool(x.get("isResult"))]
         if len(result_rows) != expected:
             raise RuntimeError(f"{league} completed-result count mismatch: {len(result_rows)} != {expected}")
         counts[league] = len(result_rows)
-        page_receipts.append({"league": league, "url": url, "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
+        page_receipts.append({"league": league, "url": url, "request_mode": "understat_current_public_getLeagueData", "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
         for x in result_rows:
             fid = str(x["id"])
             ko = source_kickoff(str(x["datetime"]))
@@ -267,7 +267,7 @@ def main() -> int:
     receipt = {
         "schema_version": "football3-historical-xg-fusion-v2-source-freeze-v1",
         "status": "NEW_HISTORICAL_CONFIRMATION_SOURCE_FROZEN",
-        "provider": "Understat public league source",
+        "provider": "Understat public getLeagueData route",
         "season_key": YEAR,
         "historical_completed_only": True,
         "requires_secret_or_api_key": False,
