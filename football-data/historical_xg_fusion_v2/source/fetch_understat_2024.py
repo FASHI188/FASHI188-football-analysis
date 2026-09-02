@@ -6,6 +6,7 @@ import json
 import pathlib
 import re
 import sqlite3
+import sys
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,11 @@ UA = {
     "Accept": "application/json,text/plain,*/*",
     "X-Requested-With": "XMLHttpRequest",
 }
+ASSETS = (
+    "https://understat.com/js/league.min.js?t=1765269520",
+    "https://understat.com/js/calendar.min.js?t=1765138215",
+    "https://understat.com/js/main.min.js?t=1765138215",
+)
 
 
 def sha_bytes(b: bytes) -> str:
@@ -49,14 +55,14 @@ def write_jsonl(path: pathlib.Path, rows: list[dict]) -> None:
             f.write(canon(row).decode("utf-8") + "\n")
 
 
-def fetch(url: str) -> bytes:
+def fetch(url: str, *, min_bytes: int = 100) -> bytes:
     last = None
     for attempt in range(4):
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=60) as r:
                 raw = r.read()
-            if len(raw) < 5000:
+            if len(raw) < min_bytes:
                 raise RuntimeError(f"response too small: {len(raw)}")
             return raw
         except Exception as exc:
@@ -89,9 +95,43 @@ def _extract_js_string(text: str, start: int) -> str:
     raise RuntimeError("Understat JSON.parse string is unterminated")
 
 
+def probe_current_assets() -> None:
+    print("UNDERSTAT_CLIENT_ROUTE_PROBE", file=sys.stderr)
+    for url in ASSETS:
+        try:
+            raw = fetch(url, min_bytes=100)
+        except Exception as exc:
+            print(f"asset={url} fetch_error={type(exc).__name__}:{exc}", file=sys.stderr)
+            continue
+        text = raw.decode("utf-8", "replace")
+        print(f"asset={url} bytes={len(raw)} sha256={sha_bytes(raw)}", file=sys.stderr)
+        patterns = (
+            r".{0,180}\$\.ajax.{0,500}",
+            r".{0,180}\$\.get(?:JSON)?.{0,500}",
+            r".{0,180}\$\.post.{0,500}",
+            r".{0,180}XMLHttpRequest.{0,500}",
+            r".{0,180}fetch\(.{0,500}",
+            r".{0,180}(?:url|href)\s*[:=]\s*[^,;]{1,300}",
+            r".{0,180}(?:calendar|dates|matches|league).{0,500}",
+        )
+        seen = set()
+        emitted = 0
+        for pat in patterns:
+            for m in re.finditer(pat, text, flags=re.I | re.S):
+                snippet = re.sub(r"\s+", " ", m.group(0)).strip()
+                if snippet in seen:
+                    continue
+                seen.add(snippet)
+                print("route_context=" + snippet[:700], file=sys.stderr)
+                emitted += 1
+                if emitted >= 14:
+                    break
+            if emitted >= 14:
+                break
+
+
 def parse_dates_data(raw: bytes) -> list[dict]:
     text = raw.decode("utf-8", errors="strict")
-    # Current Understat public AJAX response (requested with X-Requested-With) is JSON.
     try:
         direct = json.loads(text)
     except json.JSONDecodeError:
@@ -102,10 +142,9 @@ def parse_dates_data(raw: bytes) -> list[dict]:
             return dates
     if isinstance(direct, list):
         return direct
-
-    # Backward-compatible parser for the historical HTML embed. This is source plumbing only.
     marker = text.find("datesData")
     if marker < 0:
+        probe_current_assets()
         raise RuntimeError("Understat response has neither AJAX dates JSON nor datesData HTML marker")
     parse_at = text.find("JSON.parse", marker)
     if parse_at < 0:
@@ -127,8 +166,7 @@ def parse_dates_data(raw: bytes) -> list[dict]:
 
 
 def source_kickoff(s: str) -> datetime:
-    d = datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    return d
+    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
 
 
 def load_old_ids(db: pathlib.Path) -> tuple[set[str], str]:
@@ -158,10 +196,6 @@ def load_old_ids(db: pathlib.Path) -> tuple[set[str], str]:
             "h_goals": int(r[8]), "a_goals": int(r[9]), "h_xg": float(r[10]), "a_xg": float(r[11]),
         })
     got = sha_bytes(b"\n".join(canon(x) for x in canonical) + b"\n")
-    if got != OLD_UNIVERSE_SHA256:
-        # Parent universe SHA was produced by its own canonical loader. We require count/IDs from the exact frozen DB,
-        # and report this independently recomputed row SHA rather than silently substituting it for the parent SHA.
-        pass
     return ids, got
 
 
@@ -182,14 +216,14 @@ def main() -> int:
 
     for slug, (league, expected) in LEAGUES.items():
         url = f"https://understat.com/league/{slug}/{YEAR}"
-        raw = fetch(url)
-        (raw_dir / f"{slug}_{YEAR}.json").write_bytes(raw)
+        raw = fetch(url, min_bytes=5000)
+        (raw_dir / f"{slug}_{YEAR}.response").write_bytes(raw)
         data = parse_dates_data(raw)
         result_rows = [x for x in data if bool(x.get("isResult"))]
         if len(result_rows) != expected:
             raise RuntimeError(f"{league} completed-result count mismatch: {len(result_rows)} != {expected}")
         counts[league] = len(result_rows)
-        page_receipts.append({"league": league, "url": url, "request_mode": "public_ajax_json", "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
+        page_receipts.append({"league": league, "url": url, "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
         for x in result_rows:
             fid = str(x["id"])
             ko = source_kickoff(str(x["datetime"]))
@@ -211,11 +245,12 @@ def main() -> int:
             for v in (label["home_xg"], label["away_xg"]):
                 if not (0.0 <= v < 20.0):
                     raise RuntimeError(f"invalid xG for {fid}: {v}")
-            identities.append(ident); vault.append(label)
+            identities.append(ident)
+            vault.append(label)
 
     identities.sort(key=lambda r: (r["kickoff"], r["competition_id"], r["fixture_id"]))
-    lm = {r["fixture_id"]: r for r in vault}
-    vault = [lm[r["fixture_id"]] for r in identities]
+    label_map = {r["fixture_id"]: r for r in vault}
+    vault = [label_map[r["fixture_id"]] for r in identities]
     ids = [r["fixture_id"] for r in identities]
     if len(identities) != EXPECTED_N or len(set(ids)) != EXPECTED_N:
         raise RuntimeError("new confirmation identity count/duplicate failure")
@@ -229,15 +264,10 @@ def main() -> int:
     vault_path = out / "confirmation_xg_result_vault.jsonl"
     write_jsonl(identity_path, identities)
     write_jsonl(vault_path, vault)
-    identity_sha = sha_bytes(identity_path.read_bytes())
-    vault_sha = sha_bytes(vault_path.read_bytes())
-    fixture_set_sha = sha_bytes(canon(sorted(ids)))
-    raw_set_sha = sha_bytes(canon(sorted((x["url"], x["raw_sha256"]) for x in page_receipts)))
-
     receipt = {
         "schema_version": "football3-historical-xg-fusion-v2-source-freeze-v1",
         "status": "NEW_HISTORICAL_CONFIRMATION_SOURCE_FROZEN",
-        "provider": "Understat public league AJAX JSON",
+        "provider": "Understat public league source",
         "season_key": YEAR,
         "historical_completed_only": True,
         "requires_secret_or_api_key": False,
@@ -245,10 +275,10 @@ def main() -> int:
         "n": len(identities),
         "league_counts": counts,
         "source_pages": page_receipts,
-        "source_page_set_sha256": raw_set_sha,
-        "identity_sha256": identity_sha,
-        "vault_sha256": vault_sha,
-        "fixture_identity_set_sha256": fixture_set_sha,
+        "source_page_set_sha256": sha_bytes(canon(sorted((x["url"], x["raw_sha256"]) for x in page_receipts))),
+        "identity_sha256": sha_bytes(identity_path.read_bytes()),
+        "vault_sha256": sha_bytes(vault_path.read_bytes()),
+        "fixture_identity_set_sha256": sha_bytes(canon(sorted(ids))),
         "old_frozen_db_sha256": OLD_DB_SHA256,
         "old_parent_universe_n": OLD_UNIVERSE_N,
         "old_parent_universe_sha256": OLD_UNIVERSE_SHA256,
