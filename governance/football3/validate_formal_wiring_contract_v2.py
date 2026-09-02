@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -8,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 EXPECTED_BRANCH = "football3/historical-xg-fusion-v2-formal-wiring-governed-v1"
-EXPECTED_BASE_HEAD = "3016f6c7a0b77e0db310ad926011dfaa50c56e02"
+EXPECTED_BASE_HEAD = "d3b3e322f78c48b91477ef6e11054e51ac00fd85"
 EXPECTED_STATUS = "GOVERNANCE_REMEDIATED_PENDING_CODEX_RECHECK"
 EXPECTED_KIND = "historical_xg_fusion_v2_formal_wiring_non_market"
 EXPECTED_SCHEMA_ID = "football3://governance/formal-wiring-contract-schema-v2"
@@ -27,6 +28,9 @@ EXPECTED_WHITELIST = {
     ".github/workflows/football3-full-stack-remediation.yml",
     ".github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml",
     "football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json",
+    "football-data/new_engine_v1/formal_fusion_v2.py",
+    "football-data/new_engine_v1/test_formal_fusion_v2.py",
+    "football-data/research/audit_football3_changed_scientific_files.py",
     "governance/football3/formal_wiring_contract_schema_v2.json",
     "governance/football3/test_validate_formal_wiring_contract_v2.py",
     "governance/football3/validate_formal_wiring_contract_v2.py",
@@ -35,11 +39,19 @@ EXPECTED_MARKET_BLOBS = {
     "football-data/research/FOOTBALL3_EXPERIMENT_CONTRACT_TEMPLATE_V2.json": "776abfbc06b66405aeb13d67848518c64e05d3d2",
     "football-data/research/validate_football3_experiment.py": "19be1b19fec4187beec8abff6d24e5ceb60c2945",
     "football-data/research/test_validate_football3_experiment.py": "18ef0467563b9354ce2d152fe48022c484e4608e",
-    "football-data/research/audit_football3_changed_scientific_files.py": "e5eb3f53e7697d443dd151f2e4ea9f9fe7fd1d58",
+    "football-data/research/audit_football3_changed_scientific_files.py": "e40284a163cbc4bc4d5f2862b1243d94d2b3b872",
 }
 EXPECTED_FORMAL_BLOBS = {
-    "football-data/new_engine_v1/formal_fusion_v2.py": "3d5226a1ab804f41a814f657b9c76d469038da8a",
-    "football-data/new_engine_v1/test_formal_fusion_v2.py": "c80abb96b7bc6255f0038a587d0451466e87f6ee",
+    "football-data/new_engine_v1/formal_fusion_v2.py": "a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871",
+    "football-data/new_engine_v1/test_formal_fusion_v2.py": "61b25cd403fa1d9efa0dfcbc1643e0f17621944e",
+}
+EXPECTED_BINDINGS = {
+    "runner": "football-data/new_engine_v1/formal_fusion_v2.py",
+    "helpers": ["football-data/new_engine_v1/test_formal_fusion_v2.py"],
+    "contract_marker": "FOOTBALL3_FORMAL_WIRING_CONTRACT",
+    "helper_marker": "FOOTBALL3_FORMAL_WIRING_HELPER_FOR",
+    "authority_guard": "football-data/research/audit_football3_changed_scientific_files.py",
+    "cumulative_audit_base_head": EXPECTED_BASE_HEAD,
 }
 REQUIRED_FORBIDDEN = {
     "market_features",
@@ -112,6 +124,10 @@ def validate_schema(schema: dict) -> None:
     for key, expected in constants.items():
         if not isinstance(props.get(key), dict) or props[key].get("const") != expected:
             fail(f"formal_wiring schema constant drift: {key}")
+    gov_props = props.get("governance", {}).get("properties", {})
+    binding_schema = gov_props.get("scientific_code_bindings")
+    if not isinstance(binding_schema, dict) or binding_schema.get("additionalProperties") is not False:
+        fail("formal_wiring scientific binding schema missing/fail-open")
 
 
 def validate_contract(contract: dict, schema: dict) -> None:
@@ -170,8 +186,8 @@ def validate_contract(contract: dict, schema: dict) -> None:
             "mode", "market_features", "market_inputs", "market_baseline", "market_validator_semantics",
             "training", "tuning", "new_target_labels", "existing_frozen_historical_replay_only",
             "same_kickoff_isolation_required", "formal_enablement", "production_pointer_change",
-            "whitelist_base_head", "changed_file_whitelist", "immutable_market_governance_git_blobs",
-            "immutable_formal_source_git_blobs",
+            "whitelist_base_head", "changed_file_whitelist", "scientific_code_bindings",
+            "immutable_market_governance_git_blobs", "immutable_formal_source_git_blobs",
         },
         "governance",
     )
@@ -198,7 +214,9 @@ def validate_contract(contract: dict, schema: dict) -> None:
     if not isinstance(whitelist, list) or len(whitelist) > 12 or len(whitelist) != len(set(whitelist)):
         fail("changed-file whitelist must contain <=12 unique paths")
     if set(whitelist) != EXPECTED_WHITELIST:
-        fail("changed-file whitelist differs from frozen six-file remediation scope")
+        fail("changed-file whitelist differs from frozen cumulative remediation scope")
+    if gov.get("scientific_code_bindings") != EXPECTED_BINDINGS:
+        fail("formal_wiring scientific code binding drift")
     if gov.get("immutable_market_governance_git_blobs") != EXPECTED_MARKET_BLOBS:
         fail("market validator/schema/guard blob locks changed")
     if gov.get("immutable_formal_source_git_blobs") != EXPECTED_FORMAL_BLOBS:
@@ -209,6 +227,42 @@ def validate_contract(contract: dict, schema: dict) -> None:
         fail("forbidden list must be unique")
     if not REQUIRED_FORBIDDEN.issubset(set(forbidden)):
         fail("formal_wiring forbidden set is incomplete")
+
+
+def _top_level_string_constant(path: Path, name: str) -> str | None:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as exc:
+        fail(f"binding source syntax error {path}: {exc}")
+    matches: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            matches.append(value.value)
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def validate_source_bindings(contract: dict, repo_root: Path) -> None:
+    bindings = contract["governance"]["scientific_code_bindings"]
+    contract_rel = "football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json"
+    runner = repo_root / bindings["runner"]
+    if not runner.is_file():
+        fail("formal_wiring runner missing")
+    if _top_level_string_constant(runner, bindings["contract_marker"]) != contract_rel:
+        fail("formal_wiring runner contract marker mismatch")
+    for helper_rel in bindings["helpers"]:
+        helper = repo_root / helper_rel
+        if not helper.is_file():
+            fail(f"formal_wiring helper missing: {helper_rel}")
+        if _top_level_string_constant(helper, bindings["helper_marker"]) != contract_rel:
+            fail(f"formal_wiring helper contract marker mismatch: {helper_rel}")
 
 
 def git_blob_sha1(path: Path) -> str:
@@ -238,7 +292,7 @@ def validate_runtime_branch(contract: dict) -> None:
 
 def validate_changed_files(contract: dict, repo_root: Path, base_head: str) -> None:
     if base_head != EXPECTED_BASE_HEAD or base_head != contract["governance"]["whitelist_base_head"]:
-        fail("diff base must equal frozen governance base HEAD")
+        fail("diff base must equal frozen cumulative research wiring HEAD")
     try:
         out = subprocess.check_output(
             ["git", "diff", "--name-only", f"{base_head}...HEAD"],
@@ -246,7 +300,7 @@ def validate_changed_files(contract: dict, repo_root: Path, base_head: str) -> N
             text=True,
         )
     except Exception as exc:
-        fail(f"cannot compute frozen remediation diff: {exc}")
+        fail(f"cannot compute frozen cumulative remediation diff: {exc}")
     changed = {line.strip() for line in out.splitlines() if line.strip()}
     expected = set(contract["governance"]["changed_file_whitelist"])
     if changed != expected:
@@ -266,6 +320,7 @@ def main() -> int:
     schema = load_json(args.schema)
     validate_contract(contract, schema)
     validate_runtime_branch(contract)
+    validate_source_bindings(contract, args.repo_root)
     validate_repo_locks(contract, args.repo_root)
     if not args.skip_diff:
         validate_changed_files(contract, args.repo_root, args.base_head)
@@ -281,6 +336,7 @@ def main() -> int:
         "new_target_labels": False,
         "formal_enablement": False,
         "changed_file_count": len(contract["governance"]["changed_file_whitelist"]),
+        "scientific_code_bindings": contract["governance"]["scientific_code_bindings"],
     }, indent=2, sort_keys=True))
     return 0
 

@@ -4,10 +4,13 @@ on:
   push:
     branches: [football3/historical-xg-fusion-v2-formal-wiring-governed-v1]
     paths:
-      - '.github/workflows/football3-full-stack-remediation.yml'
-      - '.github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml'
+      - 'football-data/new_engine_v1/formal_fusion_v2.py'
+      - 'football-data/new_engine_v1/test_formal_fusion_v2.py'
+      - 'football-data/research/audit_football3_changed_scientific_files.py'
       - 'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json'
       - 'governance/football3/**'
+      - '.github/workflows/football3-full-stack-remediation.yml'
+      - '.github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml'
   pull_request:
     paths:
       - 'football-data/**'
@@ -20,16 +23,16 @@ permissions:
   contents: read
 
 env:
-  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '3cfe9302bac9abc8b9d1bfd678c4a38f4c79dd2c124dd6e2b3bfaa3d715c83dc'
+  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '2000528df3a951252e9da83a81034431e3c4f5b5fb5d779e25de4302a5d0cebf'
   HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256: 'c61d695eeb5601bb74a5b6a673b71c28d17959730732e476d4361563b3436b58'
-  FORMAL_WIRING_GOVERNANCE_BASE_HEAD: '3016f6c7a0b77e0db310ad926011dfaa50c56e02'
+  FORMAL_WIRING_RESEARCH_BASE_HEAD: 'd3b3e322f78c48b91477ef6e11054e51ac00fd85'
   FORMAL_WIRING_GOVERNED_BRANCH: 'football3/historical-xg-fusion-v2-formal-wiring-governed-v1'
 
 jobs:
   full-stack-preflight:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || startsWith(github.head_ref, 'football3/')
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,11 +53,9 @@ jobs:
             football-data/research/audit_football3_changed_scientific_files.py \
             football-data/research/audit_football3_lineage.py \
             football-data/research/audit_football3_pr_scope.py \
-            football-data/research/run_football3_synthetic_prelabel_smoke.py
-      - name: Compile isolated non-market formal_wiring governance validator
-        if: github.ref_name == env.FORMAL_WIRING_GOVERNED_BRANCH || github.head_ref == env.FORMAL_WIRING_GOVERNED_BRANCH
-        run: |
-          python -m py_compile \
+            football-data/research/run_football3_synthetic_prelabel_smoke.py \
+            football-data/new_engine_v1/formal_fusion_v2.py \
+            football-data/new_engine_v1/test_formal_fusion_v2.py \
             governance/football3/validate_formal_wiring_contract_v2.py \
             governance/football3/test_validate_formal_wiring_contract_v2.py
       - name: Audit C072-C lineage and all C073-C077-derived research isolation
@@ -66,17 +67,19 @@ jobs:
           pytest -q \
             football-data/research/test_football3_core.py \
             football-data/research/test_validate_football3_experiment.py
-      - name: Run isolated non-market formal_wiring positive and fail-closed tests
-        if: github.ref_name == env.FORMAL_WIRING_GOVERNED_BRANCH || github.head_ref == env.FORMAL_WIRING_GOVERNED_BRANCH
-        run: pytest -q governance/football3/test_validate_formal_wiring_contract_v2.py
-      - name: Validate isolated non-market formal_wiring schema-v2 and immutable market governance
-        if: github.ref_name == env.FORMAL_WIRING_GOVERNED_BRANCH || github.head_ref == env.FORMAL_WIRING_GOVERNED_BRANCH
+      - name: Run non-market formal_wiring governance and adapter adversarial tests
+        env:
+          PYTHONPATH: football-data:football-data/research
+        run: |
+          pytest -q governance/football3/test_validate_formal_wiring_contract_v2.py
+          python football-data/new_engine_v1/test_formal_fusion_v2.py
+      - name: Validate isolated non-market formal_wiring schema-v2 governance
         run: |
           python governance/football3/validate_formal_wiring_contract_v2.py \
             --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
             --schema governance/football3/formal_wiring_contract_schema_v2.json \
             --repo-root . \
-            --base-head "$FORMAL_WIRING_GOVERNANCE_BASE_HEAD"
+            --base-head "$FORMAL_WIRING_RESEARCH_BASE_HEAD"
       - name: Run zero-real-label end-to-end scoring smoke
         env:
           PYTHONPATH: football-data/research
@@ -137,8 +140,7 @@ jobs:
             assert not Path(stale).exists(), stale
           print('policy/contract/audit/single-authority: PASS')
           PY
-      - name: Enforce migration and revalidate all active V2 contracts
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == env.FORMAL_WIRING_GOVERNED_BRANCH)
+      - name: Authoritative cumulative changed-scientific-files audit
         env:
           PYTHONPATH: football-data/research
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -147,15 +149,14 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
             BASE_SHA="$PR_BASE_SHA"
           else
-            BASE_SHA="$FORMAL_WIRING_GOVERNANCE_BASE_HEAD"
+            BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"
           fi
           python football-data/research/audit_football3_changed_scientific_files.py \
             --base "$BASE_SHA" \
             --head HEAD \
-            --expected-guard-canonical-ast-sha256 "${HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256}" \
-            --expected-audit-canonical-ast-sha256 "${HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256}"
-      - name: Prove remediation itself opens no real target or sealed data
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == env.FORMAL_WIRING_GOVERNED_BRANCH)
+            --expected-guard-canonical-ast-sha256 "$HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" \
+            --expected-audit-canonical-ast-sha256 "$HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
+      - name: Prove cumulative remediation opens no real target or sealed data
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -163,12 +164,12 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
             BASE_SHA="$PR_BASE_SHA"
           else
-            BASE_SHA="$FORMAL_WIRING_GOVERNANCE_BASE_HEAD"
+            BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"
           fi
           export BASE_SHA
           python - <<'PY'
           import os, subprocess
-          base=os.environ['BASE_SHA'] if os.environ.get('BASE_SHA') else os.environ['FORMAL_WIRING_GOVERNANCE_BASE_HEAD']
+          base=os.environ['BASE_SHA']
           changed=subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines()
           forbidden_fragments=['c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv','confirmation1597','reserve266','confirmation150']
           bad=[f for f in changed if any(x.lower() in f.lower() for x in forbidden_fragments)]

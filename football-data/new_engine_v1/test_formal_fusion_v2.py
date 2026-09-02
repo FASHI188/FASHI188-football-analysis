@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-import importlib.util
+import ast
 import math
 import pathlib
-import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-HERE = pathlib.Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("formal_fusion_v2", HERE / "formal_fusion_v2.py")
-ff = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = ff
-spec.loader.exec_module(ff)
+from historical_xg_challenger_v1 import historical_xg_challenger as hxg
+from new_engine_v1 import formal_fusion_v2 as ff
+from research import audit_football3_changed_scientific_files as changed_guard
 
-hxg = ff._load_xg_module()
+FOOTBALL3_FORMAL_WIRING_HELPER_FOR = "football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json"
+
+HERE = pathlib.Path(__file__).resolve().parent
 T0 = datetime(2025, 8, 10, 15, tzinfo=timezone.utc)
 
 
@@ -27,6 +27,13 @@ def seed_component(state, team, venue, comp, value=4.0, weight=8.0):
     when = T0 - timedelta(days=5)
     target[(team, venue)] = hxg.ResidualState(value, weight, when, "2025/26")
     pooled[team] = hxg.ResidualState(value, weight, when, "2025/26")
+
+
+def guarded_source_blockers(source: str) -> list[str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "candidate.py"
+        path.write_text(source, encoding="utf-8")
+        return changed_guard.dynamic_authority_blockers(path)
 
 
 class FormalFusionV2WiringTests(unittest.TestCase):
@@ -100,10 +107,16 @@ class FormalFusionV2WiringTests(unittest.TestCase):
             self.assertAlmostEqual(sum(c["probability"] for c in p["score_matrix"]), 1.0, 12)
 
     def test_06_no_prospective_queue_surface(self):
-        self.assertFalse(hasattr(ff, "create_queue"))
-        self.assertFalse(hasattr(ff, "fetch_future"))
-        self.assertFalse(hasattr(ff, "train"))
-        self.assertFalse(hasattr(ff, "tune"))
+        tree = ast.parse((HERE / "formal_fusion_v2.py").read_text(encoding="utf-8"))
+        names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        self.assertNotIn("create_queue", names)
+        self.assertNotIn("fetch_future", names)
+        self.assertNotIn("train", names)
+        self.assertNotIn("tune", names)
 
     def test_07_matrix_support_fail_closed(self):
         state = ff.new_candidate_state()
@@ -113,6 +126,65 @@ class FormalFusionV2WiringTests(unittest.TestCase):
         bad["score_matrix"] = xg[0]["score_matrix"][:-1]
         with self.assertRaises(ff.FormalFusionError):
             ff.blend_active_predictions(v1[0], bad)
+
+    def test_08_unknown_fixture_object_rejected(self):
+        class UnknownFixture:
+            fixture_id = "f1"
+            competition_id = "ENG_PremierLeague"
+            season = "2025/26"
+            kickoff = T0
+            home_team_id = "A"
+            away_team_id = "B"
+
+        with self.assertRaises(ff.FormalFusionError):
+            ff.predict_formal_batch(ff.new_candidate_state(), [UnknownFixture()])
+
+    def test_09_component_identity_field_missing_rejected(self):
+        state = ff.new_candidate_state()
+        f = fixture()
+        xg, v1 = state.predict_batch([f], include_matrix=True)
+        bad = dict(xg[0])
+        del bad["fixture_id"]
+        with self.assertRaises(ff.FormalFusionError):
+            ff.blend_active_predictions(v1[0], bad)
+
+    def test_10_component_identity_mismatch_rejected(self):
+        state = ff.new_candidate_state()
+        f = fixture()
+        xg, v1 = state.predict_batch([f], include_matrix=True)
+        bad = dict(xg[0])
+        bad["away_team_id"] = "WRONG_TEAM"
+        with self.assertRaises(ff.FormalFusionError):
+            ff.blend_active_predictions(v1[0], bad)
+
+    def test_11_dynamic_import_and_execution_payloads_are_rejected(self):
+        module_name = "import" + "lib"
+        importer = "__" + "import__"
+        spec_name = "spec_from_" + "file_location"
+        exec_name = "exec_" + "module"
+        payloads = [
+            f"import {module_name}\nx = {module_name}.import_module('os')\n",
+            f"x = {importer}('os')\n",
+            f"from {module_name}.util import {spec_name}\nx = {spec_name}('m', 'x.py')\n",
+            f"class L:\n    def {exec_name}(self, m):\n        return None\nL().{exec_name}(object())\n",
+            "x = ev" + "al('1+1')\n",
+            "ex" + "ec('x=1')\n",
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.assertTrue(guarded_source_blockers(payload))
+
+    def test_12_reflection_payload_is_rejected(self):
+        reflection_name = "get" + "attr"
+        payload = f"x = {reflection_name}(object(), 'real')\n"
+        blockers = guarded_source_blockers(payload)
+        self.assertTrue(blockers)
+        self.assertTrue(any("reflection" in reason for reason in blockers))
+
+    def test_13_adapter_and_test_sources_have_no_dynamic_authority(self):
+        for path in (HERE / "formal_fusion_v2.py", HERE / "test_formal_fusion_v2.py"):
+            with self.subTest(path=path.name):
+                self.assertEqual(changed_guard.dynamic_authority_blockers(path), [])
 
 
 if __name__ == "__main__":

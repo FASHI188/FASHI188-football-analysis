@@ -17,6 +17,10 @@ HDA_GUARD_PATH = 'football-data/research/audit_football3_changed_scientific_file
 ZERO_LABEL_HDA_MARKER = 'HDA_AGGREGATION_ONLY_NO_TARGET_LABEL_SCORING'
 HDA_SCORING_MARKER = 'PURE_HDA_PROBABILITY_SCORING_NO_IO_NO_TRAINING'
 HDA_SCORING_MODULE = 'football3_hda_scoring'
+FORMAL_WIRING_CONTRACT_MARKER = 'FOOTBALL3_FORMAL_WIRING_CONTRACT'
+FORMAL_WIRING_HELPER_MARKER = 'FOOTBALL3_FORMAL_WIRING_HELPER_FOR'
+FORMAL_WIRING_CONTRACT_PREFIX = 'football-data/historical_xg_fusion_v2/contracts/'
+FORMAL_WIRING_CONTRACT_KIND = 'historical_xg_fusion_v2_formal_wiring_non_market'
 
 # Exact allow-list only. The scoring module is NOT a generic exemption: it has its own
 # executable AST purity contract below, and every other scoring caller must bind V2.
@@ -197,6 +201,14 @@ def contract_constant(path: Path) -> str | None:
 
 def helper_contract_constant(path: Path) -> str | None:
     return _string_constant(path, 'FOOTBALL3_EXPERIMENT_HELPER_FOR')
+
+
+def formal_wiring_contract_constant(path: Path) -> str | None:
+    return _string_constant(path, FORMAL_WIRING_CONTRACT_MARKER)
+
+
+def formal_wiring_helper_constant(path: Path) -> str | None:
+    return _string_constant(path, FORMAL_WIRING_HELPER_MARKER)
 
 
 def _import_contract(node: ast.AST) -> list[tuple[str, tuple[str, ...]]]:
@@ -559,6 +571,8 @@ def _guard_frozen_semantic_blockers(tree: ast.Module, path: Path) -> list[str]:
             'football-data/research/run_football3_hda_zero_label_audit.py',
         },
         'DYNAMIC_BUILTIN_CAPABILITIES': {'__import__', 'eval', 'exec', 'compile', 'getattr'},
+        'DYNAMIC_IMPORTLIB_CAPABILITIES': {'import_module', 'spec_from_file_location', 'module_from_spec'},
+        'DYNAMIC_ATTRIBUTE_CAPABILITIES': {'exec_module'},
     }
     for name, expected in expectations.items():
         ok, actual = _literal_top_level_assignment(tree, name)
@@ -663,6 +677,8 @@ AUTH_DYNAMIC_CAPABILITY = 'DYNAMIC_CAPABILITY'
 AUTH_DERIVED = 'AUTHORITY_DERIVED'
 AUTH_CONTAINER = 'AUTHORITY_CONTAINER'
 DYNAMIC_BUILTIN_CAPABILITIES = {'__import__', 'eval', 'exec', 'compile', 'getattr'}
+DYNAMIC_IMPORTLIB_CAPABILITIES = {'import_module', 'spec_from_file_location', 'module_from_spec'}
+DYNAMIC_ATTRIBUTE_CAPABILITIES = {'exec_module'}
 AUTHORITY_KINDS = {
     AUTH_BUILTINS_MODULE,
     AUTH_IMPORTLIB_MODULE,
@@ -775,8 +791,10 @@ def _authority_expr_kind(
         return _authority_expr_kind(node.value, kinds, function_returns)
     if isinstance(node, ast.Attribute):
         base = _authority_expr_kind(node.value, kinds, function_returns)
+        if node.attr in DYNAMIC_ATTRIBUTE_CAPABILITIES:
+            return AUTH_DYNAMIC_CAPABILITY
         if base == AUTH_IMPORTLIB_MODULE:
-            return AUTH_DYNAMIC_CAPABILITY if node.attr == 'import_module' else AUTH_DERIVED
+            return AUTH_DYNAMIC_CAPABILITY if node.attr in DYNAMIC_IMPORTLIB_CAPABILITIES else AUTH_DERIVED
         if base == AUTH_BUILTINS_MODULE:
             return AUTH_DYNAMIC_CAPABILITY
         if base in {AUTH_DYNAMIC_CAPABILITY, AUTH_DERIVED, AUTH_CONTAINER}:
@@ -856,7 +874,7 @@ def _authority_kinds(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
                 bound = alias.asname or alias.name.split('.')[0]
                 if alias.name == 'builtins':
                     kinds[bound] = AUTH_BUILTINS_MODULE
-                elif alias.name == 'importlib':
+                elif alias.name == 'importlib' or alias.name.startswith('importlib.'):
                     kinds[bound] = AUTH_IMPORTLIB_MODULE
         elif isinstance(node, ast.ImportFrom):
             if node.module == 'builtins':
@@ -864,10 +882,10 @@ def _authority_kinds(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
                     bound = alias.asname or alias.name
                     if alias.name in DYNAMIC_BUILTIN_CAPABILITIES:
                         kinds[bound] = AUTH_DYNAMIC_CAPABILITY
-            elif node.module == 'importlib':
+            elif node.module == 'importlib' or (node.module and node.module.startswith('importlib.')):
                 for alias in node.names:
                     bound = alias.asname or alias.name
-                    if alias.name == 'import_module':
+                    if alias.name in DYNAMIC_IMPORTLIB_CAPABILITIES:
                         kinds[bound] = AUTH_DYNAMIC_CAPABILITY
 
     assignments: list[tuple[list[str], ast.AST]] = []
@@ -929,7 +947,11 @@ def dynamic_authority_blockers(path: Path) -> list[str]:
     blockers: list[str] = []
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in {'builtins', 'importlib'}:
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and (node.module == 'builtins' or node.module == 'importlib' or node.module.startswith('importlib.'))
+        ):
             for alias in node.names:
                 bound = alias.asname or alias.name
                 if kinds.get(bound) == AUTH_DYNAMIC_CAPABILITY:
@@ -1023,6 +1045,102 @@ def _safe_contract_path(raw: str) -> Path:
     return p
 
 
+def _safe_formal_wiring_contract_path(raw: str) -> Path:
+    p = Path(raw)
+    if (
+        p.is_absolute()
+        or '..' in p.parts
+        or not p.as_posix().startswith(FORMAL_WIRING_CONTRACT_PREFIX)
+        or p.suffix != '.json'
+    ):
+        raise GuardError(f'formal_wiring contract path must be repo-relative under {FORMAL_WIRING_CONTRACT_PREFIX}: {raw}')
+    return p
+
+
+def _formal_wiring_binding_blockers(
+    file_name: str,
+    *,
+    runner_contract: str | None,
+    helper_contract: str | None,
+    audit_base: str,
+) -> tuple[list[str], dict[str, str] | None]:
+    blockers: list[str] = []
+    if runner_contract and helper_contract:
+        return [f'{file_name}: cannot be both formal_wiring runner and helper'], None
+    raw = runner_contract or helper_contract
+    if not raw:
+        return [], None
+    try:
+        cpath = _safe_formal_wiring_contract_path(raw)
+    except GuardError as exc:
+        return [f'{file_name}: {exc}'], None
+    if not cpath.is_file():
+        return [f'{file_name}: formal_wiring contract missing: {cpath}'], None
+    try:
+        contract = json.loads(cpath.read_text(encoding='utf-8'))
+    except Exception as exc:
+        return [f'{file_name}: unreadable formal_wiring contract {cpath}: {exc}'], None
+    if not isinstance(contract, dict):
+        return [f'{file_name}: formal_wiring contract root must be object: {cpath}'], None
+    if contract.get('schema_version') != 2 or contract.get('project_id') != 'football3':
+        blockers.append(f'{file_name}: formal_wiring contract must be football3 schema v2: {cpath}')
+    if contract.get('contract_kind') != FORMAL_WIRING_CONTRACT_KIND:
+        blockers.append(f'{file_name}: formal_wiring contract kind mismatch: {cpath}')
+    runtime = contract.get('runtime')
+    governance = contract.get('governance')
+    if not isinstance(runtime, dict) or not isinstance(governance, dict):
+        blockers.append(f'{file_name}: formal_wiring runtime/governance object missing: {cpath}')
+        return blockers, None
+    if runtime.get('formal_enablement') is not False or runtime.get('production_pointer_changed') is not False:
+        blockers.append(f'{file_name}: formal_wiring runtime unexpectedly enabled')
+    if runtime.get('prospective_queue') is not False:
+        blockers.append(f'{file_name}: formal_wiring prospective queue must remain false')
+    if (
+        governance.get('market_features') is not False
+        or governance.get('market_inputs') != []
+        or governance.get('market_baseline') is not False
+        or governance.get('market_validator_semantics') != 'UNCHANGED_AND_NOT_APPLICABLE_TO_NON_MARKET_FORMAL_WIRING'
+    ):
+        blockers.append(f'{file_name}: formal_wiring non-market governance drift')
+    if governance.get('training') is not False or governance.get('tuning') is not False:
+        blockers.append(f'{file_name}: formal_wiring training/tuning must remain false')
+    if governance.get('new_target_labels') is not False:
+        blockers.append(f'{file_name}: formal_wiring new_target_labels must remain false')
+    bindings = governance.get('scientific_code_bindings')
+    if not isinstance(bindings, dict):
+        blockers.append(f'{file_name}: formal_wiring scientific_code_bindings missing')
+        return blockers, None
+    expected_binding_keys = {'runner', 'helpers', 'contract_marker', 'helper_marker', 'authority_guard', 'cumulative_audit_base_head'}
+    if set(bindings) != expected_binding_keys:
+        blockers.append(f'{file_name}: formal_wiring scientific_code_bindings key set mismatch')
+        return blockers, None
+    if bindings.get('contract_marker') != FORMAL_WIRING_CONTRACT_MARKER:
+        blockers.append(f'{file_name}: formal_wiring contract marker mismatch')
+    if bindings.get('helper_marker') != FORMAL_WIRING_HELPER_MARKER:
+        blockers.append(f'{file_name}: formal_wiring helper marker mismatch')
+    if bindings.get('authority_guard') != HDA_GUARD_PATH:
+        blockers.append(f'{file_name}: formal_wiring authority guard mismatch')
+    if bindings.get('cumulative_audit_base_head') != audit_base:
+        blockers.append(
+            f'{file_name}: formal_wiring cumulative audit base mismatch; '
+            f"binding={bindings.get('cumulative_audit_base_head')} audit={audit_base}"
+        )
+    runner = bindings.get('runner')
+    helpers = bindings.get('helpers')
+    if not isinstance(runner, str) or not isinstance(helpers, list) or any(not isinstance(x, str) for x in helpers):
+        blockers.append(f'{file_name}: formal_wiring runner/helper binding types invalid')
+        return blockers, None
+    if runner_contract and file_name != runner:
+        blockers.append(f'{file_name}: formal_wiring runner identity mismatch; contract runner={runner}')
+    if helper_contract and file_name not in helpers:
+        blockers.append(f'{file_name}: formal_wiring helper identity mismatch')
+    if runner_contract and runtime.get('candidate_entry') != file_name:
+        blockers.append(f'{file_name}: formal_wiring runtime candidate_entry mismatch')
+    role = 'runner' if runner_contract else 'helper'
+    receipt = {'file': file_name, 'contract': cpath.as_posix(), 'role': role}
+    return blockers, receipt
+
+
 def active_v2_contracts() -> list[Path]:
     out = []
     for p in SCIENCE_DIR.rglob('*.json'):
@@ -1086,6 +1204,7 @@ def main() -> int:
     checked = []
     blockers: list[str] = []
     helpers = []
+    formal_wiring_bindings = []
 
     # These expected identities are supplied by the independently reviewed workflow.
     # There is deliberately no self-hash or repository-local fallback.
@@ -1143,8 +1262,15 @@ def main() -> int:
         try:
             cp = contract_constant(path)
             hp = helper_contract_constant(path)
+            fcp = formal_wiring_contract_constant(path)
+            fhp = formal_wiring_helper_constant(path)
         except SyntaxError as exc:
             blockers.append(f'{file_name}: syntax error: {exc}')
+            continue
+
+        declared_binding_count = sum(bool(x) for x in (cp, hp, fcp, fhp))
+        if declared_binding_count > 1:
+            blockers.append(f'{file_name}: executable Python may declare exactly one scientific contract/helper binding')
             continue
 
         # Dynamic execution/import/reflection authority is a hard blocker before any
@@ -1153,6 +1279,18 @@ def main() -> int:
         if file_name != HDA_TEST_PATH:
             for reason in dynamic_authority_blockers(path):
                 blockers.append(f'{file_name}: AST_DYNAMIC_AUTHORITY_DENIED: {reason}')
+
+        if fcp or fhp:
+            formal_blockers, receipt = _formal_wiring_binding_blockers(
+                file_name,
+                runner_contract=fcp,
+                helper_contract=fhp,
+                audit_base=args.base,
+            )
+            blockers.extend(formal_blockers)
+            if receipt is not None and not formal_blockers:
+                formal_wiring_bindings.append(receipt)
+            continue
 
         # Direct HDA-scoring references still require an explicit V2 caller/helper contract.
         scoring_ref = references_hda_scoring(path)
@@ -1212,6 +1350,7 @@ def main() -> int:
         'active_v2_contract_count': len(active),
         'scientific_runners_checked': checked,
         'experiment_helpers_bound': helpers,
+        'formal_wiring_bindings_checked': formal_wiring_bindings,
         'blockers': blockers,
     }
     print(json.dumps(output, indent=2))

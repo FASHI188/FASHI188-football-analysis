@@ -15,6 +15,7 @@ spec.loader.exec_module(mod)
 
 CONTRACT_PATH = HERE.parents[1] / "football-data" / "historical_xg_fusion_v2" / "contracts" / "FORMAL_FUSION_V2_WIRING.json"
 SCHEMA_PATH = HERE / "formal_wiring_contract_schema_v2.json"
+RESEARCH_BASE = "d3b3e322f78c48b91477ef6e11054e51ac00fd85"
 
 
 def contract() -> dict:
@@ -44,6 +45,9 @@ def test_market_semantics_are_not_weakened():
     rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__(
         "football-data/research/validate_football3_experiment.py", "0" * 40
     ))
+    rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__(
+        "football-data/research/test_validate_football3_experiment.py", "0" * 40
+    ))
 
 
 def test_training_tuning_labels_and_enablement_fail_closed():
@@ -61,9 +65,13 @@ def test_weight_formula_and_fallback_are_frozen():
     rejects(lambda c: c["fusion"].__setitem__("xg_insufficient", "PARTIAL_XG"))
 
 
-def test_whitelist_is_exact_and_capped():
+def test_cumulative_whitelist_is_exact_and_capped():
+    c = contract()
+    assert c["governance"]["whitelist_base_head"] == RESEARCH_BASE
+    assert len(c["governance"]["changed_file_whitelist"]) == 9
+    assert len(c["governance"]["changed_file_whitelist"]) <= 12
     rejects(lambda c: c["governance"]["changed_file_whitelist"].append("football-data/research/validate_football3_experiment.py"))
-    rejects(lambda c: c["governance"].__setitem__("whitelist_base_head", "0" * 40))
+    rejects(lambda c: c["governance"].__setitem__("whitelist_base_head", "3016f6c7a0b77e0db310ad926011dfaa50c56e02"))
 
 
 def test_branch_research_and_formal_source_identities_are_frozen():
@@ -74,6 +82,21 @@ def test_branch_research_and_formal_source_identities_are_frozen():
     ))
 
 
+def test_scientific_code_binding_is_real_non_market_and_fail_closed():
+    c = contract()
+    b = c["governance"]["scientific_code_bindings"]
+    assert b == mod.EXPECTED_BINDINGS
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
+        "runner", "football-data/research/fake_market_runner.py"
+    ))
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
+        "contract_marker", "FOOTBALL3_EXPERIMENT_CONTRACT"
+    ))
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
+        "cumulative_audit_base_head", "3016f6c7a0b77e0db310ad926011dfaa50c56e02"
+    ))
+
+
 def test_unknown_top_level_contract_key_fails_closed():
     rejects(lambda c: c.__setitem__("market_override", True))
 
@@ -81,6 +104,13 @@ def test_unknown_top_level_contract_key_fails_closed():
 def test_schema_constants_fail_closed():
     s = schema()
     s["properties"]["schema_version"]["const"] = 1
+    with pytest.raises(mod.FormalWiringGovernanceError):
+        mod.validate_contract(contract(), s)
+
+
+def test_schema_scientific_binding_cannot_be_removed():
+    s = schema()
+    s["properties"]["governance"]["properties"].pop("scientific_code_bindings")
     with pytest.raises(mod.FormalWiringGovernanceError):
         mod.validate_contract(contract(), s)
 
