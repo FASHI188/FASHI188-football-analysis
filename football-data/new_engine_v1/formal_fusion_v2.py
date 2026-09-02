@@ -18,6 +18,7 @@ EXPECTED_V1_ENGINE_SHA256 = "cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394a
 EXPECTED_V1_HEAD = "22f639304d2e32fc952dbec2255153ee45dcd41a"
 EXPECTED_RESEARCH_HEAD = "d3b3e322f78c48b91477ef6e11054e51ac00fd85"
 FORMAL_ENABLEMENT = False
+_MODULE_CACHE: dict[str, Any] = {}
 
 
 class FormalFusionError(RuntimeError):
@@ -25,6 +26,9 @@ class FormalFusionError(RuntimeError):
 
 
 def _load_module(name: str, path: Path):
+    cached = _MODULE_CACHE.get(name)
+    if cached is not None:
+        return cached
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise FormalFusionError(f"cannot load frozen module: {path}")
@@ -32,6 +36,7 @@ def _load_module(name: str, path: Path):
     import sys
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    _MODULE_CACHE[name] = module
     return module
 
 
