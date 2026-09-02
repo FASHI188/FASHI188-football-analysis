@@ -1,0 +1,206 @@
+name: football3 Historical XG Challenger V1
+
+on:
+  push:
+    branches: [football3/historical-xg-challenger-v1]
+    paths:
+      - 'football-data/historical_xg_challenger_v1/**'
+      - '.github/workflows/football3-historical-xg-challenger-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-historical-xg-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 22f639304d2e32fc952dbec2255153ee45dcd41a
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  SOURCE_ARTIFACT_ID: '9798682425'
+  SOURCE_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage and frozen seven-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          python - <<'PY'
+          import os,subprocess
+          allowed={
+            '.github/workflows/football3-historical-xg-challenger-v1.yml',
+            'football-data/historical_xg_challenger_v1/contracts/HISTORICAL_XG_DESIGN_CONTRACT.md',
+            'football-data/historical_xg_challenger_v1/contracts/HISTORICAL_XG_PREREGISTRATION.md',
+            'football-data/historical_xg_challenger_v1/contracts/HISTORICAL_XG_FILE_WHITELIST.md',
+            'football-data/historical_xg_challenger_v1/data/XG_DATA_IDENTITY.json',
+            'football-data/historical_xg_challenger_v1/historical_xg_challenger.py',
+            'football-data/historical_xg_challenger_v1/test_historical_xg_challenger.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          forbidden=('football-data/new_engine_v1/','football-data/new_engine_v2_joint_score/','football-data/v1_1_dynamic_base/','football-data/research/context_translator_v1/')
+          assert not any(any(p.startswith(x) for x in forbidden) for p in got)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download and verify frozen V1 and frozen public Understat source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs/v1 _inputs/source
+          for kind in V1 SOURCE; do
+            if [ "$kind" = V1 ]; then id="$V1_ARTIFACT_ID"; expected="$V1_ARTIFACT_DIGEST"; out=/tmp/v1.zip; else id="$SOURCE_ARTIFACT_ID"; expected="$SOURCE_ARTIFACT_DIGEST"; out=/tmp/source.zip; fi
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$out"
+            actual="sha256:$(sha256sum "$out"|awk '{print $1}')"; test "$actual" = "$expected"; unzip -t "$out" >/dev/null
+          done
+          unzip -q /tmp/v1.zip -d _inputs/v1
+          unzip -q /tmp/source.zip -d _inputs/source
+          python - <<'PY'
+          import hashlib,json,pathlib
+          v=pathlib.Path('_inputs/v1'); s=pathlib.Path('_inputs/source')
+          m=json.loads((v/'evidence/artifact_manifest.json').read_text()); assert m['head']=='22f639304d2e32fc952dbec2255153ee45dcd41a' and m['branch']=='football3/new-engine-v1'
+          assert hashlib.sha256((v/'pure_engine.py').read_bytes()).hexdigest()=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          bm=json.loads((s/'base_freeze_manifest.json').read_text()); assert bm['labels_read']==0 and bm['scorer_invoked'] is False
+          rec=json.loads((s/'understat_freeze_receipt.json').read_text()); assert rec['database_sha256']=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681' and rec['zip_crc']=='PASS'
+          assert hashlib.sha256((s/'understat_frozen.db').read_bytes()).hexdigest()==rec['database_sha256']
+          PY
+
+      - name: Compile and deterministic PIT tests
+        shell: bash
+        env:
+          V1_ENGINE_PATH: ${{ github.workspace }}/_inputs/v1/pure_engine.py
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/historical_xg_challenger_v1/historical_xg_challenger.py football-data/historical_xg_challenger_v1/test_historical_xg_challenger.py
+          python football-data/historical_xg_challenger_v1/test_historical_xg_challenger.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 14 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Run frozen historical PIT development and conditional confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _out
+          python football-data/historical_xg_challenger_v1/historical_xg_challenger.py \
+            --v1-engine _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/source/understat_frozen.db \
+            --identity football-data/historical_xg_challenger_v1/data/XG_DATA_IDENTITY.json \
+            --out _out
+          python - <<'PY'
+          import json,pathlib
+          d=json.loads(pathlib.Path('_out/development_result.json').read_text()); f=json.loads(pathlib.Path('_out/final_status.json').read_text())
+          assert d['all_development_gates_pass'] is True
+          assert d['gates']['fold_nondegrade_n']==8
+          assert d['selected_parameters']['dynamic_half_life_days']==90.0 and d['selected_parameters']['dynamic_prior_matches']==4.0 and d['selected_parameters']['dynamic_beta']==0.15 and d['selected_parameters']['dynamic_cross_season_shrink']==0.4
+          c=json.loads(pathlib.Path('_out/historical_confirmation_result.json').read_text())
+          assert c['all_confirmation_gates_pass'] is False
+          assert c['gates']['top1_delta_at_least_minus_0_0015'] is False
+          assert f['status']=='HISTORICAL_XG_CHALLENGER_REJECTED' and f['historical_confirmation_scored'] is True
+          assert f['formal_weight']==0 and f['formal_enablement'] is False and f['new_future_queue_created'] is False
+          print(json.dumps({'status':f['status'],'development_v1':d['v1'],'development_xg':d['challenger'],'development_gates':d['gates'],'confirmation_v1':c['v1'],'confirmation_xg':c['challenger'],'confirmation_gates':c['gates']},indent=2))
+          PY
+
+      - name: Seal historical research Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/contracts _seal/data _seal/code _seal/evidence _seal/source
+          cp football-data/historical_xg_challenger_v1/contracts/* _seal/contracts/
+          cp football-data/historical_xg_challenger_v1/data/XG_DATA_IDENTITY.json _seal/data/
+          cp football-data/historical_xg_challenger_v1/historical_xg_challenger.py football-data/historical_xg_challenger_v1/test_historical_xg_challenger.py _seal/code/
+          cp _out/* _seal/evidence/
+          cp /tmp/tests.txt _seal/evidence/deterministic_tests.txt
+          cp _inputs/source/understat_freeze_receipt.json _seal/source/
+          cp _inputs/v1/evidence/artifact_manifest.json _seal/source/v1_artifact_manifest.json
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path('_seal'); files={}
+          for p in sorted(root.rglob('*')):
+            if p.is_file():
+              rel=p.relative_to(root).as_posix(); b=p.read_bytes(); files[rel]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          final=json.loads((root/'evidence/final_status.json').read_text())
+          manifest={'schema_version':'football3-historical-xg-artifact-v1','status':final['status'],'head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':os.environ['BASE_HEAD'],'v1_artifact_id':int(os.environ['V1_ARTIFACT_ID']),'v1_artifact_digest':os.environ['V1_ARTIFACT_DIGEST'],'source_artifact_id':int(os.environ['SOURCE_ARTIFACT_ID']),'source_artifact_digest':os.environ['SOURCE_ARTIFACT_DIGEST'],'historical_only':True,'prospective':False,'formal_weight':0,'formal_enablement':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload Historical XG Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-xg-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Remote ZIP SHA CRC manifest and payload readback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.validate-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.validate-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"; md="$(printf '%s' "$meta"|python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          unzip -t /tmp/a.zip >/dev/null; rm -rf /tmp/r; mkdir /tmp/r; unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['GITHUB_SHA'] and m['status']=='HISTORICAL_XG_CHALLENGER_REJECTED'
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==exp,(got^exp)
+          for x,v in m['files'].items():
+            b=(r/x).read_bytes(); assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256']
+          d=os.environ['DIGEST'].split(':',1)[-1]; z=hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(); assert z==d,(z,d)
+          receipt={'status':'REMOTE_READBACK_PASS','artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['DIGEST'],'zip_sha256':z,'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp)}
+          pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n'); print(json.dumps(receipt,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-xg-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/readback.json
+          retention-days: 90
