@@ -1,0 +1,184 @@
+name: football3 Historical Shot Event Public Expansion V1
+
+on:
+  push:
+    branches: [football3/historical-shot-event-public-expansion-v1]
+    paths:
+      - '.github/workflows/football3-historical-shot-event-public-expansion-v1.yml'
+      - 'football-data/research/historical_shot_event_public_expansion/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASE_HEAD: 357d45eee5c26cc340f1d1bc53fbaa8021ef8f91
+      FORMAL_V2_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+      V3_USR1_HEAD: 485807562f0d1c859ba13355dc671e980de5eb9e
+      OLD_CONFIRM_HEAD: 827e5ac2092b6f0af42c6cbce58cc66026385a83
+      REQUIRED_N: '6481'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact-head governance and immutable refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-shot-event-public-expansion-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          expected=(
+            '.github/workflows/football3-historical-shot-event-public-expansion-v1.yml'
+            'football-data/research/historical_shot_event_public_expansion/PUBLIC_EXPANSION_CONTRACT.json'
+            'football-data/research/historical_shot_event_public_expansion/public_source_audit.py'
+            'football-data/research/historical_shot_event_public_expansion/test_public_source_audit.py'
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" -eq "${#expected_sorted[@]}"
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | awk '{print $1}')" = "$FORMAL_V2_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-upset-safe-v1 | awk '{print $1}')" = "$V3_USR1_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-upset-safe-confirmation-v1 | awk '{print $1}')" = "$OLD_CONFIRM_HEAD"
+          python - <<'PY'
+          import json
+          p='football-data/research/historical_shot_event_public_expansion/PUBLIC_EXPANSION_CONTRACT.json'
+          c=json.load(open(p))
+          assert c['required_n']==6481 and c['required_n_locked'] is True
+          assert c['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert c['v3_usr1_head']=='485807562f0d1c859ba13355dc671e980de5eb9e'
+          assert c['confirmation_unlock']['condition'].endswith('>= 6481')
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh compile and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/historical_shot_event_public_expansion/public_source_audit.py football-data/research/historical_shot_event_public_expansion/test_public_source_audit.py
+          python -m pip install -q pytest
+          cd football-data/research/historical_shot_event_public_expansion
+          python -m pytest -q test_public_source_audit.py
+
+      - name: Online zero-label public source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public_expansion_out
+          python football-data/research/historical_shot_event_public_expansion/public_source_audit.py --online --out public_expansion_out | tee public_expansion_out/audit_stdout.txt
+          python - <<'PY'
+          import json
+          g=json.load(open('public_expansion_out/gate.json'))
+          i=json.load(open('public_expansion_out/public_source_inventory.json'))
+          assert g['required_n']==6481 and g['eligible_n']<6481
+          assert g['terminal']=='NO_SUFFICIENT_PUBLIC_SHOT_EVENT_DATA'
+          assert g['target_labels_opened'] is False and g['predictor_run'] is False and g['scorer_run'] is False
+          assert i['selection_used_outcomes'] is False and i['target_match_payloads_opened'] is False
+          assert i['deduplicated_eligible_big5_completed_fixture_n']==0 and i['gap_to_required_n']==6481
+          PY
+
+      - name: Static no-model no-label execution audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          files=[Path('football-data/research/historical_shot_event_public_expansion/public_source_audit.py')]
+          text='\n'.join(p.read_text() for p in files)
+          forbidden=['import historical_fusion_v3','run_prediction(','score_predictions(','open_label_vault(','market_odds','provider_secret','secrets.']
+          hits=[x for x in forbidden if x in text]
+          assert not hits,hits
+          PY
+
+      - name: Build sealed audit artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sealed_artifact/repo sealed_artifact/output
+          cp football-data/research/historical_shot_event_public_expansion/PUBLIC_EXPANSION_CONTRACT.json sealed_artifact/repo/
+          cp football-data/research/historical_shot_event_public_expansion/public_source_audit.py sealed_artifact/repo/
+          cp football-data/research/historical_shot_event_public_expansion/test_public_source_audit.py sealed_artifact/repo/
+          cp .github/workflows/football3-historical-shot-event-public-expansion-v1.yml sealed_artifact/repo/
+          cp public_expansion_out/public_source_inventory.json public_expansion_out/gate.json public_expansion_out/audit_stdout.txt sealed_artifact/output/
+          python - <<'PY'
+          import hashlib,json,pathlib,subprocess,os
+          root=pathlib.Path('sealed_artifact')
+          files={}
+          for p in sorted(root.rglob('*')):
+              if p.is_file() and p.name!='artifact_manifest.json':
+                  b=p.read_bytes(); files[str(p.relative_to(root))]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          gate=json.load(open(root/'output/gate.json'))
+          m={'schema_version':'football3-public-shot-event-expansion-artifact-v1','head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'run_id':int(os.environ['GITHUB_RUN_ID']),'required_n':6481,'terminal':gate['terminal'],'target_labels_opened':False,'predictor_run':False,'scorer_run':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload sealed audit artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-public-shot-event-expansion-${{ github.sha }}-${{ github.run_id }}
+          path: sealed_artifact/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Record upload digest
+        shell: bash
+        env:
+          UPLOAD_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          test -n "$UPLOAD_DIGEST"
+          echo "ARTIFACT_ID=$ARTIFACT_ID"
+          echo "UPLOAD_DIGEST=$UPLOAD_DIGEST"
+
+  remote-readback:
+    needs: audit-and-seal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download exact run artifact ZIP through GitHub API
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const arts=await github.rest.actions.listWorkflowRunArtifacts({owner:context.repo.owner,repo:context.repo.repo,run_id:context.runId});
+            const xs=arts.data.artifacts.filter(a=>a.name.startsWith(`football3-public-shot-event-expansion-${context.sha}-${context.runId}`));
+            if(xs.length!==1) core.setFailed(`artifact cardinality ${xs.length}`);
+            const a=xs[0]; fs.writeFileSync('artifact_meta.json',JSON.stringify(a,null,2));
+            const {data}=await github.rest.actions.downloadArtifact({owner:context.repo.owner,repo:context.repo.repo,artifact_id:a.id,archive_format:'zip'});
+            fs.writeFileSync('artifact.zip',Buffer.from(data));
+      - name: Verify GitHub digest ZIP CRC manifest exact-set and file hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -t artifact.zip >/dev/null
+          python - <<'PY'
+          import hashlib,json,pathlib,zipfile,os
+          meta=json.load(open('artifact_meta.json'))
+          z=pathlib.Path('artifact.zip'); zsha=hashlib.sha256(z.read_bytes()).hexdigest()
+          md=str(meta.get('digest') or '').removeprefix('sha256:')
+          assert md==zsha,(md,zsha)
+          out=pathlib.Path('readback'); out.mkdir()
+          with zipfile.ZipFile(z) as zz: zz.extractall(out)
+          m=json.load(open(out/'artifact_manifest.json'))
+          assert m['head']==os.environ['GITHUB_SHA'] and m['run_id']==int(os.environ['GITHUB_RUN_ID'])
+          assert m['required_n']==6481 and m['terminal']=='NO_SUFFICIENT_PUBLIC_SHOT_EVENT_DATA'
+          assert not m['target_labels_opened'] and not m['predictor_run'] and not m['scorer_run']
+          actual={str(p.relative_to(out)) for p in out.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}
+          assert actual==set(m['files']), (actual,set(m['files']))
+          for rel,info in m['files'].items():
+              b=(out/rel).read_bytes(); assert len(b)==info['bytes']; assert hashlib.sha256(b).hexdigest()==info['sha256']
+          print(json.dumps({'artifact_id':meta['id'],'zip_sha256':zsha,'payload_n':len(actual),'terminal':m['terminal']},sort_keys=True))
+          PY
