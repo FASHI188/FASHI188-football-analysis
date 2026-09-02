@@ -62,13 +62,46 @@ def fetch(url: str) -> bytes:
     raise RuntimeError(f"public Understat fetch failed without credentials: {type(last).__name__}: {last}")
 
 
+def _extract_js_string(text: str, start: int) -> str:
+    while start < len(text) and text[start].isspace():
+        start += 1
+    if start >= len(text) or text[start] not in {"'", '"'}:
+        raise RuntimeError("Understat JSON.parse opening quote not found")
+    quote = text[start]
+    i = start + 1
+    out = []
+    while i < len(text):
+        ch = text[i]
+        if ch == quote:
+            backslashes = 0
+            j = i - 1
+            while j >= start and text[j] == "\\":
+                backslashes += 1
+                j -= 1
+            if backslashes % 2 == 0:
+                return "".join(out)
+        out.append(ch)
+        i += 1
+    raise RuntimeError("Understat JSON.parse string is unterminated")
+
+
 def parse_dates_data(raw: bytes) -> list[dict]:
     text = raw.decode("utf-8", errors="strict")
-    m = re.search(r"datesData\s*=\s*JSON\.parse\('([^']+)'\)", text)
-    if not m:
-        raise RuntimeError("Understat datesData JSON embed not found")
-    decoded = bytes(m.group(1), "utf-8").decode("unicode_escape")
-    rows = json.loads(decoded)
+    marker = text.find("datesData")
+    if marker < 0:
+        raise RuntimeError("Understat datesData marker not found")
+    parse_at = text.find("JSON.parse", marker)
+    if parse_at < 0:
+        raise RuntimeError("Understat datesData JSON.parse marker not found")
+    open_paren = text.find("(", parse_at + len("JSON.parse"))
+    if open_paren < 0:
+        raise RuntimeError("Understat datesData JSON.parse opening parenthesis not found")
+    payload = _extract_js_string(text, open_paren + 1)
+    try:
+        decoded = bytes(payload, "utf-8").decode("unicode_escape")
+        rows = json.loads(decoded)
+    except Exception as exc:
+        raise RuntimeError(f"Understat datesData JSON decode failed: {type(exc).__name__}: {exc}") from exc
     if not isinstance(rows, list):
         raise RuntimeError("Understat datesData is not a list")
     return rows
