@@ -1,0 +1,219 @@
+name: football3 Historical Fusion V3 Shot Regime
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-shot-regime-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-shot-regime-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-historical-fusion-v3-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_SHA256: bb95ab5491ba439794da4cbc0f0ab5517408a0476baae7aee2ff423c776da9ba
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  OLD_SOURCE_ARTIFACT_ID: '9798682425'
+  OLD_SOURCE_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      terminal_status: ${{ steps.run.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage scope and formal freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-shot-regime-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$FORMAL_HEAD" HEAD)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import os,subprocess
+          allowed={
+            '.github/workflows/football3-historical-fusion-v3-shot-regime-v1.yml',
+            'football-data/research/historical_fusion_v3/HISTORICAL_FUSION_V3_CONTRACT.json',
+            'football-data/research/historical_fusion_v3/historical_fusion_v3.py',
+            'football-data/research/historical_fusion_v3/test_historical_fusion_v3.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['FORMAL_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          forbidden=('CURRENT','production','formal_enablement')
+          assert not any(any(x in p for x in forbidden) for p in got)
+          PY
+          test "$(sha256sum football-data/research/historical_fusion_v3/HISTORICAL_FUSION_V3_CONTRACT.json | awk '{print $1}')" = "$CONTRACT_SHA256"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh deterministic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/historical_fusion_v3/historical_fusion_v3.py football-data/research/historical_fusion_v3/test_historical_fusion_v3.py
+          python football-data/research/historical_fusion_v3/test_historical_fusion_v3.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 11 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/v2 _inputs/old _inputs/v1 _inputs/xg
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            actual="sha256:$(sha256sum "$zip" | awk '{print $1}')"
+            test "$actual" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$OLD_SOURCE_ARTIFACT_ID" "$OLD_SOURCE_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          python - <<'PY'
+          import hashlib,json,pathlib
+          h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          assert h('_inputs/v2/code/historical_xg_fusion_v2.py')=='1e840d8d37a72761a269bfb80f7a4ce74c9b67344e6f6a5b2f3a87374c8f2d8b'
+          assert h('_inputs/old/understat_frozen.db')=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert h('_inputs/v1/pure_engine.py')=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          assert h('_inputs/xg/code/historical_xg_challenger.py')=='588cad84f59e8a6b31297984c2c9015af5275f209dea8d4e3a3d71183e762ba2'
+          vm=json.load(open('_inputs/v2/artifact_manifest.json')); assert vm['head']=='d3b3e322f78c48b91477ef6e11054e51ac00fd85' and vm['selected_weight']==0.75
+          PY
+
+      - name: Historical V3 error map candidates and outer validation
+        id: run
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run
+          python football-data/research/historical_fusion_v3/historical_fusion_v3.py \
+            --contract football-data/research/historical_fusion_v3/HISTORICAL_FUSION_V3_CONTRACT.json \
+            --v2-engine _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg-engine _inputs/xg/code/historical_xg_challenger.py \
+            --v1-engine _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --parent-predictions _inputs/xg/evidence/frozen_predictions.jsonl \
+            --out _run | tee /tmp/v3_stdout.txt
+          python - <<'PY'
+          import json
+          f=json.load(open('_run/final_status.json'))
+          assert f['status'] in {'STOP_NO_STABLE_V3_TARGET','HISTORICAL_FUSION_V3_REJECTED','V3_RESEARCH_CANDIDATE_PASSED_CONFIRMATION_REQUIRED'}
+          assert f['formal_v2_unchanged'] is True and f['fresh_confirmation_available'] is False
+          if f['status']=='HISTORICAL_FUSION_V3_REJECTED':
+              assert f['outer_gates']['all_pass'] is False
+          PY
+          status="$(python -c "import json;print(json.load(open('_run/final_status.json'))['status'])")"
+          if [ -f _run/artifact_slug.txt ]; then slug="$(cat _run/artifact_slug.txt)"; else slug="$status"; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Seal exact payload manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/contracts _seal/code _seal/evidence
+          cp football-data/research/historical_fusion_v3/HISTORICAL_FUSION_V3_CONTRACT.json _seal/contracts/
+          cp football-data/research/historical_fusion_v3/historical_fusion_v3.py football-data/research/historical_fusion_v3/test_historical_fusion_v3.py _seal/code/
+          cp _run/*.json _seal/evidence/
+          cp /tmp/tests.txt /tmp/v3_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          final=json.load(open('_run/final_status.json'))
+          m={'schema_version':'football3-historical-fusion-v3-artifact-v1','status':final['status'],'head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'formal_v2_head':os.environ['FORMAL_HEAD'],'historical_only':True,'prospective_queue':False,'formal_v2_unchanged':True,'production_pointer_changed':False,'CURRENT_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload final V3 artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-${{ steps.run.outputs.slug }}-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - name: Remote ZIP SHA digest CRC manifest payload exact-set hash bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.validate-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.validate-and-seal.outputs.artifact_digest }}
+          STATUS: ${{ needs.validate-and-seal.outputs.terminal_status }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$md" = "$DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          test "sha256:$(sha256sum /tmp/a.zip | awk '{print $1}')" = "$DIGEST"
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/r && mkdir /tmp/r && unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('/tmp/r');m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['GITHUB_SHA'] and m['status']==os.environ['STATUS']
+          assert m['direct_parent']==subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()
+          assert m['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert m['formal_v2_unchanged'] is True and m['production_pointer_changed'] is False and m['CURRENT_changed'] is False
+          exp=set(m['files']);got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}
+          assert got==exp,(got^exp)
+          for x,v in m['files'].items():
+              b=(r/x).read_bytes();assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256'],x
+          receipt={'status':'REMOTE_READBACK_PASS','terminal_status':m['status'],'artifact_id':int(os.environ['ART_ID']),'metadata_digest':os.environ['DIGEST'],'zip_sha256':hashlib.sha256(pathlib.Path('/tmp/a.zip').read_bytes()).hexdigest(),'crc_pass':True,'manifest_sha256':hashlib.sha256((r/'artifact_manifest.json').read_bytes()).hexdigest(),'payload_file_n':len(exp),'head':m['head'],'direct_parent':m['direct_parent']}
+          pathlib.Path('/tmp/readback.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n');print(json.dumps(receipt,indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-readback-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/readback.json
+          retention-days: 90
