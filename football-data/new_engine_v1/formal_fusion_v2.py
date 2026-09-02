@@ -24,15 +24,23 @@ class FormalFusionError(RuntimeError):
     pass
 
 
-def _load_xg_module():
-    spec = importlib.util.spec_from_file_location("football3_formal_hxg", XG_ENGINE_PATH)
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise FormalFusionError("cannot load frozen XG Challenger")
+        raise FormalFusionError(f"cannot load frozen module: {path}")
     module = importlib.util.module_from_spec(spec)
     import sys
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_xg_module():
+    return _load_module("football3_formal_hxg", XG_ENGINE_PATH)
+
+
+def _load_v1_module():
+    return _load_module("football3_formal_v1", HERE / "pure_engine.py")
 
 
 def load_frozen_contract() -> dict[str, Any]:
@@ -78,7 +86,8 @@ def new_candidate_state():
         xg["dynamic_beta"],
         xg["dynamic_cross_season_shrink"],
     )
-    return hxg.ChallengerState(hxg.v1, dict(hxg.EXPECTED_V1_PARAMS), params)
+    v1 = _load_v1_module()
+    return hxg.ChallengerState(v1, dict(hxg.EXPECTED_V1_PARAMS), params)
 
 
 def apply_completed_xg_batch(state, fixtures: Iterable[Any], released_labels: dict[str, Any], available_at):
