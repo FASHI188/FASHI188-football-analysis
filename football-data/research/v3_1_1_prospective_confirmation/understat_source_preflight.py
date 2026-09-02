@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, hashlib, json, time, urllib.request
+import argparse, gzip, hashlib, json, time, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,25 +20,34 @@ AJAX_HEADERS={'User-Agent':UA,'Accept':'application/json','X-Requested-With':'XM
 def sha256(b:bytes)->str: return hashlib.sha256(b).hexdigest()
 def canon(o)->bytes: return json.dumps(o,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
 
-def fetch(url:str, headers:dict[str,str]|None=None, tries:int=3)->bytes:
+def decode_http_body(raw:bytes, content_encoding:str='')->bytes:
+    enc=str(content_encoding or '').lower().strip()
+    if enc=='gzip' or raw[:2]==b'\x1f\x8b':
+        try: return gzip.decompress(raw)
+        except Exception as e: raise RuntimeError('gzip response decode failed') from e
+    return raw
+
+def fetch(url:str, headers:dict[str,str]|None=None, tries:int=3):
     err=None
     for i in range(tries):
         try:
             req=urllib.request.Request(url,headers=headers or {'User-Agent':UA})
             with urllib.request.urlopen(req,timeout=30) as r:
                 if getattr(r,'status',200)!=200: raise RuntimeError(f'HTTP {r.status}')
-                return r.read()
+                wire=r.read(); enc=str(r.headers.get('Content-Encoding') or '')
+                decoded=decode_http_body(wire,enc)
+                return decoded,{'wire_sha256':sha256(wire),'decoded_sha256':sha256(decoded),'content_encoding':enc,'wire_bytes':len(wire),'decoded_bytes':len(decoded)}
         except Exception as e:
             err=e
             if i+1<tries: time.sleep(2*(i+1))
     raise RuntimeError(f'fetch failed {url}: {err}')
 
 def fetch_ajax_json(url:str):
-    raw=fetch(url,AJAX_HEADERS)
+    raw,meta=fetch(url,AJAX_HEADERS)
     try: obj=json.loads(raw)
     except Exception as e: raise RuntimeError(f'AJAX response not JSON {url}') from e
     if not isinstance(obj,dict): raise RuntimeError(f'AJAX response not object {url}')
-    return raw,obj
+    return raw,obj,meta
 
 def league_dates(obj):
     v=obj.get('dates')
@@ -89,14 +98,15 @@ def validate_shots(shots):
 
 def run(out:Path):
     homepage_url='https://understat.com/'
-    home=fetch(homepage_url,{'User-Agent':UA,'Accept':'text/html,application/xhtml+xml'})
+    home,home_meta=fetch(homepage_url,{'User-Agent':UA,'Accept':'text/html,application/xhtml+xml'})
     report={
-      'schema_version':'football3-v3-1-1-understat-source-preflight-v2-ajax',
+      'schema_version':'football3-v3-1-1-understat-source-preflight-v3-ajax-gzip',
       'cutoff_utc':CUTOFF.isoformat().replace('+00:00','Z'),
-      'source':'Understat','homepage_url':homepage_url,'homepage_sha256':sha256(home),
+      'source':'Understat','homepage_url':homepage_url,'homepage_sha256':sha256(home),'homepage_transport':home_meta,
       'transport':{
         'mode':'Understat AJAX JSON',
         'required_header':'X-Requested-With: XMLHttpRequest',
+        'content_encoding_handling':'explicit gzip decode by header or 1f8b magic',
         'league_endpoint_template':'https://understat.com/getLeagueData/{league}/{season_start_year}',
         'match_endpoint_template':'https://understat.com/getMatchData/{match_id}',
         'reference_repository':UNDERSTAT_API_REFERENCE_BASE,
@@ -117,7 +127,7 @@ def run(out:Path):
     total_future=0; total_completed=0
     for league,slug in LEAGUES.items():
         url=f'https://understat.com/getLeagueData/{slug}/2026'
-        raw,obj=fetch_ajax_json(url); dates=league_dates(obj)
+        raw,obj,lmeta=fetch_ajax_json(url); dates=league_dates(obj)
         completed=[]; future=[]
         for r in dates:
             if not isinstance(r,dict) or not r.get('datetime'): continue
@@ -130,12 +140,12 @@ def run(out:Path):
         dt,sample=completed[-1]; mid=str(sample.get('id') or '')
         if not mid.isdigit(): raise RuntimeError(f'{league}: invalid sample match id')
         murl=f'https://understat.com/getMatchData/{mid}'
-        mraw,mobj=fetch_ajax_json(murl); schema=validate_shots(match_shots(mobj))
+        mraw,mobj,mmeta=fetch_ajax_json(murl); schema=validate_shots(match_shots(mobj))
         report['leagues'][league]={
-          'league_ajax_url':url,'league_ajax_sha256':sha256(raw),'season_start_year':2026,
+          'league_ajax_url':url,'league_ajax_sha256':sha256(raw),'league_transport':lmeta,'season_start_year':2026,
           'schedule_rows_n':len(dates),'completed_pre_cutoff_n':len(completed),'future_post_cutoff_n':len(future),
           'first_future_fixture':{'kickoff_raw':future[0][0].strftime('%Y-%m-%d %H:%M:%S'),'identity':row_identity(future[0][1])},
-          'pre_cutoff_schema_sample':{'match_ajax_url':murl,'match_ajax_sha256':sha256(mraw),'kickoff_raw':dt.strftime('%Y-%m-%d %H:%M:%S'),'identity':row_identity(sample),'shot_schema':schema},
+          'pre_cutoff_schema_sample':{'match_ajax_url':murl,'match_ajax_sha256':sha256(mraw),'match_transport':mmeta,'kickoff_raw':dt.strftime('%Y-%m-%d %H:%M:%S'),'identity':row_identity(sample),'shot_schema':schema},
           'post_cutoff_match_ajax_fetched':0
         }
         total_future+=len(future); total_completed+=len(completed); time.sleep(0.5)
