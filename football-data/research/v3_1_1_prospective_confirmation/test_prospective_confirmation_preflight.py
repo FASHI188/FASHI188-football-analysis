@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, importlib.util, json, pathlib, unittest
+import gzip, hashlib, importlib.util, json, pathlib, unittest
 
 ROOT=pathlib.Path(__file__).resolve().parent
 CONTRACT=ROOT/'PROSPECTIVE_CONFIRMATION_CONTRACT.json'
@@ -59,6 +59,12 @@ class TestProspectiveConfirmation(unittest.TestCase):
         self.assertEqual(m.UNDERSTAT_API_REFERENCE_COMMIT,'d1252d9734e94ba98c681d2e41d467f1edb7aaf5')
         self.assertEqual(m.AJAX_HEADERS['X-Requested-With'],'XMLHttpRequest')
         self.assertEqual(m.LEAGUES['La liga'],'La_Liga')
+
+    def test_gzip_ajax_body_decodes_by_header_and_magic(self):
+        m=load_source(); raw=b'{"dates":[]}' ; gz=gzip.compress(raw)
+        self.assertEqual(m.decode_http_body(gz,'gzip'),raw)
+        self.assertEqual(m.decode_http_body(gz,''),raw)
+        self.assertEqual(m.decode_http_body(raw,''),raw)
 
     def test_ajax_league_payload_synthetic(self):
         m=load_source()
