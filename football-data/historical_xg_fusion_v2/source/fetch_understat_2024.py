@@ -22,7 +22,11 @@ EXPECTED_N = 1752
 OLD_DB_SHA256 = "f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681"
 OLD_UNIVERSE_N = 18084
 OLD_UNIVERSE_SHA256 = "9984062205f26a300c4b0da203c83a2a21befdd3a1149b01da59feee4c2ae14b"
-UA = {"User-Agent": "Mozilla/5.0 Football3HistoricalResearch/1.0", "Accept": "text/html,application/xhtml+xml"}
+UA = {
+    "User-Agent": "Mozilla/5.0 Football3HistoricalResearch/1.0",
+    "Accept": "application/json,text/plain,*/*",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
 
 def sha_bytes(b: bytes) -> str:
@@ -87,9 +91,22 @@ def _extract_js_string(text: str, start: int) -> str:
 
 def parse_dates_data(raw: bytes) -> list[dict]:
     text = raw.decode("utf-8", errors="strict")
+    # Current Understat public AJAX response (requested with X-Requested-With) is JSON.
+    try:
+        direct = json.loads(text)
+    except json.JSONDecodeError:
+        direct = None
+    if isinstance(direct, dict):
+        dates = direct.get("dates")
+        if isinstance(dates, list):
+            return dates
+    if isinstance(direct, list):
+        return direct
+
+    # Backward-compatible parser for the historical HTML embed. This is source plumbing only.
     marker = text.find("datesData")
     if marker < 0:
-        raise RuntimeError("Understat datesData marker not found")
+        raise RuntimeError("Understat response has neither AJAX dates JSON nor datesData HTML marker")
     parse_at = text.find("JSON.parse", marker)
     if parse_at < 0:
         raise RuntimeError("Understat datesData JSON.parse marker not found")
@@ -102,6 +119,8 @@ def parse_dates_data(raw: bytes) -> list[dict]:
         rows = json.loads(decoded)
     except Exception as exc:
         raise RuntimeError(f"Understat datesData JSON decode failed: {type(exc).__name__}: {exc}") from exc
+    if isinstance(rows, dict) and isinstance(rows.get("dates"), list):
+        rows = rows["dates"]
     if not isinstance(rows, list):
         raise RuntimeError("Understat datesData is not a list")
     return rows
@@ -164,13 +183,13 @@ def main() -> int:
     for slug, (league, expected) in LEAGUES.items():
         url = f"https://understat.com/league/{slug}/{YEAR}"
         raw = fetch(url)
-        (raw_dir / f"{slug}_{YEAR}.html").write_bytes(raw)
+        (raw_dir / f"{slug}_{YEAR}.json").write_bytes(raw)
         data = parse_dates_data(raw)
         result_rows = [x for x in data if bool(x.get("isResult"))]
         if len(result_rows) != expected:
             raise RuntimeError(f"{league} completed-result count mismatch: {len(result_rows)} != {expected}")
         counts[league] = len(result_rows)
-        page_receipts.append({"league": league, "url": url, "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
+        page_receipts.append({"league": league, "url": url, "request_mode": "public_ajax_json", "raw_sha256": sha_bytes(raw), "raw_bytes": len(raw), "result_n": len(result_rows)})
         for x in result_rows:
             fid = str(x["id"])
             ko = source_kickoff(str(x["datetime"]))
@@ -218,7 +237,7 @@ def main() -> int:
     receipt = {
         "schema_version": "football3-historical-xg-fusion-v2-source-freeze-v1",
         "status": "NEW_HISTORICAL_CONFIRMATION_SOURCE_FROZEN",
-        "provider": "Understat public league pages",
+        "provider": "Understat public league AJAX JSON",
         "season_key": YEAR,
         "historical_completed_only": True,
         "requires_secret_or_api_key": False,
