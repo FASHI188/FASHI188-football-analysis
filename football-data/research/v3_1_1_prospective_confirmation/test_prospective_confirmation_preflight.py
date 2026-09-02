@@ -54,19 +54,24 @@ class TestProspectiveConfirmation(unittest.TestCase):
         self.assertIn('favorite_minus_weak_rolling_open_play_share',s['feature_names'])
         self.assertIn('favorite_minus_weak_rolling_set_piece_share',s['feature_names'])
 
-    def test_understat_dates_parser_synthetic(self):
+    def test_ajax_transport_reference_is_pinned(self):
         m=load_source()
-        html=("<script>var datesData = JSON.parse('\\x7b\\x22dates\\x22\\x3a\\x5b\\x7b\\x22id\\x22\\x3a\\x22123\\x22\\x2c\\x22isResult\\x22\\x3atrue\\x2c\\x22datetime\\x22\\x3a\\x222026-08-30 15\\x3a00\\x3a00\\x22\\x7d\\x5d\\x7d');</script>").encode()
-        self.assertEqual(m.dates_list(m.extract_var(html,'datesData'))[0]['id'],'123')
+        self.assertEqual(m.UNDERSTAT_API_REFERENCE_COMMIT,'d1252d9734e94ba98c681d2e41d467f1edb7aaf5')
+        self.assertEqual(m.AJAX_HEADERS['X-Requested-With'],'XMLHttpRequest')
+        self.assertEqual(m.LEAGUES['La liga'],'La_Liga')
 
-    def test_understat_shot_schema_synthetic(self):
+    def test_ajax_league_payload_synthetic(self):
         m=load_source()
-        html=("<script>var shotsData = JSON.parse('\\x7b\\x22shots\\x22\\x3a\\x7b\\x22h\\x22\\x3a\\x5b\\x7b\\x22xG\\x22\\x3a\\x220.1\\x22\\x2c\\x22situation\\x22\\x3a\\x22OpenPlay\\x22\\x2c\\x22h_a\\x22\\x3a\\x22h\\x22\\x7d\\x5d\\x2c\\x22a\\x22\\x3a\\x5b\\x7b\\x22xG\\x22\\x3a\\x220.2\\x22\\x2c\\x22situation\\x22\\x3a\\x22FromCorner\\x22\\x2c\\x22h_a\\x22\\x3a\\x22a\\x22\\x7d\\x5d\\x7d\\x7d');</script>").encode()
-        r=m.validate_shots(m.shots_list(m.extract_var(html,'shotsData')))
+        obj={'teams':{},'players':[],'dates':[{'id':'123','isResult':True,'datetime':'2026-08-30 15:00:00','h':{'title':'A'},'a':{'title':'B'}}]}
+        rows=m.league_dates(obj)
+        self.assertEqual(rows[0]['id'],'123')
+        self.assertEqual(m.row_identity(rows[0])['home_team'],'A')
+
+    def test_ajax_shot_schema_synthetic_and_unknown_fails_closed(self):
+        m=load_source()
+        obj={'shots':{'h':[{'xG':'0.1','situation':'OpenPlay','h_a':'h'}],'a':[{'xG':'0.2','situation':'FromCorner','h_a':'a'}]}}
+        r=m.validate_shots(m.match_shots(obj))
         self.assertEqual(r['shot_n'],2); self.assertEqual(r['sides_seen'],['a','h'])
-
-    def test_unknown_shot_situation_fails_closed(self):
-        m=load_source()
         with self.assertRaises(RuntimeError):
             m.validate_shots([{'xG':'0.1','situation':'Unknown','h_a':'h'},{'xG':'0.1','situation':'OpenPlay','h_a':'a'}])
 
