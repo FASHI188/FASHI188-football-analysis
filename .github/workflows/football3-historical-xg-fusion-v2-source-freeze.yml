@@ -89,21 +89,24 @@ jobs:
             python - <<'PY'
           import hashlib,pathlib,re
           files=sorted(pathlib.Path('_source_freeze/raw_pages').glob('*')) if pathlib.Path('_source_freeze/raw_pages').exists() else []
-          print('SOURCE_STRUCTURE_DIAGNOSTIC')
+          print('SOURCE_STRUCTURE_DIAGNOSTIC_V2')
           print('raw_file_n=',len(files))
           for p in files[:1]:
               b=p.read_bytes(); s=b.decode('utf-8','replace')
               title=re.search(r'<title[^>]*>(.*?)</title>',s,re.I|re.S)
               scripts=re.findall(r'<script[^>]+src=["\']([^"\']+)',s,re.I)
-              links=re.findall(r'<link[^>]+href=["\']([^"\']+)',s,re.I)
-              tokens={t:(t.lower() in s.lower()) for t in ['datesData','__NEXT_DATA__','webpack','api','league','matches','xG','application/json','cloudflare','challenge','captcha']}
               print('file=',p.name,'bytes=',len(b),'sha256=',hashlib.sha256(b).hexdigest())
               print('title=',(title.group(1).strip()[:300] if title else None))
-              print('script_src_n=',len(scripts),'script_src_first=',scripts[:12])
-              print('link_href_first=',links[:12])
-              print('tokens=',tokens)
-              prefix=re.sub(r'\s+',' ',s[:600]).strip()
-              print('prefix600=',prefix)
+              print('script_src_all=',scripts)
+              for token in ['$.ajax','ajax(','fetch(','XMLHttpRequest','/league/','dates','matches','calendar','getLeague','api/','leagueData']:
+                  hits=[]; low=s.lower(); needle=token.lower(); pos=0
+                  while len(hits)<4:
+                      i=low.find(needle,pos)
+                      if i<0: break
+                      a=max(0,i-160); z=min(len(s),i+300)
+                      hits.append(re.sub(r'\s+',' ',s[a:z]))
+                      pos=i+len(needle)
+                  if hits: print('context',token,hits)
           PY
             cat /tmp/source.err
             exit "$rc"
