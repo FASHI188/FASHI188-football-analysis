@@ -1,0 +1,95 @@
+name: football3 Historical Shot Event Sealed Inventory V1
+on:
+  push:
+    branches: [football3/historical-shot-event-sealed-inventory-v1]
+    paths:
+      - '.github/workflows/football3-historical-shot-event-sealed-inventory-v1.yml'
+      - 'football-data/research/historical_shot_event_sealed_inventory/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sealed-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+      V3_HEAD: 485807562f0d1c859ba13355dc671e980de5eb9e
+      CONFIRM_HEAD: 827e5ac2092b6f0af42c6cbce58cc66026385a83
+      DIR: football-data/research/historical_shot_event_sealed_inventory
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Governance and exact refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-shot-event-sealed-inventory-v1'
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-upset-safe-v1 | cut -f1)" = "$V3_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-upset-safe-confirmation-v1 | cut -f1)" = "$CONFIRM_HEAD"
+          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD)
+          printf '%s\n' "${changed[@]}" > changed.txt
+          python - <<'PY'
+          import json,pathlib,subprocess
+          c=json.load(open('football-data/research/historical_shot_event_sealed_inventory/SEALED_INVENTORY_CONTRACT.json'))
+          changed=subprocess.check_output(['git','diff','--name-only',c['base_formal_v2']['head']+'...HEAD'],text=True).splitlines()
+          assert sorted(changed)==sorted(c['file_whitelist']), (changed,c['file_whitelist'])
+          assert c['candidate']['head']=='485807562f0d1c859ba13355dc671e980de5eb9e'
+          assert c['power_plan']['required_n']==6481
+          print('GOVERNANCE_PASS')
+          PY
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Fresh compile and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile "$DIR/sealed_inventory.py" "$DIR/test_sealed_inventory.py"
+          python "$DIR/test_sealed_inventory.py" |& tee tests.txt
+      - name: Zero-label source freeze and mechanical stop gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/evidence
+          python "$DIR/sealed_inventory.py" --contract "$DIR/SEALED_INVENTORY_CONTRACT.json" source-census --out out/evidence/source_census.json | tee source_census_stdout.txt
+          python "$DIR/sealed_inventory.py" --contract "$DIR/SEALED_INVENTORY_CONTRACT.json" gate --outdir out/evidence | tee gate_stdout.txt
+          python - <<'PY'
+          import json,pathlib
+          r=json.load(open('out/evidence/terminal_status.json'))
+          assert r['status']=='NO_ELIGIBLE_SEALED_SHOT_EVENT_COHORT'
+          assert r['required_n']==6481 and r['eligible_target_identity_upper_bound']==1752
+          assert r['target_labels_opened'] is False and r['predictor_run'] is False and r['scorer_run'] is False
+          assert not list(pathlib.Path('out').rglob('*label*vault*'))
+          print('STOP_BEFORE_TARGET_LABEL_INGESTION_PASS')
+          PY
+      - name: Build sealed engineering artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/code artifact/contracts artifact/evidence
+          cp "$DIR/sealed_inventory.py" artifact/code/
+          cp "$DIR/test_sealed_inventory.py" artifact/code/
+          cp "$DIR/SEALED_INVENTORY_CONTRACT.json" artifact/contracts/
+          cp .github/workflows/football3-historical-shot-event-sealed-inventory-v1.yml artifact/workflow.yml
+          cp out/evidence/*.json artifact/evidence/
+          cp tests.txt changed.txt source_census_stdout.txt gate_stdout.txt artifact/evidence/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('artifact')
+          files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='artifact_manifest.json'):
+              b=p.read_bytes(); files[str(p.relative_to(root))]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          exact=sorted(list(files)+['artifact_manifest.json'])
+          m={'schema_version':'football3-historical-shot-event-sealed-inventory-artifact-v1','head':os.environ['GITHUB_SHA'],'run_id':int(os.environ['GITHUB_RUN_ID']),'status':'NO_ELIGIBLE_SEALED_SHOT_EVENT_COHORT','required_n':6481,'target_labels_opened':False,'predictor_run':False,'scorer_run':False,'files':files,'payload_exact_set':exact}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+          find artifact -type f -print | sort
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-shot-event-sealed-inventory-${{ github.sha }}-${{ github.run_id }}
+          path: artifact/
+          retention-days: 30
+          if-no-files-found: error
