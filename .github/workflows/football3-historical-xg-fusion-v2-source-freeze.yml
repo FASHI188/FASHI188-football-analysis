@@ -81,7 +81,34 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf _source_freeze
-          python football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py --old-db /tmp/understat_frozen.db --out _source_freeze
+          set +e
+          python football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py --old-db /tmp/understat_frozen.db --out _source_freeze > /tmp/source.out 2> /tmp/source.err
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            python - <<'PY'
+          import hashlib,pathlib,re
+          files=sorted(pathlib.Path('_source_freeze/raw_pages').glob('*')) if pathlib.Path('_source_freeze/raw_pages').exists() else []
+          print('SOURCE_STRUCTURE_DIAGNOSTIC')
+          print('raw_file_n=',len(files))
+          for p in files[:1]:
+              b=p.read_bytes(); s=b.decode('utf-8','replace')
+              title=re.search(r'<title[^>]*>(.*?)</title>',s,re.I|re.S)
+              scripts=re.findall(r'<script[^>]+src=["\']([^"\']+)',s,re.I)
+              links=re.findall(r'<link[^>]+href=["\']([^"\']+)',s,re.I)
+              tokens={t:(t.lower() in s.lower()) for t in ['datesData','__NEXT_DATA__','webpack','api','league','matches','xG','application/json','cloudflare','challenge','captcha']}
+              print('file=',p.name,'bytes=',len(b),'sha256=',hashlib.sha256(b).hexdigest())
+              print('title=',(title.group(1).strip()[:300] if title else None))
+              print('script_src_n=',len(scripts),'script_src_first=',scripts[:12])
+              print('link_href_first=',links[:12])
+              print('tokens=',tokens)
+              prefix=re.sub(r'\s+',' ',s[:600]).strip()
+              print('prefix600=',prefix)
+          PY
+            cat /tmp/source.err
+            exit "$rc"
+          fi
+          cat /tmp/source.out
           python - <<'PY'
           import json
           r=json.load(open('_source_freeze/source_freeze_receipt.json'))
