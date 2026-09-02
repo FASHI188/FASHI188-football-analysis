@@ -1,0 +1,143 @@
+name: football3 Historical XG Fusion V2 source freeze
+
+on:
+  push:
+    branches: [football3/historical-xg-fusion-v2]
+    paths:
+      - 'football-data/historical_xg_fusion_v2/contracts/**'
+      - 'football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py'
+      - '.github/workflows/football3-historical-xg-fusion-v2-source-freeze.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-historical-xg-fusion-v2-source-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 08a13ce01ddf7c3408b7b89d39d44c01a3b30c9b
+  OLD_SOURCE_ARTIFACT_ID: '9798682425'
+  OLD_SOURCE_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  source-freeze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and source-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          python - <<'PY'
+          import os,subprocess
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          allowed={
+            'football-data/historical_xg_fusion_v2/contracts/HISTORICAL_XG_FUSION_V2_PREREGISTRATION.md',
+            'football-data/historical_xg_fusion_v2/contracts/HISTORICAL_XG_FUSION_V2_FILE_WHITELIST.md',
+            'football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py',
+            '.github/workflows/football3-historical-xg-fusion-v2-source-freeze.yml',
+          }
+          assert got==allowed,(got,allowed)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile source freezer
+        run: python -m py_compile football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py
+
+      - name: Download exact frozen old Understat DB
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_SOURCE_ARTIFACT_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$md" = "$OLD_SOURCE_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_SOURCE_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_SOURCE_ARTIFACT_DIGEST"
+          unzip -tq /tmp/old.zip
+          unzip -p /tmp/old.zip understat_frozen.db > /tmp/understat_frozen.db
+          test "$(sha256sum /tmp/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Fetch and freeze completed Understat 2024 Big-5 source
+        run: |
+          set -euo pipefail
+          rm -rf _source_freeze
+          python football-data/historical_xg_fusion_v2/source/fetch_understat_2024.py --old-db /tmp/understat_frozen.db --out _source_freeze
+          python - <<'PY'
+          import json
+          r=json.load(open('_source_freeze/source_freeze_receipt.json'))
+          assert r['status']=='NEW_HISTORICAL_CONFIRMATION_SOURCE_FROZEN'
+          assert r['n']==1752 and r['old_fixture_overlap_n']==0
+          assert r['league_counts']=={'Bundesliga':306,'EPL':380,'La liga':380,'Ligue 1':306,'Serie A':380}
+          assert r['identity_file_contains_result_or_xg'] is False
+          PY
+
+      - name: Seal source Artifact manifest
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path('_source_freeze')
+          files={}
+          for p in sorted(root.rglob('*')):
+            if p.is_file():
+              b=p.read_bytes(); files[p.relative_to(root).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          m={'schema_version':'football3-historical-xg-fusion-v2-source-artifact-v1','status':'NEW_HISTORICAL_CONFIRMATION_SOURCE_FROZEN','head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'base_head':os.environ['BASE_HEAD'],'no_scoring_performed':True,'no_model_prediction_performed':True,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload source freeze Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-xg-fusion-v2-source-${{ github.sha }}-${{ github.run_id }}
+          path: _source_freeze
+          retention-days: 90
+          if-no-files-found: error
+
+  source-readback:
+    needs: source-freeze
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Remote ZIP digest CRC manifest payload readback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.source-freeze.outputs.artifact_id }}
+          DIGEST: ${{ needs.source-freeze.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$md" = "$DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          test "sha256:$(sha256sum /tmp/a.zip | awk '{print $1}')" = "$DIGEST"
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/r && mkdir /tmp/r && unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['GITHUB_SHA'] and m['no_scoring_performed'] is True
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert got==exp,(got^exp)
+          for x,v in m['files'].items():
+            b=(r/x).read_bytes(); assert len(b)==v['bytes'] and hashlib.sha256(b).hexdigest()==v['sha256']
+          PY
