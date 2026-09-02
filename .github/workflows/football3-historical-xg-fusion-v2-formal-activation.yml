@@ -1,0 +1,135 @@
+name: Football3 Historical XG Fusion V2 Formal Activation
+
+on:
+  push:
+    branches: [football3/historical-xg-fusion-v2-formal-activation-v1]
+    paths:
+      - 'football-data/config/formal_model_pointer_historical_xg_fusion_v2.json'
+      - 'governance/football3/formal_activation_pointer_schema_v1.json'
+      - 'governance/football3/validate_formal_activation_pointer_v1.py'
+      - 'governance/football3/test_validate_formal_activation_pointer_v1.py'
+      - '.github/workflows/football3-historical-xg-fusion-v2-formal-activation.yml'
+      - '.github/workflows/football3-full-stack-remediation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ACCEPTED_HEAD: a142014d9355cc950916f7445e82310471d2d9b2
+  ACCEPTED_ARTIFACT_ID: '9841488040'
+  ACCEPTED_ARTIFACT_SHA256: 0bed3e3d01f7fee952047f0c48d5496294bc7d0ee51d30eb731ac0bc1be3d936
+
+jobs:
+  formal-activation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify exact activation lineage and six-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base "$ACCEPTED_HEAD" HEAD)" = "$ACCEPTED_HEAD"
+          test "$(git rev-list --count "$ACCEPTED_HEAD"..HEAD)" -ge 1
+          python governance/football3/validate_formal_activation_pointer_v1.py --repo-root .
+      - name: Run activation and accepted wiring tests
+        shell: bash
+        env:
+          PYTHONPATH: governance/football3:football-data:football-data/research
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_formal_activation_pointer_v1.py governance/football3/test_validate_formal_activation_pointer_v1.py
+          python governance/football3/test_validate_formal_activation_pointer_v1.py 2>&1 | tee /tmp/activation_tests.txt
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/wiring_tests.txt
+          grep -q '^OK$' /tmp/activation_tests.txt
+          grep -q '^OK$' /tmp/wiring_tests.txt
+      - name: Verify accepted wiring Artifact bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ACCEPTED_ARTIFACT_ID}/zip" > /tmp/accepted.zip
+          actual="$(sha256sum /tmp/accepted.zip | awk '{print $1}')"
+          test "$actual" = "$ACCEPTED_ARTIFACT_SHA256"
+          python - <<'PY'
+          import json,zipfile
+          with zipfile.ZipFile('/tmp/accepted.zip') as z:
+              bad=z.testzip(); assert bad is None,bad
+              manifest=json.loads(z.read('artifact_manifest.json'))
+              assert manifest['head']=='a142014d9355cc950916f7445e82310471d2d9b2'
+              assert manifest['formal_enablement'] is False
+              assert manifest['production_pointer_changed'] is False
+          print('accepted wiring artifact: PASS')
+          PY
+      - name: Prove activation changes authority only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/new_engine_v1/formal_fusion_v2.py)" = a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871
+          test "$(git hash-object football-data/new_engine_v1/test_formal_fusion_v2.py)" = 61b25cd403fa1d9efa0dfcbc1643e0f17621944e
+          git diff --exit-code "$ACCEPTED_HEAD"...HEAD -- football-data/new_engine_v1 football-data/historical_xg_challenger_v1 football-data/historical_xg_fusion_v2
+      - name: Seal exact-head activation Artifact
+        id: upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/changed _seal/evidence
+          while IFS= read -r rel; do
+            mkdir -p "_seal/changed/$(dirname "$rel")"
+            cp "$rel" "_seal/changed/$rel"
+          done < <(git diff --name-only "$ACCEPTED_HEAD"...HEAD)
+          cp /tmp/activation_tests.txt /tmp/wiring_tests.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path('_seal')
+          pointer=json.loads(pathlib.Path('football-data/config/formal_model_pointer_historical_xg_fusion_v2.json').read_text())
+          files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='artifact_manifest.json'):
+              files[str(p.relative_to(root))]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}
+          manifest={
+              'schema_version':'football3-historical-xg-fusion-v2-formal-activation-artifact-v1',
+              'status':'FORMAL_ACTIVATION_READY_EXTERNAL_CURRENT_REQUIRED',
+              'head':os.environ['GITHUB_SHA'],
+              'parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),
+              'accepted_head':os.environ['ACCEPTED_HEAD'],
+              'branch':os.environ['GITHUB_REF_NAME'],
+              'formal_enablement':True,
+              'production_pointer_changed':True,
+              'external_current_required':True,
+              'xg_weight':pointer['model']['xg_weight'],
+              'frozen_v1_weight':pointer['model']['frozen_v1_weight'],
+              'scope_n':len(pointer['formal_scope']),
+              'market_features':False,
+              'training':False,
+              'tuning':False,
+              'new_target_labels':False,
+              'prospective_queue':False,
+              'ready':False,
+              'merge':False,
+              'files':files,
+          }
+          (root/'artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        id: artifact
+        with:
+          name: football3-historical-xg-fusion-v2-formal-activation-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          include-hidden-files: true
+      - name: Terminal marker
+        shell: bash
+        run: |
+          echo FORMAL_ACTIVATION_READY_EXTERNAL_CURRENT_REQUIRED
+          echo "HEAD=${GITHUB_SHA}"
+          echo "ARTIFACT_ID=${{ steps.artifact.outputs.artifact-id }}"
+          echo "ARTIFACT_DIGEST=${{ steps.artifact.outputs.artifact-digest }}"

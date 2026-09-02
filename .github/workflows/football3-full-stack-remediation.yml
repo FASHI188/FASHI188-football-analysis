@@ -2,7 +2,9 @@ name: Football3 Full Stack Scientific Preflight
 
 on:
   push:
-    branches: [football3/historical-xg-fusion-v2-formal-wiring-governed-v1]
+    branches:
+      - football3/historical-xg-fusion-v2-formal-wiring-governed-v1
+      - football3/historical-xg-fusion-v2-formal-activation-v1
     paths:
       - 'football-data/new_engine_v1/formal_fusion_v2.py'
       - 'football-data/new_engine_v1/test_formal_fusion_v2.py'
@@ -11,6 +13,11 @@ on:
       - 'governance/football3/**'
       - '.github/workflows/football3-full-stack-remediation.yml'
       - '.github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml'
+      - 'football-data/config/formal_model_pointer_historical_xg_fusion_v2.json'
+      - 'governance/football3/formal_activation_pointer_schema_v1.json'
+      - 'governance/football3/validate_formal_activation_pointer_v1.py'
+      - 'governance/football3/test_validate_formal_activation_pointer_v1.py'
+      - '.github/workflows/football3-historical-xg-fusion-v2-formal-activation.yml'
   pull_request:
     paths:
       - 'football-data/**'
@@ -57,7 +64,9 @@ jobs:
             football-data/new_engine_v1/formal_fusion_v2.py \
             football-data/new_engine_v1/test_formal_fusion_v2.py \
             governance/football3/validate_formal_wiring_contract_v2.py \
-            governance/football3/test_validate_formal_wiring_contract_v2.py
+            governance/football3/test_validate_formal_wiring_contract_v2.py \
+            governance/football3/validate_formal_activation_pointer_v1.py \
+            governance/football3/test_validate_formal_activation_pointer_v1.py
       - name: Audit C072-C lineage and all C073-C077-derived research isolation
         run: python football-data/research/audit_football3_lineage.py
       - name: Unit-test metrics calibration PIT identity bootstrap evaluator and V2 contract guards
@@ -73,13 +82,27 @@ jobs:
         run: |
           pytest -q governance/football3/test_validate_formal_wiring_contract_v2.py
           python football-data/new_engine_v1/test_formal_fusion_v2.py
+      - name: Run formal activation pointer governance tests
+        if: github.ref_name == 'football3/historical-xg-fusion-v2-formal-activation-v1'
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          python governance/football3/test_validate_formal_activation_pointer_v1.py
+          python governance/football3/validate_formal_activation_pointer_v1.py --repo-root .
       - name: Validate isolated non-market formal_wiring schema-v2 governance
         run: |
-          python governance/football3/validate_formal_wiring_contract_v2.py \
-            --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
-            --schema governance/football3/formal_wiring_contract_schema_v2.json \
-            --repo-root . \
-            --base-head "$FORMAL_WIRING_RESEARCH_BASE_HEAD"
+          if [ "$GITHUB_REF_NAME" = 'football3/historical-xg-fusion-v2-formal-activation-v1' ]; then
+            python governance/football3/validate_formal_wiring_contract_v2.py \
+              --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
+              --schema governance/football3/formal_wiring_contract_schema_v2.json \
+              --repo-root . --skip-diff
+          else
+            python governance/football3/validate_formal_wiring_contract_v2.py \
+              --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
+              --schema governance/football3/formal_wiring_contract_schema_v2.json \
+              --repo-root . \
+              --base-head "$FORMAL_WIRING_RESEARCH_BASE_HEAD"
+          fi
       - name: Run zero-real-label end-to-end scoring smoke
         env:
           PYTHONPATH: football-data/research
