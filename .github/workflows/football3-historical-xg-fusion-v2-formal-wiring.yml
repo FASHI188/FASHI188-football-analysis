@@ -2,12 +2,14 @@ name: football3 Historical XG Fusion V2 Formal Wiring
 
 on:
   push:
-    branches: [football3/historical-xg-fusion-v2-formal-wiring]
+    branches: [football3/historical-xg-fusion-v2-formal-wiring-governed-v1]
     paths:
-      - 'football-data/new_engine_v1/formal_fusion_v2.py'
-      - 'football-data/new_engine_v1/test_formal_fusion_v2.py'
-      - 'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json'
+      - '.github/workflows/football3-full-stack-remediation.yml'
       - '.github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml'
+      - 'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json'
+      - 'governance/football3/formal_wiring_contract_schema_v2.json'
+      - 'governance/football3/test_validate_formal_wiring_contract_v2.py'
+      - 'governance/football3/validate_formal_wiring_contract_v2.py'
   workflow_dispatch:
 
 permissions:
@@ -15,11 +17,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: football3-historical-xg-fusion-v2-formal-wiring-${{ github.sha }}
+  group: football3-historical-xg-fusion-v2-formal-wiring-governed-${{ github.sha }}
   cancel-in-progress: false
 
 env:
-  BASE_HEAD: d3b3e322f78c48b91477ef6e11054e51ac00fd85
+  GOVERNANCE_BASE_HEAD: 3016f6c7a0b77e0db310ad926011dfaa50c56e02
   V1_ARTIFACT_ID: '9732754224'
   V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
   XG_ARTIFACT_ID: '9826787329'
@@ -39,31 +41,69 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify exact lineage and four-file scope
+      - name: Verify exact governed lineage and frozen six-file remediation scope
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_REF_NAME" = 'football3/historical-xg-fusion-v2-formal-wiring'
+          test "$GITHUB_REF_NAME" = 'football3/historical-xg-fusion-v2-formal-wiring-governed-v1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git merge-base "$GOVERNANCE_BASE_HEAD" HEAD)" = "$GOVERNANCE_BASE_HEAD"
           python - <<'PY'
-          import os, subprocess
-          allowed = {
-            '.github/workflows/football3-historical-xg-fusion-v2-formal-wiring.yml',
-            'football-data/new_engine_v1/formal_fusion_v2.py',
-            'football-data/new_engine_v1/test_formal_fusion_v2.py',
-            'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json',
-          }
-          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"], text=True).splitlines())
+          import json, os, pathlib, subprocess
+          contract = json.loads(pathlib.Path('football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json').read_text())
+          allowed = set(contract['governance']['changed_file_whitelist'])
+          assert len(allowed) == 6 and len(allowed) <= 12
+          got = set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['GOVERNANCE_BASE_HEAD']}...HEAD"], text=True).splitlines())
           assert got == allowed, (got, allowed)
-          forbidden = ('CURRENT', 'PR334', 'R5')
-          assert not any(any(x in p for x in forbidden) for p in got)
+          assert not any(any(x in p for x in ('CURRENT', 'PR334', 'R5')) for p in got)
           PY
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Validate isolated non-market formal_wiring schema-v2 governance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/validate_formal_wiring_contract_v2.py \
+            --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
+            --schema governance/football3/formal_wiring_contract_schema_v2.json \
+            --repo-root . \
+            --base-head "$GOVERNANCE_BASE_HEAD" | tee /tmp/formal_governance.txt
+          grep -q 'FORMAL_WIRING_GOVERNANCE_V2_PASS' /tmp/formal_governance.txt
+
+      - name: Run governance positive and fail-closed negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pytest==8.4.1
+          pytest -q governance/football3/test_validate_formal_wiring_contract_v2.py | tee /tmp/governance_tests.txt
+          grep -q '9 passed' /tmp/governance_tests.txt
+
+      - name: Verify frozen market-governance and formal-source blob identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib, subprocess
+          c=json.loads(pathlib.Path('football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json').read_text())
+          locks={}
+          locks.update(c['governance']['immutable_market_governance_git_blobs'])
+          locks.update(c['governance']['immutable_formal_source_git_blobs'])
+          for path, expected in sorted(locks.items()):
+              actual=subprocess.check_output(['git','rev-parse',f'HEAD:{path}'],text=True).strip()
+              assert actual==expected,(path,actual,expected)
+          assert c['governance']['market_features'] is False
+          assert c['governance']['market_inputs']==[]
+          assert c['governance']['market_baseline'] is False
+          assert c['governance']['training'] is False
+          assert c['governance']['tuning'] is False
+          assert c['governance']['new_target_labels'] is False
+          print('immutable market/formal blobs: PASS')
+          PY
 
       - name: Verify frozen source identities and non-enablement
         shell: bash
@@ -81,11 +121,14 @@ jobs:
           assert identity['fusion_contract']['formula']=='normalize((1-w)*p_V1 + w*p_XG)'
           assert identity['formal_weight']==0 and identity['formal_enablement'] is False
           assert lock['formal_activation'] is False
+          assert wiring['schema_version']==2
+          assert wiring['contract_kind']=='historical_xg_fusion_v2_formal_wiring_non_market'
           assert wiring['fusion']['xg_weight']==0.75 and wiring['fusion']['v1_weight']==0.25
+          assert wiring['fusion']['xg_insufficient']=='FROZEN_V1_EXACT_FALLBACK'
           assert wiring['runtime']['formal_enablement'] is False
           assert wiring['runtime']['production_pointer_changed'] is False
           assert wiring['runtime']['prospective_queue'] is False
-          assert wiring['status']=='GPT_REMEDIATED_PENDING_CODEX_RECHECK'
+          assert wiring['status']=='GOVERNANCE_REMEDIATED_PENDING_CODEX_RECHECK'
           PY
 
       - name: Download and verify frozen acceptance inputs
@@ -134,6 +177,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            governance/football3/validate_formal_wiring_contract_v2.py \
+            governance/football3/test_validate_formal_wiring_contract_v2.py \
             football-data/new_engine_v1/pure_engine.py \
             football-data/historical_xg_challenger_v1/historical_xg_challenger.py \
             football-data/new_engine_v1/formal_fusion_v2.py \
@@ -194,44 +239,70 @@ jobs:
           assert f['formal_weight']==0 and f['formal_enablement'] is False and f['prospective_queue'] is False
           PY
 
-      - name: Seal exact-head acceptance artifact
+      - name: Seal exact-head governed acceptance artifact
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf _seal && mkdir -p _seal
+          rm -rf _seal && mkdir -p _seal/governance
           cp football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json _seal/
           cp football-data/new_engine_v1/formal_fusion_v2.py _seal/
           cp football-data/new_engine_v1/test_formal_fusion_v2.py _seal/
-          cp /tmp/xg_tests.txt /tmp/fusion_tests.txt /tmp/wiring_tests.txt /tmp/development_stdout.txt /tmp/confirmation_predict_stdout.txt /tmp/confirmation_score_stdout.txt _seal/
+          cp governance/football3/formal_wiring_contract_schema_v2.json _seal/governance/
+          cp governance/football3/validate_formal_wiring_contract_v2.py _seal/governance/
+          cp governance/football3/test_validate_formal_wiring_contract_v2.py _seal/governance/
+          cp /tmp/formal_governance.txt /tmp/governance_tests.txt /tmp/xg_tests.txt /tmp/fusion_tests.txt /tmp/wiring_tests.txt /tmp/development_stdout.txt /tmp/confirmation_predict_stdout.txt /tmp/confirmation_score_stdout.txt _seal/
           cp -R _run _seal/
           python - <<'PY'
           import hashlib,json,os,pathlib
           root=pathlib.Path('_seal')
+          contract=json.loads(pathlib.Path('football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json').read_text())
+          governance_receipt={
+            'schema_version':'football3-formal-wiring-governance-receipt-v2',
+            'status':'FORMAL_WIRING_GOVERNANCE_V2_PASS',
+            'head':os.environ['GITHUB_SHA'],
+            'branch':os.environ['GITHUB_REF_NAME'],
+            'base_head':os.environ['GOVERNANCE_BASE_HEAD'],
+            'changed_file_whitelist':contract['governance']['changed_file_whitelist'],
+            'market_features':False,
+            'market_inputs':[],
+            'market_baseline':False,
+            'market_validator_semantics':'UNCHANGED',
+            'training':False,
+            'tuning':False,
+            'new_target_labels':False,
+            'formal_enablement':False,
+            'production_pointer_changed':False,
+            'immutable_market_governance_git_blobs':contract['governance']['immutable_market_governance_git_blobs'],
+            'immutable_formal_source_git_blobs':contract['governance']['immutable_formal_source_git_blobs'],
+          }
+          (root/'governance_receipt.json').write_text(json.dumps(governance_receipt,indent=2,sort_keys=True)+'\n')
           files={}
           for p in sorted(x for x in root.rglob('*') if x.is_file()):
               files[str(p.relative_to(root))]=hashlib.sha256(p.read_bytes()).hexdigest()
           manifest={
-            'schema_version':'football3-historical-xg-fusion-v2-formal-wiring-artifact-v1',
-            'status':'GPT_REMEDIATED_PENDING_CODEX_RECHECK',
+            'schema_version':'football3-historical-xg-fusion-v2-formal-wiring-artifact-v2',
+            'status':'FORMAL_WIRING_GOVERNANCE_V2_PASS',
             'head':os.environ['GITHUB_SHA'],
             'branch':os.environ['GITHUB_REF_NAME'],
-            'base_head':os.environ['BASE_HEAD'],
+            'base_head':os.environ['GOVERNANCE_BASE_HEAD'],
             'xg_weight':0.75,
             'v1_weight':0.25,
             'formal_enablement':False,
             'production_pointer_changed':False,
             'prospective_queue':False,
             'historical_completed_only':True,
+            'market_validator_semantics':'UNCHANGED',
+            'new_target_labels':False,
             'files':files,
           }
           (root/'artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
           PY
 
-      - name: Upload full acceptance artifact
+      - name: Upload full governed acceptance artifact
         id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: football3-historical-xg-fusion-v2-formal-wiring-${{ github.run_id }}
+          name: football3-historical-xg-fusion-v2-formal-wiring-governed-${{ github.run_id }}
           path: _seal
           if-no-files-found: error
           compression-level: 6
@@ -239,7 +310,7 @@ jobs:
       - name: Terminal marker
         shell: bash
         run: |
-          echo 'GPT_REMEDIATED_PENDING_CODEX_RECHECK'
+          echo 'FORMAL_WIRING_GOVERNANCE_V2_PASS'
           echo "HEAD=${GITHUB_SHA}"
           echo "ARTIFACT_ID=${{ steps.upload.outputs.artifact-id }}"
           echo "ARTIFACT_DIGEST=${{ steps.upload.outputs.artifact-digest }}"
