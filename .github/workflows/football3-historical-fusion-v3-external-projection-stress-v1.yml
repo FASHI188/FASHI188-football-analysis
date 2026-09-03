@@ -1,0 +1,178 @@
+name: football3 Historical Fusion V3 External Projection Stress
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-external-projection-stress-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-external-projection-stress-v1.yml'
+      - 'football-data/research/historical_fusion_v3_external_projection_stress/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-external-projection-stress-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 03c6f033af9ab22b042dfaed6ecd779a60c21a31
+  CONTRACT_FREEZE_COMMIT: ca07b84119efcbc9a40895fa3ec893074fe766ff
+  CONTRACT_BLOB: 24c1a9452444de79f8e13a20d4e5344a07de74d2
+  RUNNER_BLOB: 12db9dd7c1022adc8691d72f01bd961fdb99b8eb
+  TEST_BLOB: 5b0d52477bcfda2faf1563ae68bcab4265e77c70
+  V324_HEAD: 3cc9098cd321ee4f1dd659b1a4f4db75c02555ed
+  V324_RUNNER_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+
+jobs:
+  stress-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact lineage contract freeze whitelist and formal guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-external-projection-stress-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-2-4-minimal-boundary-projection-v1 | cut -f1)" = "$V324_HEAD"
+          D=football-data/research/historical_fusion_v3_external_projection_stress
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          test "$(git hash-object "$D/EXTERNAL_PROJECTION_STRESS_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/external_projection_stress.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_external_projection_stress.py")" = "$TEST_BLOB"
+          test "$(git hash-object "$V")" = "$V324_RUNNER_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          d=pathlib.Path('football-data/research/historical_fusion_v3_external_projection_stress')
+          contract=str(d/'EXTERNAL_PROJECTION_STRESS_CONTRACT.json')
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines())
+          assert freeze=={contract},freeze
+          allowed={'.github/workflows/football3-historical-fusion-v3-external-projection-stress-v1.yml',contract,str(d/'external_projection_stress.py'),str(d/'test_external_projection_stress.py')}
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((d/'EXTERNAL_PROJECTION_STRESS_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_EXTERNAL_DATA_DOWNLOAD_OR_LABEL_SCORING'
+          assert c['scientific_role']=='EXTERNAL_TRANSPORT_DIAGNOSTIC_ONLY_NOT_FORMAL_CONFIRMATION'
+          assert c['mechanism']['projection']=='EXACT_V3_2_4_DETERMINISTIC_MINIMUM_L2_TOP1_BOUNDARY_PROJECTION'
+          assert c['mechanism']['no_learning'] and c['mechanism']['no_parameter_fit'] and c['mechanism']['no_threshold_grid']
+          assert len(c['data']['leagues'])==6 and len(c['data']['seasons'])==2 and c['evaluation']['chronological_folds']==12
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and run seven structural tests before download scoring
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_projection_stress
+          python -m py_compile "$D/external_projection_stress.py" "$D/test_external_projection_stress.py"
+          (cd "$D" && python test_external_projection_stress.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download frozen 12-file external stress cohort without redirects
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _data
+          python - <<'PY' > /tmp/download_plan.txt
+          import json
+          c=json.load(open('football-data/research/historical_fusion_v3_external_projection_stress/EXTERNAL_PROJECTION_STRESS_CONTRACT.json'))
+          for season in c['data']['seasons']:
+              sp=c['data']['season_paths'][season]
+              for lg in c['data']['leagues']:
+                  code=lg['code']; print(sp,code,c['data']['url_template'].format(season_path=sp,league=code))
+          PY
+          while read -r sp code url; do
+            out="_data/${sp}_${code}.csv"
+            meta="$(curl -sS --fail -D /tmp/hdr -o "$out" -w '%{http_code} %{redirect_url}' "$url")"
+            test "${meta%% *}" = '200'
+            test -z "${meta#* }"
+            test -s "$out"
+          done < /tmp/download_plan.txt
+
+      - name: Execute frozen external projection stress once
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_projection_stress
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          rm -rf _run && mkdir _run
+          python "$D/external_projection_stress.py" --contract "$D/EXTERNAL_PROJECTION_STRESS_CONTRACT.json" --data-dir _data --v324-runner "$V" --out _run | tee /tmp/stress_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/external_projection_stress_result.json'))
+          assert r['classification'] in {'GEOMETRY_EXTERNALLY_STABLE','GEOMETRY_EXTERNALLY_MIXED','GEOMETRY_EXTERNALLY_IMPLICATED'}
+          assert r['row_count']>1000
+          assert r['formal_confirmation'] is False and r['promotion_allowed'] is False
+          assert r['formal_v2_unchanged'] and r['v3_1_1_unchanged'] and not r['CURRENT_changed']
+          assert len(r['chronological_folds'])==12 and len(r['league_season_groups'])==12
+          PY
+
+      - name: Seal immutable external stress evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_projection_stress
+          rm -rf _artifact && mkdir -p _artifact/{contracts,code,evidence,data}
+          cp "$D/EXTERNAL_PROJECTION_STRESS_CONTRACT.json" _artifact/contracts/
+          cp "$D/external_projection_stress.py" "$D/test_external_projection_stress.py" _artifact/code/
+          cp _run/external_projection_stress_result.json _artifact/evidence/
+          cp /tmp/tests.txt /tmp/stress_stdout.txt _artifact/evidence/
+          cp _data/*.csv _artifact/data/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact'); r=json.load(open(root/'evidence/external_projection_stress_result.json'))
+          files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=p.relative_to(root).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          m={'schema_version':'football3-v3-external-projection-stress-artifact-v1','head':os.environ['GITHUB_SHA'],'classification':r['classification'],'scientific_role':r['scientific_role'],'row_count':r['row_count'],'projection':r['projection'],'global_deltas':r['global']['deltas'],'chronological_fold_ll_nondegrade_n':r['chronological_fold_ll_nondegrade_n'],'league_season_ll_nondegrade_n':r['league_season_ll_nondegrade_n'],'formal_confirmation':False,'promotion_allowed':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload immutable external stress artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-external-projection-stress-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: stress-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-external-projection-stress-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify manifest and terminal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json'))
+          assert m['classification'] in {'GEOMETRY_EXTERNALLY_STABLE','GEOMETRY_EXTERNALLY_MIXED','GEOMETRY_EXTERNALLY_IMPLICATED'}
+          assert m['row_count']>1000 and m['formal_confirmation'] is False and m['promotion_allowed'] is False
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.is_file(),rel; assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          r=json.load(open(root/'evidence/external_projection_stress_result.json'))
+          assert r['classification']==m['classification'] and r['row_count']==m['row_count']
+          PY
