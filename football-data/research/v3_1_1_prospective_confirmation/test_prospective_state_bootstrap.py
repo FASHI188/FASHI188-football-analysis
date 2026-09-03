@@ -1,15 +1,14 @@
 from __future__ import annotations
-import importlib.util, json, pathlib, unittest
+import importlib.util, json, pathlib, sys, unittest
 from datetime import datetime, timezone
 
 ROOT=pathlib.Path(__file__).resolve().parent
-CONTRACT=ROOT/'PROSPECTIVE_CONFIRMIRMATION_CONTRACT.json'
 STATE=ROOT/'FROZEN_CANDIDATE_STATE.json'
 SRC=ROOT/'prospective_state_bootstrap.py'
 
 def load():
     s=importlib.util.spec_from_file_location('prospective_state_bootstrap',SRC)
-    m=importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+    m=importlib.util.module_from_spec(s); sys.modules[s.name]=m; s.loader.exec_module(m); return m
 
 class TestStateBootstrap(unittest.TestCase):
     def test_frozen_contract_and_state_bindings(self):
