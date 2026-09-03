@@ -9,6 +9,9 @@ import formal_source_contract_v1
 
 COMPAT = formal_source_contract_v1.install()
 import gateway
+import live_gateway_patch_v1
+
+LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 
 
 def _direct_complete_fixture(history):
@@ -41,11 +44,13 @@ def main() -> int:
         audit = formal_source_contract_v1.audit_snapshot()
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         (out / "source_contract_adapter.json").write_bytes(gateway.canon(COMPAT))
+        (out / "live_gateway_adapter.json").write_bytes(gateway.canon(LIVE_GATEWAY))
         p = out / "summary.json"
         if p.exists():
             d = json.loads(p.read_text(encoding="utf-8"))
             d["source_contract_adapter"] = COMPAT
             d["source_contract_audit"] = audit
+            d["live_gateway_adapter"] = LIVE_GATEWAY
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
