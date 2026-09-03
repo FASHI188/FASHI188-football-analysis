@@ -5,9 +5,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import source_compat_v3
+import source_compat_v4
 
-COMPAT = source_compat_v3.install()
+COMPAT = source_compat_v4.install()
 import gateway
 
 
