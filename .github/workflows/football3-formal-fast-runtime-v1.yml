@@ -1,0 +1,105 @@
+name: Football3 Formal Fast Runtime V1
+
+on:
+  push:
+    branches:
+      - football3/formal-fast-prediction-runtime-v1
+    paths:
+      - 'football-data/formal_fast_runtime_v1/**'
+      - '.github/workflows/football3-formal-fast-runtime-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  equivalence-300:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download frozen historical source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+
+      - name: Run final 300-fixture fresh equivalence and autoroute tests
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/formal_fast_runtime_v1/evidence/remote
+          PYTHONPATH="$PWD/football-data" python3 football-data/formal_fast_runtime_v1/test_runtime.py \
+            --mode local \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --out football-data/formal_fast_runtime_v1/evidence/remote/equivalence_300.json \
+            --n 300 \
+            | tee football-data/formal_fast_runtime_v1/evidence/remote/equivalence_300.stdout.txt
+
+      - name: Build exact-HEAD artifact manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, zlib
+          root=pathlib.Path('football-data/formal_fast_runtime_v1')
+          files=[
+              root/'runtime.py',
+              root/'test_runtime.py',
+              root/'contracts/SCOPE_REVISION_2026-09-03.md',
+              root/'evidence/remote/equivalence_300.json',
+              root/'evidence/remote/equivalence_300.stdout.txt',
+          ]
+          def sha256(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          payload=[]
+          for p in files:
+              b=p.read_bytes()
+              payload.append({'path':str(p),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'crc32':f'{zlib.crc32(b)&0xffffffff:08x}'})
+          manifest={
+              'schema_version':'football3-formal-fast-runtime-artifact-manifest-v1',
+              'head':os.environ['GITHUB_SHA'],
+              'ref':os.environ['GITHUB_REF'],
+              'run_id':os.environ['GITHUB_RUN_ID'],
+              'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+              'payload':payload,
+          }
+          raw=json.dumps(manifest,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
+          manifest['manifest_payload_sha256']=hashlib.sha256(raw).hexdigest()
+          out=root/'evidence/remote/artifact_manifest.json'
+          out.write_text(json.dumps(manifest,ensure_ascii=False,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps({'head':manifest['head'],'manifest':str(out),'manifest_sha256':sha256(out)},sort_keys=True))
+          PY
+
+      - name: Upload verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-fast-runtime-v1-exact-head
+          path: |
+            football-data/formal_fast_runtime_v1/runtime.py
+            football-data/formal_fast_runtime_v1/test_runtime.py
+            football-data/formal_fast_runtime_v1/contracts/SCOPE_REVISION_2026-09-03.md
+            football-data/formal_fast_runtime_v1/evidence/remote/equivalence_300.json
+            football-data/formal_fast_runtime_v1/evidence/remote/equivalence_300.stdout.txt
+            football-data/formal_fast_runtime_v1/evidence/remote/artifact_manifest.json
+          if-no-files-found: error
+          compression-level: 6
