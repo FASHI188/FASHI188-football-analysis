@@ -1,0 +1,89 @@
+name: football3 V3.2.3 Artifact Readback Repair
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-2-3-temporal-transport-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-2-3-readback-repair-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v323-readback-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  SEG2_PARENT_HEAD: 06286ee64ff3af5ea058995e28760ffa39e85078
+  SCIENCE_HEAD: 755610432bc50c01146d61297c41060c080b10c9
+  CONTRACT_BLOB: ea5a91c6c68254a931b7ff13fa837fed02d95032
+  RUNNER_BLOB: 653e012ef179554ceeef19f5952c6fa9454e534a
+  TEST_BLOB: d883ce032830aa698b9f96885194b9dc1635c82e
+  ARTIFACT_ID: '9887477239'
+  ARTIFACT_DIGEST: sha256:85b48353d0e0206160f83ff080dc046115d82427810fa52f2a5e5ce72c3e47a7
+
+jobs:
+  remote-readback-repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify immutable science lineage and read back sealed artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$SCIENCE_HEAD" HEAD)" = "$SCIENCE_HEAD"
+          test "$(git merge-base "$SEG2_PARENT_HEAD" "$SCIENCE_HEAD")" = "$SEG2_PARENT_HEAD"
+          D=football-data/research/historical_fusion_v3_2_3_temporal_transport
+          test "$(git hash-object "$D/V3_2_3_TEMPORAL_TRANSPORT_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/v3_2_3_segment3.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_v3_2_3_segment3.py")" = "$TEST_BLOB"
+          python - <<'PY'
+          import os,subprocess
+          parent=os.environ['SEG2_PARENT_HEAD']
+          allowed={
+            '.github/workflows/football3-historical-fusion-v3-2-3-temporal-transport-v1.yml',
+            '.github/workflows/football3-historical-fusion-v3-2-3-readback-repair-v1.yml',
+            'football-data/research/historical_fusion_v3_2_3_temporal_transport/V3_2_3_TEMPORAL_TRANSPORT_CONTRACT.json',
+            'football-data/research/historical_fusion_v3_2_3_temporal_transport/v3_2_3_segment3.py',
+            'football-data/research/historical_fusion_v3_2_3_temporal_transport/test_v3_2_3_segment3.py'}
+          got=set(subprocess.check_output(['git','diff','--name-only',f'{parent}...HEAD'],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          PY
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          norm() { case "$1" in sha256:*) printf '%s' "$1";; *) printf 'sha256:%s' "$1";; esac; }
+          test "$(norm "$got")" = "$(norm "$ARTIFACT_DIGEST")"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/a.zip
+          test "sha256:$(sha256sum /tmp/a.zip | awk '{print $1}')" = "$(norm "$ARTIFACT_DIGEST")"
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['SCIENCE_HEAD'],(m['head'],os.environ['SCIENCE_HEAD'])
+          assert m['contract_blob']==os.environ['CONTRACT_BLOB']
+          for rel,rec in m['files'].items():
+              p=r/rel
+              assert p.exists(),rel
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+              assert p.stat().st_size==rec['bytes'],rel
+          f=json.loads((r/'evidence/final_status.json').read_text())
+          assert f['status']==m['status']=='V3_2_3_TEMPORAL_TRANSPORT_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT'
+          assert f['2023_opened'] is False and f['3504_opened'] is False
+          assert f['source_max_season_loaded']==2022
+          assert f['formal_v2_unchanged'] is True and f['v3_1_1_unchanged'] is True
+          assert f['CURRENT_changed'] is False and f['production_pointer_changed'] is False and f['formal_enablement_changed'] is False and f['formal_weights_changed'] is False
+          roll=json.loads((r/'evidence/rolling_2021_2022.json').read_text())
+          assert roll['source_max_season_loaded']==2022
+          print(json.dumps({'artifact_id':os.environ['ARTIFACT_ID'],'digest_verified':True,'manifest_verified':True,'status':f['status'],'2023_opened':False,'3504_opened':False},sort_keys=True))
+          PY
