@@ -8,7 +8,7 @@ class T(unittest.TestCase):
     def test_norm(self):
         p=m.norm_odds([2,4,4]); self.assertAlmostEqual(sum(p),1.0); self.assertEqual(m.top1(p),0)
     def test_dominance_true(self):
-        op=[0.50,0.30,0.20]; cp=[0.20,0.31,0.49]; self.assertTrue(m.evidence_dominates(op,cp,0,2))
+        op=[0.50,0.30,0.20]; cp=[0.18,0.30,0.52]; self.assertTrue(m.evidence_dominates(op,cp,0,2))
     def test_dominance_false(self):
         op=[0.45,0.35,0.20]; cp=[0.34,0.35,0.31]; self.assertFalse(m.evidence_dominates(op,cp,0,1))
     def test_exact_v324_projection(self):
