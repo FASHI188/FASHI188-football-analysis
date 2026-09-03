@@ -12,6 +12,7 @@ LEAGUES = {
 SEASONS=(2024,2025)
 ALLOWED_SITUATIONS={"OpenPlay","SetPiece","FromCorner","DirectFreekick","Penalty"}
 SET_PIECE={"SetPiece","FromCorner","DirectFreekick"}
+PROCESS_SKIP_REASON="frozen_process_requires_bilateral_positive_nonpenalty_shots"
 UA="Mozilla/5.0 (compatible; Football3HistoricalReplay/1.0; +noncommercial-research)"
 HEADERS={"User-Agent":UA,"Accept":"application/json","X-Requested-With":"XMLHttpRequest"}
 
@@ -76,6 +77,13 @@ def _goal(obj,key):
     return x
 
 def validate_shots(obj):
+    """Validate raw shot rows without inventing bilateral-shot availability.
+
+    Frozen V3.1/USR-1 process semantics skip the process-state update when either
+    side has zero non-penalty shots.  Such a fixture is still a valid completed
+    match for Formal V2 and for final scoring, so empty/penalty-only sides are
+    retained here and handled by side_agg/process_eligible below.
+    """
     shots=obj.get("shots")
     if not isinstance(shots,dict): raise DataError("match shots missing")
     out={"h":[],"a":[]}
@@ -93,13 +101,13 @@ def validate_shots(obj):
             if sit not in ALLOWED_SITUATIONS: raise DataError(f"unknown situation {sit}")
             if ha!=side: raise DataError("shot side mismatch")
             out[side].append((x,sit))
-    if not out["h"] or not out["a"]: raise DataError("bilateral shots required")
     return out
 
 def side_agg(rows):
     nps=[x for x,s in rows if s!="Penalty"]
     npxg=sum(nps); n=len(nps)
-    if n<=0: raise DataError("zero nonpenalty shots")
+    if n<=0:
+        return None
     open_n=sum(1 for _,s in rows if s=="OpenPlay")
     set_n=sum(1 for _,s in rows if s in SET_PIECE)
     return {"npxg":npxg,"nonpenalty_shots":n,"npxg_per_shot":npxg/n,"open_play_share":open_n/n,"set_piece_share":set_n/n}
@@ -112,7 +120,7 @@ def write_jsonl(path,rows):
 
 def run(outdir:pathlib.Path):
     outdir.mkdir(parents=True,exist_ok=True)
-    fixtures=[]; updates=[]; labels=[]; seen=set(); source_rows=[]; per={}; request_n=0
+    fixtures=[]; updates=[]; labels=[]; seen=set(); source_rows=[]; per={}; request_n=0; process_skipped=0
     for season in SEASONS:
         for league,info in LEAGUES.items():
             url=f"https://understat.com/getLeagueData/{info['slug']}/{season}"
@@ -122,7 +130,7 @@ def run(outdir:pathlib.Path):
             done=[r for r in dates if isinstance(r,dict) and truthy(r.get("isResult"))]
             if not done: raise DataError(f"{league} {season}: no completed matches")
             key=f"{league}|{season}"
-            per[key]={"league_rows":len(dates),"completed_n":len(done),"league_payload_sha256":meta["decoded_sha256"]}
+            per[key]={"league_rows":len(dates),"completed_n":len(done),"league_payload_sha256":meta["decoded_sha256"],"process_skipped_n":0}
             for idx,r in enumerate(done):
                 mid=str(r.get("id") or "").strip()
                 if not mid.isdigit(): raise DataError("match id invalid")
@@ -138,8 +146,25 @@ def run(outdir:pathlib.Path):
                 murl=f"https://understat.com/getMatchData/{mid}"
                 mobj,mmeta=fetch_json(murl); request_n+=1
                 sh=validate_shots(mobj); hs=side_agg(sh["h"]); aa=side_agg(sh["a"])
+                process_eligible=bool(hs is not None and aa is not None)
+                if not process_eligible:
+                    process_skipped+=1; per[key]["process_skipped_n"]+=1
                 fixtures.append({"fixture_id":fid,"understat_match_id":int(mid),"competition_id":f"understat-league:{info['league_id']}","league":league,"league_id":info["league_id"],"season":season,"season_label":f"{season}/{str(season+1)[-2:]}","kickoff":ko.isoformat(),"home_team_id":f"understat-team:{hid}","away_team_id":f"understat-team:{aid}","home_team_name":hname,"away_team_name":aname})
-                updates.append({"fixture_id":fid,"release_at":(ko+timedelta(hours=3)).isoformat(),"home_xg":hx,"away_xg":ax,"home_npxg":hs["npxg"],"away_npxg":aa["npxg"],"home_nonpenalty_shots":hs["nonpenalty_shots"],"away_nonpenalty_shots":aa["nonpenalty_shots"],"home_npxg_per_shot":hs["npxg_per_shot"],"away_npxg_per_shot":aa["npxg_per_shot"],"home_open_play_share":hs["open_play_share"],"away_open_play_share":aa["open_play_share"],"home_set_piece_share":hs["set_piece_share"],"away_set_piece_share":aa["set_piece_share"]})
+                updates.append({
+                    "fixture_id":fid,"release_at":(ko+timedelta(hours=3)).isoformat(),"home_xg":hx,"away_xg":ax,
+                    "process_update_eligible":process_eligible,
+                    "process_skip_reason":None if process_eligible else PROCESS_SKIP_REASON,
+                    "home_npxg":hs["npxg"] if process_eligible else None,
+                    "away_npxg":aa["npxg"] if process_eligible else None,
+                    "home_nonpenalty_shots":hs["nonpenalty_shots"] if process_eligible else None,
+                    "away_nonpenalty_shots":aa["nonpenalty_shots"] if process_eligible else None,
+                    "home_npxg_per_shot":hs["npxg_per_shot"] if process_eligible else None,
+                    "away_npxg_per_shot":aa["npxg_per_shot"] if process_eligible else None,
+                    "home_open_play_share":hs["open_play_share"] if process_eligible else None,
+                    "away_open_play_share":aa["open_play_share"] if process_eligible else None,
+                    "home_set_piece_share":hs["set_piece_share"] if process_eligible else None,
+                    "away_set_piece_share":aa["set_piece_share"] if process_eligible else None,
+                })
                 labels.append({"fixture_id":fid,"home_goals":hg,"away_goals":ag,"outcome":outcome(hg,ag)})
                 source_rows.append({"fixture_id":fid,"match_payload_sha256":mmeta["decoded_sha256"]})
                 if (idx+1)%50==0: print(f"{key}: {idx+1}/{len(done)}",flush=True)
@@ -149,7 +174,7 @@ def run(outdir:pathlib.Path):
     if not (len(fixtures)==len(updates)==len(labels)==len(seen)): raise DataError("store count mismatch")
     write_jsonl(outdir/"fixtures.jsonl",fixtures); write_jsonl(outdir/"state_updates.jsonl",updates); write_jsonl(outdir/"label_vault.jsonl",labels)
     ids=[r["fixture_id"] for r in fixtures]
-    manifest={"schema_version":"football3-v3-1-1-historical-replay-data-v1","status":"HISTORICAL_REPLAY_DATA_READY","post_view_historical_stress_test":True,"fresh_confirmation":False,"seasons":[2024,2025],"leagues":list(LEAGUES),"fixture_n":len(fixtures),"fixture_identity_sha256":sha256(canon(ids)),"fixture_store_sha256":sha256((outdir/"fixtures.jsonl").read_bytes()),"state_update_store_sha256":sha256((outdir/"state_updates.jsonl").read_bytes()),"label_vault_sha256":sha256((outdir/"label_vault.jsonl").read_bytes()),"raw_ajax_persisted":False,"raw_shot_rows_persisted":False,"request_n":request_n,"per_league_season":per,"source_match_payload_identity_sha256":sha256(canon(source_rows))}
+    manifest={"schema_version":"football3-v3-1-1-historical-replay-data-v2-zero-shot-safe","status":"HISTORICAL_REPLAY_DATA_READY","post_view_historical_stress_test":True,"fresh_confirmation":False,"seasons":[2024,2025],"leagues":list(LEAGUES),"fixture_n":len(fixtures),"process_update_skipped_n":process_skipped,"process_skip_semantics":PROCESS_SKIP_REASON,"fixture_identity_sha256":sha256(canon(ids)),"fixture_store_sha256":sha256((outdir/"fixtures.jsonl").read_bytes()),"state_update_store_sha256":sha256((outdir/"state_updates.jsonl").read_bytes()),"label_vault_sha256":sha256((outdir/"label_vault.jsonl").read_bytes()),"raw_ajax_persisted":False,"raw_shot_rows_persisted":False,"request_n":request_n,"per_league_season":per,"source_match_payload_identity_sha256":sha256(canon(source_rows))}
     (outdir/"data_manifest.json").write_text(json.dumps(manifest,sort_keys=True,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     print(json.dumps(manifest,sort_keys=True),flush=True)
 
