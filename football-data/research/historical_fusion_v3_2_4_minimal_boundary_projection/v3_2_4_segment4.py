@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, importlib.util, itertools, json, math, pathlib
+import argparse, importlib.util, itertools, json, math, pathlib, sys
 
 EPS=1e-15
 TOL=1e-12
@@ -7,7 +7,7 @@ TOL=1e-12
 class V324Error(RuntimeError): pass
 
 def loadmod(name,path):
-    spec=importlib.util.spec_from_file_location(name,str(path)); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
+    spec=importlib.util.spec_from_file_location(name,str(path)); mod=importlib.util.module_from_spec(spec); sys.modules[name]=mod; spec.loader.exec_module(mod); return mod
 
 def write_json(path,obj): pathlib.Path(path).write_text(json.dumps(obj,sort_keys=True,indent=2,allow_nan=False)+'\n')
 
@@ -19,8 +19,6 @@ def minimum_boundary_projection(base,target,weak,epsilon=1e-9):
         return b,{'executed':False,'reason':'same_argmax','target':target,'baseline_top1':bt,'total_variation':0.0,'l2_sq':0.0}
     competitors=[i for i in range(3) if i!=target]
     best=None
-    # The binding set contains target plus one or both competitors. Enumerating all
-    # active sets is exact for the 3-class Euclidean projection onto a strict Top1 cone.
     for k in (1,2):
         for bind in itertools.combinations(competitors,k):
             S=(target,)+tuple(bind)
