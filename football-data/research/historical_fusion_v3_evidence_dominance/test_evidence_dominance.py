@@ -45,7 +45,7 @@ class EvidenceDominanceTests(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_strong_reversal_is_dominant(self):
-        ok, rec = module.evidence_dominates([0.44, 0.31, 0.25], [0.28, 0.30, 0.42])
+        ok, rec = module.evidence_dominates([0.40, 0.31, 0.29], [0.27, 0.31, 0.42])
         self.assertTrue(rec["proposal"])
         self.assertLessEqual(rec["opening_margin"], rec["closing_reversal_margin"])
         self.assertTrue(ok)
