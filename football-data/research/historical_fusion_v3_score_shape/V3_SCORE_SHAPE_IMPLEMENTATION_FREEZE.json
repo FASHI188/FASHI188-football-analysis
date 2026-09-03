@@ -1,0 +1,130 @@
+{
+  "schema_version": "football3-v3-score-shape-implementation-freeze-v1",
+  "status": "FROZEN_BEFORE_ANY_SCORE_SHAPE_TARGET_SCORING",
+  "parent_contract_freeze_commit": "002e5cb9ef9e2ec9278eab01cf8665c1da81e63a",
+  "clean_parent_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+  "scientific_parent": "FROZEN_V3_1_1_JOINT_SCORE_ONLY",
+  "abandoned_lineages": [
+    "V3.2.4_THROUGH_V3.2.7_DIAGNOSTIC_ONLY_NOT_PARENT",
+    "STATE51_THROUGH_STATE63_HISTORY_ONLY_NOT_PARENT"
+  ],
+  "development_source_freeze": {
+    "sql_seasons": [2014, 2022],
+    "leagues": ["Bundesliga", "EPL", "La liga", "Ligue 1", "Serie A"],
+    "row_n": 16332,
+    "canonical_jsonl_sha256": "71771c1366adb544fec18536a2f55cf632212e05e6a139ab91fd472784d30de0",
+    "season_counts": {"2014":1826,"2015":1826,"2016":1825,"2017":1826,"2018":1826,"2019":1725,"2020":1826,"2021":1826,"2022":1826},
+    "physical_rule": "development loader SQL must exclude season>=2023 before labels or target rows are materialized"
+  },
+  "frozen_v3_1_1_baseline_reconstruction": {
+    "candidate_id": "V3.1.1-A",
+    "v3_1_variant": "V3.1-A",
+    "v3_1_params": {"residual_scale": 0.25},
+    "matrix_rule": "take frozen Formal V2 0..14 x 0..14 joint base shape and I-project each H/D/A outcome region to the season-wise frozen V3.1-A probabilities",
+    "rolling_fit": "for target season s>=2019 fit the frozen USR/V3.1 residual model on seasons 2018..s-1 only; process features are PIT snapshots before kickoff",
+    "fallback": "frozen exact fallback behavior inherited unchanged",
+    "one_x_two_identity_tolerance": 1e-12
+  },
+  "development_role_resolution": {
+    "2018": "V3.1 rolling-model warmup only; not score-shape scored and not residual-history scored",
+    "2019": "first valid frozen-V3.1.1 score residual history; post-label release history only; not used to select by its own score",
+    "2020": "only development scoring season for the preregistered 18-cell grid",
+    "2021_2022": "fixed-hyperparameter rolling OOS hard gate",
+    "2023": "physically unopened until every 2021-22 hard gate passes; then one fixed diagnostic only",
+    "2024_25_and_2025_26_3504": "forbidden in this stage"
+  },
+  "residual_record": {
+    "goal_bucket": "0,1,2,3plus",
+    "total_bucket": "0to1,2,3,4,5plus",
+    "margin_bucket_team_perspective": "multi_goal_loss,one_goal_loss,draw,one_goal_win,multi_goal_win",
+    "per_team_components": [
+      "scored_goal_bucket_onehot_minus_frozen_baseline_marginal",
+      "conceded_goal_bucket_onehot_minus_frozen_baseline_opponent_marginal",
+      "total_goal_bucket_onehot_minus_frozen_baseline_total_distribution",
+      "failed_to_score_indicator_minus_frozen_baseline_team_zero_probability",
+      "clean_sheet_indicator_minus_frozen_baseline_opponent_zero_probability",
+      "margin_bucket_onehot_minus_frozen_baseline_team_perspective_margin_distribution"
+    ],
+    "release_time": "kickoff_plus_3_hours",
+    "same_kickoff_isolation": true
+  },
+  "lookback_and_support": {
+    "lookback_rule": "for target season s and lookback L include only released residual records with historical season >= s-L and release_time <= target kickoff",
+    "current_season_prior_matches_allowed": true,
+    "equal_weight_within_window": true,
+    "activation_rule": "both target teams must independently have at least min_effective_matches released records in the window; otherwise exact frozen V3.1.1 matrix",
+    "min_effective_matches_grid": [8,16]
+  },
+  "cell_tilt_score": {
+    "home_goal_components": ["home_team_scored_residual_at_home_goal_bucket","away_team_conceded_residual_at_home_goal_bucket"],
+    "away_goal_components": ["away_team_scored_residual_at_away_goal_bucket","home_team_conceded_residual_at_away_goal_bucket"],
+    "total_component": "mean(home_team_total_residual,away_team_total_residual) at cell total bucket",
+    "zero_components": "if home_goals_cell=0 include mean(home FTS residual, away CS residual); if away_goals_cell=0 include mean(away FTS residual, home CS residual); if both are zero include both zero terms; otherwise omit zero term",
+    "margin_component": "mean(home team margin residual for cell margin category, away team margin residual for the reversed category)",
+    "raw_cell_score": "arithmetic mean of all applicable components",
+    "tilt_factor": "exp(shrinkage * raw_cell_score)",
+    "extra_clipping": "NONE"
+  },
+  "region_projection": {
+    "regions": ["home_win_h_gt_a","draw_h_eq_a","away_win_h_lt_a"],
+    "procedure": "multiply each frozen V3.1.1 cell by its tilt factor, renormalize independently inside each outcome region back to that region's frozen V3.1.1 mass, then apply any floating residual to the largest cell in that same region",
+    "matrix_shape": [15,15],
+    "matrix_sum_tolerance": 1e-12,
+    "outcome_region_mass_tolerance": 1e-12,
+    "negative_cell_forbidden": true
+  },
+  "grid_and_selection": {
+    "grid_cartesian": {"shrinkage":[0.25,0.5,0.75],"lookback_seasons":[1,2,4],"min_effective_matches":[8,16]},
+    "grid_n": 18,
+    "selection_scoring_season": 2020,
+    "feasibility": [
+      "1X2 probabilities and Top1 exactly identical to frozen V3.1.1 within tolerance",
+      "2020 exact-score logloss delta <= 0",
+      "2020 total-goals RPS delta <= 0"
+    ],
+    "ranking": "lowest candidate exact-score logloss, then lowest total-goals RPS, then smaller shrinkage, then larger min_effective_matches, then larger lookback_seasons",
+    "no_feasible_candidate_terminal": "V3_SCORE_SHAPE_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT",
+    "post_selection_tuning": "FORBIDDEN"
+  },
+  "fixed_2021_2022_gate": {
+    "target_seasons": [2021,2022],
+    "hyperparameters_fixed_from_2020": true,
+    "baseline_refit_each_target_season": true,
+    "expected_nonempty_frozen_outer_folds": 6,
+    "hard_gates_source": "V3_SCORE_SHAPE_CONTRACT.json hard_gates_2021_2022",
+    "all_required": true
+  },
+  "candidate_fixed_2023_gate": {
+    "open_condition": "all fixed 2021-22 hard gates pass",
+    "hyperparameters_fixed": true,
+    "single_diagnostic_only": true,
+    "gates": {
+      "coverage_required": 1.0,
+      "one_x_two_probability_max_abs_delta": 1e-12,
+      "one_x_two_top1_identity_required": true,
+      "global_1x2_logloss_delta_max": 1e-12,
+      "global_1x2_brier_delta_max": 1e-12,
+      "global_1x2_rps_delta_max": 1e-12,
+      "exact_score_logloss_delta_max": 0.0,
+      "total_goals_rps_delta_max": 0.0,
+      "score_matrix_sum_max_abs_error": 1e-12,
+      "outcome_region_mass_max_abs_error": 1e-12,
+      "worst_eligible_league_season_exact_score_logloss_degradation_max": 0.01
+    },
+    "on_failure": "V3_SCORE_SHAPE_2023_DIAGNOSTIC_FAILED_NO_RESCUE",
+    "on_success": "V3_SCORE_SHAPE_RESEARCH_CANDIDATE_READY_PROSPECTIVE_CONFIRMATION_REQUIRED"
+  },
+  "metric_definitions": {
+    "exact_score_logloss": "mean -log P(actual home_goals,away_goals), with probability floor 1e-15; scores outside 0..14 use floor",
+    "total_goals_categories": "0,1,2,3,4,5,6plus",
+    "total_goals_rps": "standard ordered multiclass RPS averaged over matches",
+    "top1_score_accuracy": "argmax 225-cell exact-score hit rate; diagnostic only",
+    "league_season_eligibility_min_n": 100,
+    "folds": "frozen XG chronological outer fold map, evaluated only on nonempty target rows"
+  },
+  "anti_rescue": {
+    "forbid_after_2020": ["new thresholds","feature deletion","feature reweighting","bucket changes","clip changes","grid changes","team/league exceptions"],
+    "forbid_after_2021_2022": ["any scientific change before 2023","opening 3504","fold-specific repair"],
+    "formal_changes": "FORBIDDEN"
+  }
+}
