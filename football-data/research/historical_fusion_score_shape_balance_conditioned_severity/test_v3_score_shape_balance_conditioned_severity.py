@@ -32,7 +32,10 @@ class T(unittest.TestCase):
     def test_fit_gamma_finite(self):
         b=[[0.0]*4 for _ in range(4)];b[2][1]=.2;b[3][0]=.2;b[1][2]=.1;b[0][3]=.1;b[1][1]=.4
         cells=[(2,1),(3,0)];obs=[]
-        for i in range(20):obs.append({'x':1.0 if i<10 else -1.0,'sobs':1.0 if i<10 else 0.0,'cells':cells,'matrix':b,'observed':(3,0) if i<10 else (2,1),'fixture_id':str(i),'season':2018})
+        for i in range(10):
+            severe=i<7;obs.append({'x':1.0,'sobs':1.0 if severe else 0.0,'cells':cells,'matrix':b,'observed':(3,0) if severe else (2,1),'fixture_id':'p'+str(i),'season':2018})
+        for i in range(10):
+            severe=i<3;obs.append({'x':-1.0,'sobs':1.0 if severe else 0.0,'cells':cells,'matrix':b,'observed':(3,0) if severe else (2,1),'fixture_id':'n'+str(i),'season':2018})
         f=m.fit_gamma(obs);self.assertTrue(math.isfinite(f['gamma']));self.assertGreaterEqual(f['loglik_at_fit']+1e-12,f['loglik_at_gamma0'])
 
 if __name__=='__main__':unittest.main()
