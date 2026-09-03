@@ -1,0 +1,227 @@
+name: football3 Historical Fusion V3 Evidence Dominance Fresh Validation
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-evidence-dominance-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-evidence-dominance-v1.yml'
+      - 'football-data/research/historical_fusion_v3_evidence_dominance/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-evidence-dominance-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 60452fa6e523b26e80fff2cc0aa7d3c3fdf85a16
+  CONTRACT_FREEZE_COMMIT: 9e29df07c38f1bc6fffa683eba8239fb5104c768
+  CONTRACT_BLOB: d36b018869d06531119be0623c8ea7d292c01d13
+  RUNNER_BLOB: 317d018fe3b35962ce0df24378dbb8b05445e5fc
+  TEST_BLOB: aa8b6a1e0680296a065cf29503430d0b9584f4f2
+  V324_HEAD: 3cc9098cd321ee4f1dd659b1a4f4db75c02555ed
+  V324_RUNNER_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+
+jobs:
+  fresh-validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify freeze ordering, exact lineage and immutable formal guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-evidence-dominance-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-2-4-minimal-boundary-projection-v1 | cut -f1)" = "$V324_HEAD"
+          D=football-data/research/historical_fusion_v3_evidence_dominance
+          C="$D/EVIDENCE_DOMINANCE_CONTRACT.json"
+          R="$D/evidence_dominance.py"
+          T="$D/test_evidence_dominance.py"
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          test "$(git hash-object "$C")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$R")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$T")" = "$TEST_BLOB"
+          test "$(git hash-object "$V")" = "$V324_RUNNER_BLOB"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          d=pathlib.Path('football-data/research/historical_fusion_v3_evidence_dominance')
+          cpath=str(d/'EVIDENCE_DOMINANCE_CONTRACT.json')
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines())
+          assert freeze=={cpath},freeze
+          allowed={
+              '.github/workflows/football3-historical-fusion-v3-evidence-dominance-v1.yml',
+              cpath,
+              str(d/'evidence_dominance.py'),
+              str(d/'test_evidence_dominance.py'),
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((d/'EVIDENCE_DOMINANCE_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_FRESH_COHORT_DOWNLOAD_OR_LABEL_SCORING'
+          assert c['scientific_role']=='ZERO_PARAMETER_CHALLENGER_EXTERNAL_VALIDATION_NOT_FORMAL_CONFIRMATION'
+          r=c['rule']
+          assert r['name']=='EVIDENCE_DOMINANCE_REVERSAL_MARGIN'
+          assert r['evidence_dominance']=='closing_reversal_margin >= opening_margin'
+          assert r['no_learning'] and r['no_parameter_fit'] and r['no_threshold_grid'] and r['no_post_view_selector']
+          assert r['prediction_weight']==0
+          codes=[x['code'] for x in c['fresh_data']['leagues']]
+          assert len(codes)==6 and len(set(codes))==6
+          assert set(codes).isdisjoint(c['fresh_data']['prior_external_stress_codes'])
+          assert c['fresh_data']['source_failure_policy']=='ABORT_COHORT_NO_SUBSTITUTION'
+          assert len(c['fresh_data']['seasons'])==2 and c['evaluation']['chronological_folds']==12 and c['evaluation']['league_season_groups']==12
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and run structural tests before fresh cohort download
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance
+          python -m py_compile "$D/evidence_dominance.py" "$D/test_evidence_dominance.py"
+          (cd "$D" && python test_evidence_dominance.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download frozen fresh 12-file secondary-league cohort without redirects
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _data
+          python - <<'PY' > /tmp/download_plan.txt
+          import json
+          c=json.load(open('football-data/research/historical_fusion_v3_evidence_dominance/EVIDENCE_DOMINANCE_CONTRACT.json'))
+          for season in c['fresh_data']['seasons']:
+              sp=c['fresh_data']['season_paths'][season]
+              for lg in c['fresh_data']['leagues']:
+                  code=lg['code']
+                  print(sp,code,c['fresh_data']['url_template'].format(season_path=sp,league=code))
+          PY
+          while read -r sp code url; do
+            out="_data/${sp}_${code}.csv"
+            meta="$(curl -sS --fail -D /tmp/hdr -o "$out" -w '%{http_code} %{redirect_url}' "$url")"
+            test "${meta%% *}" = '200'
+            test -z "${meta#* }"
+            test -s "$out"
+          done < /tmp/download_plan.txt
+
+      - name: Execute frozen zero-parameter challenger once
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          rm -rf _run && mkdir _run
+          python "$D/evidence_dominance.py" --contract "$D/EVIDENCE_DOMINANCE_CONTRACT.json" --data-dir _data --v324-runner "$V" --out _run | tee /tmp/evidence_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/evidence_dominance_result.json'))
+          assert r['classification'] in {'EVIDENCE_DOMINANCE_EXTERNALLY_STABLE','EVIDENCE_DOMINANCE_EXTERNALLY_MIXED','EVIDENCE_DOMINANCE_EXTERNALLY_FAILED'}
+          assert r['row_count']>1000
+          assert len(r['chronological_folds'])==12 and len(r['league_season_groups'])==12
+          assert len(r['ungated_reference']['chronological_folds'])==12 and len(r['ungated_reference']['league_season_groups'])==12
+          assert r['rule']['prediction_weight']==0 and r['prediction_weight']==0
+          assert r['formal_confirmation'] is False and r['promotion_allowed'] is False
+          assert r['formal_v2_unchanged'] and r['v3_1_1_unchanged'] and r['v3_2_4_unchanged'] and not r['CURRENT_changed']
+          PY
+
+      - name: Seal immutable one-time fresh validation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance
+          rm -rf _artifact && mkdir -p _artifact/{contracts,code,evidence,data}
+          cp "$D/EVIDENCE_DOMINANCE_CONTRACT.json" _artifact/contracts/
+          cp "$D/evidence_dominance.py" "$D/test_evidence_dominance.py" _artifact/code/
+          cp _run/evidence_dominance_result.json _artifact/evidence/
+          cp /tmp/tests.txt /tmp/evidence_stdout.txt /tmp/download_plan.txt _artifact/evidence/
+          cp _data/*.csv _artifact/data/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact')
+          r=json.load(open(root/'evidence/evidence_dominance_result.json'))
+          files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=p.relative_to(root).as_posix()
+              files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          m={
+              'schema_version':'football3-v3-evidence-dominance-artifact-v1',
+              'head':os.environ['GITHUB_SHA'],
+              'contract_freeze_commit':os.environ['CONTRACT_FREEZE_COMMIT'],
+              'classification':r['classification'],
+              'scientific_role':r['scientific_role'],
+              'row_count':r['row_count'],
+              'rule':r['rule'],
+              'global_deltas':r['global']['deltas'],
+              'chronological_fold_ll_nondegrade_n':r['chronological_fold_ll_nondegrade_n'],
+              'league_season_ll_nondegrade_n':r['league_season_ll_nondegrade_n'],
+              'ungated_global_deltas':r['ungated_reference']['global']['deltas'],
+              'ungated_fold_ll_nondegrade_n':r['ungated_reference']['chronological_fold_ll_nondegrade_n'],
+              'ungated_group_ll_nondegrade_n':r['ungated_reference']['league_season_ll_nondegrade_n'],
+              'formal_confirmation':False,
+              'promotion_allowed':False,
+              'prediction_weight':0,
+              'formal_v2_unchanged':True,
+              'v3_1_1_unchanged':True,
+              'v3_2_4_unchanged':True,
+              'CURRENT_changed':False,
+              'production_pointer_changed':False,
+              'formal_enablement_changed':False,
+              'formal_weights_changed':False,
+              'files':files,
+          }
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload immutable fresh validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-evidence-dominance-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: fresh-validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-evidence-dominance-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify manifest and terminal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback')
+          m=json.load(open(root/'artifact_manifest.json'))
+          assert m['classification'] in {'EVIDENCE_DOMINANCE_EXTERNALLY_STABLE','EVIDENCE_DOMINANCE_EXTERNALLY_MIXED','EVIDENCE_DOMINANCE_EXTERNALLY_FAILED'}
+          assert m['row_count']>1000 and m['formal_confirmation'] is False and m['promotion_allowed'] is False and m['prediction_weight']==0
+          for rel,rec in m['files'].items():
+              p=root/rel
+              assert p.is_file(),rel
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          r=json.load(open(root/'evidence/evidence_dominance_result.json'))
+          assert r['classification']==m['classification'] and r['row_count']==m['row_count']
+          assert r['rule']['candidate_executed_n']<=r['rule']['evidence_dominant_n']<=r['rule']['proposal_n']
+          PY
