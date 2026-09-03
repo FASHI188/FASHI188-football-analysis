@@ -1,0 +1,235 @@
+name: football3 Historical Fusion V3.2 Prelabel Guard
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-2-three-fault-dynamic-joint-repair-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-2-prelabel-v1.yml'
+      - 'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-2-prelabel-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  V31_HEAD: 7689ec0726fbed6fd2474e1a237b49ab7ad768c7
+  USR1_HEAD: 485807562f0d1c859ba13355dc671e980de5eb9e
+  CONTRACT_BLOB: 2a4cd43a89d0328516163a0532b12f10c7393d7a
+  SOURCE_REGISTRY_BLOB: f250fe4b48f8281c391501a5213e8292ae11563f
+  SHOT_READINESS_BLOB: bb8f8b64e57e1215e70a5ce10dffab3197f99d52
+  CORE_SOURCE_SHA256: e27a0324c3440ddbaf177df66a9df68a2a693da321c68d9592660781b5a7b50e
+  AUDIT_SOURCE_SHA256: 5b0ca7bf5ac41164cc9b1f6232d43f0f16a63a0b168d3dfb6c924eefb6cb7a6d
+  TEST_SOURCE_SHA256: 1bae8ed628d3f02cb7d62e906d78cc0d0358d025aa7dd4448b8e78349daab266
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+
+jobs:
+  prelabel-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage contract source and whitelist guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-2-three-fault-dynamic-joint-repair-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$V311_HEAD" HEAD)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-low-variance-v1 | cut -f1)" = "$V31_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-upset-safe-v1 | cut -f1)" = "$USR1_HEAD"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git hash-object football-data/config/context_intelligence_source_registry_v514.json)" = "$SOURCE_REGISTRY_BLOB"
+          test "$(git hash-object football-data/validation/shot_event_data_readiness_v506.py)" = "$SHOT_READINESS_BLOB"
+          python - <<'PY'
+          import base64,hashlib,json,os,pathlib,re,subprocess,zlib
+          root=pathlib.Path('football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair')
+          allowed={
+            '.github/workflows/football3-historical-fusion-v3-2-prelabel-v1.yml',
+            (root/'V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json').as_posix(),
+            (root/'v3_2_core.py').as_posix(),
+            (root/'v3_2_prelabel_audit.py').as_posix(),
+            (root/'test_v3_2_core.py').as_posix(),
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['V311_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(k in p for k in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((root/'V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_TARGET_LABEL_SCORING'
+          assert c['objective']['coverage_required']==1.0 and c['objective']['target_top1_accuracy']==0.55
+          assert c['post_view_evidence_policy']['v3_1_1_2024_2026_stress']['classification']=='POST_VIEW_DIAGNOSTIC_ONLY'
+          assert c['source_inventory_freeze']['market_inputs']=='FORBIDDEN_IN_PRIMARY_V3_2_ROUTE'
+          assert [x['id'] for x in c['joint_score_surface_candidates']]==['V3.2-A','V3.2-B','V3.2-C']
+          for name,sha in [('v3_2_core.py',os.environ['CORE_SOURCE_SHA256']),('v3_2_prelabel_audit.py',os.environ['AUDIT_SOURCE_SHA256']),('test_v3_2_core.py',os.environ['TEST_SOURCE_SHA256'])]:
+              t=(root/name).read_text(); m=re.search(r"_PAYLOAD=b'''(.*?)'''",t,re.S); assert m,name
+              src=zlib.decompress(base64.b85decode(m.group(1).encode()))
+              assert hashlib.sha256(src).hexdigest()==sha,(name,hashlib.sha256(src).hexdigest(),sha)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh deterministic V3.2 math and contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair
+          python -m py_compile "$D/v3_2_core.py" "$D/v3_2_prelabel_audit.py" "$D/test_v3_2_core.py"
+          (cd "$D" && python test_v3_2_core.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 14 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download frozen code and schema-only database inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{old,v31,usr1}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          python - <<'PY'
+          import hashlib,pathlib
+          h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          assert h('_inputs/old/understat_frozen.db')=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert h('_inputs/v31/code/historical_fusion_v3_1.py')=='59485a959940ad0e1f5357842731634acc88957dc1b7f8f029cf4cca8d05b402'
+          assert h('_inputs/usr1/code/historical_fusion_v3_upset_safe.py')=='1707ad6b6e1339ac08b90038d595c1ea299ec4c92940643b6c404633a67c878b'
+          PY
+
+      - name: Zero-label PIT capability and frozen evaluator API audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair
+          rm -rf _prelabel && mkdir -p _prelabel
+          python "$D/v3_2_prelabel_audit.py" \
+            --contract "$D/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json" \
+            --v311-wrapper football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31-wrapper _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1-wrapper _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --db _inputs/old/understat_frozen.db \
+            --source-registry football-data/config/context_intelligence_source_registry_v514.json \
+            --shot-readiness football-data/validation/shot_event_data_readiness_v506.py \
+            --out _prelabel/prelabel_audit.json 2>&1 | tee /tmp/prelabel_stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_prelabel/prelabel_audit.json'))
+          assert x['status']=='PRELABEL_PASS'
+          for k in ['label_fields_accessed','target_row_values_accessed','model_fits','target_scoring_runs','market_inputs_accessed']:
+              assert x[k]==0,(k,x[k])
+          assert x['post_view_3504_selection_forbidden'] is True
+          assert x['formal_v2_unchanged'] is True and x['v3_1_1_unchanged'] is True
+          assert x['CURRENT_changed'] is False and x['production_pointer_changed'] is False and x['formal_enablement_changed'] is False and x['formal_weights_changed'] is False
+          PY
+
+      - name: Seal prelabel artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair
+          rm -rf _seal && mkdir -p _seal/contracts _seal/code _seal/evidence
+          cp "$D/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json" _seal/contracts/
+          cp "$D/v3_2_core.py" "$D/v3_2_prelabel_audit.py" "$D/test_v3_2_core.py" _seal/code/
+          cp _prelabel/prelabel_audit.json /tmp/tests.txt /tmp/prelabel_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          a=json.loads((r/'evidence/prelabel_audit.json').read_text())
+          m={'schema_version':'football3-v3-2-prelabel-artifact-v1','status':'PRELABEL_PASS','head':os.environ['GITHUB_SHA'],'v311_head':os.environ['V311_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'contract_blob':os.environ['CONTRACT_BLOB'],'research_only':True,'label_fields_accessed':a['label_fields_accessed'],'model_fits':a['model_fits'],'target_scoring_runs':a['target_scoring_runs'],'post_view_3504_selection_forbidden':True,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload V3.2 prelabel artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-2-prelabel-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: prelabel-guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - name: Remote ZIP digest CRC manifest exact-set SHA bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.prelabel-guard.outputs.artifact_id }}
+          DIGEST: ${{ needs.prelabel-guard.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          test "sha256:$(sha256sum /tmp/a.zip | awk '{print $1}')" = "$DIGEST"
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/r && mkdir /tmp/r && unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['status']=='PRELABEL_PASS' and m['head']==os.environ['GITHUB_SHA']
+          assert m['v311_head']=='a90762a97515f3edd564e8ad204db0d0d4231494'
+          assert m['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert m['contract_blob']=='2a4cd43a89d0328516163a0532b12f10c7393d7a'
+          assert m['label_fields_accessed']==0 and m['model_fits']==0 and m['target_scoring_runs']==0
+          assert m['post_view_3504_selection_forbidden'] is True
+          assert m['formal_v2_unchanged'] is True and m['v3_1_1_unchanged'] is True
+          assert m['CURRENT_changed'] is False and m['production_pointer_changed'] is False and m['formal_enablement_changed'] is False and m['formal_weights_changed'] is False
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file()}-{'artifact_manifest.json'}
+          assert got==exp,(got^exp)
+          for rel,meta in m['files'].items():
+              b=(r/rel).read_bytes(); assert len(b)==meta['bytes'] and hashlib.sha256(b).hexdigest()==meta['sha256'],rel
+          a=json.loads((r/'evidence/prelabel_audit.json').read_text()); assert a['status']=='PRELABEL_PASS'
+          PY
