@@ -10,6 +10,10 @@ on:
       - 'football-data/formal_runtime_missing_input_probe_v1.py'
       - '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
   workflow_dispatch:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, edited, reopened, synchronize]
 
 permissions:
   contents: read
@@ -21,28 +25,66 @@ concurrency:
 
 jobs:
   formal-request:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.ref == 'football3/formal-gpt-runner-request-carrier-v1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Restore remote formal state bundle cache
-        id: restore_state
-        uses: actions/cache/restore@v4
-        with:
-          path: .formal_state_cache
-          key: football3-formal-state-v1-${{ github.sha }}
-          restore-keys: |
-            football3-formal-state-v1-
+      - name: Build audited invocation request
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          event=os.environ['GITHUB_EVENT_NAME']
+          out=pathlib.Path('.runtime_sources/invocation_request.json')
+          if event=='pull_request':
+              if os.environ.get('PR_HEAD_REF')!='football3/formal-gpt-runner-request-carrier-v1':
+                  raise SystemExit('unauthorized request carrier branch')
+              body=os.environ.get('PR_BODY','')
+              begin='<!-- football3-request-json -->'
+              end='<!-- /football3-request-json -->'
+              if begin not in body or end not in body:
+                  raise SystemExit('request carrier markers missing')
+              raw=body.split(begin,1)[1].split(end,1)[0].strip()
+              req=json.loads(raw)
+              transport='DRAFT_PR_BODY_EDIT'
+          else:
+              req=json.loads(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json').read_text(encoding='utf-8'))
+              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
+          if type(req) is not dict or req.get('schema_version')!='football3-formal-gpt-gateway-v1':
+              raise SystemExit('gateway request schema mismatch at transport')
+          canonical=json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
+          out.write_bytes(canonical)
+          audit={
+              'schema_version':'football3-gpt-request-transport-v1',
+              'event':event,'transport':transport,
+              'request_sha256':hashlib.sha256(canonical).hexdigest(),
+              'pr_number':os.environ.get('PR_NUMBER') or None,
+              'pr_head_ref':os.environ.get('PR_HEAD_REF') or None,
+              'pr_base_ref':os.environ.get('PR_BASE_REF') or None,
+              'code_ref':os.environ.get('GITHUB_SHA'),
+              'commit_per_match_required':False,
+          }
+          pathlib.Path('.runtime_sources/request_transport.json').write_text(
+              json.dumps(audit,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          print(json.dumps(audit,sort_keys=True))
+          PY
 
-      - name: Restore durable state Artifact when cache misses
-        if: ${{ steps.restore_state.outputs.cache-hit != 'true' }}
+      - name: Restore latest durable formal state Artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -51,28 +93,29 @@ jobs:
           rm -rf .formal_state_cache/bundle/*
           python3 - <<'PY'
           import json, os, pathlib, urllib.request
-          repo=os.environ['GITHUB_REPOSITORY']
-          token=os.environ['GH_TOKEN']
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
           req=urllib.request.Request(
               f'https://api.github.com/repos/{repo}/actions/artifacts?per_page=100',
               headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'},
           )
           with urllib.request.urlopen(req) as r:
               data=json.load(r)
+          allowed={'football3/formal-gpt-runner-integration-v1','football3/formal-gpt-runner-request-carrier-v1'}
           candidates=[]
           for a in data.get('artifacts',[]):
               wr=a.get('workflow_run') or {}
               if (not a.get('expired') and str(a.get('name','')).startswith('formal-gpt-runner-state-')
-                      and wr.get('head_branch')=='football3/formal-gpt-runner-integration-v1'):
+                      and wr.get('head_branch') in allowed):
                   candidates.append(a)
           candidates.sort(key=lambda a:(a.get('created_at',''),int(a.get('id',0))))
-          out=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
+          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
           if not candidates:
-              out.write_text(json.dumps({'status':'NO_DURABLE_STATE_ARTIFACT'},sort_keys=True)+'\n')
+              p.write_text(json.dumps({'status':'NO_DURABLE_STATE_ARTIFACT'},sort_keys=True)+'\n')
           else:
               a=candidates[-1]
-              out.write_text(json.dumps({'status':'FOUND','artifact_id':a['id'],'name':a['name'],
-                                         'digest':a.get('digest'),'created_at':a.get('created_at')},sort_keys=True)+'\n')
+              p.write_text(json.dumps({'status':'FOUND','artifact_id':a['id'],'name':a['name'],
+                  'digest':a.get('digest'),'created_at':a.get('created_at'),
+                  'head_branch':(a.get('workflow_run') or {}).get('head_branch')},sort_keys=True)+'\n')
           PY
           if python3 - <<'PY'
           import json
@@ -109,6 +152,7 @@ jobs:
           PY
             fi
           fi
+          cat .runtime_sources/state_artifact_candidate.json
 
       - name: Download byte-bound frozen FULL rebuild sources
         env:
@@ -136,12 +180,13 @@ jobs:
           set -euo pipefail
           rm -rf football-data/formal_gpt_gateway_v1/output
           mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
+          cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
           if [ -f .runtime_sources/state_artifact_candidate.json ]; then
             cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
           fi
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/entry.py \
-              --request "$PWD/football-data/formal_gpt_gateway_v1/request.json" \
+              --request "$PWD/.runtime_sources/invocation_request.json" \
               --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
@@ -158,9 +203,8 @@ jobs:
           import json, os, pathlib
           p=pathlib.Path('football-data/formal_gpt_gateway_v1/output/summary.json')
           d=json.loads(p.read_text()) if p.exists() else {'status':'NO_SUMMARY'}
-          state_sha=str(d.get('state_bundle_sha') or 'no-state')
           with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
-              f.write(f"state_sha={state_sha}\n")
+              f.write(f"state_sha={str(d.get('state_bundle_sha') or 'no-state')}\n")
               f.write(f"status={d.get('status','UNKNOWN')}\n")
               f.write(f"path={d.get('calculation_path','NONE')}\n")
           PY
@@ -186,14 +230,7 @@ jobs:
               --bundle "$PWD/.formal_state_cache/bundle" \
             | tee football-data/formal_gpt_gateway_v1/output/state_validate.txt
 
-      - name: Save remote formal state bundle cache
-        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .formal_state_cache
-          key: football3-formal-state-v1-${{ steps.gateway_summary.outputs.state_sha || 'recovered' }}-${{ github.run_id }}
-
-      - name: Upload prediction/gap receipt
+      - name: Upload prediction or gap receipt
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
