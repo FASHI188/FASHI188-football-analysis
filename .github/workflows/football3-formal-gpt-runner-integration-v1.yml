@@ -1,0 +1,118 @@
+name: Football3 Formal GPT Runner Integration V1
+
+on:
+  push:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - 'football-data/formal_gpt_gateway_v1/**'
+      - '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-formal-gpt-runner-integration-v1
+  cancel-in-progress: false
+
+jobs:
+  formal-request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore remote formal state bundle cache
+        id: restore_state
+        uses: actions/cache/restore@v4
+        with:
+          path: .formal_state_cache
+          key: football3-formal-state-v1-${{ github.sha }}
+          restore-keys: |
+            football3-formal-state-v1-
+
+      - name: Download byte-bound frozen FULL rebuild sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+
+      - name: Execute frozen original formal runner through gateway
+        id: execute
+        run: |
+          set -euo pipefail
+          rm -rf football-data/formal_gpt_gateway_v1/output
+          mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_gpt_gateway_v1/gateway.py \
+              --request "$PWD/football-data/formal_gpt_gateway_v1/request.json" \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --state-root "$PWD/.formal_state_cache" \
+              --out "$PWD/football-data/formal_gpt_gateway_v1/output" \
+            | tee football-data/formal_gpt_gateway_v1/output/stdout.txt
+          python3 - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path('football-data/formal_gpt_gateway_v1/output/summary.json')
+          d=json.loads(p.read_text())
+          state_sha=str(d.get('state_bundle_sha') or 'no-state')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
+              f.write(f"state_sha={state_sha}\n")
+              f.write(f"status={d.get('status','UNKNOWN')}\n")
+              f.write(f"path={d.get('calculation_path','NONE')}\n")
+          PY
+
+      - name: Validate persisted state bundle when present
+        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+              --bundle "$PWD/.formal_state_cache/bundle" \
+            | tee football-data/formal_gpt_gateway_v1/output/state_validate.txt
+
+      - name: Save remote formal state bundle cache
+        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .formal_state_cache
+          key: football3-formal-state-v1-${{ steps.execute.outputs.state_sha }}-${{ github.run_id }}
+
+      - name: Upload prediction/gap receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-gpt-runner-receipt-${{ github.run_id }}
+          path: football-data/formal_gpt_gateway_v1/output/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload complete reusable state bundle
+        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-gpt-runner-state-${{ github.run_id }}
+          path: .formal_state_cache/bundle/
+          if-no-files-found: error
+          retention-days: 90
