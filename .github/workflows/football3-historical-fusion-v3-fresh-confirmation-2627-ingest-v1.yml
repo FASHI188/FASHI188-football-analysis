@@ -1,0 +1,171 @@
+name: football3 Historical Fusion V3 Fresh Confirmation 2026-27 Ingest
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-fresh-confirmation-2627-ingest-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-fresh-confirmation-2627-ingest-v1.yml'
+      - 'football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-fresh-2627-ingest-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASE_HEAD: 100e5361c0f2ec274e165435d995a172b050f296
+  CONTRACT_FREEZE_COMMIT: 79098db2ad738fa5b514403858118082ec3ed154
+  CONTRACT_BLOB: 00b9275939a7110b18abfa3ac8299d6849518bcf
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  MIRROR_REPO: jvwknzn6p2-spec/sports-lab-model-plan.md
+  MIRROR_COMMIT: 0e865f69976fd1a11f495c2c72b85823ba496390
+
+jobs:
+  ingest-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact lineage contract freeze whitelist and formal guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-fresh-confirmation-2627-ingest-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-stage7-macro-integration-closure-v1 | cut -f1)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          D=football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest
+          test "$(git hash-object "$D/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json")" = "$CONTRACT_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          d=pathlib.Path('football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest')
+          contract=str(d/'FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json')
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines())
+          assert freeze=={contract},freeze
+          allowed={contract,'.github/workflows/football3-historical-fusion-v3-fresh-confirmation-2627-ingest-v1.yml'}
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((d/'FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_DATA_DOWNLOAD'
+          assert c['quarantine']['model_runner_access']=='FORBIDDEN_UNTIL_SEPARATE_CONFIRMATION_CONTRACT_FROZEN'
+          assert c['quarantine']['parameter_selection']=='FORBIDDEN'
+          assert c['snapshot']['maximum_allowed_match_date']=='2026-09-01'
+          assert len(c['leagues'])==5
+          PY
+
+      - name: Download primary and independent mirror snapshots without redirects
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _raw _mirror _artifact && mkdir -p _raw _mirror _artifact/{contracts,raw,evidence}
+          python - <<'PY'
+          import json,pathlib,subprocess,os
+          c=json.load(open('football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json'))
+          for x in c['leagues']:
+              code=x['code']; primary=x['url']
+              mirror=f"https://raw.githubusercontent.com/{os.environ['MIRROR_REPO']}/{os.environ['MIRROR_COMMIT']}/{x['mirror_path']}"
+              for url,out in [(primary,f'_raw/{code}.csv'),(mirror,f'_mirror/{code}.csv')]:
+                  cp=subprocess.run(['curl','-sS','--connect-timeout','15','--max-time','60','-o',out,'-w','%{http_code}',url],text=True,capture_output=True,check=True)
+                  status=cp.stdout.strip()
+                  if status!='200': raise SystemExit(f'{code} http={status} url={url}')
+          PY
+
+      - name: Byte equality identity date and aggregate-only quarantine audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv,datetime,hashlib,json,pathlib,shutil
+          c=json.load(open('football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json'))
+          cutoff=datetime.date.fromisoformat(c['snapshot']['maximum_allowed_match_date'])
+          required=set(c['download_integrity']['required_columns'])
+          leagues=[]; total=0; total_xg=0
+          for x in c['leagues']:
+              code=x['code']; p=pathlib.Path('_raw')/f'{code}.csv'; m=pathlib.Path('_mirror')/f'{code}.csv'
+              pb=p.read_bytes(); mb=m.read_bytes()
+              assert pb==mb, f'{code} primary/mirror bytes differ'
+              sha=hashlib.sha256(pb).hexdigest()
+              with p.open('r',encoding='utf-8-sig',newline='') as f:
+                  r=csv.DictReader(f); fields=r.fieldnames or []
+                  assert required.issubset(fields),(code,required-set(fields))
+                  completed=[]
+                  for row in r:
+                      if not row.get('Date'): continue
+                      assert row.get('Div')==code,(code,row.get('Div'))
+                      d=datetime.datetime.strptime(row['Date'],'%d/%m/%Y').date()
+                      assert d<=cutoff,(code,d,cutoff)
+                      if row.get('FTHG')!='' and row.get('FTAG')!='' and row.get('FTR') in {'H','D','A'}:
+                          completed.append((d, row.get('HxG')!='' and row.get('AxG')!=''))
+                  assert completed,code
+              n=len(completed); nx=sum(int(z[1]) for z in completed); total+=n; total_xg+=nx
+              leagues.append({'code':code,'name':x['name'],'bytes':len(pb),'sha256':sha,'completed_match_count':n,'min_match_date':min(z[0] for z in completed).isoformat(),'max_match_date':max(z[0] for z in completed).isoformat(),'xg_complete_count':nx,'xg_coverage_rate':nx/n,'column_count':len(fields),'required_columns_present':True,'primary_mirror_byte_equal':True})
+              shutil.copy2(p,pathlib.Path('_artifact/raw')/f'{code}.csv')
+          manifest={'schema_version':'football3-fresh-confirmation-2627-quarantine-artifact-v1','head':None,'season':'2026/27','cutoff':cutoff.isoformat(),'league_count':len(leagues),'total_completed_match_count':total,'total_xg_complete_count':total_xg,'total_xg_coverage_rate':total_xg/total,'labels_quarantined':True,'model_runner_access':False,'parameter_selection':False,'threshold_selection':False,'selector_design':False,'leagues':leagues,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False}
+          pathlib.Path('_artifact/evidence/aggregate_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          pathlib.Path('_artifact/contracts/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json').write_bytes(pathlib.Path('football-data/research/historical_fusion_v3_fresh_confirmation_2627_ingest/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json').read_bytes())
+          print(json.dumps({'league_count':len(leagues),'total_completed_match_count':total,'total_xg_complete_count':total_xg,'total_xg_coverage_rate':total_xg/total},sort_keys=True))
+          PY
+
+      - name: Seal artifact file identities without printing match labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact')
+          m=json.load(open(root/'evidence/aggregate_manifest.json')); m['head']=os.environ['GITHUB_SHA']
+          files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='artifact_manifest.json'):
+              rel=p.relative_to(root).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          am={'schema_version':'football3-fresh-confirmation-2627-quarantine-seal-v1','head':os.environ['GITHUB_SHA'],'status':'FRESH_2627_BIG5_QUARANTINE_INGEST_SEALED','labels_quarantined':True,'aggregate':m,'files':files,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'promotion_allowed':False}
+          (root/'evidence/aggregate_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          (root/'artifact_manifest.json').write_text(json.dumps(am,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload immutable fresh confirmation quarantine snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fresh-2627-big5-quarantine-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: ingest-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download exact named quarantine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-fresh-2627-big5-quarantine-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify manifest and aggregate-only seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json'))
+          assert m['status']=='FRESH_2627_BIG5_QUARANTINE_INGEST_SEALED'
+          assert m['labels_quarantined'] and m['promotion_allowed'] is False
+          a=m['aggregate']; assert a['league_count']==5 and a['total_completed_match_count']>0 and a['total_xg_coverage_rate']>=0.0
+          assert a['model_runner_access'] is False and a['parameter_selection'] is False and a['selector_design'] is False
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.is_file(),rel; assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          print(json.dumps({'status':m['status'],'league_count':a['league_count'],'total_completed_match_count':a['total_completed_match_count'],'total_xg_complete_count':a['total_xg_complete_count'],'total_xg_coverage_rate':a['total_xg_coverage_rate']},sort_keys=True))
+          PY
