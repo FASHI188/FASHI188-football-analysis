@@ -5,9 +5,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import source_compat_v4
+import formal_source_contract_v1
 
-COMPAT = source_compat_v4.install()
+COMPAT = formal_source_contract_v1.install()
 import gateway
 
 
@@ -32,10 +32,10 @@ def main() -> int:
         p = Path(out_arg) / "summary.json"
         if p.exists():
             d = json.loads(p.read_text(encoding="utf-8"))
-            d["source_compat"] = COMPAT
+            d["source_contract_adapter"] = COMPAT
             d["bootstrap_fixture_selection"] = "direct first frozen ENG_PremierLeague 2024/25 fixture in 2025-04; no 300-match scoring/sample surrogate"
             p.write_bytes(gateway.canon(d))
-            (Path(out_arg) / "source_compat.json").write_bytes(gateway.canon(COMPAT))
+            (Path(out_arg) / "source_contract_adapter.json").write_bytes(gateway.canon(COMPAT))
     except Exception:
         pass
     return code
