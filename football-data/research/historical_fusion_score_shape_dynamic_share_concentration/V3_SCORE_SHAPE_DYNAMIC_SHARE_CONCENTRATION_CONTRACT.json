@@ -1,0 +1,134 @@
+{
+  "schema_version": "football3-v3-score-shape-dynamic-share-concentration-contract-v1",
+  "project_id": "football3",
+  "macro_stage": "STAGE6_SCORE_SHAPE",
+  "status": "FROZEN_BEFORE_TARGET_SCORING",
+  "research_only": true,
+  "new_information_axis": true,
+  "not_a_fourth_transport_family": true,
+  "lineage": {
+    "parent_head": "591496c909a31f69626134759a9006c5bab2bb22",
+    "parent_branch": "football3/historical-fusion-score-shape-shot-fano-state-v1",
+    "shot_fano_status": "REJECTED_NO_RESCUE",
+    "v3_2_6_head": "2d02de0de4da73412d90b019886f710beaf3ee85",
+    "v3_2_4_head": "3cc9098cd321ee4f1dd659b1a4f4db75c02555ed",
+    "v3_1_1_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "formal_current_sha256": "ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8"
+  },
+  "frozen_inputs": {
+    "understat_artifact_id": 9798682425,
+    "understat_artifact_digest": "sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba",
+    "v3_2_4_artifact_id": 9888387173,
+    "v3_2_4_artifact_digest": "sha256:c14813b04a3f21f5cf8de0cf99d682b0e539f2011adb9212532af175509e6ad1",
+    "v2_artifact_id": 9828471485,
+    "xg_artifact_id": 9826787329,
+    "v1_artifact_id": 9732754224,
+    "usr1_artifact_id": 9848912219,
+    "v31_artifact_id": 9855441319
+  },
+  "scientific_hypothesis": {
+    "id": "STRICT_PREMATCH_DYNAMIC_GOAL_SHARE_CONCENTRATION",
+    "statement": "With total-goals probability held fixed, exact-score shape contains predictive information in the pre-match variability of how xG opportunity share is allocated between the two teams. A fixture-specific Beta-Binomial goal-allocation concentration estimated only from earlier home-role and away-role xG-share histories can improve exact-score calibration relative to the frozen global concentration while preserving total-goal and 1X2 semantics.",
+    "independence_from_shot_fano_failure": true,
+    "no_cell_specific_protection": true,
+    "no_metric_targeted_patch": true
+  },
+  "share_state": {
+    "source_table": "general_game_stats",
+    "share_definition": "home_xg_share=h_xg/(h_xg+a_xg) for historical matches with positive total xG",
+    "chronology": "ONLY source matches with kickoff strictly earlier than target kickoff; same-kickoff excluded",
+    "target_sources": [
+      "target_home_team_prior_home_matches using historical home_xg_share",
+      "target_away_team_prior_away_matches using historical opponent-home_xg_share"
+    ],
+    "per_source_estimator": "method-of-moments Beta concentration kappa = mean*(1-mean)/unbiased_sample_variance - 1",
+    "minimum_profiles_for_team_role_estimate": 2,
+    "validity": "estimate valid only when 0 < sample_variance < mean*(1-mean) and kappa is finite positive",
+    "fallback_hierarchy": ["team_role", "same_league_home_share_pool", "big5_home_share_pool"],
+    "source_combination": "equal arithmetic mean of independently resolved home-team-home and away-team-away kappa estimates",
+    "trainable_parameters": "NONE",
+    "label_fitted_parameters": "NONE",
+    "threshold_grid": "NONE",
+    "market_inputs": "FORBIDDEN",
+    "future_or_same_kickoff_rows": "FORBIDDEN"
+  },
+  "goal_allocation_generator": {
+    "total_goals_anchor": "every frozen V3.1.1 total-goals marginal is retained exactly",
+    "home_share_anchor": "p = frozen V3.1.1 expected_home_goals / frozen V3.1.1 expected_total_goals; p=0.5 only if expected_total_goals is numerically zero",
+    "conditional_distribution": "For each total T, H|T follows Beta-Binomial(T, alpha=kappa*p, beta=kappa*(1-p)); only cells inside the frozen finite square support are retained and renormalized within each T slice",
+    "reference_matrix": "frozen total-goals marginal multiplied by the dynamic Beta-Binomial allocation within each total slice",
+    "baseline_global_concentration_reference": 14.0,
+    "parameter_selection": "NONE"
+  },
+  "constraint_projection": {
+    "id": "TOTAL_PLUS_HDA_KL_IPROJECTION",
+    "purpose": "constraint enforcement only",
+    "reference": "dynamic goal-share concentration reference matrix",
+    "constraints": [
+      "preserve every frozen V3.1.1 total-goals marginal exactly",
+      "preserve frozen V3.2.4 target H/D/A probabilities exactly"
+    ],
+    "algorithm": "deterministic iterative proportional fitting alternating total-goal slices and H/D/A partitions",
+    "tolerance": 1e-13,
+    "max_iterations": 10000,
+    "no_tuning": true
+  },
+  "application_scope": {
+    "all_target_matches": true,
+    "non_switch_matches": "H/D/A remains frozen V3.1.1 while score shape may change",
+    "v3_2_4_switch_matches": "H/D/A equals frozen V3.2.4 target while score shape comes from the dynamic concentration reference"
+  },
+  "data_roles": {
+    "2019_2020": "POST_VIEW_FIXED_RULE_SANITY_ONLY_NO_SELECTION",
+    "2021_2022": "POST_VIEW_FIXED_RULE_EVALUATION_ONLY_IF_SANITY_ALL_PASS",
+    "2023": "CLOSED_FOR_THIS_COMPONENT",
+    "2024_25_and_2025_26_3504": "FORBIDDEN_FOR_THIS_COMPONENT"
+  },
+  "hard_gates": {
+    "sanity_2019_2020_must_pass_all": true,
+    "evaluation_2021_2022_must_pass_all": true,
+    "structural": {
+      "chronology_violation_n_max": 0,
+      "matrix_sum_max_abs_error": 1e-12,
+      "total_goals_marginal_max_abs_error": 1e-12,
+      "matrix_to_target_1x2_max_abs_error": 1e-12,
+      "finite_nonnegative_matrix_required": true,
+      "projection_convergence_required": true
+    },
+    "score": {
+      "exact_score_logloss_delta_max": 0.0,
+      "total_goals_brier_delta_max": 1e-12,
+      "total_goals_rps_delta_max": 1e-12,
+      "score_00_binary_brier_delta_max": 0.0,
+      "score_11_binary_brier_delta_max": 0.0,
+      "score_22_binary_brier_delta_max": 0.0,
+      "low_total_le2_binary_brier_delta_max": 1e-12,
+      "high_total_ge5_binary_brier_delta_max": 1e-12,
+      "very_high_total_ge7_binary_brier_delta_max": 1e-12,
+      "top4_cell_mass_calibration_brier_delta_max": 0.0,
+      "matrix_to_1x2_max_abs_error": 1e-12
+    }
+  },
+  "forbidden": [
+    "post_view_rescue_tuning",
+    "parameter sweeps",
+    "changing the concentration estimator after scoring",
+    "changing source weights or fallback hierarchy after scoring",
+    "using target result labels to fit concentration",
+    "opening 2023 for this component",
+    "using the 3504 stress set",
+    "market or live information",
+    "manual match team league fold score or cell exceptions",
+    "Top4-specific protection",
+    "Ready",
+    "merge",
+    "force",
+    "Formal V2 or CURRENT changes"
+  ],
+  "terminal": {
+    "success": "SCORE_SHAPE_DYNAMIC_SHARE_CONCENTRATION_READY_FOR_MACRO_INTEGRATION",
+    "failure": "SCORE_SHAPE_DYNAMIC_SHARE_CONCENTRATION_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT",
+    "promotion_allowed": false
+  }
+}
