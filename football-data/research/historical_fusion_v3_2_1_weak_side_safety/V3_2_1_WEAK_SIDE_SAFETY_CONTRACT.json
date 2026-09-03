@@ -1,0 +1,204 @@
+{
+  "schema_version": "football3-v3-2-1-weak-side-safety-contract-v1",
+  "project_id": "football3",
+  "status": "FROZEN_BEFORE_V3_2_1_TARGET_SCORING",
+  "research_name": "Historical Fusion V3.2.1 Segment 1 - Weak-Side Safety and Favourite Fragility",
+  "research_branch": "football3/historical-fusion-v3-2-1-weak-side-safety-v1",
+  "scope": {
+    "included": [
+      "strong_vs_weak_1x2_repair",
+      "favourite_to_draw_fragility_repair",
+      "independent_weak_side_upset_evidence_gate"
+    ],
+    "excluded": [
+      "parity_boundary_repair",
+      "score_surface_repair",
+      "score_distribution_selection",
+      "market_inputs",
+      "formal_activation"
+    ],
+    "segment_goal": "increase full-coverage and mismatch-regime Top1 without any degradation of actual weak-side-win conditional logloss",
+    "overall_55_target": "reserved for later fully integrated V3.2.1; this segment alone is not permitted to claim 55 percent confirmation"
+  },
+  "frozen_lineage": {
+    "v3_2_terminal": {
+      "branch": "football3/historical-fusion-v3-2-three-fault-dynamic-joint-repair-v1",
+      "head": "66765da92a378b4f2bc9023ce3b5e26c354effd4",
+      "run_id": 33732856511,
+      "artifact_id": 9884662254,
+      "artifact_digest": "sha256:34c20518712ab96b0b075a297e45ec56aaeda98dab643dae579a79c62e186f6e",
+      "terminal": "V3_2_THREE_FAULT_RESEARCH_REJECTED_NO_RESCUE_ON_CONSUMED_HOLDOUT",
+      "classification": "POST_VIEW_DIAGNOSTIC_ONLY"
+    },
+    "v3_1_1_baseline": {
+      "branch": "football3/historical-fusion-v3-1-1-joint-score-v1",
+      "head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+      "artifact_id": 9856755439,
+      "artifact_digest": "sha256:f118ffa5d09c40bbefc3f18788e534e4e6b7504744a6976f78f157ce09abf305",
+      "must_remain_immutable": true
+    },
+    "formal_v2": {
+      "branch": "football3/historical-xg-fusion-v2-formal-activation-v1",
+      "head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+      "must_remain_unchanged": true,
+      "CURRENT_change_allowed": false,
+      "production_pointer_change_allowed": false,
+      "formal_enablement_change_allowed": false,
+      "formal_weight_change_allowed": false
+    }
+  },
+  "post_view_policy": {
+    "2018_2022": "POST_VIEW_DEVELOPMENT_ONLY",
+    "2023": "CANDIDATE_FIXED_POST_VIEW_DIAGNOSTIC_ONLY_AFTER_FAMILY_FREEZE",
+    "2024_25_and_2025_26_3504": "FORBIDDEN_FOR_SELECTION_OR_THRESHOLD_TUNING",
+    "fresh_confirmation_available": false,
+    "rescue_tuning_after_any_scored_gate": "FORBIDDEN"
+  },
+  "frozen_dynamic_state": {
+    "source": "V3.2 pre-frozen dynamic-state family, now fixed rather than reselected",
+    "process_variance_scale": 0.01,
+    "observation_variance_scale": 0.3,
+    "lag_half_life_matches": 16,
+    "pit_rule": "only completed lagged Understat event history available before each target kickoff",
+    "new_feature_sources": "NONE_IN_SEGMENT_1"
+  },
+  "regime_definition": {
+    "favourite_side": "argmax of frozen V3.1.1 P(Home) versus P(Away); draw never defines favourite side",
+    "weak_side": "the opposite Home/Away side",
+    "continuous_mismatch_weight": "reuse frozen V3.2 fragility_weight(abs(dynamic_strength_gap / dynamic_gap_sd)); no new hard strong-weak threshold",
+    "hard_mismatch_bucket_for_diagnostics_only": "mismatch_weight >= 0.5",
+    "hard_bucket_may_not_control_prediction": true
+  },
+  "candidate_A_draw_only_fragility": {
+    "name": "Exact Weak-Side Preservation + Favourite-vs-Draw Conditional Repair",
+    "structural_constraint": "P_weak_after == P_weak_frozen_V3_1_1 to machine tolerance on every eligible match",
+    "conditional_model": "ridge binary logistic residual for Draw versus Favourite among training outcomes that are Draw or Favourite, with frozen V3.1.1 conditional odds as offset",
+    "feature_orientation": "all directional dynamic features are oriented favourite-minus-weak; no outcome-known features",
+    "features": [
+      "frozen_favourite_probability",
+      "frozen_draw_probability",
+      "frozen_weak_probability",
+      "favourite_minus_weak_probability_gap",
+      "frozen_entropy",
+      "frozen_top1_margin",
+      "frozen_expected_total_goals",
+      "favourite_oriented_dynamic_strength_z",
+      "favourite_oriented_attack_gap",
+      "favourite_oriented_defence_gap",
+      "favourite_oriented_process_gap",
+      "signed_home_advantage_for_favourite",
+      "state_uncertainty",
+      "continuous_mismatch_weight"
+    ],
+    "inner_grid_2019_only": {
+      "ridge_lambda_multiplier": [4.0, 8.0],
+      "residual_scale": [0.1, 0.2, 0.35],
+      "max_favourite_draw_mass_shift": [0.02, 0.04]
+    },
+    "prediction_rule": "weak probability fixed exactly; only remaining mass is redistributed between favourite and draw; shift is continuous and capped",
+    "forbidden": [
+      "weak_probability_change",
+      "fixed_draw_multiplier",
+      "manual_match_or_team_patch"
+    ]
+  },
+  "candidate_B_independent_upset_gate": {
+    "name": "Candidate A + One-Sided Weak-Uplift Evidence Gate",
+    "base": "candidate_A_draw_only_fragility",
+    "upset_model": "ridge binary logistic residual for WeakWin versus NotWeakWin with frozen V3.1.1 weak-win odds as offset",
+    "independence_rule": "upset residual uses weak-side-oriented dynamic/process features and may not use the favourite-vs-draw fitted residual or the actual target outcome at prediction time",
+    "features": [
+      "frozen_weak_probability",
+      "frozen_favourite_probability",
+      "frozen_draw_probability",
+      "favourite_minus_weak_probability_gap",
+      "weak_oriented_dynamic_strength_z",
+      "weak_oriented_attack_gap",
+      "weak_oriented_defence_gap",
+      "weak_oriented_process_gap",
+      "state_uncertainty",
+      "frozen_expected_total_goals",
+      "continuous_mismatch_weight"
+    ],
+    "inner_grid_2019_only": {
+      "ridge_lambda_multiplier": [4.0, 8.0],
+      "positive_residual_scale": [0.25, 0.5],
+      "max_weak_probability_uplift": [0.01, 0.02]
+    },
+    "one_sided_rule": "P_weak may only increase above candidate A / frozen baseline; negative or zero residual produces zero weak-side change",
+    "mass_source": "weak-side uplift mass is taken from favourite probability only; draw probability from candidate A is preserved unless favourite mass is insufficient",
+    "structural_safety": "actual weak-side-win conditional logloss cannot worsen versus frozen V3.1.1 because P_weak_after >= P_weak_baseline on every match",
+    "forbidden": [
+      "decreasing_weak_probability",
+      "fixed_underdog_multiplier",
+      "outcome_known_upset_patch",
+      "manual_upset_list"
+    ]
+  },
+  "baseline_C": {
+    "name": "Frozen V3.1.1 Identity Comparator",
+    "eligible_for_new_candidate_claim": false
+  },
+  "selection_protocol": {
+    "2018": "fit candidate models only using frozen-base genuine OOS predictions after the existing burn-in procedure",
+    "2019": "mechanically enumerate only the frozen grids in this contract; each family selects highest full-coverage Top1 among settings passing all 2019 hard gates; tie lower logloss then Brier then deterministic parameter tuple",
+    "2020_2022": "expanding-history rolling OOS with 2019-selected hyperparameters; candidate family must pass all pooled hard gates and at least 6 of 8 existing chronological fold nondegradation gates",
+    "family_selection": "among nontrivial A/B families passing all 2020-2022 hard gates select highest full-coverage Top1; tie higher mismatch-regime Top1 then lower global logloss then family_id",
+    "candidate_family_frozen_before_2023": true,
+    "2023": "candidate-fixed POST_VIEW diagnostic only; no change after read",
+    "2024_2026_3504": "not opened in Segment 1",
+    "if_no_nontrivial_family_passes": "terminal rejection; no rescue tuning"
+  },
+  "hard_gates": {
+    "coverage_required": 1.0,
+    "global_logloss_delta_max": 0.0,
+    "global_brier_delta_max": 0.0,
+    "global_rps_delta_max": 0.0,
+    "global_top1_delta_min": 0.0,
+    "actual_weak_side_win_conditional_logloss_degradation_max": 0.0,
+    "actual_draw_conditional_logloss_degradation_max": 0.005,
+    "mismatch_regime_logloss_degradation_max": 0.0,
+    "mismatch_regime_top1_delta_min": 0.0,
+    "worst_eligible_league_season_logloss_degradation_max": 0.015,
+    "fold_nondegrade_min": 6,
+    "fold_count": 8,
+    "candidate_A_max_abs_weak_probability_error": 1e-12,
+    "candidate_B_min_weak_probability_delta": 0.0
+  },
+  "required_diagnostics": [
+    "global_top1_and_proper_scores",
+    "mismatch_regime_top1_and_proper_scores",
+    "actual_weak_side_win_conditional_logloss",
+    "actual_draw_conditional_logloss",
+    "weak_probability_min_delta_and_max_delta",
+    "favourite_to_draw_shift_distribution",
+    "upset_gate_activation_rate",
+    "base_wrong_to_candidate_correct_flips",
+    "base_correct_to_candidate_wrong_flips",
+    "net_top1_repairs",
+    "league_season_worst_group",
+    "8_fold_nondegradation",
+    "exact_fallback_identity"
+  ],
+  "terminal": {
+    "success": "V3_2_1_SEGMENT1_WEAK_SIDE_SAFETY_CANDIDATE_READY_FIXED_2023_DIAGNOSTIC",
+    "failure": "V3_2_1_SEGMENT1_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT",
+    "promotion_allowed": false,
+    "formal_activation_allowed": false
+  },
+  "forbidden": [
+    "market_inputs",
+    "live_or_target_postmatch_information_before_prediction",
+    "2023_parameter_or_family_selection",
+    "3504_parameter_or_family_selection",
+    "post_view_gate_relaxation",
+    "post_view_grid_expansion",
+    "CURRENT_change",
+    "production_pointer_change",
+    "formal_enablement_change",
+    "formal_weight_change",
+    "Ready",
+    "merge",
+    "force"
+  ]
+}
