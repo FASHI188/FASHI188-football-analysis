@@ -64,8 +64,8 @@ jobs:
           set -euo pipefail
           rm -rf football-data/formal_gpt_gateway_v1/output
           mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
-          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
-            python3 football-data/formal_gpt_gateway_v1/gateway.py \
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/entry.py \
               --request "$PWD/football-data/formal_gpt_gateway_v1/request.json" \
               --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
@@ -85,7 +85,7 @@ jobs:
           PY
 
       - name: Validate persisted state bundle when present
-        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
@@ -94,13 +94,14 @@ jobs:
             | tee football-data/formal_gpt_gateway_v1/output/state_validate.txt
 
       - name: Save remote formal state bundle cache
-        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
         uses: actions/cache/save@v4
         with:
           path: .formal_state_cache
-          key: football3-formal-state-v1-${{ steps.execute.outputs.state_sha }}-${{ github.run_id }}
+          key: football3-formal-state-v1-${{ steps.execute.outputs.state_sha || 'recovered' }}-${{ github.run_id }}
 
       - name: Upload prediction/gap receipt
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: formal-gpt-runner-receipt-${{ github.run_id }}
@@ -109,7 +110,7 @@ jobs:
           retention-days: 90
 
       - name: Upload complete reusable state bundle
-        if: ${{ hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
+        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: formal-gpt-runner-state-${{ github.run_id }}
