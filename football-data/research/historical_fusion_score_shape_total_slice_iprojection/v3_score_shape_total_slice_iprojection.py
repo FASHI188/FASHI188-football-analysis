@@ -179,6 +179,7 @@ def main():
     if c['status']!='FROZEN_BEFORE_SCORE_SHAPE_TARGET_SCORING': raise ScoreShapeError('contract drift')
     if c['frozen_target_hda']['params']!=c4['direction_generator']['frozen_t2_params'] or float(c['frozen_target_hda']['epsilon'])!=float(c4['projection']['epsilon']): raise ScoreShapeError('V3.2.4 target source drift')
     v324=loadmod('slice_v324',a.v324); v323=loadmod('slice_v323',a.v323); v322=loadmod('slice_v322',a.v322); v32dev=loadmod('slice_v32dev',a.v32dev)
+    a.v32dev_module=v32dev
     core=loadmod('slice_core',a.core); v311=loadmod('slice_v311',a.v311); v31=loadmod('slice_v31',a.v31); usr=loadmod('slice_usr',a.usr1); v2=loadmod('slice_v2',a.v2); xg=loadmod('slice_xg',a.xg)
     rows,fold_map,fold_rows,rowrec,proc,procrec,bmap,bmats,baserec,state_params,snaps,stateboard=v322.stage(2022,a,c3,core,v311,v31,usr,v2,xg)
     write_json(a.out/'pre2023_row_receipt.json',rowrec); write_json(a.out/'pre2023_process_receipt.json',procrec)
