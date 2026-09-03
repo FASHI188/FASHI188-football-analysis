@@ -20,6 +20,8 @@ import live_source_contract_resolution_v1
 LIVE_SOURCE_CONTRACT = live_source_contract_resolution_v1.install()
 import live_xg_quarantine_patch_v1
 LIVE_XG_QUARANTINE = live_xg_quarantine_patch_v1.install()
+import live_xg_quarantine_fast_reuse_v2
+LIVE_XG_QUARANTINE_FAST_REUSE = live_xg_quarantine_fast_reuse_v2.install()
 import live_fast_reuse_audit_v1
 LIVE_FAST_AUDIT = live_fast_reuse_audit_v1.install()
 import gateway
@@ -62,6 +64,7 @@ def main() -> int:
             "live_xg_identity_adapter.json": LIVE_XG_IDENTITY,
             "live_source_contract_adapter.json": LIVE_SOURCE_CONTRACT,
             "live_xg_quarantine_adapter.json": LIVE_XG_QUARANTINE,
+            "live_xg_quarantine_fast_reuse_adapter.json": LIVE_XG_QUARANTINE_FAST_REUSE,
             "live_fast_reuse_adapter.json": LIVE_FAST_AUDIT,
             "live_fast_reuse_audit.json": fast_audit,
             "live_gateway_adapter.json": LIVE_GATEWAY,
@@ -80,6 +83,7 @@ def main() -> int:
             d["live_xg_identity_adapter"] = LIVE_XG_IDENTITY
             d["live_source_contract_adapter"] = LIVE_SOURCE_CONTRACT
             d["live_xg_quarantine_adapter"] = LIVE_XG_QUARANTINE
+            d["live_xg_quarantine_fast_reuse_adapter"] = LIVE_XG_QUARANTINE_FAST_REUSE
             d["live_fast_reuse_adapter"] = LIVE_FAST_AUDIT
             d["live_fast_reuse_audit"] = fast_audit
             d["live_gateway_adapter"] = LIVE_GATEWAY
