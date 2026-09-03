@@ -18,6 +18,8 @@ import live_xg_identity_patch_v1
 LIVE_XG_IDENTITY = live_xg_identity_patch_v1.install()
 import live_source_contract_resolution_v1
 LIVE_SOURCE_CONTRACT = live_source_contract_resolution_v1.install()
+import live_xg_quarantine_patch_v1
+LIVE_XG_QUARANTINE = live_xg_quarantine_patch_v1.install()
 import gateway
 import live_gateway_patch_v1
 
@@ -25,9 +27,6 @@ LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 
 
 def _direct_complete_fixture(history):
-    # Deterministic single historical FULL probe strictly before the first quarantined
-    # source-contract boundary. Identity/time only; no result/xG selection and no
-    # 300-match scoring/sample surrogate.
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
     upper = datetime(2023, 4, 1, tzinfo=timezone.utc)
     rows = [
@@ -52,14 +51,19 @@ def main() -> int:
         out_arg = sys.argv[sys.argv.index("--out") + 1]
         out = Path(out_arg)
         audit = formal_source_contract_v1.audit_snapshot()
+        adapters = {
+            "source_contract_adapter.json": COMPAT,
+            "source_contract_resolution.json": SOURCE_RESOLUTION,
+            "live_delta_adapter.json": LIVE_DELTA,
+            "live_extra_schema_adapter.json": LIVE_EXTRA_SCHEMA,
+            "live_xg_identity_adapter.json": LIVE_XG_IDENTITY,
+            "live_source_contract_adapter.json": LIVE_SOURCE_CONTRACT,
+            "live_xg_quarantine_adapter.json": LIVE_XG_QUARANTINE,
+            "live_gateway_adapter.json": LIVE_GATEWAY,
+        }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
-        (out / "source_contract_adapter.json").write_bytes(gateway.canon(COMPAT))
-        (out / "source_contract_resolution.json").write_bytes(gateway.canon(SOURCE_RESOLUTION))
-        (out / "live_delta_adapter.json").write_bytes(gateway.canon(LIVE_DELTA))
-        (out / "live_extra_schema_adapter.json").write_bytes(gateway.canon(LIVE_EXTRA_SCHEMA))
-        (out / "live_xg_identity_adapter.json").write_bytes(gateway.canon(LIVE_XG_IDENTITY))
-        (out / "live_source_contract_adapter.json").write_bytes(gateway.canon(LIVE_SOURCE_CONTRACT))
-        (out / "live_gateway_adapter.json").write_bytes(gateway.canon(LIVE_GATEWAY))
+        for name, obj in adapters.items():
+            (out / name).write_bytes(gateway.canon(obj))
         p = out / "summary.json"
         if p.exists():
             d = json.loads(p.read_text(encoding="utf-8"))
@@ -70,6 +74,7 @@ def main() -> int:
             d["live_extra_schema_adapter"] = LIVE_EXTRA_SCHEMA
             d["live_xg_identity_adapter"] = LIVE_XG_IDENTITY
             d["live_source_contract_adapter"] = LIVE_SOURCE_CONTRACT
+            d["live_xg_quarantine_adapter"] = LIVE_XG_QUARANTINE
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
