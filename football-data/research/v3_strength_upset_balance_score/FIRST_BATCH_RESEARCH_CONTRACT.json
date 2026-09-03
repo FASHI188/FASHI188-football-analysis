@@ -1,0 +1,115 @@
+{
+  "baseline": {
+    "balanced": "abs(FormalV2_home-FormalV2_away)<0.10",
+    "balanced_low_goal": "balanced and FormalV2 matrix expected total goals<2.5",
+    "balanced_open": "balanced and FormalV2 matrix expected total goals>=2.5",
+    "primary": "V3.1.1-A frozen prediction/matrix from stress artifact",
+    "secondary": "Formal Fusion V2 frozen prediction/matrix",
+    "strong_weak_identity": "Formal V2 pre-match home-vs-away probability ordering; actual result never defines identity"
+  },
+  "candidates": [
+    {
+      "description": "Symmetric strong/draw/weak multinomial residual calibration on top of frozen V3.1.1 probabilities. Allows both strong and weak probabilities to move; no new football event features.",
+      "fallback": "invalid probability/matrix only -> exact V3.1.1",
+      "id": "A_OUTCOME_CAL",
+      "matrix_rule": "I-project frozen V3.1.1 15x15 matrix by home/draw/away outcome regions to candidate 1X2; within-region score shape unchanged.",
+      "optimizer": "offset multinomial Newton with ridge; max 25 iterations; deterministic backtracking line search",
+      "ridge_lambda_grid": [8.0,24.0,72.0]
+    },
+    {
+      "description": "Candidate A plus development-residualized pre-match shot-process structure, fitted as an incremental multinomial residual head. Designed to test information not already explained by baseline probabilities/expected total.",
+      "fallback": "process profile unavailable -> exact selected Candidate A prediction/matrix",
+      "id": "B_PROCESS_RESIDUAL",
+      "matrix_rule": "I-project frozen V3.1.1 15x15 matrix by outcome regions to candidate 1X2; within-region score shape unchanged.",
+      "optimizer": "offset multinomial Newton with ridge; max 25 iterations; deterministic backtracking line search",
+      "ridge_lambda_grid": [16.0,48.0,144.0]
+    },
+    {
+      "alpha_total_grid": [-0.08,-0.04,0.0,0.04,0.08],
+      "beta_covariance_grid": [-0.08,-0.04,0.0,0.04,0.08],
+      "cell_statistics": "per-match standardized total-goal count around frozen matrix expected total and standardized centered home*away covariance term; region-wise normalization preserves 1X2 exactly",
+      "description": "Outcome-mass preserving exact-score calibration only. Within each home/draw/away region, apply a two-statistic exponential tilt for total-goal level and home-away covariance/dependence; 1X2 remains frozen V3.1.1 exactly.",
+      "fallback": "invalid matrix only -> exact V3.1.1",
+      "id": "C_SCORE_SHAPE"
+    }
+  ],
+  "classification": "POST_VIEW_HISTORICAL_RESEARCH_ONLY",
+  "combination_rule": "No first-batch candidate combines outcome residual and score-shape modules. A later research version may combine the selected outcome candidate with C only if the first-batch ablation shows the outcome candidate materially improves 1X2 while C materially improves conditional score structure under their frozen gates; no post-result gate relaxation.",
+  "data_roles": {
+    "2024_25": "DEVELOPMENT_AND_PARAMETER_SELECTION_POST_VIEW",
+    "2025_26": "FIXED_POST_VIEW_EVALUATION_FOR_THIS_RESEARCH_VERSION",
+    "note": "Both seasons were previously exposed in V3.1.1 stress/diagnostic work; 2025/26 is not untouched or fresh confirmation. Candidate definitions and grids are frozen before any new-candidate scores are read."
+  },
+  "evaluation_gates": {
+    "A_B_common": {
+      "2025_26_1x2_logloss_gain_vs_v3_1_1_min": 0.0,
+      "2025_26_brier_delta_vs_v3_1_1_max": 0.0005,
+      "2025_26_rps_delta_vs_v3_1_1_max": 0.0005,
+      "2025_26_top1_delta_vs_v3_1_1_min": -0.002,
+      "balanced_1x2_logloss_gain_min": -0.001,
+      "matrix_sum_abs_error_max": 1e-12,
+      "matrix_to_1x2_max_abs_diff": 1e-12,
+      "strong_win_binary_logloss_gain_vs_v3_1_1_min": 0.0,
+      "weak_false_positive_rate_absolute_increase_max": 0.02,
+      "weak_upset_average_precision_delta_min": -0.005,
+      "weak_upset_binary_logloss_gain_vs_v3_1_1_min": 0.0,
+      "weak_upset_calibration_abs_error_delta_max": 0.003,
+      "weak_upset_roc_auc_delta_min": -0.005,
+      "worst_league_season_logloss_degradation_max": 0.015,
+      "worst_strength_gap_logloss_degradation_max": 0.01
+    },
+    "C": {
+      "2025_26_conditional_score_logloss_gain_min": 0.0005,
+      "2025_26_exact_score_logloss_gain_vs_v3_1_1_min": 0.0005,
+      "matrix_sum_abs_error_max": 1e-12,
+      "one_x_two_max_abs_delta_vs_v3_1_1": 1e-12,
+      "score_00_binary_brier_delta_max": 0.001,
+      "score_00_calibration_abs_error_delta_max": 0.002,
+      "score_11_binary_brier_delta_max": 0.001,
+      "score_11_calibration_abs_error_delta_max": 0.002,
+      "score_22_binary_brier_delta_max": 0.001,
+      "score_22_calibration_abs_error_delta_max": 0.002,
+      "score_top1_delta_min": -0.002,
+      "score_top3_delta_min": -0.002,
+      "total_goals_brier_delta_max": 0.0005,
+      "total_goals_ece_delta_max": 0.001,
+      "total_goals_rps_delta_max": 0.0005,
+      "worst_league_season_conditional_score_ll_degradation_max": 0.015
+    }
+  },
+  "features": {
+    "candidate_B_excluded_as_likely_xg_duplicate": ["rolling_npxg_for_level","rolling_npxg_against_level","current_match_xg","current_match_shots","target_result"],
+    "candidate_B_incremental_raw": ["oriented_nonpenalty_shot_for_diff","oriented_nonpenalty_shot_against_advantage","oriented_npxg_per_shot_diff","oriented_open_play_share_diff","oriented_set_piece_share_diff"],
+    "candidate_B_redundancy_control": "Each incremental raw feature is linearly residualized on development against the common baseline features before multinomial residual fitting; the residualizer is then frozen and applied to evaluation. Incremental value is B versus A on the same rows.",
+    "common_baseline": ["intercept","strength_gap","draw_probability","entropy","expected_total_goals","weak_is_home"],
+    "missing_semantics": "No text inference or imputation from target match. Candidate B uses exact Candidate A prediction when pre-match process profile is unavailable."
+  },
+  "forbidden": ["odds","market","future_fixture","target_match_feature_leakage","target_result_as_feature","target_match_shots_as_feature","postmatch_lineup_as_feature","CURRENT_change","production_pointer_change","formal_enablement_change","formal_weight_change","Fast_Runtime_change","Codex","Ready","merge","force","formal_activation"],
+  "fresh_confirmation": false,
+  "lineage": {
+    "data_artifact_digest": "sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c",
+    "data_artifact_id": 9876641831,
+    "data_head": "95757332b4ea3cd4d75db370d19ba83dfbf55601",
+    "diagnostic_artifact_digest": "sha256:ee32b21e8d7e652f68fc0f8b8407826992f9e22f31220e57b5f92127bb42a954",
+    "diagnostic_artifact_id": 9878053742,
+    "diagnostic_head": "f1c8ad34b64efad29bfa94904f9e5172a8648f17",
+    "diagnostic_run_id": 33714599310,
+    "fixture_identity_sha256": "60f14c0960b231b0e4fb0f90a0000e9c82e64f6e33c6b06e417f6902dc1ad13e",
+    "fixture_n": 3504,
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "research_branch": "football3/v3-strength-upset-balance-score-research-v1",
+    "stress_artifact_digest": "sha256:bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a",
+    "stress_artifact_id": 9876751277,
+    "v3_1_1_stress_head": "b32944f1e0a973dd5ff3a2e87d72333d85d27051"
+  },
+  "project_id": "football3",
+  "promotion_allowed": false,
+  "required_reporting": ["all_candidate_development_results","all_candidate_2025_26_results","formal_v2_comparison","v3_1_1_comparison","strong_win","weak_upset_calibration_auc_ap_false_positive","weak_home_away","balanced_low_open","draw","1x2_logloss_brier_rps_top1","exact_score_and_conditional_score_logloss","score_top1_top3","score_00_11_22","total_goals","league_season","calendar_half","active_fallback","matrix_invariants","candidate_B_incremental_ablation_A_vs_B"],
+  "schema_version": "football3-v3-strength-upset-balance-score-research-contract-v1",
+  "selection": {
+    "A": "lowest 2024/25 1X2 LogLoss among grid fits subject to weak-upset calibration_abs_error not worse than V3.1.1 by >0.005 and strong-win binary LogLoss nondegrade; tie -> larger lambda",
+    "B": "lowest 2024/25 1X2 LogLoss among grid fits subject to weak-upset ROC-AUC >= Candidate A -0.002 and calibration_abs_error <= Candidate A +0.005; tie -> larger lambda",
+    "C": "lowest 2024/25 conditional-score-given-outcome LogLoss subject to total-goals Brier/RPS not worse than V3.1.1 by >0.0005 and each 0-0/1-1/2-2 binary Brier not worse by >0.001; tie -> smaller abs(alpha)+abs(beta), then lexical"
+  },
+  "status": "FROZEN_BEFORE_FIRST_BATCH_CANDIDATE_EVALUATION"
+}
