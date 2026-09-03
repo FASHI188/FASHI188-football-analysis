@@ -1,0 +1,168 @@
+{
+  "schema_version": "football3-v3-2-2-parity-boundary-contract-v1",
+  "project_id": "football3",
+  "status": "FROZEN_BEFORE_V3_2_2_TARGET_SCORING",
+  "research_branch": "football3/historical-fusion-v3-2-2-parity-boundary-v1",
+  "scientific_name": "Historical Fusion V3.2.2 Parity Boundary Top1 Repair",
+  "research_only": true,
+  "post_view": true,
+  "fresh_confirmation": false,
+  "promotion_allowed": false,
+  "objective": {
+    "primary": "repair full-coverage 1X2 Top1 errors concentrated in genuinely close pre-match states while preserving exact frozen baseline outside the parity boundary regime",
+    "long_run_target_top1_accuracy": 0.55,
+    "target_is_not_a_guarantee": true,
+    "comparative_baseline": "FROZEN_V3_1_1_JOINT_SCORE",
+    "no_abstention": true
+  },
+  "lineage": {
+    "segment1_parent_head": "24e62ad95d7dd405257db0c533596481038a62fb",
+    "v3_2_terminal_head": "66765da92a378b4f2bc9023ce3b5e26c354effd4",
+    "v3_1_1_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "v3_2_development_blob": "d91d8cf1a4bc2b00d1edb5c3ec001eaec08b7f8d",
+    "v3_2_core_blob": "3412620e887e70c828747396064a93f10a5edb3a",
+    "v3_1_1_engine_blob": "5a530708bcf1607cb210e869006e4aa5a8e626ad",
+    "formal_v2_must_remain_unchanged": true,
+    "v3_1_1_must_remain_unchanged": true
+  },
+  "data_roles": {
+    "2014_2017": "POST_VIEW_STATE_WARMUP_ONLY",
+    "2018": "POST_VIEW_DEVELOPMENT_TRAIN",
+    "2019": "POST_VIEW_INNER_HYPERPARAMETER_SELECTION",
+    "2020_2022": "POST_VIEW_ROLLING_OOS_FAMILY_SELECTION",
+    "2023": "CLOSED_UNTIL_A_NONTRIVIAL_FAMILY_PASSES_2020_2022_THEN_CANDIDATE_FIXED_POST_VIEW_DIAGNOSTIC_ONLY",
+    "2024_25_and_2025_26_3504": "FORBIDDEN_FOR_SELECTION_THRESHOLD_TUNING_OR_THIS_SEGMENT_EXECUTION",
+    "prospective_confirmation": "REQUIRED_AFTER_ANY_SECOND_STAGE_CANDIDATE_FREEZE"
+  },
+  "pit_contract": {
+    "cutoff": "fixture_kickoff",
+    "lagged_completed_match_information_only": true,
+    "same_kickoff_cross_fixture_leakage": false,
+    "target_final_lineup": "FORBIDDEN_UNLESS_PROVEN_PRE_CUTOFF_AND_NOT_USED_IN_THIS_SEGMENT",
+    "target_postmatch_or_live_information": "FORBIDDEN",
+    "market_inputs": "FORBIDDEN_IN_PRIMARY_ROUTE"
+  },
+  "dynamic_state": {
+    "reuse_v3_2_state_family": true,
+    "inner_grid_2019_feature_logscore_only": {
+      "process_variance_scale": [0.01, 0.03, 0.06],
+      "observation_variance_scale": [0.15, 0.3, 0.6],
+      "lag_half_life_matches": [4, 8, 16]
+    },
+    "selection_uses_target_1x2_labels": false
+  },
+  "parity_route": {
+    "eligibility_is_fixed_before_scoring": true,
+    "requires_valid_dynamic_state": true,
+    "v3_2_parity_weight_min": 0.5,
+    "frozen_v3_1_1_top1_margin_max": 0.08,
+    "abs_frozen_v3_1_1_home_minus_away_max": 0.16,
+    "outside_route": "EXACT_FROZEN_V3_1_1_PROBABILITIES_AND_MATRIX",
+    "inside_soft_weight": "v3_2_parity_weight * sigmoid((0.08-top1_margin)/0.02) * sigmoid((0.16-abs(p_home-p_away))/0.04)",
+    "manual_team_league_or_result_exceptions": false
+  },
+  "fixed_features": {
+    "draw_head": [
+      "z_gap", "abs_z_gap", "frozen_total_goals_mean", "frozen_1x2_entropy", "frozen_p_draw", "frozen_top1_margin", "abs_frozen_p_home_minus_p_away", "dynamic_attack_gap", "dynamic_defence_gap", "dynamic_process_gap", "dynamic_home_advantage", "dynamic_uncertainty", "z_gap_x_total_goals", "p_draw_x_total_goals"
+    ],
+    "non_draw_side_head": [
+      "z_gap", "frozen_p_home_minus_p_away", "dynamic_attack_gap", "dynamic_defence_gap", "dynamic_process_gap", "dynamic_home_advantage", "dynamic_uncertainty", "frozen_total_goals_mean", "frozen_top1_margin"
+    ],
+    "feature_selection_after_scoring": false
+  },
+  "candidate_A": {
+    "name": "Parity Draw Hurdle With Exact Weak-Side Preservation",
+    "model": "RIDGE_LOGISTIC_DRAW_VS_NOT_DRAW_WITH_FROZEN_P_DRAW_LOGIT_OFFSET",
+    "probability_update": "change draw probability only inside parity route; any draw mass increase/decrease is exchanged only with the higher-baseline win side",
+    "structural_weak_side_rule": "P_weak_after == P_weak_before per fixture",
+    "home_away_ratio_head": "NONE"
+  },
+  "candidate_B": {
+    "name": "Hierarchical Draw Then Conditional Non-Draw Side Repair",
+    "draw_model": "RIDGE_LOGISTIC_DRAW_VS_NOT_DRAW_WITH_FROZEN_P_DRAW_LOGIT_OFFSET",
+    "side_model": "RIDGE_LOGISTIC_HOME_VS_AWAY_CONDITIONAL_ON_NOT_DRAW_WITH_FROZEN_NON_DRAW_HOME_SHARE_LOGIT_OFFSET",
+    "recombination": "P_draw then (1-P_draw)*P_home_given_not_draw and (1-P_draw)*(1-P_home_given_not_draw)",
+    "structural_weak_side_rule": "P_weak_after >= P_weak_before per fixture; if raw hierarchical output violates floor, clip weak to baseline and take required mass from stronger win side while preserving draw",
+    "forced_draw_argmax": false
+  },
+  "inner_grid_2019_only": {
+    "draw_ridge_lambda_multiplier": [4.0, 8.0, 16.0],
+    "draw_residual_scale": [0.25, 0.5, 0.75],
+    "side_ridge_lambda_multiplier_B_only": [4.0, 8.0, 16.0],
+    "side_residual_scale_B_only": [0.25, 0.5],
+    "max_outcome_probability_abs_delta": [0.02, 0.04]
+  },
+  "selection_protocol": {
+    "2018": "fit heads only on frozen walk-forward baseline predictions and PIT features",
+    "2019": "select only from the frozen grid; candidate must satisfy inner safety gates; rank highest parity Top1 then full Top1 then lower logloss then deterministic parameter tuple",
+    "2020_2022": "refit coefficients each season using only 2018 through prior season with 2019-selected hyperparameters; evaluate pooled plus eight chronological folds",
+    "family_selection": "among nontrivial hard-gate-pass A/B choose highest full-coverage Top1, tie parity Top1, then lower logloss, then candidate_id",
+    "candidate_frozen_before_2023": true,
+    "2023_open_rule": "open only if a nontrivial A/B family passes all 2020_2022 hard gates",
+    "rescue_tuning_after_2020_2022_or_2023": "FORBIDDEN"
+  },
+  "inner_2019_safety_gates": {
+    "coverage_required": 1.0,
+    "global_logloss_delta_max": 0.0,
+    "global_brier_delta_max": 0.0,
+    "global_rps_delta_max": 0.0,
+    "parity_top1_delta_min": 0.0,
+    "weak_team_win_conditional_logloss_degradation_max": 0.0,
+    "nonparity_max_abs_probability_delta": 1e-12,
+    "matrix_to_1x2_max_abs_error": 1e-12
+  },
+  "hard_gates_2020_2022": {
+    "coverage_required": 1.0,
+    "global_logloss_delta_max": 0.0,
+    "global_brier_delta_max": 0.0,
+    "global_rps_delta_max": 0.0,
+    "global_top1_delta_min": 0.001,
+    "parity_top1_delta_min": 0.005,
+    "parity_logloss_delta_max": 0.0,
+    "actual_draw_conditional_logloss_degradation_max": 0.0,
+    "actual_weak_team_win_conditional_logloss_degradation_max": 0.0,
+    "nonparity_max_abs_probability_delta": 1e-12,
+    "worst_eligible_league_season_logloss_degradation_max": 0.01,
+    "fold_logloss_nondegrade_min": 6,
+    "fold_top1_nondegrade_min": 5,
+    "exact_score_logloss_delta_max": 0.0,
+    "total_goals_rps_delta_max": 0.0005,
+    "matrix_to_1x2_max_abs_error": 1e-12
+  },
+  "hard_gates_2023_candidate_fixed": {
+    "coverage_required": 1.0,
+    "global_logloss_delta_max": 0.0,
+    "global_brier_delta_max": 0.0,
+    "global_rps_delta_max": 0.0,
+    "global_top1_delta_min": 0.0,
+    "parity_top1_delta_min": 0.0,
+    "parity_logloss_delta_max": 0.0,
+    "actual_draw_conditional_logloss_degradation_max": 0.0,
+    "actual_weak_team_win_conditional_logloss_degradation_max": 0.0,
+    "nonparity_max_abs_probability_delta": 1e-12,
+    "worst_eligible_league_season_logloss_degradation_max": 0.01,
+    "exact_score_logloss_delta_max": 0.0,
+    "total_goals_rps_delta_max": 0.0005,
+    "matrix_to_1x2_max_abs_error": 1e-12
+  },
+  "matrix_contract": {
+    "cells": 225,
+    "range": "0_14_x_0_14",
+    "candidate_matrix": "FROZEN_V3_1_1_WITHIN_OUTCOME_REGION_SHAPE_I_PROJECTED_TO_CANDIDATE_1X2",
+    "one_x_two_source": "INTEGRATE_FINAL_MATRIX_ONLY",
+    "outside_parity_route_exact_matrix_identity": true
+  },
+  "required_diagnostics": [
+    "parity_route_coverage", "full_coverage_top1", "parity_top1", "paired_top1_repairs_and_breaks", "global_logloss_brier_rps", "parity_logloss", "actual_draw_conditional_logloss", "actual_weak_team_win_conditional_logloss", "nonparity_identity", "fold_stability", "league_season_worst_group", "exact_score_logloss", "total_goals_rps", "matrix_integration_error"
+  ],
+  "forbidden": [
+    "2024_25_or_2025_26_3504_scoring_in_this_segment", "market_inputs", "live_or_post_target_information", "fixed_global_draw_multiplier", "forced_draw_argmax", "outcome_known_patch", "manual_match_team_or_league_exception", "post_view_threshold_change", "post_view_feature_change", "post_view_family_change", "CURRENT_change", "production_pointer_change", "formal_enablement_change", "formal_weight_change", "Ready", "merge", "force"
+  ],
+  "terminal": {
+    "development_failure": "V3_2_2_PARITY_BOUNDARY_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT",
+    "development_success": "V3_2_2_PARITY_BOUNDARY_CANDIDATE_READY_FIXED_2023_DIAGNOSTIC",
+    "candidate_fixed_2023_failure": "V3_2_2_PARITY_BOUNDARY_2023_DIAGNOSTIC_FAILED_NO_RESCUE",
+    "candidate_fixed_2023_success": "V3_2_2_PARITY_BOUNDARY_RESEARCH_CANDIDATE_READY_PROSPECTIVE_CONFIRMATION_REQUIRED"
+  }
+}
