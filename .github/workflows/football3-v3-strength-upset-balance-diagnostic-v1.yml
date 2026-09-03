@@ -1,0 +1,205 @@
+name: football3 V3 Strength Upset Balance Diagnostic
+
+on:
+  push:
+    branches: ['football3/v3-strength-upset-balance-score-research-v1']
+    paths:
+      - '.github/workflows/football3-v3-strength-upset-balance-diagnostic-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-strength-upset-balance-diagnostic-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  STRESS_HEAD: b32944f1e0a973dd5ff3a2e87d72333d85d27051
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  DATA_HEAD: 95757332b4ea3cd4d75db370d19ba83dfbf55601
+  CONTRACT_BLOB: 47f1143508781105a69ab954b45d6ada2ef1267f
+  DIAG_BLOB: 7d6da3753a8c3c097912a6792ab6062683cb5c7c
+  TEST_BLOB: 0f24f115f16af69e8c0089c3931f214d9a8335cb
+  STRESS_ARTIFACT_ID: '9876751277'
+  STRESS_ARTIFACT_DIGEST: sha256:bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a
+  DATA_ARTIFACT_ID: '9876641831'
+  DATA_ARTIFACT_DIGEST: sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c
+
+jobs:
+  diagnose-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage frozen refs and four-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/v3-strength-upset-balance-score-research-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$STRESS_HEAD" HEAD)" = "$STRESS_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/v3-1-1-historical-replay-score-2024-2026-v1 | cut -f1)" = "$STRESS_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/v3-1-1-historical-replay-2024-2026-v1 | cut -f1)" = "$DATA_HEAD"
+          test "$(git hash-object football-data/research/v3_strength_upset_balance_score/DIAGNOSTIC_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/v3_strength_upset_balance_score/diagnose_v3_1_1.py)" = "$DIAG_BLOB"
+          test "$(git hash-object football-data/research/v3_strength_upset_balance_score/test_diagnose_v3_1_1.py)" = "$TEST_BLOB"
+          python - <<'PY'
+          import os,subprocess
+          allowed={
+            '.github/workflows/football3-v3-strength-upset-balance-diagnostic-v1.yml',
+            'football-data/research/v3_strength_upset_balance_score/DIAGNOSTIC_CONTRACT.json',
+            'football-data/research/v3_strength_upset_balance_score/diagnose_v3_1_1.py',
+            'football-data/research/v3_strength_upset_balance_score/test_diagnose_v3_1_1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['STRESS_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement','formal-fast')) for p in got)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh deterministic diagnostic guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/v3_strength_upset_balance_score/diagnose_v3_1_1.py football-data/research/v3_strength_upset_balance_score/test_diagnose_v3_1_1.py
+          python football-data/research/v3_strength_upset_balance_score/test_diagnose_v3_1_1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen stress and completed-history artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/stress _inputs/data
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$STRESS_ARTIFACT_ID" "$STRESS_ARTIFACT_DIGEST" /tmp/stress.zip _inputs/stress
+          verify_one "$DATA_ARTIFACT_ID" "$DATA_ARTIFACT_DIGEST" /tmp/data.zip _inputs/data
+          python - <<'PY'
+          import json,os
+          sm=json.load(open('_inputs/stress/artifact_manifest.json'))
+          sr=json.load(open('_inputs/stress/evidence/historical_stress_result.json'))
+          dm=json.load(open('_inputs/data/artifact_manifest.json'))
+          dd=json.load(open('_inputs/data/data/data_manifest.json'))
+          assert sm['head']==os.environ['STRESS_HEAD'] and sr['status']=='V3_1_1_HISTORICAL_STRESS_TEST_PASSED' and sr['n']==3504
+          assert dm['head']==os.environ['DATA_HEAD'] and dd['status']=='HISTORICAL_REPLAY_DATA_READY' and dd['fixture_n']==3504
+          assert dd['fixture_identity_sha256']=='60f14c0960b231b0e4fb0f90a0000e9c82e64f6e33c6b06e417f6902dc1ad13e'
+          PY
+
+      - name: Authoritative POST_VIEW diagnostic decomposition
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run
+          python football-data/research/v3_strength_upset_balance_score/diagnose_v3_1_1.py \
+            --contract football-data/research/v3_strength_upset_balance_score/DIAGNOSTIC_CONTRACT.json \
+            --stress-dir _inputs/stress/evidence \
+            --data-dir _inputs/data/data \
+            --out _run 2>&1 | tee /tmp/diag_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/diagnostic_report.json'))
+          assert r['status']=='DIAGNOSTIC_COMPLETE_POST_VIEW' and r['n']==3504
+          assert r['fresh_confirmation'] is False and r['promotion_allowed'] is False
+          assert r['diagnosis']['exact_score_gain_is_region_gain_only'] is True
+          assert r['diagnosis']['v3_1_1_internal_score_structure_changed'] is False
+          assert r['diagnosis']['v3_1_1_upset_probability_changed'] is False
+          assert r['matrix_audit']['conditional_shape_max_abs_diff']<=1e-12
+          PY
+
+      - name: Seal diagnostic artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          cp football-data/research/v3_strength_upset_balance_score/DIAGNOSTIC_CONTRACT.json _seal/contracts/
+          cp football-data/research/v3_strength_upset_balance_score/diagnose_v3_1_1.py football-data/research/v3_strength_upset_balance_score/test_diagnose_v3_1_1.py _seal/code/
+          cp _run/* _seal/evidence/
+          cp /tmp/tests.txt /tmp/diag_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          d=json.load(open('_run/diagnostic_report.json'))
+          m={'schema_version':'football3-v3-strength-upset-balance-diagnostic-artifact-v1','status':d['status'],'head':os.environ['GITHUB_SHA'],
+             'stress_head':os.environ['STRESS_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'data_head':os.environ['DATA_HEAD'],
+             'n':d['n'],'classification':'POST_VIEW_DIAGNOSTIC_ONLY','fresh_confirmation':False,'promotion_allowed':False,
+             'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'fast_runtime_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload diagnostic artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-strength-upset-balance-diagnostic-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: diagnose-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Remote ZIP digest CRC manifest exact-set SHA bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.diagnose-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.diagnose-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.load(open(r/'artifact_manifest.json'))
+          assert m['head']==os.environ['GITHUB_SHA'] and m['status']=='DIAGNOSTIC_COMPLETE_POST_VIEW' and m['n']==3504
+          expected=set(m['files'])|{'artifact_manifest.json'}
+          got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file()}
+          assert got==expected,(got,expected)
+          for name,v in m['files'].items():
+              b=(r/name).read_bytes(); assert len(b)==v['bytes']; assert hashlib.sha256(b).hexdigest()==v['sha256']
+          PY
