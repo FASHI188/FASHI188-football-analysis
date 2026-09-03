@@ -1,0 +1,101 @@
+name: football3 Fresh 2026-27 Quarantine Readback Repair
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-fresh-confirmation-2627-ingest-v1']
+    paths:
+      - '.github/workflows/football3-fresh-confirmation-2627-readback-repair-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_ARTIFACT_ID: '9899566098'
+  SOURCE_ARTIFACT_DIGEST: sha256:412d8bdfbe1ca81c8b703b9e1f3493283afe0cbdb3c1edd8c3d017a13c599c1e
+  SOURCE_HEAD: ab33eda580f035df66035191f438f966f81fe707
+
+jobs:
+  repair-seal:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download exact original quarantine artifact and verify ZIP digest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$SOURCE_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" -o /tmp/source.zip
+          python - <<'PY'
+          import hashlib,os
+          got=hashlib.sha256(open('/tmp/source.zip','rb').read()).hexdigest()
+          exp=os.environ['SOURCE_ARTIFACT_DIGEST'].split(':',1)[1]
+          assert got==exp,(got,exp)
+          PY
+          mkdir source && unzip -q /tmp/source.zip -d source
+
+      - name: Validate immutable raw snapshot and rebuild non-self-referential seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,shutil,os
+          src=pathlib.Path('source')
+          old=json.load(open(src/'artifact_manifest.json'))
+          agg=json.load(open(src/'evidence/aggregate_manifest.json'))
+          assert old['head']==os.environ['SOURCE_HEAD']
+          assert old['status']=='FRESH_2627_BIG5_QUARANTINE_INGEST_SEALED'
+          assert old['labels_quarantined'] is True
+          assert agg['league_count']==5 and agg['total_completed_match_count']==97 and agg['total_xg_complete_count']==97 and agg['total_xg_coverage_rate']==1.0
+          assert sum(x['completed_match_count'] for x in agg['leagues'])==97
+          for x in agg['leagues']:
+              p=src/'raw'/f"{x['code']}.csv"
+              assert p.is_file()
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256']
+              assert x['primary_mirror_byte_equal'] is True and x['required_columns_present'] is True and x['xg_coverage_rate']==1.0
+          out=pathlib.Path('repaired'); (out/'raw').mkdir(parents=True); (out/'contracts').mkdir(); (out/'evidence').mkdir()
+          for p in (src/'raw').iterdir(): shutil.copy2(p,out/'raw'/p.name)
+          shutil.copy2(src/'contracts/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json',out/'contracts/FRESH_CONFIRMATION_2627_INGEST_CONTRACT.json')
+          shutil.copy2(src/'evidence/aggregate_manifest.json',out/'evidence/aggregate_manifest.json')
+          files={}
+          for p in sorted(x for x in out.rglob('*') if x.is_file()):
+              rel=p.relative_to(out).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          seal={'schema_version':'football3-fresh-confirmation-2627-quarantine-repaired-seal-v1','status':'FRESH_2627_BIG5_QUARANTINE_INGEST_SEALED_READBACK_REPAIRED','source_artifact_id':int(os.environ['SOURCE_ARTIFACT_ID']),'source_artifact_digest':os.environ['SOURCE_ARTIFACT_DIGEST'],'source_head':os.environ['SOURCE_HEAD'],'labels_quarantined':True,'total_completed_match_count':97,'total_xg_complete_count':97,'total_xg_coverage_rate':1.0,'files':files,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'promotion_allowed':False}
+          (out/'artifact_manifest.json').write_text(json.dumps(seal,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'status':seal['status'],'total_completed_match_count':97,'total_xg_coverage_rate':1.0},sort_keys=True))
+          PY
+
+      - name: Upload repaired immutable seal
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fresh-2627-big5-quarantine-readback-repaired-${{ github.sha }}-${{ github.run_id }}
+          path: repaired
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: repair-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-fresh-2627-big5-quarantine-readback-repaired-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify repaired seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json'))
+          assert m['status']=='FRESH_2627_BIG5_QUARANTINE_INGEST_SEALED_READBACK_REPAIRED'
+          assert m['labels_quarantined'] and m['total_completed_match_count']==97 and m['total_xg_complete_count']==97 and m['total_xg_coverage_rate']==1.0
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.is_file(),rel; assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          print(json.dumps({'status':m['status'],'total_completed_match_count':m['total_completed_match_count'],'total_xg_coverage_rate':m['total_xg_coverage_rate']},sort_keys=True))
+          PY
