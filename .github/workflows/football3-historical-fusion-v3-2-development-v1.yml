@@ -1,0 +1,263 @@
+name: football3 Historical Fusion V3.2 Development
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-2-three-fault-dynamic-joint-repair-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-2-development-v1.yml'
+      - 'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-2-development-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  PRELABEL_HEAD: 41c3c621ee7716d3f00437c67f2055235edebeef
+  CONTRACT_BLOB: 2a4cd43a89d0328516163a0532b12f10c7393d7a
+  CORE_BLOB: 3412620e887e70c828747396064a93f10a5edb3a
+  DEVELOPMENT_BLOB: d91d8cf1a4bc2b00d1edb5c3ec001eaec08b7f8d
+  PRELABEL_ARTIFACT_ID: '9882713374'
+  PRELABEL_ARTIFACT_DIGEST: sha256:6393e54502454513e019f3c8e7c5ea37aea99b84b616320755a86534cf4240cd
+  V311_ARTIFACT_ID: '9856755439'
+  V311_ARTIFACT_DIGEST: sha256:f118ffa5d09c40bbefc3f18788e534e4e6b7504744a6976f78f157ce09abf305
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  development-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      terminal_status: ${{ steps.run.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage frozen contract whitelist and no-3504 guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-2-three-fault-dynamic-joint-repair-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$V311_HEAD" HEAD)" = "$V311_HEAD"
+          test "$(git merge-base "$PRELABEL_HEAD" HEAD)" = "$PRELABEL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py)" = "$CORE_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py)" = "$DEVELOPMENT_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          allowed={
+            '.github/workflows/football3-historical-fusion-v3-2-prelabel-v1.yml',
+            '.github/workflows/football3-historical-fusion-v3-2-development-v1.yml',
+            'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json',
+            'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py',
+            'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_prelabel_audit.py',
+            'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/test_v3_2_core.py',
+            'football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['V311_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(k in p for k in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads(pathlib.Path('football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_TARGET_LABEL_SCORING'
+          assert c['objective']['coverage_required']==1.0 and c['objective']['target_top1_accuracy']==0.55
+          assert c['post_view_evidence_policy']['v3_1_1_2024_2026_stress']['fixture_n']==3504
+          assert c['post_view_evidence_policy']['v3_1_1_2024_2026_stress']['classification']=='POST_VIEW_DIAGNOSTIC_ONLY'
+          assert c['selection_protocol']['candidate_frozen_before_2023_score'] is True
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile execution bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py \
+            football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py
+
+      - name: Download and verify frozen prelabel plus seven scientific inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{prelabel,v311,v31,usr1,v2,xg,v1,old}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$PRELABEL_ARTIFACT_ID" "$PRELABEL_ARTIFACT_DIGEST" /tmp/prelabel.zip _inputs/prelabel
+          verify_one "$V311_ARTIFACT_ID" "$V311_ARTIFACT_DIGEST" /tmp/v311.zip _inputs/v311
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          python - <<'PY'
+          import hashlib,json,pathlib
+          h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          pre=json.load(open('_inputs/prelabel/artifact_manifest.json'))
+          assert pre['status']=='PRELABEL_PASS' and pre['head']=='41c3c621ee7716d3f00437c67f2055235edebeef'
+          assert pre['contract_blob']=='2a4cd43a89d0328516163a0532b12f10c7393d7a'
+          assert pre['label_fields_accessed']==0 and pre['model_fits']==0 and pre['target_scoring_runs']==0
+          assert h('_inputs/v311/code/historical_fusion_v3_1_1_joint_score.py')=='b7f244e43a267e20552a722b3d2ef859adba208577e6cbbe7adc2989c2762696'
+          assert h('_inputs/v31/code/historical_fusion_v3_1.py')=='59485a959940ad0e1f5357842731634acc88957dc1b7f8f029cf4cca8d05b402'
+          assert h('_inputs/usr1/code/historical_fusion_v3_upset_safe.py')=='1707ad6b6e1339ac08b90038d595c1ea299ec4c92940643b6c404633a67c878b'
+          assert h('_inputs/v2/code/historical_xg_fusion_v2.py')=='1e840d8d37a72761a269bfb80f7a4ce74c9b67344e6f6a5b2f3a87374c8f2d8b'
+          assert h('_inputs/xg/code/historical_xg_challenger.py')=='588cad84f59e8a6b31297984c2c9015af5275f209dea8d4e3a3d71183e762ba2'
+          assert h('_inputs/v1/pure_engine.py')=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          assert h('_inputs/v1/evidence/historical_oos_result.json')=='61d43eab46f530469a8aca6244b29dbb79150739fdcd36f84daaa831ea1bf9e4'
+          assert h('_inputs/xg/data/XG_DATA_IDENTITY.json')=='727ca283b82325362f6e63b84fbf2a1ba8a7ed0a0b67f83a6097771a855c3021'
+          assert h('_inputs/old/understat_frozen.db')=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          PY
+
+      - name: Frozen-grid POST_VIEW development and candidate-fixed 2023 holdout
+        id: run
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run
+          python football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py \
+            --contract football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json \
+            --core football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py \
+            --v311-engine _inputs/v311/code/historical_fusion_v3_1_1_joint_score.py \
+            --v31-engine _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1-engine _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2-engine _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg-engine _inputs/xg/code/historical_xg_challenger.py \
+            --v1-engine _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/v32_development_stdout.txt
+          python - <<'PY'
+          import json
+          f=json.load(open('_run/final_status.json'))
+          allowed={'V3_2_RESEARCH_CANDIDATE_READY_SECOND_STAGE_FREEZE_REQUIRED','V3_2_THREE_FAULT_RESEARCH_REJECTED_NO_RESCUE_ON_CONSUMED_HOLDOUT'}
+          assert f['status'] in allowed,f['status']
+          assert f['research_only'] is True and f['post_view'] is True and f['fresh_confirmation'] is False and f['promotion_allowed'] is False
+          assert f['formal_v2_unchanged'] is True and f['v3_1_1_unchanged'] is True
+          assert f['CURRENT_changed'] is False and f['production_pointer_changed'] is False and f['formal_enablement_changed'] is False and f['formal_weights_changed'] is False
+          if 'post_view_3504_used_for_selection' in f: assert f['post_view_3504_used_for_selection'] is False
+          if f['status'].endswith('SECOND_STAGE_FREEZE_REQUIRED'):
+              assert f['candidate_fixed_2023']['all_pass'] is True
+              assert f['candidate_id'] in {'V3.2-A','V3.2-B','V3.2-C'}
+              assert f['rolling_2020_2022']['all_pass'] is True
+          PY
+          status="$(python -c "import json;print(json.load(open('_run/final_status.json'))['status'])")"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Seal exact V3.2 development artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/contracts _seal/code _seal/evidence
+          cp football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/V3_2_THREE_FAULT_DYNAMIC_JOINT_REPAIR_CONTRACT.json _seal/contracts/
+          cp football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py _seal/code/
+          cp football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py _seal/code/
+          cp _run/*.json _seal/evidence/
+          cp /tmp/v32_development_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          f=json.load(open('_run/final_status.json'))
+          m={'schema_version':'football3-v3-2-development-artifact-v1','status':f['status'],'head':os.environ['GITHUB_SHA'],'direct_parent':subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip(),'v311_head':os.environ['V311_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'prelabel_head':os.environ['PRELABEL_HEAD'],'contract_blob':os.environ['CONTRACT_BLOB'],'research_only':True,'post_view':True,'fresh_confirmation':False,'promotion_allowed':False,'post_view_3504_used_for_selection':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload V3.2 development artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-2-development-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: development-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - name: Remote ZIP digest CRC manifest exact-set SHA bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.development-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.development-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          python - "$DIGEST" <<'PY'
+          import hashlib,sys
+          exp=sys.argv[1]
+          if not exp.startswith('sha256:'): exp='sha256:'+exp
+          got='sha256:'+hashlib.sha256(open('/tmp/a.zip','rb').read()).hexdigest()
+          assert got==exp,(got,exp)
+          PY
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/r && mkdir /tmp/r && unzip -q /tmp/a.zip -d /tmp/r
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/r'); m=json.loads((r/'artifact_manifest.json').read_text())
+          assert m['head']==os.environ['GITHUB_SHA'] and m['contract_blob']=='2a4cd43a89d0328516163a0532b12f10c7393d7a'
+          assert m['v311_head']=='a90762a97515f3edd564e8ad204db0d0d4231494' and m['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert m['post_view_3504_used_for_selection'] is False and m['promotion_allowed'] is False
+          exp=set(m['files']); got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file()}-{'artifact_manifest.json'}
+          assert got==exp,(got^exp)
+          for rel,meta in m['files'].items():
+              b=(r/rel).read_bytes(); assert len(b)==meta['bytes'] and hashlib.sha256(b).hexdigest()==meta['sha256'],rel
+          f=json.loads((r/'evidence/final_status.json').read_text()); assert f['status']==m['status']
+          PY
