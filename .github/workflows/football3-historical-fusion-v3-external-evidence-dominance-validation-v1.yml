@@ -1,0 +1,143 @@
+name: football3 External Evidence Dominance Validation
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-external-evidence-dominance-validation-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-external-evidence-dominance-validation-v1.yml'
+      - 'football-data/research/historical_fusion_v3_external_evidence_dominance_validation/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASE_HEAD: 60452fa6e523b26e80fff2cc0aa7d3c3fdf85a16
+  CONTRACT_FREEZE_COMMIT: 53742ec03c6f389eabc610bfed9f1ae9f3f0bee7
+  CONTRACT_BLOB: 22476601355dca67e6f1e5269e726912a3049bed
+  RUNNER_BLOB: 78c1f5d8e389543d8a16a6251174838351029e3e
+  TEST_BLOB: d8b7e439899486dcf8c0299a61976f8c55d86cc6
+  V324_RUNNER_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Frozen contract lineage and bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/historical_fusion_v3_external_evidence_dominance_validation
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          test "$(git hash-object "$D/EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/external_evidence_dominance_validation.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_external_evidence_dominance_validation.py")" = "$TEST_BLOB"
+          test "$(git hash-object "$V")" = "$V324_RUNNER_BLOB"
+          python - <<'PY'
+          import json,os,subprocess,pathlib
+          d=pathlib.Path('football-data/research/historical_fusion_v3_external_evidence_dominance_validation')
+          c=json.loads((d/'EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_SECOND_EXTERNAL_COHORT_DOWNLOAD_OR_SCORING'
+          a=c['frozen_zero_parameter_arbiter']; assert a['numeric_thresholds']=='NONE' and a['learned_parameters']=='NONE' and a['tv_cutoff']=='NONE'
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines())
+          assert freeze=={str(d/'EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json')}
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_evidence_dominance_validation
+          python -m py_compile "$D/external_evidence_dominance_validation.py" "$D/test_external_evidence_dominance_validation.py"
+          (cd "$D" && python test_external_evidence_dominance_validation.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Download untouched second external cohort
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _data
+          python - <<'PY' >/tmp/plan
+          import json
+          c=json.load(open('football-data/research/historical_fusion_v3_external_evidence_dominance_validation/EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json'))
+          d=c['untouched_validation_data']
+          for s in d['seasons']:
+              sp=d['season_paths'][s]
+              for lg in d['leagues']:
+                  print(sp,lg['code'],d['url_template'].format(season_path=sp,league=lg['code']))
+          PY
+          while read -r sp code url; do
+            out="_data/${sp}_${code}.csv"
+            meta="$(curl -sS --fail -D /tmp/hdr -o "$out" -w '%{http_code} %{redirect_url}' "$url")"
+            test "${meta%% *}" = '200'; test -z "${meta#* }"; test -s "$out"
+          done </tmp/plan
+      - name: One-shot untouched validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_evidence_dominance_validation
+          V=football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py
+          rm -rf _run && mkdir _run
+          python "$D/external_evidence_dominance_validation.py" --contract "$D/EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json" --data-dir _data --v324 "$V" --out _run | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/external_evidence_dominance_validation_result.json'))
+          assert r['classification'] in {'SUPPORTS_MICRO_FLIP_NOISE','REFUTES_MICRO_FLIP_NOISE','MIXED'}
+          assert r['row_count']>1000 and len(r['inventory'])==12
+          assert r['formal_confirmation'] is False and r['promotion_allowed'] is False
+          PY
+      - name: Seal artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_external_evidence_dominance_validation
+          rm -rf _artifact && mkdir -p _artifact/{contracts,code,evidence,data}
+          cp "$D/EXTERNAL_EVIDENCE_DOMINANCE_VALIDATION_CONTRACT.json" _artifact/contracts/
+          cp "$D/external_evidence_dominance_validation.py" "$D/test_external_evidence_dominance_validation.py" _artifact/code/
+          cp _run/external_evidence_dominance_validation_result.json /tmp/tests.txt /tmp/stdout.txt _artifact/evidence/
+          cp _data/*.csv _artifact/data/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact'); r=json.load(open(root/'evidence/external_evidence_dominance_validation_result.json')); files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=p.relative_to(root).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          m={'schema_version':'football3-v3-external-evidence-dominance-validation-artifact-v1','head':os.environ['GITHUB_SHA'],'classification':r['classification'],'row_count':r['row_count'],'execution':r['execution'],'global':r['global'],'raw_fold_ll_nondegrade_n':r['raw_fold_ll_nondegrade_n'],'gated_fold_ll_nondegrade_n':r['gated_fold_ll_nondegrade_n'],'raw_group_ll_nondegrade_n':r['raw_group_ll_nondegrade_n'],'gated_group_ll_nondegrade_n':r['gated_group_ll_nondegrade_n'],'formal_confirmation':False,'promotion_allowed':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-external-evidence-dominance-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-external-evidence-dominance-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json'))
+          assert m['classification'] in {'SUPPORTS_MICRO_FLIP_NOISE','REFUTES_MICRO_FLIP_NOISE','MIXED'}
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.is_file(); assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256']
+          PY
