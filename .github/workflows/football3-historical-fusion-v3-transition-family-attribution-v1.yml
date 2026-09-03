@@ -1,0 +1,172 @@
+name: football3 Historical Fusion V3 Transition Family Attribution
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-transition-family-attribution-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-transition-family-attribution-v1.yml'
+      - 'football-data/research/historical_fusion_v3_transition_family_attribution/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: football3-v3-transition-family-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  BASE_HEAD: b53540098d9e1d044e2f91c08659343bec32a0e6
+  CONTRACT_FREEZE_COMMIT: f6419f7effbfb425ec51a583278b5a06c18c4dcf
+  CONTRACT_BLOB: 90d3e97c72a8cf0d0fe4b3eb95f3defddec1c972
+  RUNNER_BLOB: fd2a716e0980482bc810e2eb2fbc970c7d52d863
+  TEST_BLOB: e54e41fb457a29e1b03a0e18e5670d2c94c48d89
+  V324_HEAD: 3cc9098cd321ee4f1dd659b1a4f4db75c02555ed
+  V324_RUNNER_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exact lineage contract freeze whitelist and formal guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-transition-family-attribution-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-2-4-minimal-boundary-projection-v1 | cut -f1)" = "$V324_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/historical_fusion_v3_transition_family_attribution
+          test "$(git hash-object "$D/TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/transition_family_attribution.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_transition_family_attribution.py")" = "$TEST_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py)" = "$V324_RUNNER_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          d=pathlib.Path('football-data/research/historical_fusion_v3_transition_family_attribution'); contract=str(d/'TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json')
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines()); assert freeze=={contract},freeze
+          allowed={'.github/workflows/football3-historical-fusion-v3-transition-family-attribution-v1.yml',contract,str(d/'transition_family_attribution.py'),str(d/'test_transition_family_attribution.py')}
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines()); assert got==allowed,(got,allowed)
+          c=json.loads((d/'TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json').read_text()); assert c['status']=='FROZEN_BEFORE_DEVELOPMENT_OR_CONFIRMATION_DOWNLOAD'; assert c['development_protocol']['candidate_families']==['DRAW_TO_SIDE_ONLY','SIDE_TO_SIDE_ONLY']; assert not ({x['code'] for x in c['data']['development_leagues']} & {x['code'] for x in c['data']['confirmation_leagues']})
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile and run seven structural tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_transition_family_attribution
+          python -m py_compile "$D/transition_family_attribution.py" "$D/test_transition_family_attribution.py"
+          (cd "$D" && python test_transition_family_attribution.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Download development cohort only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _dev _confirm _run && mkdir _dev _run
+          for sp in 2223 2324; do
+            for lg in E1 D2 I2 SP2 F2; do
+              curl -fsSL --retry 3 --retry-delay 2 "https://www.football-data.co.uk/mmz4281/${sp}/${lg}.csv" -o "_dev/${sp}_${lg}.csv"
+              test -s "_dev/${sp}_${lg}.csv"
+            done
+          done
+          sha256sum _dev/*.csv | sort > /tmp/dev_sha256.txt
+          test ! -d _confirm
+      - name: Run frozen development and mechanically freeze family
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_transition_family_attribution
+          python "$D/transition_family_attribution.py" --phase development --contract "$D/TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json" --data-dir _dev --v324-runner football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py --out _run | tee /tmp/development_stdout.txt
+          python - <<'PY'
+          import json,pathlib
+          d=json.load(open('_run/development.json'))
+          if pathlib.Path('_run/candidate_freeze.json').exists():
+              f=json.load(open('_run/candidate_freeze.json')); assert f['selected_family']==d['selected_family']; assert f['frozen_before_confirmation_download'] is True
+          else:
+              assert d['selected_family'] is None; f=json.load(open('_run/final_status.json')); assert f['confirmation_opened'] is False
+          PY
+      - name: Download confirmation only after candidate freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f _run/candidate_freeze.json ]; then
+            mkdir _confirm
+            for sp in 2223 2324; do
+              for lg in E2 E3 SC1 SC2 SC3; do
+                curl -fsSL --retry 3 --retry-delay 2 "https://www.football-data.co.uk/mmz4281/${sp}/${lg}.csv" -o "_confirm/${sp}_${lg}.csv"
+                test -s "_confirm/${sp}_${lg}.csv"
+              done
+            done
+            sha256sum _confirm/*.csv | sort > /tmp/confirm_sha256.txt
+          else
+            echo 'CONFIRMATION_UNOPENED_NO_VALID_DEVELOPMENT_FAMILY' > /tmp/confirm_unopened.txt
+          fi
+      - name: Run frozen confirmation if opened
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_transition_family_attribution
+          if [ -f _run/candidate_freeze.json ]; then
+            python "$D/transition_family_attribution.py" --phase confirmation --contract "$D/TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json" --data-dir _confirm --v324-runner football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py --out _run --freeze _run/candidate_freeze.json | tee /tmp/confirmation_stdout.txt
+          else
+            test -f _run/final_status.json
+          fi
+      - name: Seal immutable transition-family evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_transition_family_attribution
+          rm -rf _artifact && mkdir -p _artifact/{contracts,code,evidence,data_receipts}
+          cp "$D/TRANSITION_FAMILY_ATTRIBUTION_CONTRACT.json" _artifact/contracts/
+          cp "$D/transition_family_attribution.py" "$D/test_transition_family_attribution.py" _artifact/code/
+          cp _run/development.json _run/final_status.json _artifact/evidence/
+          [ ! -f _run/candidate_freeze.json ] || cp _run/candidate_freeze.json _artifact/evidence/
+          [ ! -f _run/confirmation.json ] || cp _run/confirmation.json _artifact/evidence/
+          cp /tmp/tests.txt /tmp/development_stdout.txt _artifact/evidence/
+          [ ! -f /tmp/confirmation_stdout.txt ] || cp /tmp/confirmation_stdout.txt _artifact/evidence/
+          cp /tmp/dev_sha256.txt _artifact/data_receipts/
+          [ ! -f /tmp/confirm_sha256.txt ] || cp /tmp/confirm_sha256.txt _artifact/data_receipts/
+          [ ! -f /tmp/confirm_unopened.txt ] || cp /tmp/confirm_unopened.txt _artifact/data_receipts/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact'); f=json.load(open(root/'evidence/final_status.json')); files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=p.relative_to(root).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          m={'schema_version':'football3-v3-transition-family-artifact-v1','head':os.environ['GITHUB_SHA'],'status':f['status'],'selected_family':f['selected_family'],'confirmation_opened':f['confirmation_opened'],'formal_confirmation':False,'promotion_allowed':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Upload immutable transition-family evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-transition-family-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+  remote-readback:
+    needs: research-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-transition-family-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify manifest and terminal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json'))
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.exists(),rel; assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          f=json.load(open(root/'evidence/final_status.json')); assert f['status']==m['status']; assert f['selected_family']==m['selected_family']; assert f['confirmation_opened']==m['confirmation_opened']; assert f['formal_confirmation'] is False and f['promotion_allowed'] is False; assert f['formal_v2_unchanged'] and f['v3_1_1_unchanged'] and not f['CURRENT_changed']
+          PY
