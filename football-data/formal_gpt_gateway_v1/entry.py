@@ -14,6 +14,8 @@ import live_delta_semantics_v2
 LIVE_DELTA = live_delta_semantics_v2.install()
 import live_extra_schema_patch_v1
 LIVE_EXTRA_SCHEMA = live_extra_schema_patch_v1.install()
+import live_xg_identity_patch_v1
+LIVE_XG_IDENTITY = live_xg_identity_patch_v1.install()
 import gateway
 import live_gateway_patch_v1
 
@@ -53,6 +55,7 @@ def main() -> int:
         (out / "source_contract_resolution.json").write_bytes(gateway.canon(SOURCE_RESOLUTION))
         (out / "live_delta_adapter.json").write_bytes(gateway.canon(LIVE_DELTA))
         (out / "live_extra_schema_adapter.json").write_bytes(gateway.canon(LIVE_EXTRA_SCHEMA))
+        (out / "live_xg_identity_adapter.json").write_bytes(gateway.canon(LIVE_XG_IDENTITY))
         (out / "live_gateway_adapter.json").write_bytes(gateway.canon(LIVE_GATEWAY))
         p = out / "summary.json"
         if p.exists():
@@ -62,6 +65,7 @@ def main() -> int:
             d["source_contract_resolution"] = SOURCE_RESOLUTION
             d["live_delta_adapter"] = LIVE_DELTA
             d["live_extra_schema_adapter"] = LIVE_EXTRA_SCHEMA
+            d["live_xg_identity_adapter"] = LIVE_XG_IDENTITY
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
