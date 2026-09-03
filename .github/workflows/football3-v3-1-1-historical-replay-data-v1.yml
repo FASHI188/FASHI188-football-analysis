@@ -5,6 +5,9 @@ on:
     branches: ['football3/v3-1-1-historical-replay-2024-2026-v1']
     paths:
       - '.github/workflows/football3-v3-1-1-historical-replay-data-v1.yml'
+      - 'football-data/research/v3_1_1_historical_replay_2024_2026/HISTORICAL_REPLAY_CONTRACT.json'
+      - 'football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py'
+      - 'football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py'
   workflow_dispatch:
 
 permissions:
@@ -66,7 +69,7 @@ jobs:
           set -euo pipefail
           python -m py_compile football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py
           python football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py 2>&1 | tee /tmp/tests.txt
-          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q 'Ran 8 tests' /tmp/tests.txt
           grep -q '^OK$' /tmp/tests.txt
 
       - name: Download all completed 2024-25 and 2025-26 Big-5 fixtures and shot-state fields
@@ -82,6 +85,8 @@ jobs:
           assert m['post_view_historical_stress_test'] is True and m['fresh_confirmation'] is False
           assert m['seasons']==[2024,2025]
           assert m['fixture_n']>=3400, m['fixture_n']
+          assert m['process_update_skipped_n']>=0
+          assert m['process_skip_semantics']=='frozen_process_requires_bilateral_positive_nonpenalty_shots'
           assert m['raw_ajax_persisted'] is False and m['raw_shot_rows_persisted'] is False
           for p in ('fixtures.jsonl','state_updates.jsonl','label_vault.jsonl'):
               assert pathlib.Path('_data',p).stat().st_size>0
@@ -97,13 +102,13 @@ jobs:
           cp _data/* _seal/data/
           cp /tmp/tests.txt /tmp/download.txt _seal/evidence/
           python - <<'PY'
-          import hashlib,json,os,pathlib,subprocess
+          import hashlib,json,os,pathlib
           r=pathlib.Path('_seal'); files={}
           for p in sorted(r.rglob('*')):
               if p.is_file():
                   b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
           d=json.load(open('_data/data_manifest.json'))
-          m={'schema_version':'football3-v3-1-1-historical-replay-data-artifact-v1','status':'HISTORICAL_REPLAY_DATA_READY','head':os.environ['GITHUB_SHA'],'joint_candidate_head':os.environ['JOINT_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'fixture_n':d['fixture_n'],'fixture_identity_sha256':d['fixture_identity_sha256'],'fresh_confirmation':False,'post_view_historical_stress_test':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'files':files}
+          m={'schema_version':'football3-v3-1-1-historical-replay-data-artifact-v2','status':'HISTORICAL_REPLAY_DATA_READY','head':os.environ['GITHUB_SHA'],'joint_candidate_head':os.environ['JOINT_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'fixture_n':d['fixture_n'],'process_update_skipped_n':d['process_update_skipped_n'],'fixture_identity_sha256':d['fixture_identity_sha256'],'fresh_confirmation':False,'post_view_historical_stress_test':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'files':files}
           (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
           PY
 
