@@ -12,7 +12,7 @@ class T(unittest.TestCase):
  def test_projection_exact(self):
   p,r=m.proj(V324,[.42,.38,.20],2,1e-9); self.assertTrue(r['executed']); self.assertEqual(V324.top1(p),2)
  def test_weak_floor(self):
-  b=[.42,.38,.20]; p,_=m.proj(V324,b,2,1e-9); self.assertGreaterEqual(p[0]+1e-12,b[0])
+  b=[.42,.38,.20]; p,_=m.proj(V324,b,2,1e-9); self.assertGreaterEqual(p[2]+1e-12,b[2])
  def test_contract(self):
   c=json.loads((ROOT/'SIDE_HEAD_CONSISTENCY_EXTERNAL_CONFIRM_CONTRACT.json').read_text()); self.assertTrue(c['proxy_mapping']['no_learning'] and c['proxy_mapping']['no_parameter_fit'] and c['proxy_mapping']['no_threshold_grid']); self.assertEqual({x['code'] for x in c['data']['leagues']},{'E2','E3','SC1','SC2','SC3'}); self.assertEqual(c['proxy_mapping']['draw_target'],'excluded from both always-side comparator and candidate because this diagnostic targets the non-draw side head and frozen V3.2.4 had zero D switch targets.')
 if __name__=='__main__': unittest.main()
