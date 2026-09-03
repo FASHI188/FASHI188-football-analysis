@@ -243,7 +243,6 @@ def main():
                                     'formal_matrix':bm,'v3_1_1_matrix':cm,'formal_matrix_sha256':canon_sha(bm),'v3_1_1_matrix_sha256':canon_sha(cm),
                                     'label_read_after_prediction_freeze':True})
         new_x_pending.append((max(v.release_at for v in batch_labs.values()),fb,batch_labs))
-    upd_f.close(); lab_f.close()
     try:
         extra=next(upd_iter)
         if extra.strip(): raise StressError('extra state update rows')
@@ -252,6 +251,7 @@ def main():
         extra=next(lab_iter)
         if extra.strip(): raise StressError('extra label rows')
     except StopIteration: pass
+    upd_f.close(); lab_f.close()
     n=len(score_rows)
     if n!=len(fixtures) or target_labels_read!=n or target_updates_read!=n: raise StressError('score count mismatch')
     if max_base_diff>TOL or max_cand_diff>TOL or max_weak_diff>TOL or not fallback_exact: raise StressError('matrix/fallback invariant')
