@@ -46,6 +46,14 @@ class TestHistoricalReplayDownload(unittest.TestCase):
         self.assertAlmostEqual(h['open_play_share'],0.5); self.assertAlmostEqual(h['set_piece_share'],0.5)
         self.assertAlmostEqual(a['npxg'],0.4); self.assertEqual(a['nonpenalty_shots'],2)
 
+    def test_zero_shot_side_is_retained_but_process_ineligible(self):
+        m=load()
+        obj={'shots':{'h':[],'a':[{'xG':'0.1','situation':'OpenPlay','h_a':'a'}]}}
+        x=m.validate_shots(obj)
+        self.assertIsNone(m.side_agg(x['h']))
+        self.assertIsNotNone(m.side_agg(x['a']))
+        self.assertEqual(m.PROCESS_SKIP_REASON,'frozen_process_requires_bilateral_positive_nonpenalty_shots')
+
     def test_unknown_shot_situation_fails_closed(self):
         m=load()
         with self.assertRaises(m.DataError):
