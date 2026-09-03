@@ -1,0 +1,156 @@
+name: football3 V3.1.1 Historical Replay Data
+
+on:
+  push:
+    branches: ['football3/v3-1-1-historical-replay-2024-2026-v1']
+    paths:
+      - '.github/workflows/football3-v3-1-1-historical-replay-data-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  JOINT_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+
+jobs:
+  download-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact HEAD lineage and four-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/v3-1-1-historical-replay-2024-2026-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$JOINT_HEAD" HEAD)" = "$JOINT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$JOINT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import json,os,subprocess
+          allowed={
+            '.github/workflows/football3-v3-1-1-historical-replay-data-v1.yml',
+            'football-data/research/v3_1_1_historical_replay_2024_2026/HISTORICAL_REPLAY_CONTRACT.json',
+            'football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py',
+            'football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['JOINT_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.load(open('football-data/research/v3_1_1_historical_replay_2024_2026/HISTORICAL_REPLAY_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_REPLAY_DOWNLOAD_AND_SCORING'
+          assert c['candidate']['head']==os.environ['JOINT_HEAD']
+          assert c['formal_v2']['head']==os.environ['FORMAL_HEAD']
+          assert c['target_population']['completed_only'] is True
+          assert c['fresh_confirmation_claim'] is False
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fresh deterministic data guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py
+          python football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download all completed 2024-25 and 2025-26 Big-5 fixtures and shot-state fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _data
+          python football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py --outdir _data 2>&1 | tee /tmp/download.txt
+          python - <<'PY'
+          import json,pathlib
+          m=json.load(open('_data/data_manifest.json'))
+          assert m['status']=='HISTORICAL_REPLAY_DATA_READY'
+          assert m['post_view_historical_stress_test'] is True and m['fresh_confirmation'] is False
+          assert m['seasons']==[2024,2025]
+          assert m['fixture_n']>=3400, m['fixture_n']
+          assert m['raw_ajax_persisted'] is False and m['raw_shot_rows_persisted'] is False
+          for p in ('fixtures.jsonl','state_updates.jsonl','label_vault.jsonl'):
+              assert pathlib.Path('_data',p).stat().st_size>0
+          PY
+
+      - name: Seal derived historical data Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,data,evidence}
+          cp football-data/research/v3_1_1_historical_replay_2024_2026/HISTORICAL_REPLAY_CONTRACT.json _seal/contracts/
+          cp football-data/research/v3_1_1_historical_replay_2024_2026/download_understat_history.py football-data/research/v3_1_1_historical_replay_2024_2026/test_download_understat_history.py _seal/code/
+          cp _data/* _seal/data/
+          cp /tmp/tests.txt /tmp/download.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          d=json.load(open('_data/data_manifest.json'))
+          m={'schema_version':'football3-v3-1-1-historical-replay-data-artifact-v1','status':'HISTORICAL_REPLAY_DATA_READY','head':os.environ['GITHUB_SHA'],'joint_candidate_head':os.environ['JOINT_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'fixture_n':d['fixture_n'],'fixture_identity_sha256':d['fixture_identity_sha256'],'fresh_confirmation':False,'post_view_historical_stress_test':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload derived history
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-1-1-history-data-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: download-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Remote ZIP digest CRC manifest exact-set SHA bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ART_ID: ${{ needs.download-and-seal.outputs.artifact_id }}
+          DIGEST: ${{ needs.download-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}")"
+          md="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$md" "$DIGEST" <<'PY'
+          import sys
+          n=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert n(sys.argv[1])==n(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" -o /tmp/a.zip
+          unzip -tq /tmp/a.zip
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.load(open(r/'artifact_manifest.json'))
+          assert m['head']==os.environ['GITHUB_SHA'] and m['status']=='HISTORICAL_REPLAY_DATA_READY'
+          assert m['fixture_n']>=3400 and m['fresh_confirmation'] is False
+          expected=set(m['files'])|{'artifact_manifest.json'}
+          got={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file()}
+          assert got==expected,(got,expected)
+          for name,v in m['files'].items():
+              b=(r/name).read_bytes(); assert len(b)==v['bytes']; assert hashlib.sha256(b).hexdigest()==v['sha256']
+          PY
