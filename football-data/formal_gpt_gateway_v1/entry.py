@@ -20,6 +20,8 @@ import live_source_contract_resolution_v1
 LIVE_SOURCE_CONTRACT = live_source_contract_resolution_v1.install()
 import live_xg_quarantine_patch_v1
 LIVE_XG_QUARANTINE = live_xg_quarantine_patch_v1.install()
+import live_fast_reuse_audit_v1
+LIVE_FAST_AUDIT = live_fast_reuse_audit_v1.install()
 import gateway
 import live_gateway_patch_v1
 
@@ -51,6 +53,7 @@ def main() -> int:
         out_arg = sys.argv[sys.argv.index("--out") + 1]
         out = Path(out_arg)
         audit = formal_source_contract_v1.audit_snapshot()
+        fast_audit = live_fast_reuse_audit_v1.snapshot()
         adapters = {
             "source_contract_adapter.json": COMPAT,
             "source_contract_resolution.json": SOURCE_RESOLUTION,
@@ -59,6 +62,8 @@ def main() -> int:
             "live_xg_identity_adapter.json": LIVE_XG_IDENTITY,
             "live_source_contract_adapter.json": LIVE_SOURCE_CONTRACT,
             "live_xg_quarantine_adapter.json": LIVE_XG_QUARANTINE,
+            "live_fast_reuse_adapter.json": LIVE_FAST_AUDIT,
+            "live_fast_reuse_audit.json": fast_audit,
             "live_gateway_adapter.json": LIVE_GATEWAY,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
@@ -75,6 +80,8 @@ def main() -> int:
             d["live_xg_identity_adapter"] = LIVE_XG_IDENTITY
             d["live_source_contract_adapter"] = LIVE_SOURCE_CONTRACT
             d["live_xg_quarantine_adapter"] = LIVE_XG_QUARANTINE
+            d["live_fast_reuse_adapter"] = LIVE_FAST_AUDIT
+            d["live_fast_reuse_audit"] = fast_audit
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
