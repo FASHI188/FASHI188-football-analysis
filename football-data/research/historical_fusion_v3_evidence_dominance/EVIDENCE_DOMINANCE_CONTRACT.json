@@ -1,0 +1,93 @@
+{
+  "schema_version": "football3-v3-evidence-dominance-contract-v1",
+  "project_id": "football3",
+  "status": "FROZEN_BEFORE_FRESH_COHORT_DOWNLOAD_OR_LABEL_SCORING",
+  "research_only": true,
+  "scientific_role": "ZERO_PARAMETER_CHALLENGER_EXTERNAL_VALIDATION_NOT_FORMAL_CONFIRMATION",
+  "objective": "Test whether a parameter-free evidence-dominance gate can retain the exact V3.2.4 minimum-boundary projection while improving time/group LogLoss stability on a completely separate secondary-league cohort. This is not a model upgrade and does not extrapolate the Big-5 V3 model to external leagues.",
+  "lineage": {
+    "parent_head": "60452fa6e523b26e80fff2cc0aa7d3c3fdf85a16",
+    "parent_experiment": "football3/historical-fusion-v3-external-projection-stress-v1",
+    "parent_run": 33771969420,
+    "parent_artifact": 9900014948,
+    "parent_classification": "GEOMETRY_EXTERNALLY_MIXED",
+    "v3_2_4_head": "3cc9098cd321ee4f1dd659b1a4f4db75c02555ed",
+    "v3_2_4_projection_runner_blob": "218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f",
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9"
+  },
+  "rule": {
+    "name": "EVIDENCE_DOMINANCE_REVERSAL_MARGIN",
+    "baseline_probability": "normalize reciprocal opening average odds AvgH/AvgD/AvgA",
+    "closing_signal": "normalize reciprocal closing average odds AvgCH/AvgCD/AvgCA",
+    "incumbent": "argmax opening probability",
+    "target": "argmax closing probability",
+    "proposal": "incumbent != target",
+    "opening_margin": "P_open[incumbent] - P_open[target]",
+    "closing_reversal_margin": "P_close[target] - P_close[incumbent]",
+    "evidence_dominance": "closing_reversal_margin >= opening_margin",
+    "interpretation": "The fresh closing direction must reverse the original incumbent-target gap by at least the size of the original opening gap. Equality is allowed. No fitted scalar, percentile, TV threshold or learned selector exists.",
+    "on_evidence_dominance_true": "apply exact frozen V3.2.4 deterministic minimum-L2 Top1 boundary projection toward target",
+    "on_evidence_dominance_false": "exact opening probability fallback",
+    "epsilon": 1e-9,
+    "weak_side": "argmin opening home-vs-away probability only; draw is never weak side",
+    "weak_floor": "P_weak_after >= P_weak_before; otherwise exact opening-probability fallback",
+    "no_learning": true,
+    "no_parameter_fit": true,
+    "no_threshold_grid": true,
+    "no_post_view_selector": true,
+    "prediction_weight": 0
+  },
+  "fresh_data": {
+    "source": "football-data.co.uk",
+    "seasons": ["2024/25", "2025/26"],
+    "season_paths": {"2024/25": "2425", "2025/26": "2526"},
+    "leagues": [
+      {"code": "E1", "name": "English Championship"},
+      {"code": "E2", "name": "English League One"},
+      {"code": "D2", "name": "2. Bundesliga"},
+      {"code": "F2", "name": "Ligue 2"},
+      {"code": "I2", "name": "Serie B"},
+      {"code": "SP2", "name": "Segunda Division"}
+    ],
+    "prior_external_stress_codes": ["N1", "P1", "B1", "SC0", "T1", "G1"],
+    "freshness_guard": "selected league-code set must be disjoint from prior_external_stress_codes; no selected-cohort result labels or metric outcomes were read before this contract commit",
+    "selection_basis": "secondary-division identity and source family only; not selected by result labels, odds movement performance, LogLoss, Brier, RPS or Top1 outcomes",
+    "url_template": "https://www.football-data.co.uk/mmz4281/{season_path}/{league}.csv",
+    "required_columns": ["Div", "Date", "HomeTeam", "AwayTeam", "FTR", "AvgH", "AvgD", "AvgA", "AvgCH", "AvgCD", "AvgCA"],
+    "source_failure_policy": "ABORT_COHORT_NO_SUBSTITUTION",
+    "odds_role": "PRE_MATCH_EXTERNAL_DIAGNOSTIC_SIGNAL_ONLY",
+    "match_result_role": "ONE_TIME_FRESH_VALIDATION_LABEL"
+  },
+  "evaluation": {
+    "primary_comparison": "evidence_dominance_candidate versus opening baseline",
+    "secondary_reference": "ungated exact V3.2.4 projection on the same fresh cohort, descriptive only and never used to change the frozen rule",
+    "metrics": ["multiclass_logloss", "multiclass_brier", "rps", "top1_accuracy"],
+    "chronological_folds": 12,
+    "fold_construction": "sort all completed usable rows by match date then deterministic league/home/away tie-break; split into 12 contiguous equal-count folds before reading metric results",
+    "league_season_groups": 12,
+    "terminal_classification": {
+      "EVIDENCE_DOMINANCE_EXTERNALLY_STABLE": "candidate global LL/Brier/RPS nondegrade and Top1 nondegrade versus opening baseline; chronological fold LL nondegrade >=10/12; league-season LL nondegrade >=10/12",
+      "EVIDENCE_DOMINANCE_EXTERNALLY_MIXED": "candidate global LL/Brier/RPS and Top1 all nondegrade versus opening baseline, but either LL stability count is 7-9/12",
+      "EVIDENCE_DOMINANCE_EXTERNALLY_FAILED": "candidate global LogLoss degrades versus opening baseline OR either LL stability count <=6/12 OR any frozen-rule/inventory/freshness guard fails"
+    }
+  },
+  "interpretation_guards": [
+    "No value from the parent external stress cohort may change this frozen rule after this commit.",
+    "No fresh-cohort result may change the rule, cohort, threshold, selector, projection or evaluation gate after first download.",
+    "Closing odds remain an external diagnostic signal only and are not added to Football3 production inputs.",
+    "This fresh external validation cannot promote Formal V2, V3.1.1, V3.2.4 or Stage7.",
+    "If stable, the result is evidence for a future separately governed research candidate only; prediction_weight remains zero."
+  ],
+  "formal_guards": {
+    "formal_v2_unchanged": true,
+    "v3_1_1_unchanged": true,
+    "v3_2_4_unchanged": true,
+    "CURRENT_unchanged": true,
+    "production_pointer_unchanged": true,
+    "formal_enablement_unchanged": true,
+    "formal_weights_unchanged": true,
+    "promotion_allowed": false,
+    "ready_allowed": false,
+    "merge_allowed": false
+  }
+}
