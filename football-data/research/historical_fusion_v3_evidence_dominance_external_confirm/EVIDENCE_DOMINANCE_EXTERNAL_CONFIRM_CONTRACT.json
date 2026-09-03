@@ -1,0 +1,87 @@
+{
+  "schema_version":"football3-v3-evidence-dominance-external-confirm-contract-v1",
+  "project_id":"football3",
+  "status":"FROZEN_BEFORE_SECOND_EXTERNAL_COHORT_DOWNLOAD_OR_SCORING",
+  "research_only":true,
+  "scientific_role":"SECOND_EXTERNAL_TRANSPORT_DIAGNOSTIC_ONLY_NOT_FORMAL_CONFIRMATION",
+  "objective":"Test a zero-parameter evidence-dominance arbitration rule on a completely untouched external cohort. The rule must improve time-stable probability quality without using the consumed 2019-2022 Big-5 folds or the first external stress cohort to set any numeric model threshold.",
+  "lineage":{
+    "continuity_head":"60452fa6e523b26e80fff2cc0aa7d3c3fdf85a16",
+    "first_external_stress_run":33771969420,
+    "first_external_stress_artifact_id":9900014948,
+    "first_external_stress_classification":"GEOMETRY_EXTERNALLY_MIXED",
+    "v3_2_4_head":"3cc9098cd321ee4f1dd659b1a4f4db75c02555ed",
+    "v3_2_4_projection_runner_blob":"218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f",
+    "formal_v2_head":"e12f5d1193be5d81f60301cf34ab2140e11712a9"
+  },
+  "data":{
+    "source":"football-data.co.uk",
+    "seasons":["2024/25","2025/26"],
+    "season_paths":{"2024/25":"2425","2025/26":"2526"},
+    "leagues":[
+      {"code":"E1","name":"English Championship"},
+      {"code":"D2","name":"2. Bundesliga"},
+      {"code":"I2","name":"Serie B"},
+      {"code":"SP2","name":"Segunda Division"},
+      {"code":"F2","name":"Ligue 2"}
+    ],
+    "url_template":"https://www.football-data.co.uk/mmz4281/{season_path}/{league}.csv",
+    "required_columns":["Div","Date","HomeTeam","AwayTeam","FTR","AvgH","AvgD","AvgA","AvgCH","AvgCD","AvgCA"],
+    "cohort_guard":"NONE of E1,D2,I2,SP2,F2 in 2024/25 or 2025/26 may have appeared in the first external stress cohort N1,P1,B1,SC0,T1,G1.",
+    "opening_odds_role":"PRE_MATCH_BASELINE_ONLY",
+    "closing_odds_role":"INDEPENDENT_PRE_MATCH_DIRECTION_EVIDENCE_ONLY",
+    "match_result_role":"ONE_TIME_SECOND_EXTERNAL_STRESS_LABEL"
+  },
+  "mechanism":{
+    "baseline_probability":"normalize reciprocal opening average odds AvgH/AvgD/AvgA",
+    "signal_probability":"normalize reciprocal closing average odds AvgCH/AvgCD/AvgCA",
+    "old_top1":"argmax opening probability",
+    "target":"argmax closing probability",
+    "raw_proposal":"old_top1 != target",
+    "evidence_dominance_rule":"For a raw proposal old->target, execute only if log(Pclose[target]/Pclose[old]) >= log(Popen[old]/Popen[target]). This is an exact zero-threshold comparison of reversal evidence against the opening preference it overturns; no fitted scalar, grid, TV cutoff, league exception, team exception or fold exception is permitted.",
+    "projection":"EXACT_V3_2_4_DETERMINISTIC_MINIMUM_L2_TOP1_BOUNDARY_PROJECTION",
+    "epsilon":1e-9,
+    "weak_side":"argmin of opening home-vs-away probability only; draw is never weak side",
+    "weak_floor":"P_weak_after >= P_weak_before; otherwise exact opening-probability fallback",
+    "no_learning":true,
+    "no_parameter_fit":true,
+    "no_threshold_grid":true,
+    "no_tv_threshold":true,
+    "no_post_view_selector":true,
+    "no_reference_to_first_external_metric_values_inside_rule":true
+  },
+  "comparators":{
+    "opening":"opening normalized probabilities",
+    "always_project":"first external-stress operator: whenever closing Top1 differs, apply exact V3.2.4 projection",
+    "evidence_dominance":"apply exact V3.2.4 projection only when the frozen log-evidence dominance inequality holds"
+  },
+  "evaluation":{
+    "metrics":["multiclass_logloss","multiclass_brier","rps","top1_accuracy"],
+    "chronological_folds":12,
+    "fold_construction":"sort all completed usable rows by match date then deterministic league/home/away tie-break; split into 12 contiguous equal-count folds before metric evaluation",
+    "league_season_groups":10,
+    "acceptance":{
+      "candidate_global_logloss_delta_vs_opening_max":0.0,
+      "candidate_global_brier_delta_vs_opening_max":0.0,
+      "candidate_global_rps_delta_vs_opening_max":0.0,
+      "candidate_global_top1_delta_vs_opening_min_exclusive":0.0,
+      "candidate_chronological_fold_ll_nondegrade_min":10,
+      "candidate_league_season_ll_nondegrade_min":8,
+      "candidate_fold_ll_nondegrade_must_be_ge_always_project":true,
+      "candidate_global_logloss_must_be_le_always_project":true
+    },
+    "terminal":{
+      "pass":"EVIDENCE_DOMINANCE_EXTERNALLY_VALIDATED_ON_SECOND_UNTOUCHED_COHORT",
+      "fail":"EVIDENCE_DOMINANCE_NOT_VALIDATED_NO_RESCUE_ON_CONSUMED_EXTERNAL_COHORT"
+    }
+  },
+  "interpretation_guards":[
+    "This is not a Big-5 V3.2.4 out-of-domain model evaluation.",
+    "Closing odds are not added to any football3 production or research model.",
+    "This experiment only tests whether a zero-parameter arbitration principle improves the stability of the same frozen projection operator under a second independent pre-match signal cohort.",
+    "No result can promote Formal V2, V3.1.1, V3.2.4 or Stage7.",
+    "If this cohort fails, no rescue threshold may be derived from these labels.",
+    "If this cohort passes, the rule may be considered a pre-frozen arbitration hypothesis for a future genuinely fresh Big-5 confirmation, not retroactively applied to consumed 2019-2022 labels."
+  ],
+  "formal_guards":{"formal_v2_unchanged":true,"v3_1_1_unchanged":true,"CURRENT_unchanged":true,"production_pointer_unchanged":true,"formal_enablement_unchanged":true,"formal_weights_unchanged":true,"promotion_allowed":false}
+}
