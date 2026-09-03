@@ -21,7 +21,7 @@ env:
   DATA_HEAD: 95757332b4ea3cd4d75db370d19ba83dfbf55601
   CONTRACT_BLOB: dc2a7877aa84d7f3fb8e8169743aa50755623b86
   SCOPE_BLOB: 0a42a6b28df1ca9f35990e8e10e3ead8af2eb756
-  EVALUATOR_BLOB: b5a3f75ff1dd975b2df798661e73342927226c71
+  EVALUATOR_BLOB: 272b3e4f817e2f9f2984058b3bccf8dbc608a558
   TEST_BLOB: 3ba859eaf6f487148d22d586bd81cf7de886fc00
   EVALUATOR_SOURCE_SHA256: 0bb755363f757f4f7fcddf5690ec6beff7e66f49732028077ad9c82d3dfb36df
   STRESS_ARTIFACT_ID: '9876751277'
@@ -93,10 +93,10 @@ jobs:
           grep -q 'Ran 6 tests' /tmp/tests.txt
           grep -q '^OK$' /tmp/tests.txt
           python - <<'PY'
-          import base64,hashlib,pathlib,re,zlib,os
+          import ast,base64,hashlib,pathlib,re,zlib,os
           p=pathlib.Path('football-data/research/v3_strength_upset_balance_score/first_batch_research.py')
           s=p.read_text(); m=re.search(r"_PAYLOAD=b'''(.*)'''\nexec",s,re.S); assert m
-          src=zlib.decompress(base64.b85decode(m.group(1).encode()))
+          src=zlib.decompress(base64.b64decode(m.group(1).encode()))
           assert hashlib.sha256(src).hexdigest()==os.environ['EVALUATOR_SOURCE_SHA256']
           compile(src.decode(),'first_batch_research_decompressed.py','exec')
           PY
@@ -156,11 +156,12 @@ jobs:
             --usr1-engine _in/usr1/code/historical_fusion_v3_upset_safe.py \
             --out _run 2>&1 | tee /tmp/research_stdout.txt
           python - <<'PY'
-          import json
+          import json,math
           r=json.load(open('_run/first_batch_result.json'))
           assert r['status']=='FIRST_BATCH_RESEARCH_COMPLETE'
           assert r['classification']=='POST_VIEW_HISTORICAL_RESEARCH_ONLY' and r['fresh_confirmation'] is False and r['promotion_allowed'] is False
           assert (r['n'],r['development_n'],r['evaluation_n'])==(3504,1752,1752)
+          assert set(k for k in r if k in {'A','B','C'})=={'A','B','C'}
           assert r['matrix_audit']['all_valid'] is True
           assert r['formal_v2_unchanged'] and r['v3_1_1_unchanged'] and not r['CURRENT_changed'] and not r['production_pointer_changed'] and not r['formal_enablement_changed'] and not r['fast_runtime_changed']
           PY
@@ -189,7 +190,11 @@ jobs:
           for p in sorted(root.rglob('*')):
               if p.is_file():
                   b=p.read_bytes(); files[str(p.relative_to(root))]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
-          m={'schema_version':'football3-v3-strength-upset-balance-score-first-batch-artifact-manifest-v1','head':os.environ['GITHUB_SHA'],'branch':'football3/v3-strength-upset-balance-score-research-v1','formal_v2_head':os.environ['FORMAL_HEAD'],'v3_1_1_stress_head':os.environ['STRESS_HEAD'],'classification':'POST_VIEW_REPAIRED_REPLAY_NOT_FIRST_UNSEEN_EVALUATION','fresh_confirmation':False,'promotion_allowed':False,'source_artifacts':{'stress':[int(os.environ['STRESS_ARTIFACT_ID']),os.environ['STRESS_ARTIFACT_DIGEST']], 'data':[int(os.environ['DATA_ARTIFACT_ID']),os.environ['DATA_ARTIFACT_DIGEST']], 'diagnostic':[int(os.environ['DIAG_ARTIFACT_ID']),os.environ['DIAG_ARTIFACT_DIGEST']], 'old_understat':[int(os.environ['OLD_ARTIFACT_ID']),os.environ['OLD_ARTIFACT_DIGEST']], 'usr1':[int(os.environ['USR1_ARTIFACT_ID']),os.environ['USR1_ARTIFACT_DIGEST']]},'payload_files':files,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'fast_runtime_changed':False,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False}
+          m={'schema_version':'football3-v3-strength-upset-balance-score-first-batch-artifact-manifest-v1','head':os.environ['GITHUB_SHA'],
+             'branch':'football3/v3-strength-upset-balance-score-research-v1','formal_v2_head':os.environ['FORMAL_HEAD'],'v3_1_1_stress_head':os.environ['STRESS_HEAD'],
+             'classification':'POST_VIEW_REPAIRED_REPLAY_NOT_FIRST_UNSEEN_EVALUATION','fresh_confirmation':False,'promotion_allowed':False,
+             'source_artifacts':{'stress':[int(os.environ['STRESS_ARTIFACT_ID']),os.environ['STRESS_ARTIFACT_DIGEST']], 'data':[int(os.environ['DATA_ARTIFACT_ID']),os.environ['DATA_ARTIFACT_DIGEST']], 'diagnostic':[int(os.environ['DIAG_ARTIFACT_ID']),os.environ['DIAG_ARTIFACT_DIGEST']], 'old_understat':[int(os.environ['OLD_ARTIFACT_ID']),os.environ['OLD_ARTIFACT_DIGEST']], 'usr1':[int(os.environ['USR1_ARTIFACT_ID']),os.environ['USR1_ARTIFACT_DIGEST']]},
+             'payload_files':files,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'fast_runtime_changed':False,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False}
           pathlib.Path('_seal/artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
           PY
 
