@@ -1,0 +1,137 @@
+{
+  "schema_version": "football3-v3-score-shape-shot-fano-state-contract-v1",
+  "project_id": "football3",
+  "macro_stage": "STAGE6_SCORE_SHAPE",
+  "status": "FROZEN_BEFORE_TARGET_SCORING",
+  "research_only": true,
+  "new_information_axis": true,
+  "not_a_fourth_transport_family": true,
+  "lineage": {
+    "parent_head": "cb66586713ba844f28a00a95bbdd1804df298aa1",
+    "parent_branch": "football3/historical-fusion-score-shape-goaldiff-tilt-v1",
+    "v3_2_6_head": "2d02de0de4da73412d90b019886f710beaf3ee85",
+    "v3_2_4_head": "3cc9098cd321ee4f1dd659b1a4f4db75c02555ed",
+    "v3_1_1_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "formal_current_sha256": "ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8",
+    "prior_score_transport_program": "BLOCKED_AND_DIAGNOSTIC_ONLY"
+  },
+  "frozen_inputs": {
+    "understat_artifact_id": 9798682425,
+    "understat_artifact_digest": "sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba",
+    "v3_2_4_artifact_id": 9888387173,
+    "v3_2_4_artifact_digest": "sha256:c14813b04a3f21f5cf8de0cf99d682b0e539f2011adb9212532af175509e6ad1",
+    "v2_artifact_id": 9828471485,
+    "xg_artifact_id": 9826787329,
+    "v1_artifact_id": 9732754224,
+    "usr1_artifact_id": 9848912219,
+    "v31_artifact_id": 9855441319
+  },
+  "scientific_hypothesis": {
+    "id": "STRICT_PREMATCH_SHOT_PROCESS_FANO_GENERATIVE_STATE",
+    "statement": "Exact-score shape contains predictive information in the strictly pre-match shot opportunity process variance that is absent from a fixed score kernel. The predictive variance of future goals can be decomposed from prior shot Bernoulli variance plus between-match xG opportunity variance and injected as a mean-preserving extra-Poisson goal-count state before enforcing already-frozen total-goal and 1X2 semantics.",
+    "independence_from_prior_top4_failures": true,
+    "no_cell_specific_protection": true,
+    "no_metric_targeted_patch": true
+  },
+  "shot_state": {
+    "source_tables": ["general_game_stats", "game_events"],
+    "chronology": "ONLY source matches with kickoff strictly earlier than target kickoff; same-kickoff matches are excluded",
+    "roles": {
+      "home_goal_state": ["home_team_prior_home_attack", "away_team_prior_away_defense"],
+      "away_goal_state": ["away_team_prior_away_attack", "home_team_prior_home_defense"]
+    },
+    "per_source_statistics": {
+      "lambda_match": "sum shot xG in one historical source-side match",
+      "bernoulli_variance_match": "sum xG*(1-xG) over shots in that historical source-side match",
+      "fano": "(mean(bernoulli_variance_match) + unbiased_sample_variance(lambda_match)) / mean(lambda_match)"
+    },
+    "minimum_profiles_for_team_role_variance": 2,
+    "fallback_hierarchy": ["team_role", "same_league_role_pool", "big5_role_pool"],
+    "source_combination": "equal arithmetic mean of the attack-source Fano and opponent-defense-source Fano after each source independently applies the fallback hierarchy",
+    "underdispersion_policy": "F_effective=max(1,F_estimated); this family tests only extra-Poisson opportunity uncertainty and is exactly Poisson-neutral below one",
+    "trainable_parameters": "NONE",
+    "label_fitted_parameters": "NONE",
+    "threshold_grid": "NONE",
+    "market_inputs": "FORBIDDEN",
+    "future_or_same_kickoff_events": "FORBIDDEN"
+  },
+  "goal_count_generator": {
+    "mean_anchor": "home and away expected-goal means are computed directly from the frozen V3.1.1 baseline 225-cell matrix",
+    "distribution": "Poisson when F_effective=1; otherwise moment-matched Negative Binomial with k=mu/(F_effective-1), preserving mean mu and variance F_effective*mu",
+    "support": "same finite goal support as frozen baseline matrix; probability above final support cell is folded into the last marginal bin for the reference measure only",
+    "joint_reference": "outer product of the generated home and away goal-count marginals",
+    "parameter_selection": "NONE"
+  },
+  "constraint_projection": {
+    "id": "DUAL_MARGINAL_KL_IPROJECTION",
+    "purpose": "constraint enforcement only, not a candidate transport family",
+    "reference": "shot-process Fano joint reference matrix",
+    "constraints": [
+      "preserve every frozen V3.1.1 total-goals marginal exactly",
+      "preserve frozen V3.2.4 target H/D/A probabilities exactly"
+    ],
+    "algorithm": "deterministic iterative proportional fitting alternating total-goal slices and H/D/A partitions",
+    "tolerance": 1e-13,
+    "max_iterations": 10000,
+    "no_tuning": true
+  },
+  "application_scope": {
+    "all_target_matches": true,
+    "non_switch_matches": "H/D/A remains frozen V3.1.1 while score shape may change through the new generative reference",
+    "v3_2_4_switch_matches": "H/D/A equals frozen V3.2.4 target while score shape comes from the new generative reference"
+  },
+  "data_roles": {
+    "2019_2020": "POST_VIEW_FIXED_RULE_SANITY_ONLY_NO_SELECTION",
+    "2021_2022": "POST_VIEW_FIXED_RULE_EVALUATION_ONLY_IF_SANITY_ALL_PASS",
+    "2023": "CLOSED_FOR_THIS_COMPONENT",
+    "2024_25_and_2025_26_3504": "FORBIDDEN_FOR_THIS_COMPONENT"
+  },
+  "hard_gates": {
+    "sanity_2019_2020_must_pass_all": true,
+    "evaluation_2021_2022_must_pass_all": true,
+    "structural": {
+      "chronology_violation_n_max": 0,
+      "matrix_sum_max_abs_error": 1e-12,
+      "total_goals_marginal_max_abs_error": 1e-12,
+      "matrix_to_target_1x2_max_abs_error": 1e-12,
+      "finite_nonnegative_matrix_required": true,
+      "projection_convergence_required": true
+    },
+    "score": {
+      "exact_score_logloss_delta_max": 0.0,
+      "total_goals_brier_delta_max": 1e-12,
+      "total_goals_rps_delta_max": 1e-12,
+      "score_00_binary_brier_delta_max": 0.0,
+      "score_11_binary_brier_delta_max": 0.0,
+      "score_22_binary_brier_delta_max": 0.0,
+      "low_total_le2_binary_brier_delta_max": 1e-12,
+      "high_total_ge5_binary_brier_delta_max": 1e-12,
+      "very_high_total_ge7_binary_brier_delta_max": 1e-12,
+      "top4_cell_mass_calibration_brier_delta_max": 0.0,
+      "matrix_to_1x2_max_abs_error": 1e-12
+    }
+  },
+  "forbidden": [
+    "post_view_rescue_tuning",
+    "parameter sweeps",
+    "changing the Fano formula after scoring",
+    "changing fallback hierarchy after scoring",
+    "changing source weights after scoring",
+    "using result labels to fit the shot-state parameters",
+    "opening 2023 for this component",
+    "using the 3504 stress set",
+    "market or live information",
+    "manual match team league fold score or cell exceptions",
+    "Top4-specific protection",
+    "Ready",
+    "merge",
+    "force",
+    "Formal V2 or CURRENT changes"
+  ],
+  "terminal": {
+    "success": "SCORE_SHAPE_SHOT_FANO_COMPONENT_READY_FOR_MACRO_INTEGRATION",
+    "failure": "SCORE_SHAPE_SHOT_FANO_GENERATIVE_AXIS_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT",
+    "promotion_allowed": false
+  }
+}
