@@ -7,6 +7,7 @@ on:
     paths:
       - 'football-data/formal_gpt_gateway_v1/**'
       - 'football-data/formal_source_contract_v1.py'
+      - 'football-data/formal_runtime_missing_input_probe_v1.py'
       - '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
   workflow_dispatch:
 
@@ -130,6 +131,7 @@ jobs:
 
       - name: Execute frozen original formal runner through gateway
         id: execute
+        continue-on-error: true
         run: |
           set -euo pipefail
           rm -rf football-data/formal_gpt_gateway_v1/output
@@ -146,16 +148,34 @@ jobs:
               --state-root "$PWD/.formal_state_cache" \
               --out "$PWD/football-data/formal_gpt_gateway_v1/output" \
             | tee football-data/formal_gpt_gateway_v1/output/stdout.txt
+
+      - name: Record gateway outputs when summary exists
+        id: gateway_summary
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('football-data/formal_gpt_gateway_v1/output/summary.json')
-          d=json.loads(p.read_text())
+          d=json.loads(p.read_text()) if p.exists() else {'status':'NO_SUMMARY'}
           state_sha=str(d.get('state_bundle_sha') or 'no-state')
           with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
               f.write(f"state_sha={state_sha}\n")
               f.write(f"status={d.get('status','UNKNOWN')}\n")
               f.write(f"path={d.get('calculation_path','NONE')}\n")
           PY
+
+      - name: Probe missing input routes to FULL and fails closed
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_runtime_missing_input_probe_v1.py \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --work "$PWD/.formal_missing_probe" \
+              --out "$PWD/football-data/formal_gpt_gateway_v1/output"
 
       - name: Validate persisted state bundle when present
         if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
@@ -171,7 +191,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .formal_state_cache
-          key: football3-formal-state-v1-${{ steps.execute.outputs.state_sha || 'recovered' }}-${{ github.run_id }}
+          key: football3-formal-state-v1-${{ steps.gateway_summary.outputs.state_sha || 'recovered' }}-${{ github.run_id }}
 
       - name: Upload prediction/gap receipt
         if: ${{ always() }}
@@ -190,3 +210,7 @@ jobs:
           path: .formal_state_cache/bundle/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Preserve main gateway failure as job failure
+        if: ${{ always() && steps.execute.outcome == 'failure' }}
+        run: exit 1
