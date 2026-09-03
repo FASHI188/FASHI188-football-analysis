@@ -1,0 +1,175 @@
+name: football3 Historical Fusion V3 Evidence Dominance External Confirm
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-evidence-dominance-external-confirm-v1']
+    paths:
+      - '.github/workflows/football3-historical-fusion-v3-evidence-dominance-external-confirm-v1.yml'
+      - 'football-data/research/historical_fusion_v3_evidence_dominance_external_confirm/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASE_HEAD: 60452fa6e523b26e80fff2cc0aa7d3c3fdf85a16
+  CONTRACT_FREEZE_COMMIT: cb2a0b2e93c71bd7099436421a7ac6c886c076b0
+  CONTRACT_BLOB: bd69a3dfe641feb2214d53eac4d8d4d85f82aacb
+  RUNNER_BLOB: 9fa1cd85efb838a21ce42c6647f872bd56a8447a
+  TEST_BLOB: 52699989349cbc5d00ff3cd6c77ab398018eff10
+  V324_HEAD: 3cc9098cd321ee4f1dd659b1a4f4db75c02555ed
+  V324_RUNNER_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+
+jobs:
+  confirm-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact lineage contract freeze whitelist and formal guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-evidence-dominance-external-confirm-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "${CONTRACT_FREEZE_COMMIT}^")" = "$BASE_HEAD"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-2-4-minimal-boundary-projection-v1 | cut -f1)" = "$V324_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/historical_fusion_v3_evidence_dominance_external_confirm
+          test "$(git hash-object "$D/EVIDENCE_DOMINANCE_EXTERNAL_CONFIRM_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/evidence_dominance_external_confirm.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_evidence_dominance_external_confirm.py")" = "$TEST_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py)" = "$V324_RUNNER_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          d=pathlib.Path('football-data/research/historical_fusion_v3_evidence_dominance_external_confirm')
+          contract=str(d/'EVIDENCE_DOMINANCE_EXTERNAL_CONFIRM_CONTRACT.json')
+          freeze=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...{os.environ['CONTRACT_FREEZE_COMMIT']}"],text=True).splitlines())
+          assert freeze=={contract},freeze
+          allowed={'.github/workflows/football3-historical-fusion-v3-evidence-dominance-external-confirm-v1.yml',contract,str(d/'evidence_dominance_external_confirm.py'),str(d/'test_evidence_dominance_external_confirm.py')}
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['BASE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((d/'EVIDENCE_DOMINANCE_EXTERNAL_CONFIRM_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_SECOND_EXTERNAL_COHORT_DOWNLOAD_OR_SCORING'
+          assert c['mechanism']['no_learning'] and c['mechanism']['no_parameter_fit'] and c['mechanism']['no_threshold_grid'] and c['mechanism']['no_tv_threshold']
+          assert {x['code'] for x in c['data']['leagues']}=={'E1','D2','I2','SP2','F2'}
+          assert not ({x['code'] for x in c['data']['leagues']} & {'N1','P1','B1','SC0','T1','G1'})
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and run seven structural tests before second-cohort scoring
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance_external_confirm
+          python -m py_compile "$D/evidence_dominance_external_confirm.py" "$D/test_evidence_dominance_external_confirm.py"
+          (cd "$D" && python test_evidence_dominance_external_confirm.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download frozen untouched second external cohort
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _data && mkdir _data
+          for season in 2425 2526; do
+            for lg in E1 D2 I2 SP2 F2; do
+              u="https://www.football-data.co.uk/mmz4281/${season}/${lg}.csv"
+              out="_data/${season}_${lg}.csv"
+              curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$u" -o "$out"
+              test -s "$out"
+            done
+          done
+          python - <<'PY'
+          import csv,pathlib
+          req={'Div','Date','HomeTeam','AwayTeam','FTR','AvgH','AvgD','AvgA','AvgCH','AvgCD','AvgCA'}
+          files=sorted(pathlib.Path('_data').glob('*.csv')); assert len(files)==10,len(files)
+          for p in files:
+              with p.open(encoding='utf-8-sig',newline='') as f:
+                  r=csv.DictReader(f); h=set(r.fieldnames or []); rows=list(r)
+              assert req<=h,(p,sorted(req-h)); assert rows,(p,'empty')
+          PY
+
+      - name: Execute frozen evidence-dominance confirmation once
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance_external_confirm
+          rm -rf _run && mkdir _run
+          python "$D/evidence_dominance_external_confirm.py" \
+            --contract "$D/EVIDENCE_DOMINANCE_EXTERNAL_CONFIRM_CONTRACT.json" \
+            --data-dir _data \
+            --v324-runner football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py \
+            --out _run 2>&1 | tee /tmp/research_stdout.txt
+          python - <<'PY'
+          import json
+          f=json.load(open('_run/evidence_dominance_external_confirm_result.json'))
+          assert f['status'] in {'EVIDENCE_DOMINANCE_EXTERNALLY_VALIDATED_ON_SECOND_UNTOUCHED_COHORT','EVIDENCE_DOMINANCE_NOT_VALIDATED_NO_RESCUE_ON_CONSUMED_EXTERNAL_COHORT'}
+          assert f['scientific_role']=='SECOND_EXTERNAL_TRANSPORT_DIAGNOSTIC_ONLY_NOT_FORMAL_CONFIRMATION'
+          assert f['formal_confirmation'] is False and f['promotion_allowed'] is False
+          assert f['formal_v2_unchanged'] and f['v3_1_1_unchanged'] and not f['CURRENT_changed'] and not f['production_pointer_changed'] and not f['formal_enablement_changed'] and not f['formal_weights_changed']
+          PY
+
+      - name: Seal immutable second-cohort evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_evidence_dominance_external_confirm
+          rm -rf _artifact && mkdir -p _artifact/{contracts,code,evidence,raw}
+          cp "$D/EVIDENCE_DOMINANCE_EXTERNAL_CONFIRM_CONTRACT.json" _artifact/contracts/
+          cp "$D/evidence_dominance_external_confirm.py" "$D/test_evidence_dominance_external_confirm.py" _artifact/code/
+          cp _run/evidence_dominance_external_confirm_result.json _artifact/evidence/
+          cp /tmp/tests.txt /tmp/research_stdout.txt _artifact/evidence/
+          cp _data/*.csv _artifact/raw/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_artifact'); files={}
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rel=p.relative_to(root).as_posix(); files[rel]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+          f=json.load(open(root/'evidence/evidence_dominance_external_confirm_result.json'))
+          m={'schema_version':'football3-v3-evidence-dominance-external-confirm-artifact-v1','head':os.environ['GITHUB_SHA'],'status':f['status'],'all_pass':f['all_pass'],'row_count':f['row_count'],'scientific_role':f['scientific_role'],'formal_confirmation':False,'promotion_allowed':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (root/'artifact_manifest.json').write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload immutable second-cohort evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-evidence-dominance-confirm-${{ github.sha }}-${{ github.run_id }}
+          path: _artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  remote-readback:
+    needs: confirm-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download exact named artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-evidence-dominance-confirm-${{ github.sha }}-${{ github.run_id }}
+          path: readback
+      - name: Verify manifest and terminal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('readback'); m=json.load(open(root/'artifact_manifest.json')); f=json.load(open(root/'evidence/evidence_dominance_external_confirm_result.json'))
+          assert m['status']==f['status']; assert m['head']; assert m['row_count']==f['row_count']
+          assert m['formal_confirmation'] is False and m['promotion_allowed'] is False
+          for rel,rec in m['files'].items():
+              p=root/rel; assert p.exists(),rel; assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256'],rel
+          PY
