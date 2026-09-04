@@ -1,0 +1,257 @@
+name: football3 Stage6 Pre-B Immutable Receipt Enrollment V1
+
+on:
+  push:
+    branches: ['football3/stage6-pre-b-prospective-confirmation-v1']
+    paths:
+      - '.github/workflows/football3-stage6-pre-b-receipt-enrollment-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-stage6-pre-b-receipt-enrollment-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  PARENT_EXEC_HEAD: 99e8ce4db838aafdfe186d556afa8b488a611ec0
+  STAGE6_B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_V2_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  ENROLL_CONTRACT_BLOB: 1f84020f1807fcc4bdc12ec6824e0a57931738c6
+  ENROLL_RUNNER_BLOB: 892f38f0677ddcb2872e0769392ae715f50f3187
+  ENROLL_TEST_BLOB: e4ef3b76d44d1d1f1d951a2817c4a6b4002c1a90
+  MAIN_CONTRACT_BLOB: 4769b3e21c459b457acb685ad5933157f2647cb0
+  CONNECTED_AUDIT_BLOB: 12ec314cc63f608fb0c72055f57535154f308364
+  QUEUE_RECEIPT_BLOB: 4430e6fa0206257169bd107575c6447d9adb85f7
+  STATE_CONTRACT_BLOB: dfdf60ae01fc4344e6f2d3e2bb7f957f004cd6ee
+  BOOTSTRAP_BLOB: cb0279d3f47cd58acae18ffb8c18544d89e5d604
+  B_COMMON_BLOB: 247d27dc6db26a0b1423b9431ffe3b1265b1e9aa
+  V311_JOINT_BLOB: 5a530708bcf1607cb210e869006e4aa5a8e626ad
+  QUEUE_SHA: 6cfcaba8e2f82af0996a404eb3fc5bb477174aebd09c9b10c7434d95e59c8dfc
+  REQUIRED_N: '1335'
+  FIRST_KICKOFF_UTC: '2026-09-04T17:00:00Z'
+  PREFLIGHT_ARTIFACT_ID: '9933741257'
+  PREFLIGHT_ARTIFACT_DIGEST: sha256:9d974d4cbc8f9d890fddef9f1c8ab7d2bd4c8da6d45b658ea6ea0a07a62cf9cd
+  CUTOFF_ARTIFACT_ID: '9934686684'
+  CUTOFF_ARTIFACT_DIGEST: sha256:42f6b6a69fc14439e6068a52dd752447976e3581c02390a714453cdd7f9b3492
+  CUTOFF_PACKAGE_SHA: b4713b483117a455db06ce25362d6993f5d8242a2ea035577e1fbeda3a6e41ae
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  OLD_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+
+jobs:
+  enroll-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact-head lineage and frozen byte guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/stage6-pre-b-prospective-confirmation-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_EXEC_HEAD" HEAD)" = "$PARENT_EXEC_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$STAGE6_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_V2_HEAD"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/RECEIPT_ENROLLMENT_CONTRACT.json)" = "$ENROLL_CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/enroll_stage6_pre_b_receipts.py)" = "$ENROLL_RUNNER_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/test_enroll_stage6_pre_b_receipts.py)" = "$ENROLL_TEST_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_confirmation/STAGE6_PRE_B_PROSPECTIVE_CONFIRMATION_CONTRACT.json)" = "$MAIN_CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/CONNECTED_CONSUMPTION_AUDIT.json)" = "$CONNECTED_AUDIT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/PROSPECTIVE_QUEUE_LOCK_RECEIPT.json)" = "$QUEUE_RECEIPT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/STATE_BOOTSTRAP_CONTRACT.json)" = "$STATE_CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_governance/bootstrap_stage6_pre_b_state.py)" = "$BOOTSTRAP_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_deep_ppda/common.py)" = "$B_COMMON_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py)" = "$V311_JOINT_BLOB"
+          python - <<'PY'
+          import json,os,subprocess
+          changed=subprocess.check_output(['git','diff','--name-only',f"{os.environ['STAGE6_B_HEAD']}...HEAD"],text=True).splitlines()
+          for p in changed:
+              ok=(p.startswith('football-data/research/stage6_pre_b_prospective_confirmation/') or
+                  p.startswith('football-data/research/stage6_pre_b_prospective_governance/') or
+                  p.startswith('.github/workflows/football3-stage6-pre-b-'))
+              assert ok,p
+              assert not any(x in p for x in ('CURRENT','production_pointer','formal_enablement')),p
+          c=json.load(open('football-data/research/stage6_pre_b_prospective_governance/RECEIPT_ENROLLMENT_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_RECEIPT_GENERATION'
+          assert c['queue']['required_n']==1335 and c['queue']['locked_n']==1335
+          assert c['queue']['ordered_queue_identity_sha256']==os.environ['QUEUE_SHA']
+          assert c['state_use_rule']['target_result_or_xg_updates_during_enrollment']=='FORBIDDEN'
+          assert c['state_use_rule']['target_match_ajax_pages']=='FORBIDDEN'
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Hard pre-kickoff enrollment deadline gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from datetime import datetime,timezone
+          first=datetime.fromisoformat('2026-09-04T17:00:00+00:00')
+          now=datetime.now(timezone.utc)
+          assert now < first, f'STOP_MISSED_PREKICKOFF_RECEIPT_NO_BACKFILL now={now.isoformat()} first={first.isoformat()}'
+          print('PREKICKOFF_DEADLINE_PASS',now.isoformat())
+          PY
+
+      - name: Deterministic enrollment tests
+        shell: bash
+        working-directory: football-data/research/stage6_pre_b_prospective_governance
+        run: |
+          set -euo pipefail
+          python -m py_compile enroll_stage6_pre_b_receipts.py test_enroll_stage6_pre_b_receipts.py
+          python -m unittest -v test_enroll_stage6_pre_b_receipts.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{preflight,cutoff,old,xg}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda x:x if x.startswith('sha256:') else 'sha256:'+x
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$PREFLIGHT_ARTIFACT_ID" "$PREFLIGHT_ARTIFACT_DIGEST" /tmp/preflight.zip _inputs/preflight
+          verify_one "$CUTOFF_ARTIFACT_ID" "$CUTOFF_ARTIFACT_DIGEST" /tmp/cutoff.zip _inputs/cutoff
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          QUEUE="$(find _inputs/preflight -type f -name prospective_queue_lock.json -print -quit)"
+          CUTOFF="$(find _inputs/cutoff -type f -name CUTOFF_STATE_PACKAGE.json -print -quit)"
+          DB="$(find _inputs/old -type f -name understat_frozen.db -print -quit)"
+          XGI="$(find _inputs/xg -type f -name XG_DATA_IDENTITY.json -print -quit)"
+          test -n "$QUEUE" && test -n "$CUTOFF" && test -n "$DB" && test -n "$XGI"
+          test "$(sha256sum "$DB" | awk '{print $1}')" = "$OLD_DB_SHA256"
+          python - "$QUEUE" "$CUTOFF" <<'PY'
+          import json,sys,os
+          q=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
+          assert q['required_n']==1335 and q['queue_n_atomic']==1335
+          assert q['ordered_queue_identity_sha256']==os.environ['QUEUE_SHA']
+          assert q['target_labels_opened'] is False and q['result_or_goal_fields_persisted'] is False
+          assert p['package_sha256']==os.environ['CUTOFF_PACKAGE_SHA']
+          assert p['target_labels_read_for_scoring'] is False and p['target_match_pages_fetched']==0
+          PY
+          printf '%s\n' "$QUEUE" > /tmp/queue_path
+          printf '%s\n' "$CUTOFF" > /tmp/cutoff_path
+          printf '%s\n' "$DB" > /tmp/db_path
+          printf '%s\n' "$XGI" > /tmp/xgi_path
+
+      - name: Generate all 1335 immutable pre-kickoff receipts
+        id: enroll
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python football-data/research/stage6_pre_b_prospective_governance/enroll_stage6_pre_b_receipts.py \
+            --contract football-data/research/stage6_pre_b_prospective_governance/RECEIPT_ENROLLMENT_CONTRACT.json \
+            --queue "$(cat /tmp/queue_path)" \
+            --cutoff-state "$(cat /tmp/cutoff_path)" \
+            --old-db "$(cat /tmp/db_path)" \
+            --xg-identity "$(cat /tmp/xgi_path)" \
+            --out _run \
+            --workers 6 | tee /tmp/enroll_stdout.txt
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          def canon(o): return json.dumps(o,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()
+          f=json.load(open('_run/final_status.json'))
+          assert f['status']=='STAGE6_PRE_B_FRESH_CONFIRMATION_RECEIPTS_FULLY_ENROLLED_LABELS_SEALED'
+          assert f['required_n']==1335 and f['receipt_n']==1335
+          assert f['ordered_queue_identity_sha256']==os.environ['QUEUE_SHA']
+          assert f['all_generated_before_locked_kickoff'] is True
+          assert f['target_labels_opened'] is False and f['target_result_or_goal_values_read']==0
+          assert f['target_match_ajax_pages_fetched']==0 and f['target_state_updates_applied']==0
+          assert f['interim_scoring'] is False
+          assert f['max_matrix_to_1x2_abs_error']<=1e-12
+          assert f['max_outcome_probability_abs_delta']<=0.08+1e-15
+          rows=[]
+          for line in pathlib.Path('_run/receipts.jsonl').read_text().splitlines():
+              r=json.loads(line); h=r.pop('receipt_sha256'); assert hashlib.sha256(canon(r)).hexdigest()==h; r['receipt_sha256']=h; rows.append(r)
+          assert len(rows)==1335
+          assert all(r['target_label_read'] is False and r['target_match_ajax_page_fetched'] is False for r in rows)
+          print(json.dumps(f,sort_keys=True))
+          PY
+
+      - name: Seal enrollment artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          cp football-data/research/stage6_pre_b_prospective_confirmation/STAGE6_PRE_B_PROSPECTIVE_CONFIRMATION_CONTRACT.json _seal/contracts/
+          cp football-data/research/stage6_pre_b_prospective_governance/{CONNECTED_CONSUMPTION_AUDIT.json,PROSPECTIVE_QUEUE_LOCK_RECEIPT.json,STATE_BOOTSTRAP_CONTRACT.json,RECEIPT_ENROLLMENT_CONTRACT.json} _seal/contracts/
+          cp football-data/research/stage6_pre_b_prospective_governance/{bootstrap_stage6_pre_b_state.py,enroll_stage6_pre_b_receipts.py,test_enroll_stage6_pre_b_receipts.py} _seal/code/
+          cp _run/{source_observation_manifest.json,receipts.jsonl,receipt_ledger.json,final_status.json} _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_seal'); files=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              b=p.read_bytes(); files.append({'path':p.relative_to(root).as_posix(),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
+          final=json.load(open(root/'evidence'/'final_status.json'))
+          manifest={'schema_version':'football3-stage6-pre-b-receipt-enrollment-seal-v1','exact_head':os.environ['GITHUB_SHA'],'terminal_status':final['status'],'receipt_n':1335,'ordered_queue_identity_sha256':os.environ['QUEUE_SHA'],'target_labels_opened':False,'interim_scoring':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload enrollment artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-stage6-pre-b-receipt-enrollment-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: enroll-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-stage6-pre-b-receipt-enrollment-${{ github.sha }}
+          path: _readback
+      - name: Verify immutable receipt artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_readback'); m=json.load(open(root/'MANIFEST.json')); f=json.load(open(root/'evidence'/'final_status.json'))
+          assert m['exact_head']==os.environ['GITHUB_SHA']
+          assert m['terminal_status']=='STAGE6_PRE_B_FRESH_CONFIRMATION_RECEIPTS_FULLY_ENROLLED_LABELS_SEALED'
+          assert m['receipt_n']==1335 and f['receipt_n']==1335
+          assert m['target_labels_opened'] is False and m['interim_scoring'] is False
+          for x in m['files']:
+              b=(root/x['path']).read_bytes(); assert len(b)==x['bytes'] and hashlib.sha256(b).hexdigest()==x['sha256']
+          lines=(root/'evidence'/'receipts.jsonl').read_text().splitlines(); assert len(lines)==1335
+          ledger=json.load(open(root/'evidence'/'receipt_ledger.json')); assert ledger['receipt_n']==1335
+          print(json.dumps({'status':m['terminal_status'],'exact_head':m['exact_head'],'receipt_n':m['receipt_n'],'active_n':f['active_n'],'fallback_n':f['fallback_n']},sort_keys=True))
+          PY
