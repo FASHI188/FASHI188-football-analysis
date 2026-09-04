@@ -42,9 +42,12 @@ def wrap_reconstruct_cutoff_state(original, helper):
 
     def wrapped(*args, **kwargs):
         result = original(*args, **kwargs)
-        if not isinstance(result, tuple) or len(result) != 7:
+        # Frozen V1 enrollment contract returns exactly:
+        # legacy, formal_state, process_pack, b_pack, future,
+        # league_provenance, shot_transport, b_receipt, legacy_code.
+        if not isinstance(result, tuple) or len(result) != 9:
             raise EnrollmentError("unexpected cutoff reconstruction return contract")
-        legacy = result[5]
+        legacy = result[0]
         formal = getattr(legacy, "formal", None)
         if formal is None:
             raise EnrollmentError("reconstructed legacy formal module missing")
