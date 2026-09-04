@@ -48,7 +48,6 @@ jobs:
           unzip -q .accept/confirmation.zip -d .accept/confirmation
           unzip -q .accept/original_base.zip -d .accept/original_base
           unzip -q .accept/original_final.zip -d .accept/original_final
-          cp -a .accept/original_final/. .formal_state_cache/bundle/
 
       - name: Guard unit tests and legal fallback regression
         run: |
@@ -106,11 +105,37 @@ jobs:
           print('ANOMALY_REBUILD_PASS')
           PY
 
+      - name: Prepare guard-bound exact-cutoff cache from rebuilt prematch state
+        run: |
+          set -euo pipefail
+          rm -rf .formal_state_cache/bundle .formal_state_cache/fast_cache_binding_v1.json
+          mkdir -p .formal_state_cache/bundle
+          cp -a .accept/stuttgart-state/bundle/. .formal_state_cache/bundle/
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 - <<'PY'
+          from pathlib import Path
+          import formal_state_integrity_guard_v1 as guard
+          import permanent_team_identity_bridge_v1 as bridge
+          import runtime as rt
+          repo=Path('.').resolve()
+          root=Path('.formal_state_cache').resolve()
+          loaded=rt.validate_bundle(root/'bundle')
+          cutoff=rt._parse_dt('2026-09-04T00:25:59+00:00','cutoff')
+          kickoff=rt._parse_dt('2026-09-04T18:30:00+00:00','kickoff')
+          fixture,ident=bridge.resolve_fixture(repo,loaded['state'],'GER_Bundesliga','2026/27','VfB Stuttgart','FC Koln',kickoff)
+          assert fixture['home_team_id']=='gteam_9dc5bad7a55031b9', fixture
+          assert fixture['away_team_id']=='gteam_1c33ac6f1f97b37a', fixture
+          binding=guard._binding_payload(loaded,'GER_Bundesliga','2026/27',cutoff,ident)
+          assert binding['data_waterline_covers_requested_cutoff'] is True, binding
+          guard._write_json(root/'fast_cache_binding_v1.json',binding)
+          print('GUARD_BOUND_REBUILT_CACHE_PASS',binding['binding_sha256'])
+          PY
+
       - name: Execute formal gateway entry on exact frozen Stuttgart cutoff
         run: |
           set -euo pipefail
           cat > .accept/formal/request.json <<'JSON'
-          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"stuttgart-koln-governed-candidate-acceptance-v1","match":{"competition_id":"GER_Bundesliga","season":"2026/27","home_team_name":"VfB Stuttgart","away_team_name":"FC Koln","kickoff":"2026-09-04T18:30:00+00:00","cutoff":"2026-09-04T00:25:59+00:00"}}
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"stuttgart-koln-governed-candidate-acceptance-v2","match":{"competition_id":"GER_Bundesliga","season":"2026/27","home_team_name":"VfB Stuttgart","away_team_name":"FC Koln","kickoff":"2026-09-04T18:30:00+00:00","cutoff":"2026-09-04T00:25:59+00:00"}}
           JSON
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
           python3 football-data/formal_gpt_gateway_v1/entry.py \
@@ -127,15 +152,26 @@ jobs:
           assert s['status']=='PASS', s
           assert s['formal_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9', s
           assert s['formal_current_sha256']=='ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8', s
+          assert s['gateway_route']=='SEALED_EXACT_CUTOFF_REPLAY', s
+          assert s['source_refetch_used'] is False, s
+          assert s['state_integrity_guard']['status']=='PASS', s
+          assert s['state_integrity_guard']['execution_mode']=='FAST', s
           r=json.loads((out/'prediction_receipt.json').read_text())
           assert r['formal_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9', r
           assert r['current_sha256']=='ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8', r
           assert r['fallback_exact_v1'] is False, r
-          # This lane starts from the exact frozen target-cutoff state; any live refetch is forbidden.
-          for p in out.glob('*.json'):
-              obj=json.loads(p.read_text())
-              if isinstance(obj,dict) and 'source_refetch_used' in obj:
-                  assert obj['source_refetch_used'] is False, (p,obj)
+          assert r['execution_mode']=='FAST', r
+          assert r['fusion_status']=='FUSION_ACTIVE', r
+          assert r['fallback_class']=='NONE', r
+          assert r['history_counts']['v1_home_historical_matches']>0, r
+          assert r['history_counts']['v1_away_historical_matches']>0, r
+          assert min(float(x) for x in r['history_counts']['xg_effective_evidence'])>=3.0, r
+          assert r['sha256']['input_sha256'], r
+          assert r['sha256']['state_sha256'], r
+          assert r['sha256']['state_bundle_sha256'], r
+          assert r['sha256']['prediction_sha256'], r
+          assert r['receipt_sha'], r
+          assert r['latest_data_available_at'], r
           print('FORMAL_GATEWAY_CANDIDATE_PASS')
           PY
 
@@ -173,7 +209,13 @@ jobs:
             'formal_gateway_prediction_sha':fr['prediction_sha'],
             'formal_gateway_receipt_sha':fr['receipt_sha'],
             'formal_gateway_status':f['status'],
-            'source_refetch_used':s['source_refetch_used'],
+            'formal_gateway_route':f['gateway_route'],
+            'formal_gateway_execution_mode':fr['execution_mode'],
+            'formal_gateway_fallback_class':fr['fallback_class'],
+            'formal_gateway_input_sha':fr['sha256']['input_sha256'],
+            'formal_gateway_state_sha':fr['sha256']['state_sha256'],
+            'formal_gateway_state_bundle_sha':fr['sha256']['state_bundle_sha256'],
+            'source_refetch_used':s['source_refetch_used'] or f.get('source_refetch_used',False),
           }
           (root/'acceptance_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
           print(json.dumps(m,sort_keys=True))
@@ -188,5 +230,6 @@ jobs:
             .accept/integrity/
             .accept/stuttgart/
             .accept/formal/output/
+            .formal_state_cache/fast_cache_binding_v1.json
           if-no-files-found: error
           retention-days: 90
