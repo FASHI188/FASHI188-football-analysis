@@ -229,6 +229,7 @@ def run(out: Path, queue_out: Path) -> None:
         "raw_payload_persisted": False,
         "raw_data_redistribution": False,
         "real_target_result_or_goal_values_read": 0,
+        "connected_consumption_audit_required_before_enrollment": True,
         "transport": {
             "required_header": "X-Requested-With: XMLHttpRequest",
             "content_encoding_handling": "explicit gzip decode by header or 1f8b magic",
@@ -296,8 +297,6 @@ def run(out: Path, queue_out: Path) -> None:
         "queue_first_kickoff_utc": queue[0]["scheduled_kickoff_utc"] if queue else None,
         "queue_last_kickoff_utc": queue[-1]["scheduled_kickoff_utc"] if queue else None,
         "ordered_queue_identity_sha256": queue_digest,
-        "target_identity_overlap_with_consumed": 0,
-        "unresolved_historical_identity_gaps": 0,
     })
     gates = [
         report["all_five_competitions_operational"],
@@ -306,13 +305,11 @@ def run(out: Path, queue_out: Path) -> None:
         report["ppda_field_semantics_verified"],
         report["strict_prior_history_builder_verified"],
         report["queue_meets_required_n"],
-        report["target_identity_overlap_with_consumed"] == 0,
-        report["unresolved_historical_identity_gaps"] == 0,
         report["real_target_result_or_goal_values_read"] == 0,
     ]
-    report["source_preflight_status"] = "PASS_ZERO_LABEL_READY_TO_LOCK_QUEUE" if all(gates) else "STOP_ZERO_LABEL_GATE"
+    report["source_preflight_status"] = "PASS_SOURCE_AND_QUEUE_PRELOCK_ZERO_LABEL" if all(gates) else "STOP_ZERO_LABEL_SOURCE_GATE"
     queue_payload = {
-        "schema_version": "football3-stage6-pre-b-prospective-queue-lock-v1",
+        "schema_version": "football3-stage6-pre-b-prospective-queue-prelock-v1",
         "cutoff_utc": report["cutoff_utc"],
         "required_n": REQUIRED_N,
         "queue_n_atomic": len(queue),
@@ -321,15 +318,17 @@ def run(out: Path, queue_out: Path) -> None:
         "fixtures": queue,
         "target_labels_opened": False,
         "result_or_goal_fields_persisted": False,
+        "connected_consumption_audit_status": "PENDING",
+        "enrollment_authorized": False,
     }
-    report["queue_lock_payload_sha256"] = sha256_bytes(canon(queue_payload))
+    report["queue_prelock_payload_sha256"] = sha256_bytes(canon(queue_payload))
     report["report_sha256"] = sha256_bytes(canon({k: v for k, v in report.items() if k != "report_sha256"}))
     out.parent.mkdir(parents=True, exist_ok=True)
     queue_out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     queue_out.write_text(json.dumps(queue_payload, sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(report, sort_keys=True))
-    if report["source_preflight_status"] != "PASS_ZERO_LABEL_READY_TO_LOCK_QUEUE":
+    if report["source_preflight_status"] != "PASS_SOURCE_AND_QUEUE_PRELOCK_ZERO_LABEL":
         raise SystemExit(2)
 
 
