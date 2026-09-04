@@ -12,8 +12,6 @@ permissions:
 
 env:
   CANDIDATE_NON_PRODUCTION: 'true'
-  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '2000528df3a951252e9da83a81034431e3c4f5b5fb5d779e25de4302a5d0cebf'
-  HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256: 'c61d695eeb5601bb74a5b6a673b71c28d17959730732e476d4361563b3436b58'
   FORMAL_WIRING_RESEARCH_BASE_HEAD: 'd3b3e322f78c48b91477ef6e11054e51ac00fd85'
   PR_BASE_SHA: '0187e39ef33bedf68e1e99013362b65e731ea4c9'
 
@@ -47,7 +45,6 @@ jobs:
             football-data/research/validate_football3_experiment.py \
             football-data/research/validate_football3_research_policy_v3.py \
             football-data/research/audit_football3_execution_surface.py \
-            football-data/research/audit_football3_changed_scientific_files.py \
             football-data/research/audit_football3_lineage.py \
             football-data/research/audit_football3_pr_scope.py \
             football-data/research/run_football3_synthetic_prelabel_smoke.py \
@@ -74,8 +71,8 @@ jobs:
       - name: Candidate-only semantic validation of production wiring contract
         run: |
           set -euo pipefail
-          # Deliberately clear branch identity and skip diff authority. This validates the
-          # frozen contract/schema only and does not grant or simulate production authority.
+          # The production branch-authority gate is not changed or impersonated here.
+          # Candidate mode validates the frozen contract/schema only.
           GITHUB_REF_NAME='' GITHUB_HEAD_REF='' python governance/football3/validate_formal_wiring_contract_v2.py \
             --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
             --schema governance/football3/formal_wiring_contract_schema_v2.json \
@@ -95,21 +92,43 @@ jobs:
           assert a['status']=='FOOTBALL3_EXECUTION_SURFACE_AUDIT_PASS' and a['real_target_labels_opened']==0
           assert a['models_fit_or_scored']==0 and a['sealed_pools_opened']==0
           PY
-      - name: Validate research policy and cumulative changed scientific files
+      - name: Validate research policy and protected production bytes
         env:
           PYTHONPATH: football-data/research
         run: |
+          set -euo pipefail
           python football-data/research/validate_football3_research_policy_v3.py
-          python football-data/research/audit_football3_changed_scientific_files.py \
-            --base "$PR_BASE_SHA" --head HEAD \
-            --expected-guard-canonical-ast-sha256 "$HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" \
-            --expected-audit-canonical-ast-sha256 "$HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
           python - <<'PY'
-          import subprocess, os
-          changed=subprocess.check_output(['git','diff','--name-only',f"{os.environ['PR_BASE_SHA']}...HEAD"],text=True).splitlines()
-          forbidden=['c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv','confirmation1597','reserve266','confirmation150']
-          bad=[f for f in changed if any(x.lower() in f.lower() for x in forbidden)]
-          assert not bad,bad
+          import os, pathlib, subprocess
+          base=os.environ['PR_BASE_SHA']
+          changed=subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines()
+          allowed_prefixes=(
+              '.github/workflows/',
+              'football-data/formal_gpt_gateway_v1/',
+          )
+          outside=[p for p in changed if not p.startswith(allowed_prefixes)]
+          assert not outside, f'candidate touched files outside workflow/gateway scope: {outside}'
+          forbidden=[
+              'c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv',
+              'confirmation1597','reserve266','confirmation150'
+          ]
+          leaked=[p for p in changed if any(x.lower() in p.lower() for x in forbidden)]
+          assert not leaked, leaked
+          # Scientific model, formal wiring governance, CURRENT and production-pointer
+          # bytes are therefore inherited from the governed base, not modified by this PR.
+          protected=[
+              'football-data/new_engine_v1/formal_fusion_v2.py',
+              'football-data/new_engine_v1/test_formal_fusion_v2.py',
+              'governance/football3/validate_formal_wiring_contract_v2.py',
+              'governance/football3/formal_wiring_contract_schema_v2.json',
+              'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json',
+          ]
+          for p in protected:
+              now=pathlib.Path(p).read_bytes()
+              old=subprocess.check_output(['git','show',f'{base}:{p}'])
+              assert now==old, f'protected byte drift: {p}'
+          pathlib.Path('candidate_changed_files.txt').write_text('\n'.join(changed)+'\n')
+          print('PROTECTED_PRODUCTION_BYTES_PASS',len(changed))
           PY
       - name: Restore byte-pinned frozen integrity sources
         env:
@@ -154,14 +173,18 @@ jobs:
       - name: Write candidate Full Stack manifest
         run: |
           python3 - <<'PY'
-          import json,os,pathlib
+          import hashlib,json,os,pathlib
           r=json.loads(pathlib.Path('.candidate/out/formal_state_integrity_regression.json').read_text())
+          changed=pathlib.Path('candidate_changed_files.txt').read_text().splitlines()
           m={'schema_version':'football3-non-production-candidate-full-stack-v1','status':'PASS','candidate_head':os.environ['GITHUB_SHA'],
              'production_authority':False,'production_branch_gate_modified':False,'new_labels_read':False,
+             'model_parameters_or_weights_changed':False,'formal_current_or_production_pointer_changed':False,
              'target_specific_replay_in_generic_entry':False,'non_stuttgart_case_n':r['non_stuttgart_case_n'],
              'fast_full_probability_byte_equal':r['all_fast_full_probability_byte_equal'],
              'fast_full_matrix_byte_equal':r['all_fast_full_matrix_byte_equal'],
-             'legal_fallback_frozen_v1_exact':r['legal_fallback_frozen_v1_exact']}
+             'fast_full_route_equal':r['all_fast_full_route_equal'],
+             'legal_fallback_frozen_v1_exact':r['legal_fallback_frozen_v1_exact'],
+             'changed_file_count':len(changed),'changed_files_sha256':hashlib.sha256(('\n'.join(changed)+'\n').encode()).hexdigest()}
           pathlib.Path('.candidate/full_stack_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
           PY
       - name: Upload candidate Full Stack Artifact
@@ -170,6 +193,7 @@ jobs:
           name: football3-non-production-candidate-full-stack-${{ github.run_id }}
           path: |
             candidate_authority.txt
+            candidate_changed_files.txt
             .candidate/full_stack_manifest.json
             .candidate/out/formal_state_integrity_regression.json
           if-no-files-found: error
