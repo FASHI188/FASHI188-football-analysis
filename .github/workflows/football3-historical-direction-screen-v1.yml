@@ -1,0 +1,137 @@
+name: football3 Historical PIT Direction Screen V1
+
+on:
+  push:
+    branches: ['football3/historical-expanded-pit-dev-v1']
+    paths:
+      - '.github/workflows/football3-historical-direction-screen-v1.yml'
+      - 'football-data/research/historical_direction_screen_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASE_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  screen-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-path isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-expanded-pit-dev-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          changed="$(git diff --name-only "$BASE_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective_governance|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2
+            exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-expanded-pit-dev-v1.yml|.github/workflows/football3-historical-direction-screen-v1.yml|football-data/research/historical_expanded_pit_v1/*|football-data/research/historical_direction_screen_v1/*) ;;
+              *) echo "unexpected changed path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Structural guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_direction_screen_v1
+          python -m py_compile "$D/screen_pit_directions.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_direction_screen_v1/PIT_DIRECTION_SCREEN_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_DIRECTION_SCREEN'
+          assert c['data_roles']['locked_historical_confirmation'].startswith('2023 labels strictly')
+          assert c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          assert c['diagnostics']['no_hyperparameter_grid'] is True
+          assert c['diagnostics']['no_candidate_probability_mutation'] is True
+          PY
+
+      - name: Download exact frozen historical DB
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          mkdir -p _input
+          unzip -q /tmp/old.zip understat_frozen.db understat_freeze_receipt.json understat_identity_manifest.json -d _input
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Run strict PIT direction screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_direction_screen_v1
+          rm -rf _run && mkdir _run
+          python "$D/screen_pit_directions.py" --db _input/understat_frozen.db --contract "$D/PIT_DIRECTION_SCREEN_CONTRACT.json" --out _run | tee /tmp/screen_stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/pit_direction_screen.json'))
+          assert x['status']=='HISTORICAL_PIT_DIRECTION_SCREEN_PASS'
+          assert x['development_n']==9029
+          assert x['source_max_season_loaded']==2022
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          assert x['classification']['strength_gap_and_balanced_draw']=='PRIMARY'
+          assert x['classification']['joint_score_low_score_state']=='PRIMARY'
+          assert x['classification']['match_importance_proxy']=='PROMISING_INTERACTION'
+          assert x['classification']['schedule_rest_congestion']=='INTERACTION_ONLY'
+          assert x['classification']['rotation_pressure']=='INTERACTION_ONLY'
+          r=x['regimes']
+          assert r['balanced']['draw'] > r['overall']['draw'] > r['strong_gap']['draw']
+          assert r['strong_gap_favorite_win'] > 0.68
+          assert r['strong_gap_upset'] < 0.16
+          assert r['low_prior_total']['scores']['goals_le_2'] > 0.57
+          assert r['high_prior_total']['scores']['goals_le_2'] < 0.39
+          PY
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_direction_screen_v1
+          cp "$D/PIT_DIRECTION_SCREEN_CONTRACT.json" _seal/contract/
+          cp "$D/screen_pit_directions.py" _seal/code/
+          cp _run/pit_direction_screen.json /tmp/screen_stdout.txt _seal/evidence/
+          cp _input/understat_freeze_receipt.json _input/understat_identity_manifest.json _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          x=json.load(open('_run/pit_direction_screen.json'))
+          m={'schema_version':'football3-historical-pit-direction-screen-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'base_head':os.environ['BASE_HEAD'],'status':x['status'],'development_n':x['development_n'],'classification':x['classification'],'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed screen evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-pit-direction-screen-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
