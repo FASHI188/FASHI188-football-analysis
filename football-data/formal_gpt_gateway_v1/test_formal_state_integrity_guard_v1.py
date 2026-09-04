@@ -7,8 +7,11 @@ from unittest.mock import patch
 from pathlib import Path
 
 import formal_state_integrity_guard_v1 as guard
+import formal_state_integrity_coverage_patch_v1 as coverage_patch
 import permanent_team_identity_bridge_v1 as bridge
 import runtime as rt
+
+coverage_patch.install()
 
 
 class _Base:
@@ -37,13 +40,16 @@ class _State:
 
 
 class GuardTests(unittest.TestCase):
-    def _loaded(self, home_eff: float, away_eff: float, home_id: str, away_id: str, counts=(10, 10)):
+    def _loaded(self, home_eff: float, away_eff: float, home_id: str, away_id: str, counts=(10, 10), coverage_spec=None):
         comp = "GER_Bundesliga"
         state = _State(_Base(comp, [home_id, away_id], home_eff, away_eff))
         coverage = {
             "schema_version": "football3-cross-season-xg-coverage-v1",
             "team_xg_match_counts": {comp: {home_id: counts[0], away_id: counts[1]}},
+            "files": {},
         }
+        if coverage_spec is not None:
+            coverage["files"][comp] = coverage_spec
         return {
             "state": state,
             "source": {"xg_2025_26_integrity_coverage": coverage},
@@ -113,6 +119,28 @@ class GuardTests(unittest.TestCase):
             {"fallback_exact_v1": True},
         )
         self.assertEqual(audit["fallback_class"], "DATA_STATE_ANOMALY")
+
+    def test_known_incomplete_cross_season_source_is_anomaly_not_normal_fallback(self):
+        h = rt._global_team_id("Stuttgart")
+        a = rt._global_team_id("FC Koln")
+        spec = {
+            "source_known_by_target": True,
+            "coverage_status": "INCOMPLETE_NOT_INGESTED",
+            "linked_rows": 304,
+            "joined_rows": 304,
+            "formal_rows": 306,
+            "unmatched_rows": 2,
+            "overlap_rows": 0,
+        }
+        loaded = self._loaded(10.0, 10.0, h, a, counts=(0, 0), coverage_spec=spec)
+        audit = guard.classify_state(
+            loaded, self._fixture(h, a), self._ident(),
+            {"dynamic": {"evidence": [0.5, 0.5, 0.5, 0.5]}},
+            {"fallback_exact_v1": True},
+        )
+        self.assertEqual(audit["status"], "DATA_STATE_ANOMALY")
+        self.assertEqual(audit["fallback_class"], "DATA_STATE_ANOMALY")
+        self.assertTrue(any(x.startswith("CROSS_SEASON_XG_COVERAGE_INCOMPLETE:") for x in audit["anomaly_reasons"]))
 
     def test_cache_binding_changes_on_any_bound_field(self):
         h = rt._global_team_id("Stuttgart")
