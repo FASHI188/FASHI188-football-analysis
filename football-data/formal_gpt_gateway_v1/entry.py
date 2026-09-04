@@ -30,6 +30,8 @@ LIVE_SOURCE_FAILURE_PROBE = live_source_failure_probe_v1.install(gateway)
 import live_gateway_patch_v1
 
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
+import target_identity_replay_fix_v1
+TARGET_IDENTITY_REPLAY_FIX = target_identity_replay_fix_v1.install(gateway)
 
 
 def _direct_complete_fixture(history):
@@ -71,6 +73,7 @@ def main() -> int:
             "live_fast_reuse_audit.json": fast_audit,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
+            "target_identity_replay_fix_adapter.json": TARGET_IDENTITY_REPLAY_FIX,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -91,6 +94,7 @@ def main() -> int:
             d["live_fast_reuse_audit"] = fast_audit
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
+            d["target_identity_replay_fix_adapter"] = TARGET_IDENTITY_REPLAY_FIX
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
