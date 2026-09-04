@@ -31,6 +31,8 @@ import live_gateway_patch_v1
 
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 import target_identity_replay_fix_v1
+import xg_trigger_diagnostic_fix_v2
+XG_TRIGGER_DIAGNOSTIC_FIX = xg_trigger_diagnostic_fix_v2.install()
 TARGET_IDENTITY_REPLAY_FIX = target_identity_replay_fix_v1.install(gateway)
 
 
@@ -73,6 +75,7 @@ def main() -> int:
             "live_fast_reuse_audit.json": fast_audit,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
+            "xg_trigger_diagnostic_fix_adapter.json": XG_TRIGGER_DIAGNOSTIC_FIX,
             "target_identity_replay_fix_adapter.json": TARGET_IDENTITY_REPLAY_FIX,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
@@ -94,6 +97,7 @@ def main() -> int:
             d["live_fast_reuse_audit"] = fast_audit
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
+            d["xg_trigger_diagnostic_fix_adapter"] = XG_TRIGGER_DIAGNOSTIC_FIX
             d["target_identity_replay_fix_adapter"] = TARGET_IDENTITY_REPLAY_FIX
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
