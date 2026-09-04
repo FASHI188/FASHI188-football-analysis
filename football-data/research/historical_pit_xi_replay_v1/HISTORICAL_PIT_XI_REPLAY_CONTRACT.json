@@ -1,0 +1,87 @@
+{
+  "schema_version": "football3-historical-pit-xi-replay-v1",
+  "status": "FROZEN_BEFORE_BATCH_TARGET_XI_SCORING",
+  "research_only": true,
+  "promotion_allowed": false,
+  "classification": "DIAGNOSTIC_CONSUMED_HISTORY_ONLY",
+  "parent": {
+    "branch": "football3/historical-fusion-v3-1-1-joint-score-v1",
+    "head": "a90762a97515f3edd564e8ad204db0d0d4231494"
+  },
+  "source": {
+    "artifact_id": 9798682425,
+    "artifact_digest": "sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba",
+    "database_member": "understat_frozen.db",
+    "database_sha256": "f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681",
+    "general_table": "general_game_stats",
+    "lineup_table": "lineup_stats",
+    "identity_join": "lineup_stats.match_id = general_game_stats.id",
+    "fixture_identity": "general_game_stats.fid",
+    "starter_label_rule": "lower(trim(position)) != 'sub'"
+  },
+  "target_cohort": {
+    "leagues": ["Bundesliga", "EPL", "La liga", "Ligue 1", "Serie A"],
+    "seasons": [2020, 2021, 2022],
+    "expected_fixture_n": 5478,
+    "expected_fixture_n_per_season": 1826,
+    "selection": "all exact frozen Understat fixtures in five leagues and seasons 2020-2022, ordered by date,id",
+    "consumed_history": true
+  },
+  "mechanism": {
+    "name": "STRICT_PRIOR_DECAYED_STARTER_BASELINE",
+    "lookback_pool_matches": 20,
+    "feature_lookback_matches": 8,
+    "decay": 0.78,
+    "beta_smoothing": 0.50,
+    "max_candidates": 32,
+    "candidate_pool": "players observed for team in prior completed matches only; union over last 20 team matches; deterministic trim to 32 by most-recent appearance, cumulative prior minutes, player_id",
+    "raw_probability": "(sum_lag decay^lag * I(started_prior_match) + smoothing) / (sum_lag decay^lag + 2*smoothing)",
+    "projection": "shared logit shift across candidate probabilities so projected P(start) sums to 11",
+    "expected_xi": "top 11 projected P(start); ties by cumulative prior minutes then player_id",
+    "no_parameter_search": true,
+    "no_training_or_refit": true,
+    "no_injury_backfill": true,
+    "no_current_target_lineup_feature": true,
+    "same_date_matches_are_not_prior": true
+  },
+  "comparators": {
+    "last_completed_xi": "starter XI from team's most recent strictly earlier-date match",
+    "mechanism_vs_last_xi_primary": true
+  },
+  "label_policy": {
+    "target_confirmed_xi_allowed_only_after_prediction_fixed": true,
+    "target_result_or_score_access": false,
+    "market_or_odds_access": false,
+    "postmatch_event_feature_access": false
+  },
+  "metrics": [
+    "eligible_team_sides",
+    "mean_xi_overlap",
+    "median_xi_overlap",
+    "exact_11_rate",
+    "unseen_actual_starters_mean",
+    "mean_overlap_gain_vs_last_xi",
+    "season_block_overlap_gain",
+    "four_chronological_block_overlap_gain",
+    "starter_probability_logloss",
+    "starter_probability_brier"
+  ],
+  "diagnostic_gate": {
+    "minimum_eligible_team_sides": 9000,
+    "mean_overlap_gain_vs_last_xi_min": 0.0,
+    "season_blocks_nonnegative_required": 2,
+    "chronological_blocks_nonnegative_required": 3,
+    "probability_logloss_finite": true,
+    "note": "Passing only authorizes the already-frozen 1X2 technical bridge diagnostic on consumed history; it does not authorize promotion."
+  },
+  "forbidden": {
+    "open_or_use_3504": true,
+    "retune_on_2020_2022_labels": true,
+    "use_2023_as_fresh_confirmation": true,
+    "change_formal_v2": true,
+    "change_frozen_v3_1_1": true,
+    "change_CURRENT": true,
+    "change_production_pointer": true,
+    "change_formal_weights": true
+  }
+}
