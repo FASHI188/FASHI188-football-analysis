@@ -21,7 +21,7 @@ class FrozenV2HelperBindingTests(unittest.TestCase):
             return {"sentinel": list(args)}
         helper = types.SimpleNamespace(prediction_record=fn)
         legacy = types.SimpleNamespace(formal=types.SimpleNamespace())
-        expected = ("cutoff", "rf", "standings", "process", "bstate", legacy, "bmodule")
+        expected = (legacy, "formal_state", "process_pack", "b_pack", "future", "league_provenance", "shot_transport", "b_receipt", "legacy_code")
 
         def original(*args, **kwargs):
             self.assertEqual(args, ("x",))
@@ -31,8 +31,8 @@ class FrozenV2HelperBindingTests(unittest.TestCase):
         wrapped = m.wrap_reconstruct_cutoff_state(original, helper)
         got = wrapped("x", y=1)
         self.assertIs(got, expected)
-        self.assertIs(got[5].formal.prediction_record, fn)
-        self.assertEqual(got[5].formal.prediction_record(1, 2, 3, 0.75), fn(1, 2, 3, 0.75))
+        self.assertIs(got[0].formal.prediction_record, fn)
+        self.assertEqual(got[0].formal.prediction_record(1, 2, 3, 0.75), fn(1, 2, 3, 0.75))
 
     def test_missing_prediction_record_fails_closed(self):
         with self.assertRaises(m.EnrollmentError):
@@ -64,10 +64,11 @@ class FrozenV2HelperBindingTests(unittest.TestCase):
         }
         direct = helper.prediction_record(XG, base, xp, 0.75)
         legacy = types.SimpleNamespace(formal=types.SimpleNamespace())
-        result = (None, None, None, None, None, legacy, None)
+        result = (legacy, None, None, None, None, None, None, None, None)
         wrapped = m.wrap_reconstruct_cutoff_state(lambda: result, helper)
-        adapted = wrapped()[5].formal.prediction_record(XG, base, xp, 0.75)
-        self.assertIs(wrapped()[5].formal.prediction_record, helper.prediction_record)
+        adapted_result = wrapped()
+        adapted = adapted_result[0].formal.prediction_record(XG, base, xp, 0.75)
+        self.assertIs(adapted_result[0].formal.prediction_record, helper.prediction_record)
         self.assertEqual(canon(adapted), canon(direct))
 
 
