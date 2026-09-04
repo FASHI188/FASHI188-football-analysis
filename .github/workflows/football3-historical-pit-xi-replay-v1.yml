@@ -1,0 +1,199 @@
+name: football3 historical PIT XI replay v1
+
+on:
+  push:
+    branches:
+      - football3/historical-pit-xi-replay-v1
+    paths:
+      - football-data/research/historical_pit_xi_replay_v1/**
+      - .github/workflows/football3-historical-pit-xi-replay-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-historical-pit-xi-replay-v1-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  FROZEN_V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  SCIENCE_PARENT: a60e47250ef63cbefeca8d2c0c71090a23d8fa0a
+  CONTRACT_BLOB: b09b0a6aee2529dee74364c829ae583af6a4dab1
+  RUNNER_BLOB: 64c641113d00ac3165d03aa80248b631ae8cd889
+  TEST_BLOB: a7a29ee600f5ec3fae12e8fc341dd739518c7f68
+  SOURCE_ARTIFACT_ID: '9798682425'
+  SOURCE_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  SOURCE_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+    steps:
+      - name: Checkout exact run HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify lineage whitelist and frozen science blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-pit-xi-replay-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$SCIENCE_PARENT"
+          test "$(git merge-base "$FROZEN_V311_HEAD" HEAD)" = "$FROZEN_V311_HEAD"
+          test "$(git rev-parse HEAD:football-data/research/historical_pit_xi_replay_v1/HISTORICAL_PIT_XI_REPLAY_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git rev-parse HEAD:football-data/research/historical_pit_xi_replay_v1/historical_pit_xi_replay.py)" = "$RUNNER_BLOB"
+          test "$(git rev-parse HEAD:football-data/research/historical_pit_xi_replay_v1/test_historical_pit_xi_replay.py)" = "$TEST_BLOB"
+          git diff --name-only "$FROZEN_V311_HEAD"..HEAD | sort > /tmp/actual.txt
+          cat > /tmp/expected.txt <<'EOF'
+          .github/workflows/football3-historical-pit-xi-replay-v1.yml
+          football-data/research/historical_pit_xi_replay_v1/HISTORICAL_PIT_XI_REPLAY_CONTRACT.json
+          football-data/research/historical_pit_xi_replay_v1/historical_pit_xi_replay.py
+          football-data/research/historical_pit_xi_replay_v1/test_historical_pit_xi_replay.py
+          EOF
+          sed -i 's/^          //' /tmp/expected.txt
+          sort -o /tmp/expected.txt /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run frozen structural tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile football-data/research/historical_pit_xi_replay_v1/historical_pit_xi_replay.py football-data/research/historical_pit_xi_replay_v1/test_historical_pit_xi_replay.py
+          python football-data/research/historical_pit_xi_replay_v1/test_historical_pit_xi_replay.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Verify and download exact frozen Understat Artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          meta="$(gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID})"
+          actual="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin).get("digest") or "")')"
+          expired="$(printf '%s' "$meta" | python -c 'import json,sys; print(str(json.load(sys.stdin).get("expired")).lower())')"
+          python - "$actual" "$SOURCE_ARTIFACT_DIGEST" <<'PY'
+          import sys
+          norm=lambda s:s if s.startswith('sha256:') else 'sha256:'+s
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+          test "$expired" = false
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" -o /tmp/source.zip
+          test "sha256:$(sha256sum /tmp/source.zip | awk '{print $1}')" = "$SOURCE_ARTIFACT_DIGEST"
+          rm -rf _source && mkdir _source
+          unzip -tq /tmp/source.zip
+          unzip -q /tmp/source.zip -d _source
+          test "$(sha256sum _source/understat_frozen.db | awk '{print $1}')" = "$SOURCE_DB_SHA256"
+
+      - name: Run frozen 5478-match strict-PIT XI diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf football-data/research/historical_pit_xi_replay_v1/artifacts/run
+          python football-data/research/historical_pit_xi_replay_v1/historical_pit_xi_replay.py \
+            --db _source/understat_frozen.db \
+            --out football-data/research/historical_pit_xi_replay_v1/artifacts/run \
+            2>&1 | tee /tmp/replay.txt
+
+      - name: Validate terminal and seal manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out=Path('football-data/research/historical_pit_xi_replay_v1/artifacts/run')
+          f=json.loads((out/'final_status.json').read_text())
+          allowed={'HISTORICAL_PIT_XI_DIAGNOSTIC_PASS_1X2_BRIDGE_ALLOWED','HISTORICAL_PIT_XI_DIAGNOSTIC_REJECT_NO_1X2_BRIDGE'}
+          assert f['status'] in allowed,f
+          assert f['classification']=='DIAGNOSTIC_CONSUMED_HISTORY_ONLY'
+          assert f['research_only'] is True and f['promotion_allowed'] is False
+          assert f['target_fixture_n']==5478
+          assert f['target_fixture_counts']=={'2020':1826,'2021':1826,'2022':1826} or f['target_fixture_counts']=={2020:1826,2021:1826,2022:1826}
+          for k in ('target_result_access','target_score_access','market_access','injury_backfill','2023_opened_by_this_replay','3504_opened','formal_v2_changed','frozen_v3_1_1_changed','CURRENT_changed','production_pointer_changed','formal_weights_changed'):
+              assert f[k] is False,(k,f[k])
+          assert (out/'prelabel_predictions.jsonl').exists()
+          assert (out/'evaluated_sides.jsonl').exists()
+          def sha(p):
+              h=hashlib.sha256(); h.update(p.read_bytes()); return h.hexdigest()
+          files=[]
+          for p in sorted(out.iterdir()):
+              if p.is_file() and p.name!='artifact_manifest.json':
+                  files.append({'path':p.name,'sha256':sha(p),'size':p.stat().st_size})
+          manifest={
+              'schema_version':'football3-historical-pit-xi-replay-artifact-manifest-v1',
+              'head_sha':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'branch':os.environ['GITHUB_REF_NAME'],
+              'frozen_v311_head':os.environ['FROZEN_V311_HEAD'],
+              'source_artifact_id':int(os.environ['SOURCE_ARTIFACT_ID']),
+              'source_artifact_digest':os.environ['SOURCE_ARTIFACT_DIGEST'],
+              'source_db_sha256':os.environ['SOURCE_DB_SHA256'],
+              'terminal_status':f['status'],'files':files,
+          }
+          (out/'artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True))
+          PY
+
+      - name: Define Artifact name
+        id: meta
+        shell: bash
+        run: |
+          status="$(python -c 'import json;print(json.load(open("football-data/research/historical_pit_xi_replay_v1/artifacts/run/final_status.json"))["status"])')"
+          name="football3-historical-pit-xi-replay-${status}-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sealed replay Artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: football-data/research/historical_pit_xi_replay_v1/artifacts/run
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: research-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Verify remote digest and payload terminal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.research-and-seal.outputs.artifact_id }}
+          EXPECTED_DIGEST: ${{ needs.research-and-seal.outputs.artifact_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          meta="$(gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID})"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$got" "$EXPECTED_DIGEST" <<'PY'
+          import sys
+          norm=lambda s:s if s.startswith('sha256:') else 'sha256:'+s
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/result.zip
+          rm -rf /tmp/result && mkdir /tmp/result
+          unzip -q /tmp/result.zip -d /tmp/result
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          fs=list(Path('/tmp/result').rglob('final_status.json'))
+          assert len(fs)==1,fs
+          f=json.loads(fs[0].read_text())
+          assert f['status'] in {'HISTORICAL_PIT_XI_DIAGNOSTIC_PASS_1X2_BRIDGE_ALLOWED','HISTORICAL_PIT_XI_DIAGNOSTIC_REJECT_NO_1X2_BRIDGE'}
+          assert f['target_fixture_n']==5478
+          assert f['2023_opened_by_this_replay'] is False and f['3504_opened'] is False
+          print(json.dumps({'status':f['status'],'overall':f['overall'],'gate':f['gate']},sort_keys=True))
+          PY
