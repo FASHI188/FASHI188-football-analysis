@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           rm -rf .stuttgart_recalc_state/bundle/* football-data/formal_gpt_gateway_v1/stuttgart_recalc_output/*
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
-          python3 football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v1.py \
+          python3 football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v2.py \
             --repo-root "$PWD" \
             --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
             --confirmation-dir "$PWD/.runtime_sources/confirmation" \
@@ -115,11 +115,13 @@ jobs:
           assert reg["legal_fallback_frozen_v1_exact"] is True,reg
           cs=reg["cross_season_full_rebuild"]
           assert cs["status"]=="PASS",cs
+          assert cs["state_stage"]=="BASE_AFTER_2025_26_CROSS_SEASON_REBUILD_BEFORE_2026_27_LIVE_DELTA",cs
           for comp in ("GER_Bundesliga","ENG_PremierLeague","ITA_SerieA"):
               c=cs["coverage"][comp]
               assert c["eligible_for_target"] is True,c
               assert c["joined_rows"]==c["formal_rows"] and c["joined_rows"]>0,c
-          assert min(cs["stuttgart_koln_xg_evidence"])>=3.0,cs
+          assert min(cs["stuttgart_koln_xg_evidence"])>0.0,cs
+          assert cs["final_threshold_checked_in_pinned_target_replay"] is True,cs
           assert s["status"]=="PASS",s
           assert s["cutoff"]=="2026-09-04T00:25:59+00:00",s
           assert s["source_refetch_used"] is False,s
@@ -136,6 +138,7 @@ jobs:
           assert i["home"]["strength_team_id"]=="gteam_9dc5bad7a55031b9",i
           assert i["away"]["strength_team_id"]=="gteam_1c33ac6f1f97b37a",i
           assert t["dynamic"]["fallback_exact_v1"] is False,t
+          assert min(float(x) for x in t["dynamic"]["evidence"])>=3.0,t
           gate={
             "schema_version":"football3-formal-state-integrity-gate-v1",
             "status":"PASS",
@@ -154,6 +157,7 @@ jobs:
             "stuttgart_p_away":r["p_away"],
             "stuttgart_model_center":r["model_center"],
             "stuttgart_fallback_exact_v1":r["fallback_exact_v1"],
+            "stuttgart_xg_effective_evidence":t["dynamic"]["evidence"],
             "model_parameters_or_weights_changed":False,
             "formal_current_or_production_pointer_changed":False,
           }
