@@ -9,7 +9,7 @@ from typing import Any
 import formal_state_integrity_full_rebuild_v1 as full_rebuild
 import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
-import target_identity_replay_fix_v1 as identity_diag
+from historical_xg_challenger_v1 import historical_xg_challenger as hxg
 
 SCHEMA = "football3-formal-state-integrity-guard-v1"
 BINDING_SCHEMA = "football3-fast-cache-binding-v1"
@@ -177,6 +177,45 @@ def _v1_aux(state: Any, fixture: dict[str, Any]) -> dict[str, Any]:
         "effective_away_history": float(p["effective_away_history"]),
         "effective_competition_history": float(p["effective_competition_history"]),
         "prior_source": p["prior_source"],
+    }
+
+
+def _xg_trigger_audit(state: Any, fixture: dict[str, Any]) -> dict[str, Any]:
+    """Generic, read-only XG trigger metadata audit over a state clone.
+
+    The frozen challenger's lightweight prediction intentionally omits `dynamic`.
+    Integrity inspection therefore uses the normal metadata-bearing prediction with
+    score-matrix generation disabled. The cloned state is never persisted or applied
+    back, so this cannot alter model parameters, weights, or production state.
+    """
+    clone = rt.deserialize_state(rt.serialize_v1_state(state.base), rt.serialize_xg_state(state))
+    f = hxg.FixtureRow(
+        fixture["fixture_id"], fixture["competition_id"], fixture["season"],
+        rt._parse_dt(fixture["kickoff"], "fixture kickoff"),
+        fixture["home_team_id"], fixture["away_team_id"],
+        fixture["home_team_name"], fixture["away_team_name"],
+    )
+    xg_predictions, _ = clone.predict_batch([f], include_matrix=False)
+    if len(xg_predictions) != 1:
+        raise rt.RuntimeGateError("XG trigger diagnostic cardinality mismatch")
+    row = xg_predictions[0]
+    dynamic = row.get("dynamic")
+    if type(dynamic) is not dict:
+        raise rt.RuntimeGateError(
+            "XG trigger diagnostic metadata missing from metadata-bearing challenger prediction"
+        )
+    return {
+        "schema_version": "football3-xg-trigger-audit-v2",
+        "fixture_id": fixture["fixture_id"],
+        "dynamic": dynamic,
+        "frozen_min_effective_evidence": MIN_XG_EVIDENCE,
+        "diagnostic_prediction_keys": sorted(str(k) for k in row.keys()),
+        "diagnostic_state_clone_only": True,
+        "score_matrix_requested": False,
+        "lightweight_mode_used": False,
+        "persisted_state_mutated": False,
+        "target_specific_replay_used": False,
+        "model_parameters_or_weights_changed": False,
     }
 
 
@@ -362,7 +401,6 @@ def _enrich_receipt(
 
 
 def install(gateway_module) -> dict[str, Any]:
-    identity_diag._resolve_team = identity_bridge.resolve_team
     original = gateway_module.normal_request
 
     def normal_request(req: dict[str, Any], state_root: Path, out: Path, repo_root: Path,
@@ -410,7 +448,7 @@ def install(gateway_module) -> dict[str, Any]:
         def inspect_current():
             loaded = rt.validate_bundle(state_root / "bundle")
             fixture, ident = identity_bridge.resolve_fixture(repo_root, loaded["state"], comp, season, home, away, kickoff)
-            trigger = identity_diag._xg_trigger_audit(loaded["state"], fixture)
+            trigger = _xg_trigger_audit(loaded["state"], fixture)
             receipt = json.loads((out / "prediction_receipt.json").read_text(encoding="utf-8"))
             audit = classify_state(loaded, fixture, ident, trigger, receipt)
             return loaded, fixture, ident, trigger, receipt, audit
@@ -489,6 +527,8 @@ def install(gateway_module) -> dict[str, Any]:
         ],
         "data_state_anomaly_forces_full_rebuild": True,
         "identity_fail_closed": True,
+        "generic_xg_trigger_metadata_from_state_clone": True,
+        "target_specific_replay_dependency": False,
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,
     }
