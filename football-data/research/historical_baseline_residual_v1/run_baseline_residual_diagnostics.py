@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse, collections, datetime as dt, json, math, pathlib, sqlite3, sys
 
 HERE=pathlib.Path(__file__).resolve().parent
-ROOT=HERE.parents[2]
+ROOT=HERE.parents[1]
 sys.path.insert(0,str(ROOT/'research'/'stage6_pre_b_deep_ppda'))
 sys.path.insert(0,str(ROOT/'research'/'historical_direction_screen_v1'))
 import common
@@ -61,7 +61,6 @@ def feature_map(db):
               'importance_diff':None if hi is None or ai is None else hi-ai,
               'importance_mean':None if hi is None or ai is None else 0.5*(hi+ai),
             }
-        # consume the target batch only after all features at this kickoff are snapshotted
         for g in sorted(batch,key=lambda x:int(x['id'])):
             for tid in (int(g['h_id']),int(g['a_id'])):
                 key=(g['league'],tid); s=states[key]
