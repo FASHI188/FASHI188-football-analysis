@@ -37,6 +37,11 @@ LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 import formal_future_fixture_identity_bridge_v1
 FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE = formal_future_fixture_identity_bridge_v1.install(gateway)
 
+# Preserve the historical missing-data probe contract when stricter live source
+# guards fail closed with a newer error class. This affects probe mode only.
+import formal_missing_data_probe_compat_v1
+FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(gateway)
+
 # Install generic integrity controls after the existing production gateway stack.
 # Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
 # installed here; those remain confined to diagnostic workflows.
@@ -88,6 +93,7 @@ def main() -> int:
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
+            "formal_missing_data_probe_compat_adapter.json": FORMAL_MISSING_DATA_PROBE_COMPAT,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
@@ -112,6 +118,7 @@ def main() -> int:
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
+            d["formal_missing_data_probe_compat_adapter"] = FORMAL_MISSING_DATA_PROBE_COMPAT
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
