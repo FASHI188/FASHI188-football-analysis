@@ -31,6 +31,12 @@ import live_gateway_patch_v1
 
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 
+# Canonical future/absent fixture identity must be available inside the gateway
+# before the integrity guard captures the production normal-request chain. This
+# bridge is generic and identity-only; it does not install target replay logic.
+import formal_future_fixture_identity_bridge_v1
+FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE = formal_future_fixture_identity_bridge_v1.install(gateway)
+
 # Install generic integrity controls after the existing production gateway stack.
 # Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
 # installed here; those remain confined to diagnostic workflows.
@@ -81,6 +87,7 @@ def main() -> int:
             "live_fast_reuse_audit.json": fast_audit,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
+            "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
@@ -104,6 +111,7 @@ def main() -> int:
             d["live_fast_reuse_audit"] = fast_audit
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
+            d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
