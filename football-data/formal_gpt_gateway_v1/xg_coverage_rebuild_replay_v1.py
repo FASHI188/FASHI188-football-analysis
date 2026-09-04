@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+# Install the exact governed source-contract/quarantine stack used by the formal gateway
+# before reading the frozen historical xG bindings.
+import entry as installed_gateway_stack  # noqa: F401
 import live_gateway_patch_v1 as live_gateway
 import runtime as rt
 import target_identity_replay_fix_v1 as identity_fix
