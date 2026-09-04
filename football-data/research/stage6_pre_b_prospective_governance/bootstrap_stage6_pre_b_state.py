@@ -61,6 +61,7 @@ def load_legacy_modules():
     bootstrap_bytes = git_show(LEGACY_BOOTSTRAP_PATH)
     boot_mod = types.ModuleType("v311_prospective_state_bootstrap_locked")
     boot_mod.__file__ = str(ROOT / LEGACY_BOOTSTRAP_PATH)
+    sys.modules[boot_mod.__name__] = boot_mod
     exec(compile(bootstrap_bytes, boot_mod.__file__, "exec"), boot_mod.__dict__)
     boot_mod.CUTOFF = CUTOFF
     return source_mod, boot_mod, {
