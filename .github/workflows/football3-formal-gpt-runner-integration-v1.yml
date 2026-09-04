@@ -1,10 +1,9 @@
 name: Football3 Formal GPT Runner Integration V1
 
 on:
-  pull_request:
+  push:
     branches:
       - football3/formal-gpt-runner-identity-repair-v1
-    types: [opened, edited, reopened, synchronize]
 
 permissions:
   contents: read
@@ -16,37 +15,25 @@ concurrency:
 
 jobs:
   formal-request:
-    if: ${{ github.event.pull_request.head.ref == 'football3/formal-gpt-runner-request-carrier-v1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Build audited exact frozen replay request
-        env:
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
           set -euo pipefail
           mkdir -p .runtime_sources football-data/formal_gpt_gateway_v1/output
           python3 - <<'PY'
           import hashlib, json, os, pathlib
-          body=os.environ['PR_BODY']
-          begin='<!-- football3-request-json -->'; end='<!-- /football3-request-json -->'
-          if begin not in body or end not in body:
-              raise SystemExit('request carrier markers missing')
-          req=json.loads(body.split(begin,1)[1].split(end,1)[0].strip())
-          expected={
+          req={
               'schema_version':'football3-formal-gpt-gateway-v1',
               'mode':'predict',
               'request_id':'stuttgart-koln-frozen-replay-20260904-004',
@@ -56,18 +43,14 @@ jobs:
                   'home_team_name':'VfB Stuttgart','away_team_name':'FC Koln',
               },
           }
-          if req != expected:
-              raise SystemExit('request does not exactly match audited frozen replay request')
           canonical=json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
           pathlib.Path('.runtime_sources/invocation_request.json').write_bytes(canonical)
           audit={
               'schema_version':'football3-gpt-request-transport-v1',
-              'event':'pull_request','transport':'DRAFT_PR_BODY_EDIT_SEALED_REPLAY_REPAIR',
+              'event':'push','transport':'TEMPORARY_REPAIR_PUSH_SEALED_REPLAY',
               'request_sha256':hashlib.sha256(canonical).hexdigest(),
-              'pr_number':os.environ['PR_NUMBER'],'pr_head_ref':os.environ['PR_HEAD_REF'],
-              'pr_base_ref':os.environ['PR_BASE_REF'],'code_ref':os.environ['BASE_SHA'],
-              'commit_per_match_required':False,'source_refetch_allowed':False,
-              'pinned_state_artifact_id':9918501049,
+              'code_ref':os.environ['GITHUB_SHA'],'commit_per_match_required':False,
+              'source_refetch_allowed':False,'pinned_state_artifact_id':9918501049,
               'pinned_cutoff':'2026-09-04T00:25:59+00:00',
           }
           pathlib.Path('.runtime_sources/request_transport.json').write_text(json.dumps(audit,sort_keys=True,separators=(',',':'))+'\n')
@@ -108,7 +91,6 @@ jobs:
           PY
 
       - name: Execute repaired exact-cutoff sealed replay
-        id: execute
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
