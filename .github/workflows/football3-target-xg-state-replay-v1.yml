@@ -1,0 +1,146 @@
+name: Football3 Target XG State Replay V1
+
+on:
+  push:
+    branches:
+      - football3/formal-gpt-runner-identity-repair-v1
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-target-xg-state-replay-v1
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore only pinned frozen artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation \
+                   .runtime_sources/original_base .runtime_sources/original_final \
+                   .target_state_cache football-data/formal_gpt_gateway_v1/target_replay_output
+          fetch_artifact () {
+            local id="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "${out}"
+          }
+          fetch_artifact 9798682425 .runtime_sources/understat.zip
+          fetch_artifact 9827606506 .runtime_sources/confirmation.zip
+          fetch_artifact 9918451916 .runtime_sources/original_base.zip
+          fetch_artifact 9918501049 .runtime_sources/original_final.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          unzip -q .runtime_sources/original_base.zip -d .runtime_sources/original_base
+          unzip -q .runtime_sources/original_final.zip -d .runtime_sources/original_final
+
+      - name: Execute pinned-state prematch target replay
+        run: |
+          set -euo pipefail
+          rm -rf .target_state_cache/bundle football-data/formal_gpt_gateway_v1/target_replay_output/*
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v1.py \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --original-base-bundle "$PWD/.runtime_sources/original_base" \
+              --original-final-bundle "$PWD/.runtime_sources/original_final" \
+              --state-root "$PWD/.target_state_cache" \
+              --out "$PWD/football-data/formal_gpt_gateway_v1/target_replay_output" \
+            | tee football-data/formal_gpt_gateway_v1/target_replay_output/stdout.txt
+
+      - name: Enforce target replay invariants
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib
+          out=pathlib.Path('football-data/formal_gpt_gateway_v1/target_replay_output')
+          s=json.loads((out/'summary.json').read_text())
+          r=json.loads((out/'prediction_receipt.json').read_text())
+          c=json.loads((out/'xg_coverage_repair_audit.json').read_text())
+          p=json.loads((out/'original_state_delta_reuse_proof.json').read_text())
+          t=json.loads((out/'xg_trigger_audit.json').read_text())
+          i=json.loads((out/'target_identity_audit.json').read_text())
+          assert s['status']=='PASS',s
+          assert s['cutoff']=='2026-09-04T00:25:59+00:00',s
+          assert s['gateway_route']=='PINNED_ORIGINAL_STATE_TARGET_XG_REPLAY_NO_REFETCH',s
+          assert s['source_refetch_used'] is False,s
+          assert s['post_target_information_used'] is False,s
+          assert s['target_match_xg_used'] is False,s
+          assert s['model_parameters_or_weights_changed'] is False,s
+          assert s['fusion_weights']=={'xg':0.75,'frozen_v1':0.25},s
+          assert s['fallback_exact_v1'] is False,s
+          assert r['fallback_exact_v1'] is False,r
+          assert r['model_route']!='FROZEN_V1_EXACT_FALLBACK',r
+          assert c['files']['GER_Bundesliga']['joined_rows']==306,c
+          assert c['files']['GER_Bundesliga']['formal_2025_26_rows']==306,c
+          assert c['historical_pit_claim'] is False,c
+          assert p['original_base_bundle_sha256']=='5c6e262179d6d5d06b64057bf9cb184756b72d456dcd5de466d303630d20658d',p
+          assert p['original_final_bundle_sha256']=='64cec8b2d68b3aa5989bbac7ef5125602425f30f282e833cb8cab23e8b7f46e7',p
+          assert p['original_final_state_sha256']=='7627578d26510d7240cb95cac2befac8515990c8218ddef2d7e325ecc50736fb',p
+          assert p['original_live_source_set_sha256']=='de20070f7fc5c49f5b7c45e0b6c028c0087d3c15cb6861b67fb57f0d626eac63',p
+          assert p['original_live_records_sha256']=='6a02bb78f2bf453a67d2614b593e6860fcaf1968f964ba5b50fde6e9f86ef8e2',p
+          assert p['source_refetch_used'] is False,p
+          assert p['target_2025_26_repaired_fixture_n']>0,p
+          assert i['home']['strength_team_id']=='gteam_9dc5bad7a55031b9',i
+          assert i['away']['strength_team_id']=='gteam_1c33ac6f1f97b37a',i
+          assert t['dynamic']['fallback_exact_v1'] is False,t
+          assert r['runtime_input_sha']==s['runtime_input_sha']
+          assert r['state_sha256']==s['state_sha256']
+          assert r['state_bundle_sha']==s['state_bundle_sha']
+          assert r['prediction_sha']==s['prediction_sha']
+          assert r['receipt_sha']==s['receipt_sha']
+          gate={
+            'schema_version':'football3-target-xg-state-replay-gate-v1','status':'PASS',
+            'cutoff':s['cutoff'],'model_route':r['model_route'],'fallback_exact_v1':False,
+            'home_strength_team_id':i['home']['strength_team_id'],
+            'away_strength_team_id':i['away']['strength_team_id'],
+            'ger_2025_26_xg_joined':c['files']['GER_Bundesliga']['joined_rows'],
+            'target_2025_26_repaired_fixture_n':p['target_2025_26_repaired_fixture_n'],
+            'source_refetch_used':False,
+            'runtime_input_sha':r['runtime_input_sha'],'state_sha256':r['state_sha256'],
+            'state_bundle_sha':r['state_bundle_sha'],'prediction_sha':r['prediction_sha'],
+            'receipt_sha':r['receipt_sha']}
+          (out/'target_replay_gate.json').write_text(json.dumps(gate,sort_keys=True,separators=(',',':'))+'\n')
+          print(json.dumps(gate,sort_keys=True))
+          PY
+
+      - name: Validate candidate state bundle
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+              --bundle "$PWD/.target_state_cache/bundle" \
+            | tee football-data/formal_gpt_gateway_v1/target_replay_output/state_validate.txt
+
+      - name: Upload target replay receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-target-xg-replay-receipt-${{ github.run_id }}
+          path: football-data/formal_gpt_gateway_v1/target_replay_output/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload target replay state
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-target-xg-replay-state-${{ github.run_id }}
+          path: .target_state_cache/bundle/
+          if-no-files-found: error
+          retention-days: 90
