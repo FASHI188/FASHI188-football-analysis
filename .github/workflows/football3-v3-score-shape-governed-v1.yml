@@ -1,0 +1,260 @@
+name: football3 V3 Score-Shape Governed Research
+
+on:
+  push:
+    branches: ['football3/historical-fusion-v3-score-shape-v1']
+    paths:
+      - '.github/workflows/football3-v3-score-shape-governed-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-v3-score-shape-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  SCIENCE_PACKAGE_HEAD: d166b3a36e6b891ec29039c2e558ee7b4b2dcd43
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_BLOB: b1d85e5735eeac9dfea4f3bb7856bdce1a3a8c04
+  FREEZE_BLOB: da81dc7139ba4e0c7a8f22da7159e9c731e5f9fa
+  RUNNER_BLOB: 5ba5852a27466c79740da06dc86c7f3f2339ca59
+  TEST_BLOB: 9b44df79ed913c96b5bde35915738d86f258c471
+  V311_ENGINE_BLOB: 5a530708bcf1607cb210e869006e4aa5a8e626ad
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen lineage and exact scientific bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fusion-v3-score-shape-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$SCIENCE_PACKAGE_HEAD" HEAD)" = "$SCIENCE_PACKAGE_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-score-shape-v1 | cut -f1)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/historical_fusion_v3_score_shape
+          test "$(git hash-object "$D/V3_SCORE_SHAPE_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/V3_SCORE_SHAPE_IMPLEMENTATION_FREEZE.json")" = "$FREEZE_BLOB"
+          test "$(git hash-object "$D/historical_fusion_v3_score_shape.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_historical_fusion_v3_score_shape.py")" = "$TEST_BLOB"
+          test "$(git hash-object football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py)" = "$V311_ENGINE_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          wf='.github/workflows/football3-v3-score-shape-governed-v1.yml'
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['SCIENCE_PACKAGE_HEAD']}...HEAD"],text=True).splitlines())
+          assert got=={wf},got
+          d=pathlib.Path('football-data/research/historical_fusion_v3_score_shape')
+          c=json.loads((d/'V3_SCORE_SHAPE_CONTRACT.json').read_text())
+          f=json.loads((d/'V3_SCORE_SHAPE_IMPLEMENTATION_FREEZE.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_TARGET_SCORING'
+          assert f['status']=='FROZEN_BEFORE_ANY_SCORE_SHAPE_TARGET_SCORING'
+          assert c['lineage']['v3_1_1_head']==os.environ['V311_HEAD']
+          assert c['lineage']['formal_v2_head']==os.environ['FORMAL_HEAD']
+          assert f['clean_parent_head']==os.environ['V311_HEAD']
+          assert c['immutability']['frozen_1x2_probabilities_exact'] is True
+          assert c['immutability']['frozen_1x2_top1_exact'] is True
+          assert c['data_roles']['2023'].startswith('CLOSED_UNLESS')
+          assert 'FORBIDDEN' in c['data_roles']['2024_25_and_2025_26_3504']
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and run frozen structural tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_score_shape
+          python -m py_compile "$D/historical_fusion_v3_score_shape.py" "$D/test_historical_fusion_v3_score_shape.py"
+          (cd "$D" && python test_historical_fusion_v3_score_shape.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 8 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen scientific inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs/{v2,xg,v1,old,usr1,v31}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda s:s.split(':',1)[-1].lower()
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            python - "$zip" "$expected" <<'PY'
+          import hashlib,sys
+          got=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()
+          exp=sys.argv[2].split(':',1)[-1].lower()
+          assert got==exp,(got,exp)
+          PY
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          python - <<'PY'
+          import hashlib,pathlib
+          h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          assert h('_inputs/v2/code/historical_xg_fusion_v2.py')=='1e840d8d37a72761a269bfb80f7a4ce74c9b67344e6f6a5b2f3a87374c8f2d8b'
+          assert h('_inputs/xg/code/historical_xg_challenger.py')=='588cad84f59e8a6b31297984c2c9015af5275f209dea8d4e3a3d71183e762ba2'
+          assert h('_inputs/v1/pure_engine.py')=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          assert h('_inputs/old/understat_frozen.db')=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert h('_inputs/usr1/code/historical_fusion_v3_upset_safe.py')=='1707ad6b6e1339ac08b90038d595c1ea299ec4c92940643b6c404633a67c878b'
+          assert h('_inputs/v31/code/historical_fusion_v3_1.py')=='59485a959940ad0e1f5357842731634acc88957dc1b7f8f029cf4cca8d05b402'
+          PY
+
+      - name: Run frozen score-shape protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_score_shape
+          rm -rf _run && mkdir _run
+          python "$D/historical_fusion_v3_score_shape.py" \
+            --contract "$D/V3_SCORE_SHAPE_CONTRACT.json" \
+            --implementation-freeze "$D/V3_SCORE_SHAPE_IMPLEMENTATION_FREEZE.json" \
+            --v2-engine _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg-engine _inputs/xg/code/historical_xg_challenger.py \
+            --v1-engine _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --usr1-engine _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v31-engine _inputs/v31/code/historical_fusion_v3_1.py \
+            --v311-engine football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --out _run 2>&1 | tee /tmp/research_stdout.txt
+          python - <<'PY'
+          import json, pathlib
+          f=json.load(open('_run/final_status.json'))
+          allowed={
+            'V3_SCORE_SHAPE_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT',
+            'V3_SCORE_SHAPE_2023_DIAGNOSTIC_FAILED_NO_RESCUE',
+            'V3_SCORE_SHAPE_RESEARCH_CANDIDATE_READY_PROSPECTIVE_CONFIRMATION_REQUIRED'}
+          assert f['status'] in allowed,f['status']
+          assert f['research_only'] and not f['promotion_allowed']
+          assert f['3504_opened'] is False
+          assert f['formal_v2_unchanged'] and f['v3_1_1_unchanged']
+          assert not f['CURRENT_changed'] and not f['production_pointer_changed'] and not f['formal_enablement_changed'] and not f['formal_weights_changed']
+          sr=json.load(open('_run/source_receipt.json'))
+          assert sr['source']['max_season']==2022
+          assert sr['2023_opened'] is False and sr['3504_opened'] is False
+          if f['2023_opened']:
+            g=f['fixed_2021_2022']['gates']
+            assert g['all_pass'] is True
+            assert pathlib.Path('_run/candidate_fixed_2023.json').exists()
+          else:
+            assert f['status']=='V3_SCORE_SHAPE_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT'
+            assert not pathlib.Path('_run/candidate_fixed_2023.json').exists()
+          PY
+
+      - name: Seal governed research artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_fusion_v3_score_shape
+          rm -rf _seal && mkdir -p _seal/contracts _seal/code _seal/evidence
+          cp "$D/V3_SCORE_SHAPE_CONTRACT.json" "$D/V3_SCORE_SHAPE_IMPLEMENTATION_FREEZE.json" _seal/contracts/
+          cp "$D/historical_fusion_v3_score_shape.py" "$D/test_historical_fusion_v3_score_shape.py" _seal/code/
+          cp _run/*.json _run/artifact_slug.txt _seal/evidence/
+          cp /tmp/tests.txt /tmp/research_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          f=json.load(open('_run/final_status.json'))
+          m={'schema_version':'football3-v3-score-shape-governed-artifact-v1','status':f['status'],'head':os.environ['GITHUB_SHA'],'science_package_head':os.environ['SCIENCE_PACKAGE_HEAD'],'v311_head':os.environ['V311_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'contract_blob':os.environ['CONTRACT_BLOB'],'implementation_freeze_blob':os.environ['FREEZE_BLOB'],'runner_blob':os.environ['RUNNER_BLOB'],'test_blob':os.environ['TEST_BLOB'],'research_only':True,'promotion_allowed':False,'2023_opened':bool(f['2023_opened']),'3504_opened':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload governed research artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-score-shape-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: research-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify remote artifact digest and payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.research-and-seal.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.research-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$got" "$ARTIFACT_DIGEST" <<'PY'
+          import sys
+          norm=lambda s:s.split(':',1)[-1].lower(); assert norm(sys.argv[1])==norm(sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/a.zip
+          python - /tmp/a.zip "$ARTIFACT_DIGEST" <<'PY'
+          import hashlib,sys
+          assert hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()==sys.argv[2].split(':',1)[-1].lower()
+          PY
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.loads((r/'artifact_manifest.json').read_text())
+          for rel,rec in m['files'].items():
+              p=r/rel; assert p.exists(),rel
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256']
+              assert p.stat().st_size==rec['bytes']
+          f=json.loads((r/'evidence/final_status.json').read_text())
+          assert f['status']==m['status']
+          assert f['3504_opened'] is False
+          assert f['formal_v2_unchanged'] and f['v3_1_1_unchanged']
+          print(json.dumps({'status':f['status'],'artifact_manifest_verified':True,'2023_opened':f['2023_opened'],'3504_opened':False},sort_keys=True))
+          PY
