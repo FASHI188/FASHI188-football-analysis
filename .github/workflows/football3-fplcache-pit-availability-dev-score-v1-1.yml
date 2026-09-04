@@ -1,0 +1,155 @@
+name: football3 FPLCache PIT availability dev score v1.1
+
+on:
+  push:
+    branches:
+      - football3/historical-fplcache-availability-pit-v1
+    paths:
+      - football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT_V1_1.json
+      - football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py
+      - football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py
+      - .github/workflows/football3-fplcache-pit-availability-dev-score-v1-1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-fplcache-pit-availability-dev-score-v1-1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SCIENCE_BASE_HEAD: d4e7cbb6df5cfaae564877db31416689936a5772
+  CONTRACT_BLOB: fbc9404148ccbdf659146e01ee4fb891739b9702
+  SCORER_SHA256: d399fa92e153a9656985d0d6e5db42885ddbc724b1ec8d560c1926824ab26786
+  TEST_SHA256: 73a272d9455adac71150891dfd3b869b01468f3e441e91b486df67588e8679fd
+  FPL_ARTIFACT_ID: '9924791711'
+  FPL_ARTIFACT_SHA256: 5c46ab8fa432825b1e015094d421bc014916fe689d2e810712003bc39b79feb6
+  STRESS_ARTIFACT_ID: '9876751277'
+  STRESS_ARTIFACT_SHA256: bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a
+  HISTORY_ARTIFACT_ID: '9876641831'
+  HISTORY_ARTIFACT_SHA256: 2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c
+
+jobs:
+  score:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Governance and frozen-code guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-fplcache-availability-pit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$SCIENCE_BASE_HEAD" HEAD
+          test "$(git hash-object football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT_V1_1.json)" = "$CONTRACT_BLOB"
+          test "$(sha256sum football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py | awk '{print $1}')" = "$SCORER_SHA256"
+          test "$(sha256sum football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py | awk '{print $1}')" = "$TEST_SHA256"
+          python - <<'PY'
+          import os,subprocess
+          allowed={
+            '.github/workflows/football3-fplcache-pit-availability-acquire-v1.yml',
+            '.github/workflows/football3-fplcache-pit-availability-audit-v1.yml',
+            '.github/workflows/football3-fplcache-pit-availability-dev-score-v1-1.yml',
+            'football-data/validation/acquire_fplcache_pit_availability_v1.py',
+            'football-data/validation/audit_fplcache_pit_availability_v1.py',
+            'football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT.json',
+            'football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT_V1_1.json',
+            'football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py',
+            'football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['SCIENCE_BASE_HEAD']}..HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          forbidden=('CURRENT','production_pointer','formal_enablement')
+          assert not any(any(x in p for x in forbidden) for p in got),got
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and unit-test frozen scorer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py \
+            football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py
+          python football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{fpl,stress,history}
+          fetch_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            echo "${expected}  ${zip}" | sha256sum -c -
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          fetch_one "$FPL_ARTIFACT_ID" "$FPL_ARTIFACT_SHA256" /tmp/fpl.zip _inputs/fpl
+          fetch_one "$STRESS_ARTIFACT_ID" "$STRESS_ARTIFACT_SHA256" /tmp/stress.zip _inputs/stress
+          fetch_one "$HISTORY_ARTIFACT_ID" "$HISTORY_ARTIFACT_SHA256" /tmp/history.zip _inputs/history
+          test -s _inputs/fpl/fixture_cutoff_map.jsonl.gz
+          test -s _inputs/fpl/availability_snapshots.jsonl.gz
+          test -s _inputs/stress/evidence/predictions_label_free.jsonl
+          test -s _inputs/history/data/fixtures.jsonl
+          test -s _inputs/history/data/label_vault.jsonl
+
+      - name: Run authorized development score only
+        id: score
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py \
+            --contract football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT_V1_1.json \
+            --fpl-dir _inputs/fpl \
+            --stress-dir _inputs/stress \
+            --history-dir _inputs/history \
+            --out _run 2>&1 | tee /tmp/score_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/development_score_result.json'))
+          assert r['status'] in {'FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_PASS','FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_FAIL'}
+          assert r['classification']=='POST_VIEW_DEVELOPMENT_SCORE_ONLY_NO_TRAINING_NO_TUNING'
+          assert r['primary_exact_kickoff']['n']==713
+          assert r['secondary_pair_unique_sensitivity']['n']==760
+          assert r['fresh_confirmation'] is False and r['promotion_allowed'] is False
+          assert r['training_performed'] is False and r['tuning_performed'] is False and r['parameter_search_performed'] is False and r['candidate_selection_performed'] is False
+          assert r['formal_weight_changed'] is False and r['CURRENT_changed'] is False and r['production_pointer_changed'] is False and r['formal_enablement_changed'] is False
+          PY
+          echo "status=$(python -c "import json;print(json.load(open('_run/development_score_result.json'))['status'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Seal score artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          cp football-data/research/fplcache_pit_availability_dev_score_v1/FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_CONTRACT_V1_1.json _seal/contracts/
+          cp football-data/research/fplcache_pit_availability_dev_score_v1/score_fplcache_pit_availability_dev_v1_1.py _seal/code/
+          cp football-data/research/fplcache_pit_availability_dev_score_v1/test_score_fplcache_pit_availability_dev_v1_1.py _seal/code/
+          cp _run/* _seal/evidence/
+          cp /tmp/tests.txt /tmp/score_stdout.txt _seal/evidence/
+          (cd _seal && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Upload development score artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fplcache-pit-availability-dev-score-v1-1-${{ steps.score.outputs.status }}-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
