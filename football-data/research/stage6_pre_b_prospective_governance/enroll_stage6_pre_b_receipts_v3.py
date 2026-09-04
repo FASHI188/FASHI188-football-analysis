@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import enroll_stage6_pre_b_receipts_v2 as v2wrap
 
@@ -21,15 +23,37 @@ def loadmod(name: str, path: pathlib.Path):
     return mod
 
 
-def install_prediction_helper(helper) -> None:
+def frozen_prediction_callable(helper) -> Callable[..., dict[str, Any]]:
     fn = getattr(helper, "prediction_record", None)
     if not callable(fn):
         raise EnrollmentError("frozen V2 helper missing prediction_record")
-    # V1 enrollment calls legacy.formal.prediction_record(...).  The historical
-    # stress replay proved that helper comes from historical_xg_fusion_v2.py,
-    # not from new_engine_v1.formal_fusion_v2.  Patch only this helper symbol;
-    # the formal state object and all frozen state bytes remain untouched.
-    base.legacy.formal.prediction_record = fn
+    return fn
+
+
+def wrap_reconstruct_cutoff_state(original, helper):
+    """Bind the exact frozen Formal V2 helper only after V1 reconstructs legacy.
+
+    The V1 runner keeps ``legacy`` local to reconstruct_cutoff_state/main, so a
+    module-global patch cannot work.  This adapter leaves reconstruction bytes
+    and state untouched; it only attaches the official frozen helper callable
+    to the returned legacy.formal namespace expected by the unchanged V1 call.
+    """
+    fn = frozen_prediction_callable(helper)
+
+    def wrapped(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if not isinstance(result, tuple) or len(result) != 7:
+            raise EnrollmentError("unexpected cutoff reconstruction return contract")
+        legacy = result[5]
+        formal = getattr(legacy, "formal", None)
+        if formal is None:
+            raise EnrollmentError("reconstructed legacy formal module missing")
+        setattr(formal, "prediction_record", fn)
+        if getattr(formal, "prediction_record", None) is not fn:
+            raise EnrollmentError("frozen V2 prediction_record exact binding failed")
+        return result
+
+    return wrapped
 
 
 def extract_helper_arg(argv: list[str]) -> pathlib.Path:
@@ -47,8 +71,14 @@ def extract_helper_arg(argv: list[str]) -> pathlib.Path:
 def main() -> int:
     helper_path = extract_helper_arg(sys.argv)
     helper = loadmod("stage6_frozen_historical_xg_fusion_v2", helper_path)
-    install_prediction_helper(helper)
-    return base.main()
+    original = base.reconstruct_cutoff_state
+    base.reconstruct_cutoff_state = wrap_reconstruct_cutoff_state(original, helper)
+    try:
+        # Preserve the V2 frozen-queue-order adapter; calling base.main() here
+        # would silently bypass the already-proven queue-order repair.
+        return v2wrap.main()
+    finally:
+        base.reconstruct_cutoff_state = original
 
 
 if __name__ == "__main__":
