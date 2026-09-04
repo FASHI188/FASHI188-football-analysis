@@ -88,22 +88,15 @@ jobs:
             --confirmation-dir "$PWD/.runner/confirmation" \
             --state-root "$PWD/.runner/e2e/state" --out "$PWD/.runner/e2e/fast"
           python3 - <<'PY'
-          import json, pathlib, sys
-          root=pathlib.Path.cwd()
-          sys.path.insert(0,str(root/'football-data/formal_gpt_gateway_v1'))
-          import gateway
-          history, labels, source, identity = gateway.corpus(root, root/'.runner/understat/understat_frozen.db', root/'.runner/confirmation')
-          loaded=gateway.rt.validate_bundle(root/'.runner/e2e/state/bundle')
-          lower=gateway.rt._parse_dt(loaded['meta']['historical_cutoff'],'cached cutoff')
-          rows=[r for r in history if gateway.cutoff_for(r)>lower and r.competition_id in set(gateway.rt.BIG5.values())
-                and 'stuttgart' not in (r.home_team_name+' '+r.away_team_name).lower()]
-          rows.sort(key=lambda r:(r.kickoff,r.competition_id,r.fixture_id))
-          assert rows
-          r=rows[0]
+          import json, pathlib
+          root=pathlib.Path('.runner/e2e')
+          fast=json.loads((root/'fast/summary.json').read_text())
+          f=fast['fixture']
+          assert 'stuttgart' not in (f['home_team_name']+' '+f['away_team_name']).lower()
           req={'schema_version':'football3-formal-gpt-gateway-v1','request_id':'candidate-e2e-generic-predict','mode':'predict',
-               'match':{'competition_id':r.competition_id,'season':r.season,'home_team_name':r.home_team_name,
-                        'away_team_name':r.away_team_name,'kickoff':r.kickoff.isoformat(),'cutoff':gateway.cutoff_for(r).isoformat()}}
-          (root/'.runner/e2e/predict_request.json').write_text(json.dumps(req,sort_keys=True,separators=(',',':'))+'\n')
+               'match':{'competition_id':f['competition_id'],'season':f['season'],'home_team_name':f['home_team_name'],
+                        'away_team_name':f['away_team_name'],'kickoff':f['kickoff'],'cutoff':fast['cutoff']}}
+          (root/'predict_request.json').write_text(json.dumps(req,sort_keys=True,separators=(',',':'))+'\n')
           PY
           python3 football-data/formal_gpt_gateway_v1/entry.py \
             --request "$PWD/.runner/e2e/predict_request.json" --repo-root "$PWD" \
@@ -127,7 +120,7 @@ jobs:
           gap=json.loads((root/'gap/summary.json').read_text())
           assert full['status']=='PASS' and full['probe']=='BOOTSTRAP_FULL' and full['calculation_path']=='FULL_REBUILD_PATH'
           assert fast['status']=='PASS' and fast['probe']=='REMOTE_CACHE_FAST' and fast['calculation_path']=='FAST_PATH'
-          assert pred['status']=='PASS' and pred['probe']=='PREDICTION'
+          assert pred['status']=='PASS' and pred['probe']=='PREDICTION' and pred['calculation_path']=='FAST_PATH'
           fixture=pred['fixture']; assert 'stuttgart' not in (fixture['home_team_name']+' '+fixture['away_team_name']).lower()
           assert gap['status']=='PASS_EXPECTED_FAIL_CLOSED' and gap['probe']=='MISSING_DATA_FAIL_CLOSED'
           assert gap['state_unchanged'] is True and gap['prediction_sha'] is None and gap['receipt_sha'] is None
