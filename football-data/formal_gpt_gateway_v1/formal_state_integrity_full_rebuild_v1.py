@@ -77,11 +77,13 @@ def augment_available_linked_xg(repo_root: Path, history, base_labels: dict[str,
         if not observed:
             raise rt.RuntimeGateError(f"linked xg observed_at missing: {comp}")
         observed_dt = [rt._parse_dt(x, "linked xg observed_at") for x in observed]
-        eligible = max(observed_dt) <= cutoff
+        source_known_by_target = max(observed_dt) <= cutoff
         joined = 0
         unmatched = []
         comp_counts: dict[str, int] = {}
-        if eligible:
+        staged: dict[str, Any] = {}
+        overlap = []
+        if source_known_by_target:
             for row in rows:
                 if str(row.get("competition_id") or "") != comp or str(row.get("season") or "") != LINKED_SEASON:
                     raise rt.RuntimeGateError(f"linked xg scope mismatch: {comp}")
@@ -99,8 +101,9 @@ def augment_available_linked_xg(repo_root: Path, history, base_labels: dict[str,
                 if f is None:
                     unmatched.append(k)
                     continue
-                if f.fixture_id in out:
-                    raise rt.RuntimeGateError(f"linked xg overlaps existing frozen xg: {f.fixture_id}")
+                if f.fixture_id in out or f.fixture_id in staged:
+                    overlap.append(f.fixture_id)
+                    continue
                 hg, ag = int(row["home_goals"]), int(row["away_goals"])
                 if (hg, ag) != (f.home_goals, f.away_goals):
                     raise rt.RuntimeGateError(f"linked xg frozen result identity conflict: {f.fixture_id}")
@@ -108,22 +111,38 @@ def augment_available_linked_xg(repo_root: Path, history, base_labels: dict[str,
                 if release >= rt._parse_dt(rt.BASE_HISTORY_CUTOFF, "base history cutoff"):
                     raise rt.RuntimeGateError(f"linked xg row not strictly inside historical base: {f.fixture_id}")
                 label = rt.hxg.ReleasedLabel(hg, ag, float(row["home_xg"]), float(row["away_xg"]), release)
-                out[f.fixture_id] = rt.XGLabel(
-                    label,
-                    f"linked-retro:{row.get('understat_match_id')}",
-                    source_sha,
-                    release.isoformat(),
+                staged[f.fixture_id] = (
+                    rt.XGLabel(label, f"linked-retro:{row.get('understat_match_id')}", source_sha, release.isoformat()),
+                    f.home_team_id,
+                    f.away_team_id,
                 )
                 joined += 1
-                added += 1
-                comp_counts[f.home_team_id] = comp_counts.get(f.home_team_id, 0) + 1
-                comp_counts[f.away_team_id] = comp_counts.get(f.away_team_id, 0) + 1
-            if unmatched:
-                raise rt.RuntimeGateError(f"linked xg unmatched formal fixtures: {comp} n={len(unmatched)} sample={unmatched[:3]}")
-            if joined != expected.get(comp, 0) or len(rows) != expected.get(comp, 0):
-                raise rt.RuntimeGateError(
-                    f"linked xg coverage incomplete: {comp} linked={len(rows)} joined={joined} formal={expected.get(comp,0)}"
-                )
+
+        complete = (
+            source_known_by_target
+            and not unmatched
+            and not overlap
+            and joined == expected.get(comp, 0)
+            and len(rows) == expected.get(comp, 0)
+        )
+        if complete:
+            for fid, (xg_label, hid, aid) in staged.items():
+                out[fid] = xg_label
+                comp_counts[hid] = comp_counts.get(hid, 0) + 1
+                comp_counts[aid] = comp_counts.get(aid, 0) + 1
+            added += len(staged)
+            coverage_status = "COMPLETE_INGESTED"
+        elif source_known_by_target:
+            # Never partially ingest a season. A target in this competition must later
+            # surface DATA_STATE_ANOMALY rather than silently running on a broken bridge.
+            staged.clear()
+            comp_counts.clear()
+            coverage_status = "INCOMPLETE_NOT_INGESTED"
+        else:
+            staged.clear()
+            comp_counts.clear()
+            coverage_status = "SOURCE_NOT_YET_AVAILABLE_AT_TARGET"
+
         team_counts[comp] = comp_counts
         files[comp] = {
             "path": str(path.relative_to(repo_root)),
@@ -131,15 +150,22 @@ def augment_available_linked_xg(repo_root: Path, history, base_labels: dict[str,
             "linked_rows": len(rows),
             "formal_rows": expected.get(comp, 0),
             "joined_rows": joined,
-            "eligible_for_target": eligible,
+            "unmatched_rows": len(unmatched),
+            "overlap_rows": len(overlap),
+            "source_known_by_target": source_known_by_target,
+            "eligible_for_target": complete,
+            "coverage_status": coverage_status,
             "source_observed_at_utc": observed,
             "historical_pit_claim": False,
             "use_role": "LAGGED_HISTORY_ONLY_AFTER_SOURCE_OBSERVATION",
         }
 
+    audit_status = "PASS" if all(
+        x["coverage_status"] != "INCOMPLETE_NOT_INGESTED" for x in files.values()
+    ) else "PASS_WITH_QUARANTINED_INCOMPLETE_COMPETITIONS"
     audit = {
         "schema_version": "football3-cross-season-xg-coverage-v1",
-        "status": "PASS",
+        "status": audit_status,
         "season": LINKED_SEASON,
         "target_cutoff": cutoff.isoformat(),
         "files": files,
