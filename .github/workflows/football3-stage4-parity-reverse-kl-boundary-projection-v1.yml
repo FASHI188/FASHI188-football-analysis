@@ -1,0 +1,282 @@
+name: football3 Stage4 Reverse-KL Boundary Projection
+
+on:
+  push:
+    branches: ['football3/stage4-parity-calibration-reverse-kl-boundary-projection-v1']
+    paths:
+      - '.github/workflows/football3-stage4-parity-reverse-kl-boundary-projection-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-stage4-reverse-kl-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  SCIENCE_PARENT: 755610432bc50c01146d61297c41060c080b10c9
+  ENGINEERING_PARENT: 12ff1745ec206c1d2ed64dfe8b60a6dd993bbe04
+  V324_SCAFFOLD_HEAD: 3cc9098cd321ee4f1dd659b1a4f4db75c02555ed
+  V324_SCAFFOLD_BLOB: 218cfab50a23ca5f94e57c95b2357ae2c9d9ba8f
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_BLOB: 658e00ead3ba191b92c9668a4f5e58ba9dcdca3a
+  RUNNER_BLOB: 216b5d5dea029d8ea8fc86718ce7d16a99475868
+  TEST_BLOB: f6a0fe172f2098a59c3995cab686fbbab2463044
+  V323_CONTRACT_BLOB: ea5a91c6c68254a931b7ff13fa837fed02d95032
+  V323_RUNNER_BLOB: 653e012ef179554ceeef19f5952c6fa9454e534a
+  V323_ARTIFACT_ID: '9887477239'
+  V323_ARTIFACT_DIGEST: sha256:85b48353d0e0206160f83ff080dc046115d82427810fa52f2a5e5ce72c3e47a7
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen Stage4 lineage and bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/stage4-parity-calibration-reverse-kl-boundary-projection-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$SCIENCE_PARENT" HEAD)" = "$SCIENCE_PARENT"
+          test "$(git merge-base "$ENGINEERING_PARENT" HEAD)" = "$ENGINEERING_PARENT"
+          test "$(git ls-remote origin refs/heads/football3/stage4-parity-calibration-reverse-kl-boundary-projection-v1 | cut -f1)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/stage4_parity_reverse_kl_boundary_projection
+          D3=football-data/research/historical_fusion_v3_2_3_temporal_transport
+          test "$(git hash-object "$D/STAGE4_PARITY_REVERSE_KL_BOUNDARY_PROJECTION_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/stage4_reverse_kl_projection.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_stage4_reverse_kl_projection.py")" = "$TEST_BLOB"
+          test "$(git hash-object "$D3/V3_2_3_TEMPORAL_TRANSPORT_CONTRACT.json")" = "$V323_CONTRACT_BLOB"
+          test "$(git hash-object "$D3/v3_2_3_segment3.py")" = "$V323_RUNNER_BLOB"
+          python - <<'PY'
+          import json,os,pathlib,subprocess
+          d=pathlib.Path('football-data/research/stage4_parity_reverse_kl_boundary_projection')
+          allowed={
+            '.github/workflows/football3-stage4-parity-reverse-kl-boundary-projection-v1.yml',
+            str(d/'STAGE4_PARITY_REVERSE_KL_BOUNDARY_PROJECTION_CONTRACT.json'),
+            str(d/'stage4_reverse_kl_projection.py'),
+            str(d/'test_stage4_reverse_kl_projection.py')}
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{os.environ['ENGINEERING_PARENT']}...HEAD"],text=True).splitlines())
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          c=json.loads((d/'STAGE4_PARITY_REVERSE_KL_BOUNDARY_PROJECTION_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_STAGE4_TARGET_SCORING'
+          assert c['lineage']['scientific_parent_head']==os.environ['SCIENCE_PARENT']
+          assert c['lineage']['engineering_parent_head']==os.environ['ENGINEERING_PARENT']
+          assert c['projection']['name']=='DETERMINISTIC_MINIMUM_REVERSE_KL_TOP1_BOUNDARY_PROJECTION'
+          assert c['projection']['numeric_threshold']=='NONE' and c['projection']['threshold_grid']=='NONE'
+          assert c['projection']['result_feedback'] is False
+          assert c['data_roles']['2023']=='CLOSED_IN_STAGE4'
+          assert c['data_roles']['2024_25_and_2025_26_3504'].startswith('FORBIDDEN')
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile and run structural invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage4_parity_reverse_kl_boundary_projection
+          python -m py_compile "$D/stage4_reverse_kl_projection.py" "$D/test_stage4_reverse_kl_projection.py"
+          (cd "$D" && python test_stage4_reverse_kl_projection.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Materialize exact V3.2.4 implementation scaffold
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs
+          git fetch --no-tags origin "$V324_SCAFFOLD_HEAD"
+          git show "$V324_SCAFFOLD_HEAD:football-data/research/historical_fusion_v3_2_4_minimal_boundary_projection/v3_2_4_segment4.py" > _inputs/v324_scaffold.py
+          test "$(git hash-object _inputs/v324_scaffold.py)" = "$V324_SCAFFOLD_BLOB"
+
+      - name: Download and verify frozen scientific inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs/{v323art,v2,xg,v1,old,usr1,v31}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            python - "$got" "$expected" <<'PY'
+          import sys
+          norm=lambda s:s.split(':',1)[-1].lower()
+          assert norm(sys.argv[1])==norm(sys.argv[2]),(sys.argv[1],sys.argv[2])
+          PY
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            python - "$zip" "$expected" <<'PY'
+          import hashlib,sys
+          got=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()
+          exp=sys.argv[2].split(':',1)[-1].lower()
+          assert got==exp,(got,exp)
+          PY
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V323_ARTIFACT_ID" "$V323_ARTIFACT_DIGEST" /tmp/v323.zip _inputs/v323art
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          assert h('_inputs/v2/code/historical_xg_fusion_v2.py')=='1e840d8d37a72761a269bfb80f7a4ce74c9b67344e6f6a5b2f3a87374c8f2d8b'
+          assert h('_inputs/xg/code/historical_xg_challenger.py')=='588cad84f59e8a6b31297984c2c9015af5275f209dea8d4e3a3d71183e762ba2'
+          assert h('_inputs/v1/pure_engine.py')=='cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          assert h('_inputs/old/understat_frozen.db')=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert h('_inputs/usr1/code/historical_fusion_v3_upset_safe.py')=='1707ad6b6e1339ac08b90038d595c1ea299ec4c92940643b6c404633a67c878b'
+          assert h('_inputs/v31/code/historical_fusion_v3_1.py')=='59485a959940ad0e1f5357842731634acc88957dc1b7f8f029cf4cca8d05b402'
+          m=json.load(open('_inputs/v323art/artifact_manifest.json'))
+          assert m['head']==os.environ['SCIENCE_PARENT']
+          assert m['status']=='V3_2_3_TEMPORAL_TRANSPORT_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT'
+          f=json.load(open('_inputs/v323art/evidence/final_status.json'))
+          assert f['2023_opened'] is False and f['3504_opened'] is False
+          PY
+
+      - name: Frozen Stage4 reverse-KL research
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage4_parity_reverse_kl_boundary_projection
+          D3=football-data/research/historical_fusion_v3_2_3_temporal_transport
+          rm -rf _run && mkdir _run
+          python "$D/stage4_reverse_kl_projection.py" \
+            --contract "$D/STAGE4_PARITY_REVERSE_KL_BOUNDARY_PROJECTION_CONTRACT.json" \
+            --v324-scaffold _inputs/v324_scaffold.py \
+            --v323-contract "$D3/V3_2_3_TEMPORAL_TRANSPORT_CONTRACT.json" \
+            --v323 "$D3/v3_2_3_segment3.py" \
+            --v322 football-data/research/historical_fusion_v3_2_2_parity_boundary/v3_2_2_segment2.py \
+            --v32dev football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair_execution/v3_2_development.py \
+            --core football-data/research/historical_fusion_v3_2_three_fault_dynamic_joint_repair/v3_2_core.py \
+            --v311 football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31 _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1 _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2 _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg _inputs/xg/code/historical_xg_challenger.py \
+            --v1 _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/research_stdout.txt
+          python - <<'PY'
+          import json
+          f=json.load(open('_run/final_status.json'))
+          allowed={'STAGE4_PARITY_REVERSE_KL_PROJECTION_REJECTED_NO_RESCUE_ON_CONSUMED_DEVELOPMENT','STAGE4_PARITY_REVERSE_KL_PROJECTION_READY_FOR_STAGE5_SCORE_COLLAPSE'}
+          assert f['status'] in allowed
+          assert f['research_only'] and f['post_view'] and not f['fresh_confirmation'] and not f['promotion_allowed']
+          assert f['source_max_season_loaded']==2022
+          assert f['2023_opened'] is False and f['3504_opened'] is False
+          assert f['formal_v2_unchanged'] and f['v3_1_1_unchanged']
+          assert not f['CURRENT_changed'] and not f['production_pointer_changed'] and not f['formal_enablement_changed'] and not f['formal_weights_changed']
+          pre=json.load(open('_run/pre2023_row_receipt.json'))
+          assert pre['max_source_season_loaded']==2022
+          PY
+
+      - name: Seal Stage4 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage4_parity_reverse_kl_boundary_projection
+          rm -rf _seal && mkdir -p _seal/contracts _seal/code _seal/evidence
+          cp "$D/STAGE4_PARITY_REVERSE_KL_BOUNDARY_PROJECTION_CONTRACT.json" _seal/contracts/
+          cp "$D/stage4_reverse_kl_projection.py" "$D/test_stage4_reverse_kl_projection.py" _seal/code/
+          cp _run/*.json _seal/evidence/
+          cp /tmp/tests.txt /tmp/research_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          r=pathlib.Path('_seal'); files={}
+          for p in sorted(r.rglob('*')):
+              if p.is_file():
+                  b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          f=json.load(open('_run/final_status.json'))
+          m={'schema_version':'football3-stage4-reverse-kl-artifact-v1','status':f['status'],'head':os.environ['GITHUB_SHA'],'scientific_parent_head':os.environ['SCIENCE_PARENT'],'engineering_parent_head':os.environ['ENGINEERING_PARENT'],'v311_head':os.environ['V311_HEAD'],'formal_v2_head':os.environ['FORMAL_HEAD'],'contract_blob':os.environ['CONTRACT_BLOB'],'runner_blob':os.environ['RUNNER_BLOB'],'test_blob':os.environ['TEST_BLOB'],'v324_scaffold_head':os.environ['V324_SCAFFOLD_HEAD'],'v324_scaffold_blob':os.environ['V324_SCAFFOLD_BLOB'],'research_only':True,'post_view':True,'fresh_confirmation':False,'promotion_allowed':False,'2023_opened':False,'3504_opened':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload Stage4 artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-stage4-reverse-kl-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+  remote-readback:
+    needs: research-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify remote artifact digest and payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.research-and-seal.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.research-and-seal.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          python - "$got" "$ARTIFACT_DIGEST" <<'PY'
+          import sys
+          norm=lambda s:s.split(':',1)[-1].lower()
+          assert norm(sys.argv[1])==norm(sys.argv[2])
+          PY
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" -o /tmp/a.zip
+          python - /tmp/a.zip "$ARTIFACT_DIGEST" <<'PY'
+          import hashlib,sys
+          assert hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()==sys.argv[2].split(':',1)[-1].lower()
+          PY
+          rm -rf /tmp/a && mkdir /tmp/a && unzip -q /tmp/a.zip -d /tmp/a
+          python - <<'PY'
+          import hashlib,json,pathlib
+          r=pathlib.Path('/tmp/a'); m=json.loads((r/'artifact_manifest.json').read_text())
+          for rel,rec in m['files'].items():
+              p=r/rel
+              assert p.exists(),rel
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==rec['sha256']
+              assert p.stat().st_size==rec['bytes']
+          f=json.loads((r/'evidence/final_status.json').read_text())
+          assert f['status']==m['status']
+          assert f['2023_opened'] is False and f['3504_opened'] is False
+          print(json.dumps({'status':f['status'],'artifact_manifest_verified':True,'2023_opened':False,'3504_opened':False},sort_keys=True))
+          PY
