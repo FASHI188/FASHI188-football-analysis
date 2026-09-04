@@ -1,0 +1,143 @@
+{
+  "schema_version": "football3-stage6-pre-b-prospective-confirmation-v1",
+  "status": "FROZEN_BEFORE_TARGET_ENROLLMENT",
+  "frozen_at_utc": "2026-09-04T10:35:00Z",
+  "research_only": true,
+  "parent_development_branch": "football3/stage6-pre-b-preshot-deep-ppda-v1",
+  "parent_development_head": "9cb97764de1250fd08c6d0880559192e66352ce3",
+  "frozen_v311_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+  "formal_v2_head_reference_only": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+  "development_evidence": {
+    "scored_seasons": [2020, 2021, 2022],
+    "n": 5478,
+    "active_n": 5463,
+    "fallback_n": 15,
+    "candidate_minus_baseline_logloss": -0.0035306922698121745,
+    "candidate_minus_baseline_brier": -0.0022433860801430727,
+    "candidate_minus_baseline_rps": -0.0011216930400722858,
+    "candidate_minus_baseline_top1_pp": 0.29207740051113706,
+    "evidence_class": "POST_VIEW_DEVELOPMENT_NOT_CONFIRMATION"
+  },
+  "power_plan": {
+    "schema": "football3_paired_power_plan_v1",
+    "estimand": "paired per-fixture baseline_logloss_minus_candidate_logloss on the full chronological queue, including exact-fallback fixtures",
+    "development_n": 5478,
+    "paired_mean_logloss_improvement": 0.003530692269813721,
+    "paired_sample_sd": 0.04603739150376177,
+    "alpha_two_sided": 0.05,
+    "planned_power": 0.80,
+    "z_one_minus_alpha_over_2": 1.95996398454,
+    "z_power": 0.84162123357,
+    "formula": "ceil(((z_one_minus_alpha_over_2 + z_power) * paired_sample_sd / paired_mean_logloss_improvement)^2)",
+    "required_n": 1335,
+    "runtime_minimum_n_enforced": true,
+    "optional_stopping": false
+  },
+  "candidate": {
+    "name": "STAGE6_PRE_B_LAGGED_DEEP_PPDA",
+    "method_changes_after_freeze": "FORBIDDEN",
+    "mechanism": {
+      "half_life_matches": 16.0,
+      "deep_transform": "log1p",
+      "ppda_transform": "negative_natural_log_lower_ppda_is_stronger_press",
+      "bridge_coefficient": 0.10,
+      "draw_probability": "UNCHANGED",
+      "transport": "shift conditional home-v-away logit then region-rescale joint score matrix",
+      "missing_or_invalid_required_state": "EXACT_FROZEN_V311_FALLBACK",
+      "max_outcome_probability_abs_delta": 0.08
+    },
+    "declared_features": [
+      "home_lagged_deep_state",
+      "away_lagged_deep_state",
+      "home_lagged_ppda_state",
+      "away_lagged_ppda_state"
+    ],
+    "feature_timestamp_rule": "Every state value must be constructed only from matches completed strictly before the target fixture kickoff; same-kickoff and later observations are forbidden."
+  },
+  "target_population": {
+    "competitions": ["EPL", "La_liga", "Bundesliga", "Serie_A", "Ligue_1"],
+    "initial_season": "2026/27",
+    "queue_cutoff_utc": "2026-09-04T11:00:00Z",
+    "selection": "Chronological first 1335 eligible fixtures strictly after cutoff across the five competitions; identical scheduled_kickoff_utc fixtures are an atomic batch for feature freezing and no same-time target label may update another fixture.",
+    "continue_to_next_season_if_needed": true,
+    "competition_expansion": "FORBIDDEN",
+    "required_n": 1335
+  },
+  "fixture_identity": {
+    "canonical_fields": ["competition", "season", "home_team", "away_team", "scheduled_kickoff_utc"],
+    "canonical_serialization": "sorted-key compact UTF-8 JSON",
+    "identity_hash": "SHA256",
+    "ordered_queue_digest": "SHA256 over newline-delimited canonical fixture identities in chronological order",
+    "overlap_with_globally_consumed_target_labels_required": 0
+  },
+  "zero_label_source_preflight": {
+    "source_family": "Understat AJAX league data",
+    "allowed_endpoints": ["getLeagueData/{league}/{season_start_year}"],
+    "required_raw_history_fields": ["deep", "ppda"],
+    "required_fixture_metadata": ["id", "datetime", "h", "a", "isResult"],
+    "real_target_result_or_goal_values_read": 0,
+    "preflight_gates": {
+      "all_five_competitions_operational": true,
+      "future_eligible_fixture_count_gte_required_n": true,
+      "deep_field_semantics_verified": true,
+      "ppda_field_semantics_verified": true,
+      "strict_prior_history_builder_verified": true,
+      "target_identity_overlap_with_consumed": 0,
+      "unresolved_historical_identity_gaps": 0
+    },
+    "failure_action": "STOP_DATA_COVERAGE_OR_FRESHNESS_BEFORE_TARGET_ENROLLMENT"
+  },
+  "enrollment_protocol": {
+    "start_only_after_zero_label_preflight_pass": true,
+    "immutable_prediction_receipt_required_before_each_kickoff": true,
+    "receipt_must_bind": [
+      "fixture_identity_sha256",
+      "scheduled_kickoff_utc",
+      "feature_cutoff_utc",
+      "source_observation_manifest_sha256",
+      "frozen_v311_head",
+      "candidate_contract_sha256",
+      "baseline_1x2",
+      "candidate_1x2",
+      "baseline_score_matrix_sha256",
+      "candidate_score_matrix_sha256",
+      "active_or_fallback_state"
+    ],
+    "target_labels_before_all_required_receipts_enrolled": "FORBIDDEN",
+    "interim_scoring_or_gate_peeking": "FORBIDDEN",
+    "label_reveal": "ONE_SHOT_ONLY_AFTER_REQUIRED_N_RECEIPTS_EXIST_AND_ALL_TARGET_FIXTURES_ARE_COMPLETED"
+  },
+  "confirmation_gate": {
+    "primary_metric": "paired_1x2_logloss_candidate_minus_frozen_v311",
+    "primary_pass": "mean_delta_logloss < 0 AND paired fixture bootstrap 90pct CI upper_bound < 0",
+    "bootstrap_unit": "fixture",
+    "bootstrap_seed": 20260904,
+    "bootstrap_replicates": 10000,
+    "secondary": {
+      "brier_candidate_minus_baseline_max": 0.0,
+      "rps_candidate_minus_baseline_max": 0.0,
+      "top1_candidate_minus_baseline_min_pp": 0.2,
+      "temporal_thirds_logloss_nonpositive_min": 2,
+      "temporal_thirds_top1_nonnegative_min": 2,
+      "matrix_to_1x2_max_abs_error": 1e-12,
+      "max_outcome_probability_abs_delta": 0.08
+    },
+    "pass_status": "STAGE6_PRE_B_FRESH_CONFIRMATION_PASS_RESEARCH_ONLY",
+    "fail_status": "STAGE6_PRE_B_FRESH_CONFIRMATION_FAIL_TERMINAL_NO_RETUNE",
+    "failure_reuse": "REPLICATION_OR_DIAGNOSTIC_ONLY_NO_RETUNING"
+  },
+  "forbidden": [
+    "use 2023 as fresh evidence",
+    "reuse any globally viewed target identity as fresh confirmation",
+    "retune half-life, transforms, bridge coefficient, fallback, gates or competition set after this freeze",
+    "interim target-label scoring",
+    "same-day target-label update before all same-kickoff predictions are frozen",
+    "A+B+C mixing",
+    "modify Formal V2 algorithm or 75:25 weight",
+    "modify Frozen V3.1.1",
+    "modify CURRENT",
+    "modify production pointer or formal_enablement",
+    "Ready, merge or force"
+  ],
+  "post_result_authorization": "A confirmation PASS is research evidence only. Any Stage6 integration, formal promotion, Ready or merge requires a separate explicit user authorization and separate governance receipt."
+}
