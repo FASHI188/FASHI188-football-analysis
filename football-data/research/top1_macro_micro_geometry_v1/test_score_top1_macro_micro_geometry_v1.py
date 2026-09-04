@@ -15,7 +15,9 @@ class TestGeometryDecision(unittest.TestCase):
 
     def test_integrate(self):
         m = [[0.20, 0.10], [0.30, 0.40]]
-        self.assertEqual(scorer.integrate(m), [0.30, 0.60, 0.10])
+        got = scorer.integrate(m)
+        for a, b in zip(got, [0.30, 0.60, 0.10]):
+            self.assertAlmostEqual(a, b, 12)
 
     def test_region_peaks(self):
         m = [[0.20, 0.10, 0.05], [0.30, 0.15, 0.05], [0.05, 0.05, 0.05]]
@@ -35,8 +37,6 @@ class TestGeometryDecision(unittest.TestCase):
         self.assertEqual(evidence, [None, None, None])
 
     def test_balanced_draw_can_win_geometry(self):
-        # Region masses H/D/A = 0.40/0.35/0.25; draw peak is concentrated enough
-        # that sqrt(P_k*M_k) makes Draw the decision without changing probabilities.
         m = [
             [0.20, 0.10, 0.05],
             [0.20, 0.15, 0.05],
