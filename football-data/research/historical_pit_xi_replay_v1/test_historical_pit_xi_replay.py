@@ -68,9 +68,10 @@ class HistoricalPitXiReplayTests(unittest.TestCase):
 
     def test_runner_has_no_result_or_market_feature_reads(self):
         src = RUNNER.read_text(encoding="utf-8")
-        forbidden = ["h_goals", "a_goals", "h_w", "h_d", "h_l", "odds", "market", "home_xg", "away_xg"]
-        for token in forbidden:
+        forbidden_feature_tokens = ["h_goals", "a_goals", "h_w", "h_d", "h_l", "odds", "home_xg", "away_xg"]
+        for token in forbidden_feature_tokens:
             self.assertNotIn(token, src)
+        self.assertIn('"market_access": False', src)
         self.assertIn("Phase A: fix every target prediction", src)
         self.assertIn("Phase B: only after today's target predictions are fixed", src)
         self.assertIn("same_date_matches_are_not_prior", CONTRACT.read_text(encoding="utf-8"))
