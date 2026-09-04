@@ -1,0 +1,149 @@
+name: football3 Historical Expanded PIT Dev V1
+
+on:
+  push:
+    branches: ['football3/historical-expanded-pit-dev-v1']
+    paths:
+      - '.github/workflows/football3-historical-expanded-pit-dev-v1.yml'
+      - 'football-data/research/historical_expanded_pit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASE_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  inventory-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact branch and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-expanded-pit-dev-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          changed="$(git diff --name-only "$BASE_HEAD...HEAD")"
+          printf '%s\n' "$changed"
+          test -n "$changed"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective_governance|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2
+            exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-expanded-pit-dev-v1.yml|football-data/research/historical_expanded_pit_v1/*) ;;
+              *) echo "unexpected changed path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Structural check
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_expanded_pit_v1
+          python -m py_compile "$D/audit_historical_inventory.py"
+          python - <<'PY'
+          import json
+          p='football-data/research/historical_expanded_pit_v1/HISTORICAL_EXPANDED_PIT_CONTRACT.json'
+          c=json.load(open(p))
+          assert c['status']=='FROZEN_BEFORE_NEW_DIRECTION_DEVELOPMENT'
+          assert c['frozen_boundaries']['prospective_1335_labels_forbidden'] is True
+          assert c['historical_data_roles']['historical_confirmation'].startswith('2023 completed Big5 season')
+          PY
+
+      - name: Download exact frozen historical database artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          mkdir -p _input
+          unzip -q /tmp/old.zip understat_frozen.db understat_freeze_receipt.json understat_identity_manifest.json -d _input
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Audit historical inventory without opening 2023 labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_expanded_pit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_historical_inventory.py" \
+            --db _input/understat_frozen.db \
+            --contract "$D/HISTORICAL_EXPANDED_PIT_CONTRACT.json" \
+            --out _run | tee /tmp/inventory_stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/historical_inventory.json'))
+          assert x['status']=='HISTORICAL_INVENTORY_PASS'
+          assert x['cohorts']['state_2014_2023_n']==18084
+          assert x['cohorts']['development_2018_2022_n']==9029
+          assert x['cohorts']['locked_historical_confirmation_2023_n']==1752
+          assert x['cohorts']['partial_2024_inventory_only_n']==59
+          assert x['event_match_n_2014_2023']==18084
+          assert x['lineup_match_n_2014_2023']==18084
+          assert x['lineup_two_team_n_2014_2023']==18084
+          assert x['download_required'] is False
+          assert x['label_values_selected'] is False
+          assert x['prospective_1335_data_touched'] is False
+          assert all(x['candidate_direction_feasibility'].values())
+          PY
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_expanded_pit_v1
+          cp "$D/HISTORICAL_EXPANDED_PIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_historical_inventory.py" _seal/code/
+          cp _run/historical_inventory.json _seal/evidence/
+          cp _input/understat_freeze_receipt.json _input/understat_identity_manifest.json _seal/evidence/
+          cp /tmp/inventory_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          inv=json.load(open('_run/historical_inventory.json'))
+          m={
+            'schema_version':'football3-historical-expanded-pit-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'base_head':os.environ['BASE_HEAD'],
+            'status':inv['status'],
+            'development_n':inv['cohorts']['development_2018_2022_n'],
+            'locked_confirmation_n':inv['cohorts']['locked_historical_confirmation_2023_n'],
+            'download_required':inv['download_required'],
+            'prospective_1335_data_touched':False,
+            'files':files,
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed inventory evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-expanded-pit-inventory-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
