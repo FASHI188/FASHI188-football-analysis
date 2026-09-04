@@ -1,0 +1,198 @@
+name: Football3 Formal State Integrity Guard V1
+
+on:
+  push:
+    branches:
+      - football3/formal-state-integrity-guard-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-formal-state-integrity-guard-v1
+  cancel-in-progress: false
+
+jobs:
+  integrity-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore pinned frozen sources and original Stuttgart state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation \
+                   .runtime_sources/original_base .runtime_sources/original_final \
+                   .integrity_regression .stuttgart_recalc_state/bundle \
+                   football-data/formal_gpt_gateway_v1/integrity_regression_output \
+                   football-data/formal_gpt_gateway_v1/stuttgart_recalc_output
+          fetch_artifact () {
+            local id="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "${out}"
+          }
+          fetch_artifact 9798682425 .runtime_sources/understat.zip
+          fetch_artifact 9827606506 .runtime_sources/confirmation.zip
+          fetch_artifact 9918451916 .runtime_sources/original_base.zip
+          fetch_artifact 9918501049 .runtime_sources/original_final.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          unzip -q .runtime_sources/original_base.zip -d .runtime_sources/original_base
+          unzip -q .runtime_sources/original_final.zip -d .runtime_sources/original_final
+
+      - name: Unit tests for anomaly, cache and identity rules
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 -m unittest -v football-data/formal_gpt_gateway_v1/test_formal_state_integrity_guard_v1.py
+          python3 - <<'PY'
+          import entry
+          assert entry.FORMAL_STATE_INTEGRITY_GUARD["installed"] is True
+          assert entry.FORMAL_STATE_INTEGRITY_GUARD["fallback_classes"] == ["NORMAL_FALLBACK","DATA_STATE_ANOMALY"]
+          assert entry.FORMAL_STATE_INTEGRITY_GUARD["model_parameters_or_weights_changed"] is False
+          assert entry.FORMAL_STATE_INTEGRITY_GUARD["formal_current_or_production_pointer_changed"] is False
+          print("ENTRY_INTEGRITY_GUARD_INSTALL_PASS")
+          PY
+
+      - name: Historical prematch regression GER EPL ITA and promoted team
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --out "$PWD/football-data/formal_gpt_gateway_v1/integrity_regression_output" \
+            | tee football-data/formal_gpt_gateway_v1/integrity_regression_output/stdout.txt
+
+      - name: Recalculate Stuttgart Koln from pinned prematch state only
+        run: |
+          set -euo pipefail
+          rm -rf .stuttgart_recalc_state/bundle/* football-data/formal_gpt_gateway_v1/stuttgart_recalc_output/*
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v2.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --original-base-bundle "$PWD/.runtime_sources/original_base" \
+            --original-final-bundle "$PWD/.runtime_sources/original_final" \
+            --state-root "$PWD/.stuttgart_recalc_state" \
+            --out "$PWD/football-data/formal_gpt_gateway_v1/stuttgart_recalc_output" \
+            | tee football-data/formal_gpt_gateway_v1/stuttgart_recalc_output/stdout.txt
+
+      - name: Enforce generalized integrity and Stuttgart gates
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib
+          regdir=pathlib.Path("football-data/formal_gpt_gateway_v1/integrity_regression_output")
+          stdir=pathlib.Path("football-data/formal_gpt_gateway_v1/stuttgart_recalc_output")
+          reg=json.loads((regdir/"formal_state_integrity_regression.json").read_text())
+          s=json.loads((stdir/"summary.json").read_text())
+          r=json.loads((stdir/"prediction_receipt.json").read_text())
+          t=json.loads((stdir/"xg_trigger_audit.json").read_text())
+          i=json.loads((stdir/"target_identity_audit.json").read_text())
+          assert reg["status"]=="PASS",reg
+          assert reg["case_n"]>=4,reg
+          assert set(reg["required_competitions"])=={"GER_Bundesliga","ENG_PremierLeague","ITA_SerieA"},reg
+          assert reg["promoted_case_present"] is True,reg
+          assert reg["all_fast_full_matrix_byte_equal"] is True,reg
+          assert reg["all_fast_full_probability_byte_equal"] is True,reg
+          assert reg["all_matrices_225_cells"] is True,reg
+          assert reg["legal_fallback_frozen_v1_exact"] is True,reg
+          cs=reg["cross_season_full_rebuild"]
+          assert cs["status"]=="PASS",cs
+          assert cs["state_stage"]=="BASE_AFTER_2025_26_CROSS_SEASON_REBUILD_BEFORE_2026_27_LIVE_DELTA",cs
+          for comp in ("GER_Bundesliga","ENG_PremierLeague","ITA_SerieA"):
+              c=cs["coverage"][comp]
+              assert c["eligible_for_target"] is True,c
+              assert c["joined_rows"]==c["formal_rows"] and c["joined_rows"]>0,c
+          assert min(cs["stuttgart_koln_xg_evidence"])>0.0,cs
+          assert cs["final_threshold_checked_in_pinned_target_replay"] is True,cs
+          assert s["status"]=="PASS",s
+          assert s["cutoff"]=="2026-09-04T00:25:59+00:00",s
+          assert s["source_refetch_used"] is False,s
+          assert s["target_match_xg_used"] is False,s
+          assert s["post_target_information_used"] is False,s
+          assert s["model_parameters_or_weights_changed"] is False,s
+          assert s["formal_current_or_production_pointer_changed"] is False,s
+          assert s["fusion_weights"]=={"xg":0.75,"frozen_v1":0.25},s
+          assert r["formal_head"]=="e12f5d1193be5d81f60301cf34ab2140e11712a9",r
+          assert r["current_sha256"]=="ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8",r
+          assert r["fallback_exact_v1"] is False,r
+          assert r["model_route"]!="FROZEN_V1_EXACT_FALLBACK",r
+          assert r["prediction_sha"]=="00c29b8e7f577a15bac675644889940d27bc340f199f6e8523c11e469ada8b65",r
+          assert i["home"]["strength_team_id"]=="gteam_9dc5bad7a55031b9",i
+          assert i["away"]["strength_team_id"]=="gteam_1c33ac6f1f97b37a",i
+          assert t["dynamic"]["fallback_exact_v1"] is False,t
+          assert min(float(x) for x in t["dynamic"]["evidence"])>=3.0,t
+          gate={
+            "schema_version":"football3-formal-state-integrity-gate-v1",
+            "status":"PASS",
+            "head":s["formal_head"],
+            "current_sha256":s["formal_current_sha256"],
+            "regression_case_n":reg["case_n"],
+            "required_competitions":reg["required_competitions"],
+            "promoted_case_present":reg["promoted_case_present"],
+            "fast_full_matrix_byte_equal":reg["all_fast_full_matrix_byte_equal"],
+            "fast_full_probability_byte_equal":reg["all_fast_full_probability_byte_equal"],
+            "legal_fallback_frozen_v1_exact":reg["legal_fallback_frozen_v1_exact"],
+            "stuttgart_prediction_sha":r["prediction_sha"],
+            "stuttgart_receipt_sha":r["receipt_sha"],
+            "stuttgart_p_home":r["p_home"],
+            "stuttgart_p_draw":r["p_draw"],
+            "stuttgart_p_away":r["p_away"],
+            "stuttgart_model_center":r["model_center"],
+            "stuttgart_fallback_exact_v1":r["fallback_exact_v1"],
+            "stuttgart_xg_effective_evidence":t["dynamic"]["evidence"],
+            "model_parameters_or_weights_changed":False,
+            "formal_current_or_production_pointer_changed":False,
+          }
+          (stdir/"formal_state_integrity_gate.json").write_text(json.dumps(gate,sort_keys=True,separators=(",",":"))+"\n")
+          print(json.dumps(gate,sort_keys=True))
+          PY
+
+      - name: Validate Stuttgart candidate state bundle
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+              --bundle "$PWD/.stuttgart_recalc_state/bundle" \
+            | tee football-data/formal_gpt_gateway_v1/stuttgart_recalc_output/state_validate.txt
+
+      - name: Upload generalized integrity regression
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-formal-state-integrity-regression-${{ github.run_id }}
+          path: football-data/formal_gpt_gateway_v1/integrity_regression_output/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Stuttgart recalculation receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-formal-state-integrity-stuttgart-receipt-${{ github.run_id }}
+          path: football-data/formal_gpt_gateway_v1/stuttgart_recalc_output/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Stuttgart recalculation state
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-formal-state-integrity-stuttgart-state-${{ github.run_id }}
+          path: .stuttgart_recalc_state/bundle/
+          if-no-files-found: error
+          retention-days: 90

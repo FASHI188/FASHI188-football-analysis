@@ -1,0 +1,218 @@
+name: Football3 Formal State Integrity Governed Candidate Acceptance V1
+
+on:
+  push:
+    branches:
+      - football3/formal-state-integrity-guard-governed-candidate-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-formal-state-integrity-governed-candidate-acceptance-v1
+  cancel-in-progress: false
+
+env:
+  GOVERNED_BASE_HEAD: '0187e39ef33bedf68e1e99013362b65e731ea4c9'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  FORMAL_CURRENT_SHA256: 'ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8'
+
+jobs:
+  candidate-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore byte-pinned generic frozen sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .accept/understat .accept/confirmation .accept/integrity .accept/gateway/full .accept/gateway/fast .accept/state
+          fetch_artifact () {
+            local id="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$out"
+          }
+          fetch_artifact 9798682425 .accept/understat.zip
+          fetch_artifact 9827606506 .accept/confirmation.zip
+          unzip -q .accept/understat.zip -d .accept/understat
+          unzip -q .accept/confirmation.zip -d .accept/confirmation
+
+      - name: Prove merge-staging cleanup scope and preserve audit lineage
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          target_only=[
+            '.github/workflows/football3-stuttgart-koln-sealed-replay-repair-v1.yml',
+            '.github/workflows/football3-target-xg-state-replay-v1.yml',
+            'football-data/formal_gpt_gateway_v1/target_identity_replay_fix_v1.py',
+            'football-data/formal_gpt_gateway_v1/test_target_identity_replay_fix_v1.py',
+            'football-data/formal_gpt_gateway_v1/xg_coverage_rebuild_replay_ger_v1.py',
+            'football-data/formal_gpt_gateway_v1/xg_coverage_rebuild_replay_v1.py',
+            'football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v1.py',
+            'football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v2.py',
+            'football-data/formal_gpt_gateway_v1/xg_trigger_diagnostic_fix_v2.py',
+          ]
+          present=[p for p in target_only if Path(p).exists()]
+          assert not present, f'target-only cleanup incomplete: {present}'
+          audit_evidence=[
+            'football-data/formal_gpt_gateway_v1/README_REPAIR.md',
+            'football-data/formal_gpt_gateway_v1/repair_scope.json',
+            'football-data/formal_gpt_gateway_v1/xg_coverage_repair_scope_v1.json',
+          ]
+          missing=[p for p in audit_evidence if not Path(p).exists()]
+          assert not missing, f'audit evidence removed: {missing}'
+          entry=Path('football-data/formal_gpt_gateway_v1/entry.py').read_text()
+          forbidden=('target_identity_replay_fix_v1','xg_target_state_graft_replay_v1','xg_target_state_graft_replay_v2','xg_trigger_diagnostic_fix_v2')
+          assert not [x for x in forbidden if x in entry], 'target-only logic wired into generic entry'
+          Path('.accept/cleanup_scope.txt').write_text('\n'.join(target_only)+'\n')
+          print('MERGE_STAGING_TARGET_ONLY_CLEANUP_PASS')
+          PY
+          git show "${GOVERNED_BASE_HEAD}:.github/workflows/football3-formal-gpt-runner-integration-v1.yml" > /tmp/runner-base.yml
+          cmp --silent /tmp/runner-base.yml .github/workflows/football3-formal-gpt-runner-integration-v1.yml
+
+      - name: Guard unit tests and generic integrity regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 -m unittest -v football-data/formal_gpt_gateway_v1/test_formal_state_integrity_guard_v1.py
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --out "$PWD/.accept/integrity"
+          python3 - <<'PY'
+          import json, pathlib
+          d=json.loads(pathlib.Path('.accept/integrity/formal_state_integrity_regression.json').read_text())
+          assert d['status']=='PASS', d
+          assert d['case_n']>=4, d
+          assert set(d['required_competitions'])=={'GER_Bundesliga','ENG_PremierLeague','ITA_SerieA'}, d
+          assert d['promoted_case_present'] is True, d
+          assert d['all_fast_full_matrix_byte_equal'] is True, d
+          assert d['all_fast_full_probability_byte_equal'] is True, d
+          assert d['all_fast_full_route_equal'] is True, d
+          assert d['all_matrices_225_cells'] is True, d
+          assert d['legal_fallback_frozen_v1_exact'] is True, d
+          assert d['target_specific_replay_used'] is False, d
+          print('INTEGRITY_REGRESSION_PASS')
+          PY
+
+      - name: Execute generic gateway FULL then FAST acceptance
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          cat > .accept/gateway/bootstrap_request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","request_id":"merge-staging-final-bootstrap","mode":"bootstrap_selftest"}
+          JSON
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.accept/gateway/bootstrap_request.json" \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --state-root "$PWD/.accept/state" \
+            --out "$PWD/.accept/gateway/full"
+          cat > .accept/gateway/cache_request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","request_id":"merge-staging-final-fast","mode":"cache_reuse_probe"}
+          JSON
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.accept/gateway/cache_request.json" \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --state-root "$PWD/.accept/state" \
+            --out "$PWD/.accept/gateway/fast"
+          python3 - <<'PY'
+          import json, pathlib, os
+          root=pathlib.Path('.accept/gateway')
+          full=json.loads((root/'full/summary.json').read_text())
+          fast=json.loads((root/'fast/summary.json').read_text())
+          fr=json.loads((root/'fast/prediction_receipt.json').read_text())
+          assert full['status']=='PASS' and full['calculation_path']=='FULL_REBUILD_PATH', full
+          assert fast['status']=='PASS' and fast['calculation_path']=='FAST_PATH', fast
+          for d in (full,fast):
+            assert d['formal_head']==os.environ['FORMAL_HEAD'], d
+            assert d['formal_current_sha256']==os.environ['FORMAL_CURRENT_SHA256'], d
+            assert 'formal_state_integrity_guard_adapter' in d, d
+          assert fr['formal_head']==os.environ['FORMAL_HEAD'], fr
+          assert fr['current_sha256']==os.environ['FORMAL_CURRENT_SHA256'], fr
+          assert fast['input_sha'] and fast['state_sha'] and fast['state_bundle_sha'] and fast['prediction_sha'] and fast['receipt_sha'], fast
+          assert fr['prediction_sha']==fast['prediction_sha'], (fr,fast)
+          assert fr['receipt_sha']==fast['receipt_sha'], (fr,fast)
+          print('GENERIC_GATEWAY_FULL_FAST_ACCEPTANCE_PASS')
+          PY
+
+      - name: Prove protected model and formal wiring bytes unchanged
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          base=os.environ['GOVERNED_BASE_HEAD']
+          protected=[
+            'football-data/new_engine_v1/formal_fusion_v2.py',
+            'football-data/new_engine_v1/test_formal_fusion_v2.py',
+            'governance/football3/validate_formal_wiring_contract_v2.py',
+            'governance/football3/formal_wiring_contract_schema_v2.json',
+            'football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json',
+          ]
+          for p in protected:
+            assert pathlib.Path(p).read_bytes()==subprocess.check_output(['git','show',f'{base}:{p}']), f'protected byte drift: {p}'
+          print('PROTECTED_MODEL_AND_WIRING_BYTES_PASS')
+          PY
+
+      - name: Record exact final candidate acceptance manifest
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          root=pathlib.Path('.accept')
+          i=json.loads((root/'integrity/formal_state_integrity_regression.json').read_text())
+          full=json.loads((root/'gateway/full/summary.json').read_text())
+          fast=json.loads((root/'gateway/fast/summary.json').read_text())
+          fr=json.loads((root/'gateway/fast/prediction_receipt.json').read_text())
+          m={
+            'schema_version':'football3-formal-state-integrity-governed-candidate-acceptance-v1',
+            'status':'PASS','candidate_head':os.environ['GITHUB_SHA'],
+            'formal_head':os.environ['FORMAL_HEAD'],'current_sha256':os.environ['FORMAL_CURRENT_SHA256'],
+            'model_parameters_or_weights_changed':False,'production_pointer_changed':False,'new_labels_read':False,
+            'target_specific_workflows_present':False,'target_specific_helpers_present':False,
+            'generic_gateway_full_status':full['status'],'generic_gateway_fast_status':fast['status'],
+            'generic_gateway_fast_receipt_sha':fr['receipt_sha'],
+            'generic_gateway_fast_prediction_sha':fr['prediction_sha'],
+            'regression_case_n':i['case_n'],
+            'fast_full_matrix_byte_equal':i['all_fast_full_matrix_byte_equal'],
+            'fast_full_probability_byte_equal':i['all_fast_full_probability_byte_equal'],
+            'fast_full_route_equal':i['all_fast_full_route_equal'],
+            'legal_fallback_frozen_v1_exact':i['legal_fallback_frozen_v1_exact'],
+            'historical_audit_artifacts_preserved':[9926986056,9926980214,9927001652],
+            'historical_receipts_modified':False,
+          }
+          (root/'acceptance_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
+          print(json.dumps(m,sort_keys=True))
+          PY
+
+      - name: Upload integrity acceptance Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-formal-state-integrity-governed-candidate-${{ github.run_id }}
+          path: |
+            .accept/acceptance_manifest.json
+            .accept/cleanup_scope.txt
+            .accept/integrity/formal_state_integrity_regression.json
+            .accept/gateway/full/summary.json
+            .accept/gateway/fast/summary.json
+            .accept/gateway/full/prediction_receipt.json
+            .accept/gateway/fast/prediction_receipt.json
+          if-no-files-found: error
+          retention-days: 90

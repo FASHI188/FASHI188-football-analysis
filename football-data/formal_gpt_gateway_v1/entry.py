@@ -31,6 +31,34 @@ import live_gateway_patch_v1
 
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
 
+# Canonical future/absent fixture identity must be available inside the gateway
+# before the integrity guard captures the production normal-request chain. This
+# bridge is generic and identity-only; it does not install target replay logic.
+import formal_future_fixture_identity_bridge_v1
+FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE = formal_future_fixture_identity_bridge_v1.install(gateway)
+
+# Preserve the historical missing-data probe contract when stricter live source
+# guards fail closed with a newer error class. This affects probe mode only.
+import formal_missing_data_probe_compat_v1
+FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(gateway)
+
+# If a validated state is already sealed exactly at the requested cutoff, execute
+# a source-silent replay rather than trying to re-observe a historical cutoff.
+import formal_exact_cutoff_sealed_replay_v1
+FORMAL_EXACT_CUTOFF_SEALED_REPLAY = formal_exact_cutoff_sealed_replay_v1.install(gateway)
+
+# Install generic integrity controls after the existing production gateway stack.
+# Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
+# installed here; those remain confined to diagnostic workflows.
+import formal_state_integrity_guard_v1
+FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
+import formal_cache_reuse_binding_v1
+FORMAL_CACHE_REUSE_BINDING = formal_cache_reuse_binding_v1.install(gateway)
+import formal_state_integrity_xg_history_count_fix_v1
+FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_count_fix_v1.install()
+import formal_state_integrity_coverage_patch_v1
+FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
+
 
 def _direct_complete_fixture(history):
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
@@ -71,6 +99,13 @@ def main() -> int:
             "live_fast_reuse_audit.json": fast_audit,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
+            "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
+            "formal_missing_data_probe_compat_adapter.json": FORMAL_MISSING_DATA_PROBE_COMPAT,
+            "formal_exact_cutoff_sealed_replay_adapter.json": FORMAL_EXACT_CUTOFF_SEALED_REPLAY,
+            "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
+            "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
+            "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
+            "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -91,6 +126,13 @@ def main() -> int:
             d["live_fast_reuse_audit"] = fast_audit
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
+            d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
+            d["formal_missing_data_probe_compat_adapter"] = FORMAL_MISSING_DATA_PROBE_COMPAT
+            d["formal_exact_cutoff_sealed_replay_adapter"] = FORMAL_EXACT_CUTOFF_SEALED_REPLAY
+            d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
+            d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
+            d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
+            d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "

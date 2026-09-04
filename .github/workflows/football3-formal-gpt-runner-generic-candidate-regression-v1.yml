@@ -1,0 +1,209 @@
+name: Football3 Official Generic Runner Candidate Regression V1
+
+on:
+  push:
+    branches:
+      - football3/formal-state-integrity-guard-governed-candidate-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  OFFICIAL_RUNNER_BASE_HEAD: '0187e39ef33bedf68e1e99013362b65e731ea4c9'
+  OFFICIAL_RUNNER_PATH: '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+
+jobs:
+  generic-runner-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Declare non-production candidate authority
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/formal-state-integrity-guard-governed-candidate-v1'
+          printf 'candidate_validation_only=true\nproduction_authority=false\nproduction_branch_gate_modified=false\n' > runner_candidate_authority.txt
+      - name: Prove official runner workflow restored byte-for-byte from governed base
+        run: |
+          set -euo pipefail
+          git show "${OFFICIAL_RUNNER_BASE_HEAD}:${OFFICIAL_RUNNER_PATH}" > /tmp/official-base.yml
+          cmp --silent /tmp/official-base.yml "$OFFICIAL_RUNNER_PATH"
+          sha256sum /tmp/official-base.yml "$OFFICIAL_RUNNER_PATH" | tee runner_workflow_sha256.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/football3-formal-gpt-runner-integration-v1.yml').read_text()
+          required=[
+            'football3/formal-gpt-runner-integration-v1','workflow_dispatch:',
+            'football3/formal-gpt-runner-request-carrier-v1','Build audited invocation request',
+            'Restore latest durable formal state Artifact','Download byte-bound frozen FULL rebuild sources',
+            'Execute frozen original formal runner through gateway','Probe missing input routes to FULL and fails closed',
+            'Upload prediction or gap receipt','Upload complete reusable state bundle',
+            'Preserve main gateway failure as job failure']
+          missing=[x for x in required if x not in s]
+          assert not missing,missing
+          assert 'football3/formal-gpt-runner-identity-repair-v1' not in s
+          assert 'xg_coverage_rebuild_replay_ger_v1.py' not in s
+          print('OFFICIAL_GENERIC_RUNNER_BYTE_RESTORE_PASS')
+          PY
+      - name: Restore frozen generic regression sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runner/understat .runner/confirmation .runner/out
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" -o .runner/understat.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" -o .runner/confirmation.zip
+          unzip -q .runner/understat.zip -d .runner/understat
+          unzip -q .runner/confirmation.zip -d .runner/confirmation
+      - name: Execute actual generic entry end-to-end FULL FAST predict and fail-closed
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          mkdir -p .runner/e2e/full .runner/e2e/fast .runner/e2e/predict .runner/e2e/gap .runner/e2e/state
+          cat > .runner/e2e/bootstrap_request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","request_id":"candidate-e2e-bootstrap","mode":"bootstrap_selftest"}
+          JSON
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.runner/e2e/bootstrap_request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" \
+            --state-root "$PWD/.runner/e2e/state" --out "$PWD/.runner/e2e/full"
+          cat > .runner/e2e/cache_request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","request_id":"candidate-e2e-fast","mode":"cache_reuse_probe"}
+          JSON
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.runner/e2e/cache_request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" \
+            --state-root "$PWD/.runner/e2e/state" --out "$PWD/.runner/e2e/fast"
+          python3 - <<'PY'
+          import json, pathlib
+          root=pathlib.Path('.runner/e2e')
+          fast=json.loads((root/'fast/summary.json').read_text())
+          f=fast['fixture']
+          assert 'stuttgart' not in (f['home_team_name']+' '+f['away_team_name']).lower()
+          req={'schema_version':'football3-formal-gpt-gateway-v1','request_id':'candidate-e2e-generic-predict','mode':'predict',
+               'match':{'competition_id':f['competition_id'],'season':f['season'],'home_team_name':f['home_team_name'],
+                        'away_team_name':f['away_team_name'],'kickoff':f['kickoff'],'cutoff':fast['cutoff']}}
+          (root/'predict_request.json').write_text(json.dumps(req,sort_keys=True,separators=(',',':'))+'\n')
+          PY
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.runner/e2e/predict_request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" \
+            --state-root "$PWD/.runner/e2e/state" --out "$PWD/.runner/e2e/predict"
+          cat > .runner/e2e/gap_request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","request_id":"candidate-e2e-gap","mode":"missing_data_probe","match":{"competition_id":"ENG_PremierLeague","season":"2099/00","home_team_name":"Generic Candidate Home","away_team_name":"Generic Candidate Away","kickoff":"2099-08-15T15:00:00+00:00","cutoff":"2099-08-15T14:00:00+00:00"}}
+          JSON
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.runner/e2e/gap_request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" \
+            --state-root "$PWD/.runner/e2e/state" --out "$PWD/.runner/e2e/gap"
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('.runner/e2e')
+          full=json.loads((root/'full/summary.json').read_text())
+          fast=json.loads((root/'fast/summary.json').read_text())
+          pred=json.loads((root/'predict/summary.json').read_text())
+          gap=json.loads((root/'gap/summary.json').read_text())
+          assert full['status']=='PASS' and full['probe']=='BOOTSTRAP_FULL' and full['calculation_path']=='FULL_REBUILD_PATH'
+          assert fast['status']=='PASS' and fast['probe']=='REMOTE_CACHE_FAST' and fast['calculation_path']=='FAST_PATH'
+          assert pred['status']=='PASS' and pred['probe']=='PREDICTION' and pred['calculation_path']=='FAST_PATH'
+          fixture=pred['fixture']; assert 'stuttgart' not in (fixture['home_team_name']+' '+fixture['away_team_name']).lower()
+          assert gap['status']=='PASS_EXPECTED_FAIL_CLOSED' and gap['probe']=='MISSING_DATA_FAIL_CLOSED'
+          assert gap['state_unchanged'] is True and gap['prediction_sha'] is None and gap['receipt_sha'] is None
+          for d in (full,fast,pred,gap):
+            assert 'formal_state_integrity_guard_adapter' in d
+          print('ACTUAL_GENERIC_ENTRY_END_TO_END_PASS',fixture['home_team_name'],fixture['away_team_name'])
+          PY
+      - name: Exercise arbitrary non-Stuttgart request path and FAST FULL equivalence
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v2.py \
+            --repo-root "$PWD" --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" --out "$PWD/.runner/out"
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.loads(pathlib.Path('.runner/out/formal_state_integrity_regression.json').read_text())
+          assert d['status']=='PASS' and d['non_stuttgart_case_n']>=4
+          assert d['target_specific_replay_used'] is False
+          assert d['all_fast_full_probability_byte_equal'] and d['all_fast_full_matrix_byte_equal']
+          assert d['legal_fallback_frozen_v1_exact'] is True
+          PY
+      - name: Exercise production missing-input FULL fail-closed probe
+        run: |
+          set -euo pipefail
+          mkdir -p .runner/missing
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_runtime_missing_input_probe_v1.py \
+            --repo-root "$PWD" --understat-db "$PWD/.runner/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runner/confirmation" --work "$PWD/.runner/missing-work" --out "$PWD/.runner/missing"
+          test -n "$(find .runner/missing -type f -print -quit)"
+      - name: Prove generic entry has guard and no target-specific repair
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('football-data/formal_gpt_gateway_v1/entry.py').read_text()
+          assert 'formal_state_integrity_guard_v1' in s
+          assert 'formal_state_integrity_coverage_patch_v1' in s
+          assert 'formal_state_integrity_xg_history_count_fix_v1' in s
+          assert 'target_identity_replay_fix_v1' not in s
+          assert 'xg_trigger_diagnostic_fix_v2' not in s
+          PY
+      - name: Write official generic runner regression manifest
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          p=pathlib.Path('.github/workflows/football3-formal-gpt-runner-integration-v1.yml')
+          r=json.loads(pathlib.Path('.runner/out/formal_state_integrity_regression.json').read_text())
+          full=json.loads(pathlib.Path('.runner/e2e/full/summary.json').read_text())
+          fast=json.loads(pathlib.Path('.runner/e2e/fast/summary.json').read_text())
+          pred=json.loads(pathlib.Path('.runner/e2e/predict/summary.json').read_text())
+          gap=json.loads(pathlib.Path('.runner/e2e/gap/summary.json').read_text())
+          m={'schema_version':'football3-official-generic-runner-candidate-regression-v1','status':'PASS',
+             'candidate_head':os.environ['GITHUB_SHA'],'production_authority':False,'production_branch_gate_modified':False,
+             'official_runner_byte_equal_base':True,'official_runner_base_head':os.environ['OFFICIAL_RUNNER_BASE_HEAD'],
+             'official_runner_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
+             'actual_generic_entry_end_to_end':True,'entry_full_path':full['calculation_path'],'entry_fast_path':fast['calculation_path'],
+             'entry_predict_status':pred['status'],'entry_predict_fixture':pred['fixture'],'entry_gap_status':gap['status'],
+             'entry_gap_state_unchanged':gap['state_unchanged'],'generic_request_path':True,'persistent_state_restore_contract':True,
+             'fast_to_full_contract':True,'missing_input_fail_closed_contract':True,'failure_receipt_contract':True,
+             'non_stuttgart_case_n':r['non_stuttgart_case_n'],'fast_full_matrix_byte_equal':r['all_fast_full_matrix_byte_equal'],
+             'fast_full_probability_byte_equal':r['all_fast_full_probability_byte_equal'],
+             'legal_fallback_frozen_v1_exact':r['legal_fallback_frozen_v1_exact'],'target_specific_replay_used':False}
+          pathlib.Path('.runner/official_generic_runner_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
+          print(json.dumps(m,sort_keys=True))
+          PY
+      - name: Upload official generic runner regression Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-official-generic-runner-regression-${{ github.run_id }}
+          path: |
+            runner_candidate_authority.txt
+            runner_workflow_sha256.txt
+            .runner/official_generic_runner_manifest.json
+            .runner/out/formal_state_integrity_regression.json
+            .runner/e2e/full/summary.json
+            .runner/e2e/fast/summary.json
+            .runner/e2e/predict/summary.json
+            .runner/e2e/gap/summary.json
+            .runner/e2e/full/prediction_receipt.json
+            .runner/e2e/fast/prediction_receipt.json
+            .runner/e2e/predict/prediction_receipt.json
+            .runner/e2e/gap/formal_gap.json
+            .runner/missing/
+          if-no-files-found: error
+          retention-days: 90
