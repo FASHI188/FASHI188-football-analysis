@@ -1,0 +1,97 @@
+name: football3 FPLCache PIT availability audit v1
+
+on:
+  push:
+    branches:
+      - football3/historical-fplcache-availability-pit-v1
+    paths:
+      - football-data/validation/audit_fplcache_pit_availability_v1.py
+      - .github/workflows/football3-fplcache-pit-availability-audit-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-fplcache-pit-availability-audit-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SCIENCE_BASE_HEAD: d4e7cbb6df5cfaae564877db31416689936a5772
+  SOURCE_ACQUISITION_RUN_ID: '33840532299'
+  SOURCE_ARTIFACT_ID: '9924791711'
+  SOURCE_ARTIFACT_SHA256: 5c46ab8fa432825b1e015094d421bc014916fe689d2e810712003bc39b79feb6
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Governance guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SCIENCE_BASE_HEAD" HEAD
+          mapfile -t changed < <(git diff --name-only "$SCIENCE_BASE_HEAD"..HEAD)
+          printf '%s\n' "${changed[@]}"
+          for path in "${changed[@]}"; do
+            case "$path" in
+              football-data/validation/acquire_fplcache_pit_availability_v1.py|\
+              .github/workflows/football3-fplcache-pit-availability-acquire-v1.yml|\
+              football-data/validation/audit_fplcache_pit_availability_v1.py|\
+              .github/workflows/football3-fplcache-pit-availability-audit-v1.yml)
+                ;;
+              *)
+                echo "unexpected changed path: $path" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile audit code
+        run: python -m py_compile football-data/validation/audit_fplcache_pit_availability_v1.py
+
+      - name: Download exact frozen acquisition artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fplcache-input
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" > /tmp/fplcache-input.zip
+          echo "${SOURCE_ARTIFACT_SHA256}  /tmp/fplcache-input.zip" | sha256sum -c -
+          unzip -q /tmp/fplcache-input.zip -d /tmp/fplcache-input
+          test -s /tmp/fplcache-input/manifest.json
+          test -s /tmp/fplcache-input/fixture_cutoff_map.jsonl.gz
+          test -s /tmp/fplcache-input/availability_snapshots.jsonl.gz
+
+      - name: Run zero-label source-quality audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fplcache-audit
+          python football-data/validation/audit_fplcache_pit_availability_v1.py \
+            --artifact-dir /tmp/fplcache-input \
+            --out /tmp/fplcache-audit/source_quality_gate.json \
+            | tee /tmp/fplcache-audit/RUN.log
+          sha256sum /tmp/fplcache-audit/source_quality_gate.json /tmp/fplcache-audit/RUN.log > /tmp/fplcache-audit/SHA256SUMS.txt
+          cat /tmp/fplcache-audit/source_quality_gate.json
+
+      - name: Upload zero-label audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fplcache-pit-availability-audit-v1-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/fplcache-audit
+          if-no-files-found: error
+          retention-days: 90
