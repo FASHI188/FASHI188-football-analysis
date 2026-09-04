@@ -1,0 +1,172 @@
+name: football3 Stage6 Pre-B Deep PPDA
+
+on:
+  push:
+    branches: ['football3/stage6-pre-b-preshot-deep-ppda-v1']
+    paths:
+      - '.github/workflows/football3-stage6-pre-b-preshot-deep-ppda-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_BLOB: 3f5bf16e6ffe7853bbcfdcf408859df8b7c1be0b
+  COMMON_BLOB: 247d27dc6db26a0b1423b9431ffe3b1265b1e9aa
+  RUNNER_BLOB: c28546b8a16b3bc8ef6901bbe2e447834635d62b
+  TEST_BLOB: 4fffab8491c6fb2344fb7ea97e9b8046273860f4
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/stage6-pre-b-preshot-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$V311_HEAD" HEAD)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          D=football-data/research/stage6_pre_b_deep_ppda
+          test "$(git hash-object "$D/STAGE6_PRE_B_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/common.py")" = "$COMMON_BLOB"
+          test "$(git hash-object "$D/run_stage6_pre_b.py")" = "$RUNNER_BLOB"
+          test "$(git hash-object "$D/test_stage6_pre_b.py")" = "$TEST_BLOB"
+          python - <<'PY'
+          import json,pathlib,subprocess
+          d=pathlib.Path('football-data/research/stage6_pre_b_deep_ppda')
+          c=json.loads((d/'STAGE6_PRE_B_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_CONSUMED_2020_2022_SCORING'
+          assert c['mechanism']['half_life_matches']==16.0
+          assert c['mechanism']['bridge_coefficient']==0.10
+          assert c['data_roles']['2023_and_later'].startswith('FORBIDDEN')
+          got=set(subprocess.check_output(['git','diff','--name-only','a90762a97515f3edd564e8ad204db0d0d4231494...HEAD'],text=True).splitlines())
+          allowed={str(d/'STAGE6_PRE_B_CONTRACT.json'),str(d/'common.py'),str(d/'run_stage6_pre_b.py'),str(d/'test_stage6_pre_b.py'),'.github/workflows/football3-stage6-pre-b-preshot-deep-ppda-v1.yml'}
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Structural tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage6_pre_b_deep_ppda
+          python -m py_compile "$D/common.py" "$D/run_stage6_pre_b.py" "$D/test_stage6_pre_b.py"
+          (cd "$D" && python test_stage6_pre_b.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify six frozen inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{v2,xg,v1,old,usr1,v31}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          test "$(sha256sum _inputs/v2/code/historical_xg_fusion_v2.py | awk '{print $1}')" = '1e840d8d37a72761a269bfb80f7a4ce74c9b67344e6f6a5b2f3a87374c8f2d8b'
+          test "$(sha256sum _inputs/xg/code/historical_xg_challenger.py | awk '{print $1}')" = '588cad84f59e8a6b31297984c2c9015af5275f209dea8d4e3a3d71183e762ba2'
+          test "$(sha256sum _inputs/v1/pure_engine.py | awk '{print $1}')" = 'cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318'
+          test "$(sha256sum _inputs/old/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          test "$(sha256sum _inputs/usr1/code/historical_fusion_v3_upset_safe.py | awk '{print $1}')" = '1707ad6b6e1339ac08b90038d595c1ea299ec4c92940643b6c404633a67c878b'
+          test "$(sha256sum _inputs/v31/code/historical_fusion_v3_1.py | awk '{print $1}')" = '59485a959940ad0e1f5357842731634acc88957dc1b7f8f029cf4cca8d05b402'
+
+      - name: Run frozen Stage6 pre-B development gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage6_pre_b_deep_ppda
+          rm -rf _run && mkdir _run
+          python "$D/run_stage6_pre_b.py" \
+            --contract "$D/STAGE6_PRE_B_CONTRACT.json" \
+            --v311 football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31 _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1 _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2 _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg _inputs/xg/code/historical_xg_challenger.py \
+            --v1 _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/research_stdout.txt
+          python - <<'PY'
+          import json
+          f=json.load(open('_run/final_status.json')); e=f['evaluation']
+          allowed={'STAGE6_PRE_B_STOP_DATA_COVERAGE','STAGE6_PRE_B_REJECTED_CONSUMED_DEVELOPMENT_NO_RESCUE','STAGE6_PRE_B_DEVELOPMENT_PASS_PROSPECTIVE_CONFIRMATION_REQUIRED'}
+          assert f['status'] in allowed
+          assert f['research_only'] is True and f['post_view_development'] is True and f['fresh_confirmation'] is False and f['promotion_allowed'] is False
+          assert f['source_max_season_loaded']==2022 and f['2023_opened'] is False
+          assert f['formal_v2_unchanged'] is True and f['v3_1_1_unchanged'] is True and f['CURRENT_changed'] is False and f['production_pointer_changed'] is False and f['formal_weights_changed'] is False
+          assert e['prediction_coverage_n']==5478 and e['raw_four_field_complete_n']==5478
+          assert e['coverage_pass'] is True
+          assert e['active_n']==5463 and e['fallback_n']==15
+          PY
+
+      - name: Seal exact-head evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          D=football-data/research/stage6_pre_b_deep_ppda
+          cp "$D/STAGE6_PRE_B_CONTRACT.json" _seal/contracts/
+          cp "$D/common.py" "$D/run_stage6_pre_b.py" "$D/test_stage6_pre_b.py" _seal/code/
+          cp _run/*.json _seal/evidence/
+          cp /tmp/tests.txt /tmp/research_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          final=json.load(open('_run/final_status.json'))
+          manifest={'schema_version':'football3-stage6-pre-b-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'v311_head':os.environ['V311_HEAD'],'status':final['status'],'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-stage6-pre-b-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
