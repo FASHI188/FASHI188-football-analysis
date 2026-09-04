@@ -1,0 +1,191 @@
+name: football3 Stage6 Pre-B Prospective Zero-Label Preflight
+
+on:
+  push:
+    branches: ['football3/stage6-pre-b-prospective-confirmation-v1']
+    paths:
+      - '.github/workflows/football3-stage6-pre-b-prospective-preflight-v1.yml'
+      - 'football-data/research/stage6_pre_b_prospective_confirmation/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-stage6-pre-b-prospective-preflight-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  PARENT_B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  FROZEN_V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_V2_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  CONTRACT_BLOB: 4769b3e21c459b457acb685ad5933157f2647cb0
+  PREFLIGHT_BLOB: e4d5bba9e4377895bd2f41e3560181ac78ea5829
+  TEST_BLOB: 7b938dfa6351da96c5047cf711f1a31c6c21254d
+  REQUIRED_N: '1335'
+
+jobs:
+  preflight-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      gate_status: ${{ steps.gate.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Exact-head and frozen-contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/stage6-pre-b-prospective-confirmation-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_B_HEAD" HEAD)" = "$PARENT_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$PARENT_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$FROZEN_V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_V2_HEAD"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_confirmation/STAGE6_PRE_B_PROSPECTIVE_CONFIRMATION_CONTRACT.json)" = "$CONTRACT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_confirmation/understat_deep_ppda_preflight.py)" = "$PREFLIGHT_BLOB"
+          test "$(git hash-object football-data/research/stage6_pre_b_prospective_confirmation/test_understat_deep_ppda_preflight.py)" = "$TEST_BLOB"
+          python - <<'PY'
+          import json, os
+          p='football-data/research/stage6_pre_b_prospective_confirmation/STAGE6_PRE_B_PROSPECTIVE_CONFIRMATION_CONTRACT.json'
+          c=json.load(open(p,encoding='utf-8'))
+          assert c['status']=='FROZEN_BEFORE_TARGET_ENROLLMENT'
+          assert c['parent_development_head']==os.environ['PARENT_B_HEAD']
+          assert c['frozen_v311_head']==os.environ['FROZEN_V311_HEAD']
+          assert c['power_plan']['required_n']==1335
+          assert c['target_population']['required_n']==1335
+          assert c['target_population']['queue_cutoff_utc']=='2026-09-04T11:00:00Z'
+          assert c['enrollment_protocol']['start_only_after_zero_label_preflight_pass'] is True
+          assert c['enrollment_protocol']['target_labels_before_all_required_receipts_enrolled']=='FORBIDDEN'
+          assert c['enrollment_protocol']['interim_scoring_or_gate_peeking']=='FORBIDDEN'
+          assert c['zero_label_source_preflight']['real_target_result_or_goal_values_read']==0
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Deterministic offline tests
+        shell: bash
+        working-directory: football-data/research/stage6_pre_b_prospective_confirmation
+        run: |
+          set -euo pipefail
+          python -m py_compile understat_deep_ppda_preflight.py test_understat_deep_ppda_preflight.py
+          python test_understat_deep_ppda_preflight.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Online zero-label Understat deep-PPDA source and capacity preflight
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python football-data/research/stage6_pre_b_prospective_confirmation/understat_deep_ppda_preflight.py \
+            --out _run/source_preflight.json \
+            --queue-out _run/prospective_queue_lock.json
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/source_preflight.json',encoding='utf-8'))
+          q=json.load(open('_run/prospective_queue_lock.json',encoding='utf-8'))
+          assert r['source_preflight_status']=='PASS_ZERO_LABEL_READY_TO_LOCK_QUEUE'
+          assert r['required_n']==1335
+          assert r['all_five_competitions_operational'] is True
+          assert r['future_eligible_fixture_count_gte_required_n'] is True
+          assert r['deep_field_semantics_verified'] is True
+          assert r['ppda_field_semantics_verified'] is True
+          assert r['strict_prior_history_builder_verified'] is True
+          assert r['queue_meets_required_n'] is True
+          assert r['real_target_result_or_goal_values_read']==0
+          assert 'target_identity_overlap_with_consumed' not in r
+          assert 'unresolved_historical_identity_gaps' not in r
+          assert q['target_labels_opened'] is False
+          assert q['result_or_goal_fields_persisted'] is False
+          assert q['queue_n_atomic']>=1335
+          assert q['ordered_queue_identity_sha256']==r['ordered_queue_identity_sha256']
+          PY
+          echo 'status=PASS_SOURCE_AND_QUEUE_ZERO_LABEL_ONLY_CONSUMPTION_AUDIT_STILL_REQUIRED' >> "$GITHUB_OUTPUT"
+
+      - name: Seal exact-head preflight artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          cp football-data/research/stage6_pre_b_prospective_confirmation/STAGE6_PRE_B_PROSPECTIVE_CONFIRMATION_CONTRACT.json _seal/contracts/
+          cp football-data/research/stage6_pre_b_prospective_confirmation/understat_deep_ppda_preflight.py _seal/code/
+          cp football-data/research/stage6_pre_b_prospective_confirmation/test_understat_deep_ppda_preflight.py _seal/code/
+          cp _run/source_preflight.json _seal/evidence/
+          cp _run/prospective_queue_lock.json _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_seal')
+          files=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              b=p.read_bytes(); files.append({'path':p.relative_to(root).as_posix(),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
+          manifest={
+            'schema_version':'football3-stage6-pre-b-prospective-preflight-seal-v1',
+            'exact_head':os.environ['GITHUB_SHA'],
+            'parent_b_head':os.environ['PARENT_B_HEAD'],
+            'frozen_v311_head':os.environ['FROZEN_V311_HEAD'],
+            'required_n':1335,
+            'terminal_status':'PASS_SOURCE_AND_QUEUE_ZERO_LABEL_ONLY_CONSUMPTION_AUDIT_STILL_REQUIRED',
+            'target_labels_opened':False,
+            'files':files,
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+          PY
+
+      - name: Upload preflight artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-stage6-pre-b-prospective-preflight-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          compression-level: 6
+
+  remote-readback:
+    needs: preflight-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download sealed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-stage6-pre-b-prospective-preflight-${{ github.sha }}
+          path: _readback
+
+      - name: Verify manifest and zero-label terminal state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          root=pathlib.Path('_readback')
+          m=json.load(open(root/'MANIFEST.json',encoding='utf-8'))
+          assert m['exact_head']==os.environ['GITHUB_SHA']
+          assert m['parent_b_head']==os.environ['PARENT_B_HEAD']
+          assert m['frozen_v311_head']==os.environ['FROZEN_V311_HEAD']
+          assert m['required_n']==1335
+          assert m['terminal_status']=='PASS_SOURCE_AND_QUEUE_ZERO_LABEL_ONLY_CONSUMPTION_AUDIT_STILL_REQUIRED'
+          assert m['target_labels_opened'] is False
+          for f in m['files']:
+              p=root/f['path']; b=p.read_bytes()
+              assert len(b)==f['bytes']
+              assert hashlib.sha256(b).hexdigest()==f['sha256']
+          r=json.load(open(root/'evidence/source_preflight.json',encoding='utf-8'))
+          q=json.load(open(root/'evidence/prospective_queue_lock.json',encoding='utf-8'))
+          assert r['source_preflight_status']=='PASS_ZERO_LABEL_READY_TO_LOCK_QUEUE'
+          assert r['real_target_result_or_goal_values_read']==0
+          assert q['target_labels_opened'] is False
+          assert q['queue_n_atomic']>=1335
+          print('PASS: Stage6 pre-B zero-label source/queue preflight artifact remote readback verified')
+          PY
