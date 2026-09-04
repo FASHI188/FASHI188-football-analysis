@@ -1,0 +1,85 @@
+name: football3 FPLCache PIT availability acquire v1
+
+on:
+  push:
+    branches:
+      - football3/historical-fplcache-availability-pit-v1
+    paths:
+      - football-data/validation/acquire_fplcache_pit_availability_v1.py
+      - .github/workflows/football3-fplcache-pit-availability-acquire-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-fplcache-pit-availability-acquire-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SCIENCE_BASE_HEAD: d4e7cbb6df5cfaae564877db31416689936a5772
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact research branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Governance guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SCIENCE_BASE_HEAD" HEAD
+          mapfile -t changed < <(git diff --name-only "$SCIENCE_BASE_HEAD"..HEAD)
+          printf '%s\n' "${changed[@]}"
+          for path in "${changed[@]}"; do
+            case "$path" in
+              football-data/validation/acquire_fplcache_pit_availability_v1.py|.github/workflows/football3-fplcache-pit-availability-acquire-v1.yml)
+                ;;
+              *)
+                echo "unexpected changed path: $path" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile acquisition code
+        run: python -m py_compile football-data/validation/acquire_fplcache_pit_availability_v1.py
+
+      - name: Acquire strict PIT availability snapshots
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python football-data/validation/acquire_fplcache_pit_availability_v1.py \
+            --out /tmp/football3-fplcache-pit-availability-v1 \
+            --workers 8 \
+            | tee /tmp/football3-fplcache-pit-availability-v1-run.log
+
+      - name: Freeze artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/football3-fplcache-pit-availability-v1
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          cp /tmp/football3-fplcache-pit-availability-v1-run.log RUN.log
+          du -sh .
+          cat manifest.json
+
+      - name: Upload acquisition artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fplcache-pit-availability-v1-${{ github.sha }}-${{ github.run_id }}
+          path: /tmp/football3-fplcache-pit-availability-v1
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
