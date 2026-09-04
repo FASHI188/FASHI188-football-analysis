@@ -92,6 +92,11 @@ def summarize_projection(rows,pm,bmap,dg):
         'max_reverse_kl_on_executed':max(kls) if kls else 0.0
     }
 
+def scaffold_config(c4):
+    cfg=json.loads(json.dumps(c4))
+    cfg['direction_generator']['frozen_t2_params']=dict(c4['direction_generator']['params'])
+    return cfg
+
 def main():
     ap=argparse.ArgumentParser()
     for x in ('contract','v324_scaffold','v323_contract','v323','v322','v32dev','core','v311','v31','usr1','v2','xg','v1','v1_result','db','xg_identity','out'):
@@ -104,6 +109,9 @@ def main():
         raise Stage4KLError('KL orientation drift')
     if c4['direction_generator']['params']!={'cap':0.02,'draw_lambda':16.0,'draw_scale':0.25,'half_life':1.0,'side_lambda':4.0,'side_scale':0.25,'support_tau':1.5}:
         raise Stage4KLError('frozen T2 params drift')
+    scaffold_c4=scaffold_config(c4)
+    if scaffold_c4['direction_generator']['frozen_t2_params']!=c4['direction_generator']['params']:
+        raise Stage4KLError('scaffold compatibility alias drift')
     v324=loadmod('stage4_kl_v324_scaffold',a.v324_scaffold)
     v324.minimum_boundary_projection=minimum_reverse_kl_boundary_projection
     original_project=v324.project_direction_map
@@ -129,7 +137,7 @@ def main():
     write_json(a.out/'pre2023_process_receipt.json',procrec)
     write_json(a.out/'pre2023_baseline_receipt.json',{'prediction_n':len(bmap),'segments':baserec})
     write_json(a.out/'dynamic_state_selection_2019_pre2023.json',stateboard)
-    sanity,spm,sdg,_=v324.predict_seasons((2019,2020),rows,bmap,bmats,snaps,core,c3,c4,v311,v322,v323,None,'sanity_gates_2019_2020')
+    sanity,spm,sdg,_=v324.predict_seasons((2019,2020),rows,bmap,bmats,snaps,core,c3,scaffold_c4,v311,v322,v323,None,'sanity_gates_2019_2020')
     if 'v324_projection' in sanity['pooled']:
         sanity['pooled']['reverse_kl_projection']=sanity['pooled'].pop('v324_projection')
     sanity_rows=[r for r in rows if r['season'] in (2019,2020)]
@@ -138,7 +146,7 @@ def main():
     if not sanity['all_pass']:
         final={'schema_version':'football3-stage4-reverse-kl-final-v1','status':c4['terminal']['development_failure'],'reason':'fixed_reverse_kl_projection_failed_2019_2020_sanity','research_only':True,'post_view':True,'fresh_confirmation':False,'promotion_allowed':False,'source_max_season_loaded':2022,'2023_opened':False,'3504_opened':False,'formal_v2_unchanged':True,'v3_1_1_unchanged':True,'CURRENT_changed':False,'production_pointer_changed':False,'formal_enablement_changed':False,'formal_weights_changed':False}
         write_json(a.out/'final_status.json',final); print(json.dumps(final,sort_keys=True)); return 0
-    rolling,rpm,rdg,_=v324.predict_seasons((2021,2022),rows,bmap,bmats,snaps,core,c3,c4,v311,v322,v323,fold_map,'hard_gates_2021_2022')
+    rolling,rpm,rdg,_=v324.predict_seasons((2021,2022),rows,bmap,bmats,snaps,core,c3,scaffold_c4,v311,v322,v323,fold_map,'hard_gates_2021_2022')
     if 'v324_projection' in rolling['pooled']:
         rolling['pooled']['reverse_kl_projection']=rolling['pooled'].pop('v324_projection')
     rolling_rows=[r for r in rows if r['season'] in (2021,2022)]
