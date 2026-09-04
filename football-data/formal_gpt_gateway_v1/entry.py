@@ -47,6 +47,12 @@ FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(g
 import formal_exact_cutoff_sealed_replay_v1
 FORMAL_EXACT_CUTOFF_SEALED_REPLAY = formal_exact_cutoff_sealed_replay_v1.install(gateway)
 
+# Install the isolated 2025/26 Ligue 1 historical xG completeness repair before
+# the generic integrity guard. It only supplies two source-provenance rows to the
+# already-frozen linked-history loader and does not alter model parameters/weights.
+import formal_ligue1_2025_26_xg_repair_v1
+FORMAL_LIGUE1_2025_26_XG_REPAIR = formal_ligue1_2025_26_xg_repair_v1.install()
+
 # Install generic integrity controls after the existing production gateway stack.
 # Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
 # installed here; those remain confined to diagnostic workflows.
@@ -102,6 +108,7 @@ def main() -> int:
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
             "formal_missing_data_probe_compat_adapter.json": FORMAL_MISSING_DATA_PROBE_COMPAT,
             "formal_exact_cutoff_sealed_replay_adapter.json": FORMAL_EXACT_CUTOFF_SEALED_REPLAY,
+            "formal_ligue1_2025_26_xg_repair_adapter.json": FORMAL_LIGUE1_2025_26_XG_REPAIR,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
             "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
@@ -129,6 +136,7 @@ def main() -> int:
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
             d["formal_missing_data_probe_compat_adapter"] = FORMAL_MISSING_DATA_PROBE_COMPAT
             d["formal_exact_cutoff_sealed_replay_adapter"] = FORMAL_EXACT_CUTOFF_SEALED_REPLAY
+            d["formal_ligue1_2025_26_xg_repair_adapter"] = FORMAL_LIGUE1_2025_26_XG_REPAIR
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
