@@ -48,19 +48,31 @@ def fetch(url: str) -> bytes:
 def assert_local_production_contract(contract: dict[str, Any]) -> dict[str, Any]:
     runtime = (FOOTBALL_DATA / "formal_fast_runtime_v1" / "runtime.py").read_text(encoding="utf-8")
     fusion = (FOOTBALL_DATA / "new_engine_v1" / "formal_fusion_v2.py").read_text(encoding="utf-8")
-    source_adapter = (FOOTBALL_DATA / "formal_gpt_gateway_v1" / "formal_source_contract_v1.py").read_text(encoding="utf-8")
+
+    big5_start = runtime.index("BIG5 = {")
+    big5_end = runtime.index("\n}\n", big5_start) + 3
+    big5_block = runtime[big5_start:big5_end]
+    formal_scope_start = runtime.index("FORMAL_SCOPE = (")
+    formal_scope_end = runtime.index("\n)\n", formal_scope_start) + 3
+    formal_scope_block = runtime[formal_scope_start:formal_scope_end]
 
     assertions = {
-        "JPN_J1_already_in_formal_scope": '"JPN_J1"' in runtime,
-        "KOR_KLeague1_already_in_formal_scope": '"KOR_KLeague1"' in runtime,
+        "JPN_J1_already_in_formal_scope": '"JPN_J1"' in formal_scope_block,
+        "KOR_KLeague1_already_in_formal_scope": '"KOR_KLeague1"' in formal_scope_block,
         "formal_head_matches_frozen_contract": str(contract["formal_model"]["head"]) in runtime,
         "current_sha_matches_frozen_contract": str(contract["formal_model"]["current_sha256"]) in runtime,
         "fusion_weight_fixed_0_75": "FUSION_WEIGHT = 0.75" in fusion,
         "exact_v1_fallback_route_present": 'route = "FROZEN_V1_EXACT_FALLBACK"' in fusion,
         "active_fusion_route_present": 'route = "FUSION_V2_ACTIVE"' in fusion,
-        "big5_understat_selection_present": all(x in source_adapter for x in ("Bundesliga", "EPL", "La liga", "Ligue 1", "Serie A")),
-        "jpn_not_in_understat_source_adapter": "JPN_J1" not in source_adapter,
-        "kor_not_in_understat_source_adapter": "KOR_KLeague1" not in source_adapter,
+        "big5_xg_mapping_present": all(x in big5_block for x in (
+            '"Bundesliga":"GER_Bundesliga"',
+            '"EPL":"ENG_PremierLeague"',
+            '"La liga":"ESP_LaLiga"',
+            '"Ligue 1":"FRA_Ligue1"',
+            '"Serie A":"ITA_SerieA"',
+        )),
+        "jpn_not_in_big5_xg_mapping": "JPN_J1" not in big5_block,
+        "kor_not_in_big5_xg_mapping": "KOR_KLeague1" not in big5_block,
     }
     if not all(assertions.values()):
         bad = [k for k, v in assertions.items() if not v]
