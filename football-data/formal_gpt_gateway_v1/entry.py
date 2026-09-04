@@ -39,6 +39,11 @@ TARGET_IDENTITY_REPLAY_FIX = target_identity_replay_fix_v1.install(gateway)
 # replaces the target resolver with the permanent deterministic identity bridge.
 import formal_state_integrity_guard_v1
 FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
+# The coverage patch closes the remaining cross-season loophole: once a frozen linked
+# source is known by target time, incomplete coverage cannot be reclassified as a normal
+# XG shortage. It remains DATA_STATE_ANOMALY after the clean FULL recheck.
+import formal_state_integrity_coverage_patch_v1
+FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
 
 
 def _direct_complete_fixture(history):
@@ -83,6 +88,7 @@ def main() -> int:
             "xg_trigger_diagnostic_fix_adapter.json": XG_TRIGGER_DIAGNOSTIC_FIX,
             "target_identity_replay_fix_adapter.json": TARGET_IDENTITY_REPLAY_FIX,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
+            "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -106,6 +112,7 @@ def main() -> int:
             d["xg_trigger_diagnostic_fix_adapter"] = XG_TRIGGER_DIAGNOSTIC_FIX
             d["target_identity_replay_fix_adapter"] = TARGET_IDENTITY_REPLAY_FIX
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
+            d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
