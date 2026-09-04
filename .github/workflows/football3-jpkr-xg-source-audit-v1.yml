@@ -1,0 +1,47 @@
+name: Football3 JP-KR XG Source Audit V1
+
+on:
+  push:
+    branches:
+      - football3/jpkr-xg-source-audit-research-v1
+    paths:
+      - 'football-data/research/jpkr_xg_v2/**'
+      - '.github/workflows/football3-jpkr-xg-source-audit-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact research HEAD
+        uses: actions/checkout@v4
+
+      - name: Record execution identity
+        run: |
+          mkdir -p artifacts/jpkr-xg-source-audit
+          printf '%s\n' "${GITHUB_SHA}" > artifacts/jpkr-xg-source-audit/research_head.txt
+          printf '%s\n' "${GITHUB_REF_NAME}" > artifacts/jpkr-xg-source-audit/research_branch.txt
+          printf '%s\n' "${GITHUB_RUN_ID}" > artifacts/jpkr-xg-source-audit/run_id.txt
+
+      - name: Execute zero-label source and coverage audit
+        run: |
+          python football-data/research/jpkr_xg_v2/source_audit_v1.py \
+            --out artifacts/jpkr-xg-source-audit
+
+      - name: Seal artifact file digests
+        run: |
+          cd artifacts/jpkr-xg-source-audit
+          sha256sum * | sort > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload research audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-jpkr-xg-source-audit-${{ github.run_id }}
+          path: artifacts/jpkr-xg-source-audit/
+          if-no-files-found: error
+          retention-days: 90
