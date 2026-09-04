@@ -1,0 +1,129 @@
+{
+  "schema_version": "football3-prospective-pit-xi-reconstruction-mw3-v1",
+  "project_id": "football3",
+  "scientific_name": "2026/27 EPL MW3 Prospective XI Reconstruction",
+  "status": "FROZEN_BEFORE_MW3_CONFIRMED_XI_REVEAL",
+  "frozen_at_utc": "2026-09-04T02:46:45Z",
+  "research_only": true,
+  "formal_weight": 0,
+  "parent_snapshot_branch": "football3/prospective-pit-availability-xi-shadow-mw3-v1",
+  "parent_snapshot_head": "ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf",
+  "clean_scientific_parent": "a90762a97515f3edd564e8ad204db0d0d4231494",
+  "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+  "locked_snapshot_input": {
+    "run_id": 33830397470,
+    "artifact_id": 9921466941,
+    "artifact_name": "football3-mw3-prospective-pit-ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf-33830397470",
+    "artifact_digest": "sha256:3daa8c4a947a4c4dc86c94f1d7b0a41ae5f1a71b2b5a86fd1271f42b45968181",
+    "snapshot_sha256": "e6b609266d7e54311a764fe7668da2b651634d457bb6346daf6a483798028333",
+    "snapshot_started_at_utc": "2026-09-04T02:40:57Z",
+    "earliest_target_kickoff_utc": "2026-09-04T19:00:00Z",
+    "expected_teams": 20,
+    "expected_fixtures": 10
+  },
+  "objective": "Generate and seal deterministic pre-confirmed-XI expected lineups for all ten EPL MW3 fixtures using only the previously locked pre-kickoff availability snapshot plus official FPL data from already-completed GW1/GW2. This stage evaluates no target lineup and no match result and produces no 1X2 probability.",
+  "governance": {
+    "target_result_access": false,
+    "target_score_access": false,
+    "target_confirmed_xi_access": false,
+    "target_postmatch_event_access": false,
+    "market_or_odds_access": false,
+    "target_result_as_feature": false,
+    "target_confirmed_xi_as_feature": false,
+    "retrospective_availability_backfill": false,
+    "post_view_parameter_tuning": false,
+    "parameter_search": false,
+    "training_or_refit": false,
+    "same_target_postkickoff_source_allowed": false,
+    "2023_confirmation_set_access": false,
+    "3504_access": false,
+    "formal_model_change_allowed": false,
+    "formal_probability_change_allowed": false,
+    "CURRENT_change_allowed": false,
+    "production_pointer_change_allowed": false,
+    "formal_weights_change_allowed": false
+  },
+  "prior_round_sources": {
+    "provider": "Fantasy Premier League official public API",
+    "events": [1, 2],
+    "event_live_url_template": "https://fantasy.premierleague.com/api/event/{event}/live/",
+    "fixtures_url_template": "https://fantasy.premierleague.com/api/fixtures/?event={event}",
+    "source_tier": "OFFICIAL_LEAGUE_STRUCTURED_PUBLIC",
+    "required_fixture_count_per_event": 10,
+    "required_all_fixtures_finished": true,
+    "required_live_elements_nonempty": true,
+    "required_player_stat": "starts",
+    "required_starts_count_per_event": 220,
+    "note": "A completed EPL round has 20 teams x 11 starters = 220 player-start indicators. If the live API does not expose exactly 220 starts==1 for an event, fail closed and do not substitute another source inside this frozen experiment."
+  },
+  "transported_mechanism": {
+    "reference": "R43B0/R43B0R1 strict-prior probabilistic starter baseline",
+    "reference_head": "2c4daa508c0b28a78632227c8d7a65b2fb25a0fe",
+    "feature_lookback_events_used_here": 2,
+    "decay": 0.78,
+    "smoothing": 0.50,
+    "target_probability_sum_per_team": 11.0,
+    "epsilon": 1e-8,
+    "raw_probability_formula": "(0.78*start_gw1 + 1.0*start_gw2 + 0.50) / (0.78 + 1.0 + 1.0)",
+    "projection": "logit-offset projection over current-team candidates so probabilities sum to 11; if exactly 11 eligible players remain, assign probability 1 to all 11",
+    "candidate_identity": "players in the locked FPL bootstrap assigned to the target team at snapshot time",
+    "historical_team_transfer_policy": "prior event starts are attached to player identity and count toward the player's current snapshot team; no attempt is made to backfill historical club identity",
+    "no_new_fit": true,
+    "no_role_constraint_added": true
+  },
+  "availability_adjustment": {
+    "base": "no availability exclusion; current snapshot squad only",
+    "primary_exclude_if": {
+      "status_in": ["i", "s", "u"],
+      "or_chance_of_playing_this_round_equals": 0
+    },
+    "primary_doubtful_policy": "status d is NOT excluded in primary",
+    "stress_exclude_if": {
+      "primary_excluded": true,
+      "or_status_equals": "d",
+      "or_chance_of_playing_this_round_lte": 50
+    },
+    "minimum_remaining_candidates": 11,
+    "excluded_probability": 0.0
+  },
+  "deterministic_ordering": {
+    "expected_xi": "probability descending, then locked-bootstrap season minutes descending, then player_id ascending",
+    "candidate_receipt": "same ordering",
+    "tie_break_frozen_before_target_xi": true
+  },
+  "output_contract": {
+    "team_receipts": 20,
+    "fixture_receipts": 10,
+    "expected_xi_size": 11,
+    "variants": ["base", "primary", "stress"],
+    "include_full_candidate_probabilities": true,
+    "include_source_sha256": true,
+    "include_generation_timestamp": true,
+    "include_target_confirmed_xi": false,
+    "include_target_result": false,
+    "include_1x2_probability": false
+  },
+  "hard_gates": {
+    "contract_status_exact": "FROZEN_BEFORE_MW3_CONFIRMED_XI_REVEAL",
+    "generation_must_begin_before_earliest_target_kickoff": true,
+    "locked_snapshot_artifact_exact": true,
+    "locked_snapshot_payload_sha_exact": true,
+    "prior_event_source_coverage_exact": true,
+    "team_count": 20,
+    "fixture_count": 10,
+    "all_variants_have_11_players": true,
+    "all_probability_sums_equal_11_with_tolerance": 1e-6,
+    "target_result_access": false,
+    "target_confirmed_xi_access": false,
+    "market_access": false,
+    "2023_opened": false,
+    "3504_opened": false
+  },
+  "terminal": {
+    "pass": "MW3_PROSPECTIVE_XI_RECONSTRUCTION_LOCKED_WAITING_FOR_CONFIRMED_XI_LABELS",
+    "stop_source": "STOP_SOURCE_COVERAGE_NO_TARGET_XI_REVEAL",
+    "stop_governance": "STOP_GOVERNANCE_NO_TARGET_XI_REVEAL"
+  },
+  "next_if_pass": "Keep receipts immutable. Do not inspect match results. After each target confirmed XI becomes public, a separately frozen append-only evaluation stage may use confirmed XI only as the lineup label. Match-result/1X2 evaluation remains a separate later reveal gate.",
+  "next_if_stop": "Do not open target confirmed XI or results to repair this experiment. Preserve the stop receipt and consider a separately frozen source-coverage design for a future untouched cohort."
+}
