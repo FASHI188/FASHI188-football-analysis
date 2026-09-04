@@ -30,22 +30,14 @@ LIVE_SOURCE_FAILURE_PROBE = live_source_failure_probe_v1.install(gateway)
 import live_gateway_patch_v1
 
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
-import target_identity_replay_fix_v1
-import xg_trigger_diagnostic_fix_v2
-XG_TRIGGER_DIAGNOSTIC_FIX = xg_trigger_diagnostic_fix_v2.install()
-TARGET_IDENTITY_REPLAY_FIX = target_identity_replay_fix_v1.install(gateway)
 
-# Install last: the integrity guard wraps the complete existing gateway stack and also
-# replaces the target resolver with the permanent deterministic identity bridge.
+# Install generic integrity controls after the existing production gateway stack.
+# Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
+# installed here; those remain confined to diagnostic workflows.
 import formal_state_integrity_guard_v1
 FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
-# Receipt history counts must come from fixture ids actually represented in the sealed xG
-# state, rather than treating missing replay metadata as a true zero-history observation.
 import formal_state_integrity_xg_history_count_fix_v1
 FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_count_fix_v1.install()
-# The coverage patch closes the remaining cross-season loophole: once a frozen linked
-# source is known by target time, incomplete coverage cannot be reclassified as a normal
-# XG shortage. It remains DATA_STATE_ANOMALY after the clean FULL recheck.
 import formal_state_integrity_coverage_patch_v1
 FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
 
@@ -89,8 +81,6 @@ def main() -> int:
             "live_fast_reuse_audit.json": fast_audit,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
-            "xg_trigger_diagnostic_fix_adapter.json": XG_TRIGGER_DIAGNOSTIC_FIX,
-            "target_identity_replay_fix_adapter.json": TARGET_IDENTITY_REPLAY_FIX,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
@@ -114,8 +104,6 @@ def main() -> int:
             d["live_fast_reuse_audit"] = fast_audit
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
-            d["xg_trigger_diagnostic_fix_adapter"] = XG_TRIGGER_DIAGNOSTIC_FIX
-            d["target_identity_replay_fix_adapter"] = TARGET_IDENTITY_REPLAY_FIX
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
