@@ -42,6 +42,11 @@ FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE = formal_future_fixture_identity_bridge_v1
 import formal_missing_data_probe_compat_v1
 FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(gateway)
 
+# If a validated state is already sealed exactly at the requested cutoff, execute
+# a source-silent replay rather than trying to re-observe a historical cutoff.
+import formal_exact_cutoff_sealed_replay_v1
+FORMAL_EXACT_CUTOFF_SEALED_REPLAY = formal_exact_cutoff_sealed_replay_v1.install(gateway)
+
 # Install generic integrity controls after the existing production gateway stack.
 # Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
 # installed here; those remain confined to diagnostic workflows.
@@ -96,6 +101,7 @@ def main() -> int:
             "live_gateway_adapter.json": LIVE_GATEWAY,
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
             "formal_missing_data_probe_compat_adapter.json": FORMAL_MISSING_DATA_PROBE_COMPAT,
+            "formal_exact_cutoff_sealed_replay_adapter.json": FORMAL_EXACT_CUTOFF_SEALED_REPLAY,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
             "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
@@ -122,6 +128,7 @@ def main() -> int:
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
             d["formal_missing_data_probe_compat_adapter"] = FORMAL_MISSING_DATA_PROBE_COMPAT
+            d["formal_exact_cutoff_sealed_replay_adapter"] = FORMAL_EXACT_CUTOFF_SEALED_REPLAY
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
