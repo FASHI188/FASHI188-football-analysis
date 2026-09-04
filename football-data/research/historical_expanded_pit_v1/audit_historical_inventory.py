@@ -87,30 +87,41 @@ def main() -> int:
             ),
         }
 
+    # Frozen DB has no indexes on the child match_id columns. Aggregate each child
+    # table once, then join to the historical universe; avoid O(matches * child rows)
+    # correlated scans. This changes only audit mechanics, never cohort/data roles.
     event_match_n = one(
         con,
         f"""
-        select count(*) from general_game_stats g
+        select count(*)
+        from general_game_stats g
+        join (select distinct match_id from game_events) e on e.match_id=g.id
         where g.league in ({qs}) and g.season between 2014 and 2023
-          and exists (select 1 from game_events e where e.match_id=g.id)
         """,
         BIG5,
     )
     lineup_match_n = one(
         con,
         f"""
-        select count(*) from general_game_stats g
+        select count(*)
+        from general_game_stats g
+        join (select distinct match_id from lineup_stats) l on l.match_id=g.id
         where g.league in ({qs}) and g.season between 2014 and 2023
-          and exists (select 1 from lineup_stats l where l.match_id=g.id)
         """,
         BIG5,
     )
     lineup_two_team_n = one(
         con,
         f"""
-        select count(*) from general_game_stats g
+        select count(*)
+        from general_game_stats g
+        join (
+          select match_id
+          from lineup_stats
+          group by match_id
+          having count(distinct team_id)=2
+        ) l on l.match_id=g.id
         where g.league in ({qs}) and g.season between 2014 and 2023
-          and 2=(select count(distinct l.team_id) from lineup_stats l where l.match_id=g.id)
         """,
         BIG5,
     )
