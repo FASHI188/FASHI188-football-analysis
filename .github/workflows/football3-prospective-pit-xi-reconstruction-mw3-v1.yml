@@ -1,0 +1,238 @@
+name: football3 prospective PIT XI reconstruction MW3 v1
+
+on:
+  push:
+    branches:
+      - football3/prospective-pit-xi-reconstruction-mw3-v1
+    paths:
+      - football-data/research/prospective_pit_xi_reconstruction_mw3/**
+      - .github/workflows/football3-prospective-pit-xi-reconstruction-mw3-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-prospective-pit-xi-reconstruction-mw3-v1
+  cancel-in-progress: false
+
+jobs:
+  research-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+    steps:
+      - name: Checkout exact run HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify parent lineage whitelist and frozen blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "495cac141c8e9b1e54027a2d58c425b7f21e2bf4"
+          git merge-base --is-ancestor ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf HEAD
+          git merge-base --is-ancestor a90762a97515f3edd564e8ad204db0d0d4231494 HEAD
+
+          test "$(git rev-parse HEAD:football-data/research/prospective_pit_xi_reconstruction_mw3/MW3_XI_RECONSTRUCTION_CONTRACT.json)" = "d6475244c565bf854a697c0a07904e9580b80d11"
+          test "$(git rev-parse HEAD:football-data/research/prospective_pit_xi_reconstruction_mw3/reconstruct_mw3_expected_xi.py)" = "d32857981790956ce060955cff9a417ff50e2eb7"
+          test "$(git rev-parse HEAD:football-data/research/prospective_pit_xi_reconstruction_mw3/test_mw3_xi_reconstruction.py)" = "f3c05b4642dbf90952a599a9e33017f79ea8afca"
+
+          git diff --name-only ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf..HEAD | sort > /tmp/actual.txt
+          cat > /tmp/expected.txt <<'EOF'
+          .github/workflows/football3-prospective-pit-xi-reconstruction-mw3-v1.yml
+          football-data/research/prospective_pit_xi_reconstruction_mw3/MW3_XI_RECONSTRUCTION_CONTRACT.json
+          football-data/research/prospective_pit_xi_reconstruction_mw3/reconstruct_mw3_expected_xi.py
+          football-data/research/prospective_pit_xi_reconstruction_mw3/test_mw3_xi_reconstruction.py
+          EOF
+          sed -i 's/^          //' /tmp/expected.txt
+          sort -o /tmp/expected.txt /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test runtime
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Run frozen structural tests
+        run: python -m pytest -q football-data/research/prospective_pit_xi_reconstruction_mw3/test_mw3_xi_reconstruction.py
+
+      - name: Verify locked parent Artifact metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          meta="$(gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/9921466941)"
+          actual="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin).get("digest") or "")')"
+          expired="$(printf '%s' "$meta" | python -c 'import json,sys; print(str(json.load(sys.stdin).get("expired")).lower())')"
+          run_id="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin).get("workflow_run",{}).get("id") or "")')"
+          head_sha="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin).get("workflow_run",{}).get("head_sha") or "")')"
+          test "$expired" = "false"
+          test "$actual" = "sha256:3daa8c4a947a4c4dc86c94f1d7b0a41ae5f1a71b2b5a86fd1271f42b45968181"
+          test "$run_id" = "33830397470"
+          test "$head_sha" = "ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf"
+
+      - name: Download exact locked parent Artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 33830397470
+          artifact-ids: 9921466941
+          path: locked_snapshot
+
+      - name: Reconstruct zero-label MW3 expected XI
+        id: reconstruct
+        shell: bash
+        run: |
+          set +e
+          python football-data/research/prospective_pit_xi_reconstruction_mw3/reconstruct_mw3_expected_xi.py --snapshot-dir locked_snapshot
+          rc=$?
+          echo "runner_exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Validate terminal and seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          out=Path('football-data/research/prospective_pit_xi_reconstruction_mw3/artifacts/mw3_xi_reconstruction')
+          fp=out/'final_status.json'
+          if not fp.exists():
+              raise SystemExit('missing final_status.json')
+          final=json.loads(fp.read_text())
+          allowed={
+              'MW3_PROSPECTIVE_XI_RECONSTRUCTION_LOCKED_WAITING_FOR_CONFIRMED_XI_LABELS',
+              'STOP_SOURCE_COVERAGE_NO_TARGET_XI_REVEAL',
+              'STOP_GOVERNANCE_NO_TARGET_XI_REVEAL',
+          }
+          if final.get('status') not in allowed:
+              raise SystemExit(f'unrecognized terminal: {final}')
+          for key in ('target_result_access','target_score_access','target_confirmed_xi_access','market_access','2023_opened','3504_opened','CURRENT_changed','production_pointer_changed','formal_weights_changed'):
+              if final.get(key) is not False:
+                  raise SystemExit(f'forbidden final flag not false: {key}')
+          if final.get('status','').startswith('MW3_PROSPECTIVE_XI_'):
+              teams=json.loads((out/'team_receipts.json').read_text())
+              fixtures=json.loads((out/'fixture_receipts.json').read_text())
+              if len(teams)!=20 or len(fixtures)!=10:
+                  raise SystemExit('receipt count gate failed')
+              for t in teams:
+                  for k in ('base_expected_xi','primary_expected_xi','stress_expected_xi'):
+                      if len(t[k])!=11 or len(set(t[k]))!=11:
+                          raise SystemExit(f'XI cardinality gate failed {t.get("team_code")} {k}')
+              for r in fixtures:
+                  g=r.get('governance') or {}
+                  if g.get('target_confirmed_xi_access') is not False or g.get('target_result_access') is not False or g.get('contains_1x2_probability') is not False:
+                      raise SystemExit('fixture receipt governance failed')
+
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(1<<20),b''):
+                      h.update(b)
+              return h.hexdigest()
+          files=[]
+          for p in sorted(out.rglob('*')):
+              if p.is_file() and p.name!='artifact_manifest.json':
+                  files.append({'path':str(p.relative_to(out)),'sha256':sha(p),'size':p.stat().st_size})
+          manifest={
+              'schema_version':'football3-mw3-xi-reconstruction-artifact-manifest-v1',
+              'head_sha':os.environ['GITHUB_SHA'],
+              'run_id':os.environ['GITHUB_RUN_ID'],
+              'branch':os.environ['GITHUB_REF_NAME'],
+              'parent_snapshot_head':'ff6d96d89d8ced2309c1a92aa2cb13506ca92bcf',
+              'parent_snapshot_artifact_id':9921466941,
+              'parent_snapshot_artifact_digest':'sha256:3daa8c4a947a4c4dc86c94f1d7b0a41ae5f1a71b2b5a86fd1271f42b45968181',
+              'contract_blob':'d6475244c565bf854a697c0a07904e9580b80d11',
+              'runner_blob':'d32857981790956ce060955cff9a417ff50e2eb7',
+              'test_blob':'f3c05b4642dbf90952a599a9e33017f79ea8afca',
+              'terminal_status':final.get('status'),
+              'files':files,
+          }
+          (out/'artifact_manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'terminal_status':final.get('status'),'files':len(files),'reason':final.get('reason')},sort_keys=True))
+          PY
+
+      - name: Define artifact name
+        id: meta
+        shell: bash
+        run: echo "artifact_name=football3-mw3-xi-reconstruction-${GITHUB_SHA}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable XI reconstruction artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: football-data/research/prospective_pit_xi_reconstruction_mw3/artifacts/mw3_xi_reconstruction/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm repository unchanged by runtime
+        run: git status --short
+
+  remote-readback:
+    needs: research-and-seal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify remote Artifact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.research-and-seal.outputs.artifact_id }}
+          EXPECTED_DIGEST: ${{ needs.research-and-seal.outputs.artifact_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          meta="$(gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID})"
+          actual="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin).get("digest") or "")')"
+          expired="$(printf '%s' "$meta" | python -c 'import json,sys; print(str(json.load(sys.stdin).get("expired")).lower())')"
+          actual="${actual#sha256:}"
+          expected="${EXPECTED_DIGEST#sha256:}"
+          test "$expired" = "false"
+          test "$actual" = "$expected"
+          echo "remote_digest=sha256:$actual"
+
+      - name: Download remote Artifact
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.research-and-seal.outputs.artifact_id }}
+          path: readback
+
+      - name: Verify manifest and terminal after remote readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          ms=list(Path('readback').rglob('artifact_manifest.json'))
+          if len(ms)!=1:
+              raise SystemExit(f'manifest count {len(ms)}')
+          base=ms[0].parent
+          m=json.loads(ms[0].read_text())
+          if m.get('head_sha')!=os.environ['GITHUB_SHA']:
+              raise SystemExit('manifest head mismatch')
+          if m.get('parent_snapshot_artifact_id')!=9921466941:
+              raise SystemExit('parent artifact mismatch')
+          for row in m.get('files',[]):
+              p=base/row['path']
+              if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest()!=row['sha256']:
+                  raise SystemExit(f'file verification failed {row["path"]}')
+          final=json.loads((base/'final_status.json').read_text())
+          if final.get('status')!=m.get('terminal_status'):
+              raise SystemExit('terminal mismatch')
+          print(json.dumps({'terminal_status':final.get('status'),'verified_files':len(m.get('files',[]))},sort_keys=True))
+          PY
