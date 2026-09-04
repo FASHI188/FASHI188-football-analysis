@@ -3,53 +3,190 @@ name: Football3 Formal GPT Runner Integration V1
 on:
   push:
     branches:
-      - football3/formal-gpt-runner-identity-repair-v1
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - 'football-data/formal_gpt_gateway_v1/**'
+      - 'football-data/formal_source_contract_v1.py'
+      - 'football-data/formal_runtime_missing_input_probe_v1.py'
+      - '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, edited, reopened, synchronize]
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: football3-formal-gpt-runner-xg-coverage-repair-v1
+  group: football3-formal-gpt-runner-integration-v1
   cancel-in-progress: false
 
 jobs:
   formal-request:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.ref == 'football3/formal-gpt-runner-request-carrier-v1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Restore pinned frozen model source artifacts
+      - name: Build audited invocation request
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          event=os.environ['GITHUB_EVENT_NAME']
+          out=pathlib.Path('.runtime_sources/invocation_request.json')
+          if event=='pull_request':
+              if os.environ.get('PR_HEAD_REF')!='football3/formal-gpt-runner-request-carrier-v1':
+                  raise SystemExit('unauthorized request carrier branch')
+              body=os.environ.get('PR_BODY','')
+              begin='<!-- football3-request-json -->'
+              end='<!-- /football3-request-json -->'
+              if begin not in body or end not in body:
+                  raise SystemExit('request carrier markers missing')
+              raw=body.split(begin,1)[1].split(end,1)[0].strip()
+              req=json.loads(raw)
+              transport='DRAFT_PR_BODY_EDIT'
+          else:
+              req=json.loads(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json').read_text(encoding='utf-8'))
+              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
+          if type(req) is not dict or req.get('schema_version')!='football3-formal-gpt-gateway-v1':
+              raise SystemExit('gateway request schema mismatch at transport')
+          canonical=json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
+          out.write_bytes(canonical)
+          audit={
+              'schema_version':'football3-gpt-request-transport-v1',
+              'event':event,'transport':transport,
+              'request_sha256':hashlib.sha256(canonical).hexdigest(),
+              'pr_number':os.environ.get('PR_NUMBER') or None,
+              'pr_head_ref':os.environ.get('PR_HEAD_REF') or None,
+              'pr_base_ref':os.environ.get('PR_BASE_REF') or None,
+              'code_ref':os.environ.get('GITHUB_SHA'),
+              'commit_per_match_required':False,
+          }
+          pathlib.Path('.runtime_sources/request_transport.json').write_text(
+              json.dumps(audit,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          print(json.dumps(audit,sort_keys=True))
+          PY
+
+      - name: Restore latest durable formal state Artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .runtime_sources/understat .runtime_sources/confirmation .formal_state_cache football-data/formal_gpt_gateway_v1/output
+          mkdir -p .runtime_sources .formal_state_cache/bundle
+          rm -rf .formal_state_cache/bundle/*
+          python3 - <<'PY'
+          import json, os, pathlib, urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          req=urllib.request.Request(
+              f'https://api.github.com/repos/{repo}/actions/artifacts?per_page=100',
+              headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'},
+          )
+          with urllib.request.urlopen(req) as r:
+              data=json.load(r)
+          allowed={'football3/formal-gpt-runner-integration-v1','football3/formal-gpt-runner-request-carrier-v1'}
+          candidates=[]
+          for a in data.get('artifacts',[]):
+              wr=a.get('workflow_run') or {}
+              if (not a.get('expired') and str(a.get('name','')).startswith('formal-gpt-runner-state-')
+                      and wr.get('head_branch') in allowed):
+                  candidates.append(a)
+          candidates.sort(key=lambda a:(a.get('created_at',''),int(a.get('id',0))))
+          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
+          if not candidates:
+              p.write_text(json.dumps({'status':'NO_DURABLE_STATE_ARTIFACT'},sort_keys=True)+'\n')
+          else:
+              a=candidates[-1]
+              p.write_text(json.dumps({'status':'FOUND','artifact_id':a['id'],'name':a['name'],
+                  'digest':a.get('digest'),'created_at':a.get('created_at'),
+                  'head_branch':(a.get('workflow_run') or {}).get('head_branch')},sort_keys=True)+'\n')
+          PY
+          if python3 - <<'PY'
+          import json
+          d=json.load(open('.runtime_sources/state_artifact_candidate.json'))
+          raise SystemExit(0 if d.get('status')=='FOUND' else 1)
+          PY
+          then
+            ARTIFACT_ID="$(python3 -c "import json; print(json.load(open('.runtime_sources/state_artifact_candidate.json'))['artifact_id'])")"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+              -o .runtime_sources/state.zip
+            unzip -q .runtime_sources/state.zip -d .formal_state_cache/bundle
+            if PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+                 python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+                   --bundle "$PWD/.formal_state_cache/bundle" \
+                 > .runtime_sources/state_artifact_validate.txt 2>&1
+            then
+              python3 - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
+          d=json.loads(p.read_text()); d['validation']='PASS'
+          p.write_text(json.dumps(d,sort_keys=True)+'\n')
+          PY
+            else
+              cat .runtime_sources/state_artifact_validate.txt
+              rm -rf .formal_state_cache/bundle
+              python3 - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
+          d=json.loads(p.read_text()); d['validation']='FAIL_REMOVED'
+          p.write_text(json.dumps(d,sort_keys=True)+'\n')
+          PY
+            fi
+          fi
+          cat .runtime_sources/state_artifact_candidate.json
+
+      - name: Download byte-bound frozen FULL rebuild sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
           curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
             -o .runtime_sources/understat.zip
           curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
             -o .runtime_sources/confirmation.zip
           unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
 
-      - name: Rebuild missing pretarget xg history and replay exact frozen delta
+      - name: Execute frozen original formal runner through gateway
+        id: execute
+        continue-on-error: true
         run: |
           set -euo pipefail
-          rm -rf .formal_state_cache/bundle football-data/formal_gpt_gateway_v1/output/*
+          rm -rf football-data/formal_gpt_gateway_v1/output
+          mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
+          cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
+          if [ -f .runtime_sources/state_artifact_candidate.json ]; then
+            cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
+          fi
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
-            python3 football-data/formal_gpt_gateway_v1/xg_coverage_rebuild_replay_ger_v1.py \
+            python3 football-data/formal_gpt_gateway_v1/entry.py \
+              --request "$PWD/.runtime_sources/invocation_request.json" \
               --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
@@ -57,58 +194,35 @@ jobs:
               --out "$PWD/football-data/formal_gpt_gateway_v1/output" \
             | tee football-data/formal_gpt_gateway_v1/output/stdout.txt
 
-      - name: Enforce repaired Fusion V2 invariants
+      - name: Record gateway outputs when summary exists
+        id: gateway_summary
+        if: ${{ always() }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, pathlib
-          out=pathlib.Path('football-data/formal_gpt_gateway_v1/output')
-          summary=json.loads((out/'summary.json').read_text())
-          receipt=json.loads((out/'prediction_receipt.json').read_text())
-          coverage=json.loads((out/'xg_coverage_repair_audit.json').read_text())
-          proof=json.loads((out/'original_live_delta_exact_reuse_proof.json').read_text())
-          ident=json.loads((out/'target_identity_audit.json').read_text())
-          trigger=json.loads((out/'xg_trigger_audit.json').read_text())
-          assert summary['status']=='PASS', summary
-          assert summary['cutoff']=='2026-09-04T00:25:59+00:00', summary
-          assert summary['fallback_exact_v1'] is False, summary
-          assert receipt['fallback_exact_v1'] is False, receipt
-          assert receipt['model_route']!='FROZEN_V1_EXACT_FALLBACK', receipt
-          assert summary['fusion_weights']=={'xg':0.75,'frozen_v1':0.25}, summary
-          assert summary['model_parameters_or_weights_changed'] is False, summary
-          assert summary['post_target_information_used'] is False, summary
-          assert summary['target_match_xg_used'] is False, summary
-          assert coverage['files']['GER_Bundesliga']['joined_rows']==306, coverage
-          assert coverage['files']['GER_Bundesliga']['formal_2025_26_rows']==306, coverage
-          assert proof['byte_and_event_identity_to_original_run'] is True, proof
-          assert proof['source_set_sha256']=='de20070f7fc5c49f5b7c45e0b6c028c0087d3c15cb6861b67fb57f0d626eac63', proof
-          assert proof['records_sha256']=='6a02bb78f2bf453a67d2614b593e6860fcaf1968f964ba5b50fde6e9f86ef8e2', proof
-          assert proof['records']==903, proof
-          assert ident['home']['strength_team_id']=='gteam_9dc5bad7a55031b9', ident
-          assert ident['home']['state_evidence'] is True, ident
-          dyn=trigger['dynamic']
-          assert dyn['fallback_exact_v1'] is False, dyn
-          assert receipt['runtime_input_sha']==summary['runtime_input_sha']
-          assert receipt['state_sha256']==summary['state_sha256']
-          assert receipt['state_bundle_sha']==summary['state_bundle_sha']
-          assert receipt['prediction_sha']==summary['prediction_sha']
-          assert receipt['receipt_sha']==summary['receipt_sha']
-          gate={
-              'schema_version':'football3-xg-coverage-repair-gate-v1','status':'PASS',
-              'fallback_exact_v1':False,'model_route':receipt['model_route'],
-              'cutoff':summary['cutoff'],'source_set_sha256':proof['source_set_sha256'],
-              'records_sha256':proof['records_sha256'],'records':proof['records'],
-              'ger_2025_26_xg_joined':coverage['files']['GER_Bundesliga']['joined_rows'],
-              'home_strength_team_id':ident['home']['strength_team_id'],
-              'runtime_input_sha':receipt['runtime_input_sha'],'state_sha256':receipt['state_sha256'],
-              'state_bundle_sha':receipt['state_bundle_sha'],'prediction_sha':receipt['prediction_sha'],
-              'receipt_sha':receipt['receipt_sha'],
-          }
-          (out/'xg_coverage_repair_gate.json').write_text(json.dumps(gate,sort_keys=True,separators=(',',':'))+'\n')
-          print(json.dumps(gate,sort_keys=True))
+          import json, os, pathlib
+          p=pathlib.Path('football-data/formal_gpt_gateway_v1/output/summary.json')
+          d=json.loads(p.read_text()) if p.exists() else {'status':'NO_SUMMARY'}
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
+              f.write(f"state_sha={str(d.get('state_bundle_sha') or 'no-state')}\n")
+              f.write(f"status={d.get('status','UNKNOWN')}\n")
+              f.write(f"path={d.get('calculation_path','NONE')}\n")
           PY
 
-      - name: Validate repaired state bundle
+      - name: Probe missing input routes to FULL and fails closed
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_runtime_missing_input_probe_v1.py \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --work "$PWD/.formal_missing_probe" \
+              --out "$PWD/football-data/formal_gpt_gateway_v1/output"
+
+      - name: Validate persisted state bundle when present
+        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
@@ -116,7 +230,8 @@ jobs:
               --bundle "$PWD/.formal_state_cache/bundle" \
             | tee football-data/formal_gpt_gateway_v1/output/state_validate.txt
 
-      - name: Upload repaired Fusion V2 receipt
+      - name: Upload prediction or gap receipt
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: formal-gpt-runner-receipt-${{ github.run_id }}
@@ -124,10 +239,15 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Upload repaired state bundle
+      - name: Upload complete reusable state bundle
+        if: ${{ always() && hashFiles('.formal_state_cache/bundle/manifest.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: formal-gpt-runner-state-${{ github.run_id }}
           path: .formal_state_cache/bundle/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Preserve main gateway failure as job failure
+        if: ${{ always() && steps.execute.outcome == 'failure' }}
+        run: exit 1
