@@ -1,0 +1,178 @@
+name: Football3 Ligue1 2025-26 XG Repair V1
+
+on:
+  push:
+    branches:
+      - football3/ligue1-xg-2025-26-repair-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  repair-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate strict identity-only Ligue1 supplement
+        run: |
+          set -euo pipefail
+          mkdir -p .repair_out
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/repair_ligue1_2025_26_xg_v1.py \
+              --repo-root "$PWD" \
+              --out "$PWD/.repair_out"
+          mkdir -p football-data/evidence/xg/understat_2025_26_linked_repairs football-data/manifests
+          if [ -f football-data/evidence/xg/understat_2025_26_linked_repairs/FRA_Ligue1.jsonl ]; then
+            cmp football-data/evidence/xg/understat_2025_26_linked_repairs/FRA_Ligue1.jsonl .repair_out/FRA_Ligue1.supplement.jsonl
+          else
+            cp .repair_out/FRA_Ligue1.supplement.jsonl football-data/evidence/xg/understat_2025_26_linked_repairs/FRA_Ligue1.jsonl
+          fi
+          if [ -f football-data/manifests/ligue1_2025_26_xg_repair_v1.json ]; then
+            python3 - <<'PY'
+          import json
+          old=json.load(open('football-data/manifests/ligue1_2025_26_xg_repair_v1.json'))
+          new=json.load(open('.repair_out/manifest.json'))
+          keys=['schema_version','competition_id','season','base_linked_sha256','base_linked_rows','supplement_sha256','supplement_rows','combined_rows','formal_rows','understat_source_sha256','understat_result_rows','unmatched_rows','ambiguous_rows','supplement_identities']
+          bad={k:(old.get(k),new.get(k)) for k in keys if old.get(k)!=new.get(k)}
+          if bad:
+              raise SystemExit('committed repair manifest differs from regenerated source facts: '+json.dumps(bad,sort_keys=True))
+          PY
+          else
+            cp .repair_out/manifest.json football-data/manifests/ligue1_2025_26_xg_repair_v1.json
+          fi
+
+      - name: Compile repair code
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/repair_ligue1_2025_26_xg_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_ligue1_2025_26_xg_repair_v1.py \
+            football-data/formal_gpt_gateway_v1/entry.py
+
+      - name: Download byte-bound frozen FULL rebuild sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .repair_sources/understat .repair_sources/confirmation
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .repair_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .repair_sources/confirmation.zip
+          unzip -q .repair_sources/understat.zip -d .repair_sources/understat
+          unzip -q .repair_sources/confirmation.zip -d .repair_sources/confirmation
+
+      - name: Validate 306-of-306 integrity FULL rebuild
+        run: |
+          set -euo pipefail
+          rm -rf .repair_state
+          mkdir -p .repair_state/bundle .repair_validation
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import formal_ligue1_2025_26_xg_repair_v1 as patch
+          patch.install()
+          import formal_state_integrity_full_rebuild_v1 as fr
+          root=Path('.').resolve()
+          result=fr.build_integrity_base(
+              root/'.repair_state/bundle', root,
+              root/'.repair_sources/understat/understat_frozen.db',
+              root/'.repair_sources/confirmation',
+              datetime(2026,9,4,16,0,tzinfo=timezone.utc),
+          )
+          cov=result['coverage']; spec=cov['files']['FRA_Ligue1']
+          required={
+              'coverage_status':'COMPLETE_INGESTED',
+              'linked_rows':306,
+              'formal_rows':306,
+              'joined_rows':306,
+              'unmatched_rows':0,
+              'overlap_rows':0,
+              'eligible_for_target':True,
+          }
+          bad={k:(spec.get(k),v) for k,v in required.items() if spec.get(k)!=v}
+          if bad:
+              raise SystemExit('Ligue1 integrity coverage gate failed: '+json.dumps(bad,sort_keys=True))
+          Path('.repair_validation/full_rebuild.json').write_text(json.dumps(result,ensure_ascii=False,sort_keys=True,default=str)+'\n')
+          Path('.repair_validation/coverage.json').write_text(json.dumps(cov,ensure_ascii=False,sort_keys=True)+'\n')
+          print(json.dumps(spec,ensure_ascii=False,sort_keys=True))
+          PY
+
+      - name: Execute Lyon Auxerre through production gateway stack
+        run: |
+          set -euo pipefail
+          cat > .repair_validation/request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"ligue1-xg-repair-validation-20260904-001","match":{"competition_id":"FRA_Ligue1","season":"2026/27","kickoff":"2026-09-04T17:00:00+00:00","cutoff":"2026-09-04T16:00:00+00:00","home_team_name":"Lyon","away_team_name":"Auxerre"}}
+          JSON
+          rm -rf .repair_gateway_state .repair_gateway_out
+          mkdir -p .repair_gateway_state .repair_gateway_out
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/entry.py \
+              --request "$PWD/.repair_validation/request.json" \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.repair_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.repair_sources/confirmation" \
+              --state-root "$PWD/.repair_gateway_state" \
+              --out "$PWD/.repair_gateway_out"
+          python3 - <<'PY'
+          import json, pathlib
+          d=json.loads(pathlib.Path('.repair_gateway_out/summary.json').read_text())
+          if d.get('status')!='PASS' or not d.get('prediction_sha') or not d.get('receipt_sha'):
+              raise SystemExit('production gateway did not produce formal PASS prediction: '+json.dumps(d,sort_keys=True))
+          audit=json.load(open('.repair_gateway_out/state_integrity_audit.json'))
+          if audit.get('status')!='PASS' or audit.get('fallback_class')!='NONE':
+              raise SystemExit('state integrity not clean after repair: '+json.dumps(audit,sort_keys=True))
+          spec=audit.get('cross_season_xg_coverage') or {}
+          if spec.get('coverage_status')!='COMPLETE_INGESTED' or spec.get('joined_rows')!=306 or spec.get('formal_rows')!=306:
+              raise SystemExit('repaired coverage not active in production gateway: '+json.dumps(spec,sort_keys=True))
+          print(json.dumps({'summary':d,'state_integrity':audit},ensure_ascii=False,sort_keys=True))
+          PY
+
+      - name: Build validation manifest
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib,os
+          def sh(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() if pathlib.Path(p).is_file() else None
+          summary={
+            'schema_version':'football3-ligue1-2025-26-xg-repair-ci-v1',
+            'github_sha':os.environ.get('GITHUB_SHA'),
+            'supplement_sha256':sh('.repair_out/FRA_Ligue1.supplement.jsonl'),
+            'repair_manifest_sha256':sh('.repair_out/manifest.json'),
+            'coverage_sha256':sh('.repair_validation/coverage.json'),
+            'gateway_summary_sha256':sh('.repair_gateway_out/summary.json'),
+            'prediction_receipt_sha256':sh('.repair_gateway_out/prediction_receipt.json'),
+            'state_integrity_audit_sha256':sh('.repair_gateway_out/state_integrity_audit.json'),
+          }
+          pathlib.Path('.repair_validation/ci_manifest.json').write_text(json.dumps(summary,sort_keys=True)+'\n')
+          print(json.dumps(summary,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-ligue1-xg-repair-${{ github.run_id }}
+          path: |
+            .repair_out/
+            .repair_validation/
+            .repair_gateway_out/
+          if-no-files-found: error
+          retention-days: 90
