@@ -47,6 +47,8 @@ FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(g
 # installed here; those remain confined to diagnostic workflows.
 import formal_state_integrity_guard_v1
 FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
+import formal_cache_reuse_binding_v1
+FORMAL_CACHE_REUSE_BINDING = formal_cache_reuse_binding_v1.install(gateway)
 import formal_state_integrity_xg_history_count_fix_v1
 FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_count_fix_v1.install()
 import formal_state_integrity_coverage_patch_v1
@@ -95,6 +97,7 @@ def main() -> int:
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
             "formal_missing_data_probe_compat_adapter.json": FORMAL_MISSING_DATA_PROBE_COMPAT,
             "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
+            "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
         }
@@ -120,6 +123,7 @@ def main() -> int:
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
             d["formal_missing_data_probe_compat_adapter"] = FORMAL_MISSING_DATA_PROBE_COMPAT
             d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
+            d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["bootstrap_fixture_selection"] = (
