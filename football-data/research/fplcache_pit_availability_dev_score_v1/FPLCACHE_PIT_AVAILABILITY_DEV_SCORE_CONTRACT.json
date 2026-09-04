@@ -1,0 +1,131 @@
+{
+  "schema_version": "football3-fplcache-pit-availability-dev-score-contract-v1",
+  "project_id": "football3",
+  "status": "FROZEN_BEFORE_BULK_OUTCOME_SCORING",
+  "classification": "POST_VIEW_DEVELOPMENT_SCORE_ONLY_NO_TRAINING_NO_TUNING",
+  "freeze_parent_head": "caac69bbd4946eb0e8200218dff9b2e286620fc8",
+  "research_branch": "football3/historical-fplcache-availability-pit-v1",
+  "authorization": {
+    "outcome_scoring_allowed": true,
+    "training_allowed": false,
+    "tuning_allowed": false,
+    "parameter_search_allowed": false,
+    "candidate_selection_allowed": false,
+    "formal_weight_change_allowed": false,
+    "CURRENT_change_allowed": false,
+    "production_pointer_change_allowed": false,
+    "formal_enablement_change_allowed": false,
+    "promotion_allowed": false
+  },
+  "frozen_inputs": {
+    "fplcache_acquisition": {
+      "run_id": 33840532299,
+      "artifact_id": 9924791711,
+      "digest": "sha256:5c46ab8fa432825b1e015094d421bc014916fe689d2e810712003bc39b79feb6",
+      "source_repository": "Randdalf/fplcache",
+      "source_head": "34da1166d6f03e6097a0c2f4d3fafcd807854d3e"
+    },
+    "fplcache_zero_label_audit": {
+      "run_id": 33841308796,
+      "artifact_id": 9925007345,
+      "digest": "sha256:8d6c76606d2c9707569ed49910b3c763c1df2d92d86abe7d55150ad0dca44558",
+      "decision": "PASS_TIMESTAMPED_STATUS_NEWS_SOURCE"
+    },
+    "v3_1_1_historical_predictions": {
+      "run_id": 33710505298,
+      "artifact_id": 9876751277,
+      "digest": "sha256:bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a",
+      "head": "b32944f1e0a973dd5ff3a2e87d72333d85d27051",
+      "prediction_file": "evidence/predictions_label_free.jsonl"
+    },
+    "completed_history_labels": {
+      "artifact_id": 9876641831,
+      "digest": "sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c",
+      "fixture_file": "data/fixtures.jsonl",
+      "label_file": "data/label_vault.jsonl"
+    }
+  },
+  "development_scope": {
+    "competition": "EPL",
+    "understat_season_start_years": [2024, 2025],
+    "fplcache_season_labels": ["2024-25", "2025-26"],
+    "expected_fixture_count": 760,
+    "block_a": "2024-25 development",
+    "block_b": "2025-26 development replication; post-view and not fresh confirmation",
+    "fresh_confirmation": false
+  },
+  "fixture_join": {
+    "keys": ["season", "kickoff_utc_minute", "canonical_home_team", "canonical_away_team"],
+    "required_unresolved_count": 0,
+    "team_aliases_understat_to_fplcache": {
+      "Manchester City": "Man City",
+      "Manchester United": "Man United",
+      "Newcastle United": "Newcastle",
+      "Nottingham Forest": "Nott'm Forest",
+      "Tottenham": "Tottenham",
+      "Wolverhampton Wanderers": "Wolves"
+    }
+  },
+  "feature_contract": {
+    "final_state_window": "T_MINUS_90M_LATEST_AVAILABLE_AT_OR_BEFORE_CUTOFF",
+    "diagnostic_change_window": "T_MINUS_24H_TO_T_MINUS_6H",
+    "candidate_uses": ["status", "minutes"],
+    "diagnostic_only": ["news"],
+    "forbidden_predictors": [
+      "chance_of_playing_this_round",
+      "chance_of_playing_next_round",
+      "news_added_as_numeric_predictor",
+      "target_lineup",
+      "target_result",
+      "market_odds",
+      "live_score"
+    ],
+    "player_unavailable_indicator": "1 if status != 'a', else 0",
+    "player_importance": "snapshot minutes divided by sum(snapshot minutes) over all players currently assigned to that team; if denominator <= 0, all player importances are 0",
+    "team_impairment": "sum(player_importance * player_unavailable_indicator)",
+    "home_impairment": "home team impairment at frozen final-state snapshot",
+    "away_impairment": "away team impairment at frozen final-state snapshot",
+    "signed_availability_delta": "away_impairment - home_impairment",
+    "missing_fallback": "if fixture/team/snapshot cannot be resolved exactly, fail the whole scoring run; no imputation"
+  },
+  "single_frozen_candidate": {
+    "id": "FPLCACHE-AVAIL-IDENTITY-TILT-V1",
+    "parameter_grid": {},
+    "parameter_search": false,
+    "baseline": "Frozen V3.1.1 1X2 probabilities and 15x15 joint matrix from artifact 9876751277",
+    "one_x_two_transform": "let d=away_impairment-home_impairment; unnormalized q_H=p_H*exp(d), q_D=p_D, q_A=p_A*exp(-d); normalize q to sum 1",
+    "joint_transform": "KL/I-project the frozen V3.1.1 matrix by multiplying all home-win cells by q_H/p_H, draw cells by q_D/p_D, away-win cells by q_A/p_A; preserve within-outcome score shape exactly; normalize only for floating-point closure",
+    "coefficient": 1.0,
+    "coefficient_origin": "identity scale fixed before scoring; not fitted or tuned",
+    "fallback": "none; exact source coverage is required"
+  },
+  "primary_metrics": [
+    "1x2_logloss",
+    "1x2_brier",
+    "1x2_rps",
+    "top1_accuracy",
+    "exact_score_logloss",
+    "paired_logloss_effect_sd_required_n",
+    "season_block_metrics",
+    "signal_active_fixture_count",
+    "max_probability_abs_delta"
+  ],
+  "development_gates": {
+    "fixture_count_exact": 760,
+    "unresolved_fixture_count_max": 0,
+    "signal_active_fixture_min": 50,
+    "pooled_1x2_logloss_gain_min": 0.0,
+    "pooled_1x2_brier_delta_max": 0.0,
+    "pooled_1x2_rps_delta_max": 0.0,
+    "pooled_top1_delta_min": 0.0,
+    "both_season_blocks_1x2_logloss_nondegrade": true,
+    "exact_score_logloss_gain_must_equal_1x2_logloss_gain_within": 1e-10,
+    "matrix_to_candidate_1x2_max_abs_diff": 1e-12,
+    "matrix_normalization_tolerance": 1e-12
+  },
+  "terminal": {
+    "pass": "FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_PASS",
+    "fail": "FPLCACHE_PIT_AVAILABILITY_DEV_SCORE_FAIL"
+  },
+  "interpretation_rule": "PASS means the single pre-frozen no-training availability perturbation improved or preserved all primary development gates on already-viewed historical EPL data. It is not fresh confirmation and cannot authorize production, weights, training, tuning, CURRENT, Ready or merge. FAIL rejects this exact identity-scale mechanism only; it does not prove the timestamped source has no information."
+}
