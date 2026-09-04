@@ -1,0 +1,122 @@
+{
+  "schema_version": "football3-fplcache-pit-availability-direction-consensus-dev-score-contract-v1",
+  "project_id": "football3",
+  "status": "FROZEN_BEFORE_OUTCOME_SCORING",
+  "classification": "POST_VIEW_DEVELOPMENT_SINGLE_MECHANISM_NO_TRAINING_NO_TUNING",
+  "research_branch": "football3/historical-fplcache-availability-direction-consensus-v1",
+  "freeze_parent_head": "57a46bc4c814ad738e0207eb265328127ca640eb",
+  "authorization": {
+    "outcome_scoring_allowed": true,
+    "training_allowed": false,
+    "tuning_allowed": false,
+    "parameter_search_allowed": false,
+    "candidate_selection_allowed": false,
+    "formal_weight_change_allowed": false,
+    "CURRENT_change_allowed": false,
+    "production_pointer_change_allowed": false,
+    "formal_enablement_change_allowed": false,
+    "promotion_allowed": false
+  },
+  "frozen_inputs": {
+    "fplcache_acquisition": {
+      "run_id": 33840532299,
+      "artifact_id": 9924791711,
+      "digest": "sha256:5c46ab8fa432825b1e015094d421bc014916fe689d2e810712003bc39b79feb6"
+    },
+    "v3_1_1_historical_predictions": {
+      "run_id": 33710505298,
+      "artifact_id": 9876751277,
+      "digest": "sha256:bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a"
+    },
+    "completed_history_labels": {
+      "artifact_id": 9876641831,
+      "digest": "sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c"
+    }
+  },
+  "development_scope": {
+    "competition": "EPL",
+    "understat_season_start_years": [2024, 2025],
+    "fplcache_season_labels": ["2024-25", "2025-26"],
+    "all_pair_unique_fixture_count": 760,
+    "primary_exact_kickoff_fixture_count": 713,
+    "primary_by_season": {"2024-25": 370, "2025-26": 343},
+    "fresh_confirmation": false
+  },
+  "fixture_join": {
+    "team_aliases_understat_to_fplcache_fixture": {
+      "Manchester City": "Man City",
+      "Manchester United": "Man United",
+      "Newcastle United": "Newcastle",
+      "Nottingham Forest": "Nott'm Forest",
+      "Tottenham": "Tottenham",
+      "Wolverhampton Wanderers": "Wolves"
+    },
+    "fplcache_fixture_to_snapshot_team_aliases": {
+      "Man United": "Man Utd",
+      "Tottenham": "Spurs"
+    },
+    "primary_identity": "season + canonical home + canonical away + exact kickoff UTC minute",
+    "frozen_kickoff_mismatch_count": 47
+  },
+  "feature_contract": {
+    "windows": ["T_MINUS_24H", "T_MINUS_6H", "T_MINUS_90M"],
+    "allowed_snapshot_fields": ["status", "minutes", "team", "teams.name"],
+    "forbidden_predictors": [
+      "chance_of_playing_this_round",
+      "chance_of_playing_next_round",
+      "news_added_as_numeric_predictor",
+      "target_lineup",
+      "target_result",
+      "market_odds",
+      "live_score"
+    ],
+    "player_unavailable_indicator": "1 if status != 'a', else 0",
+    "player_importance": "snapshot minutes / team snapshot minutes; denominator<=0 yields zero impairment",
+    "team_impairment": "sum(player_importance * unavailable_indicator)",
+    "window_delta": "away_impairment - home_impairment"
+  },
+  "single_frozen_candidate": {
+    "id": "FPLCACHE-AVAIL-DIRECTION-CONSENSUS-BOUNDED-TILT-V1",
+    "parameter_grid": {},
+    "parameter_search": false,
+    "candidate_selection": false,
+    "activation_rule": "active iff all three window_delta values are strictly positive OR all three are strictly negative; otherwise exact fallback to Frozen V3.1.1",
+    "active_magnitude": "m = median(window_delta at T-24h,T-6h,T-90m)",
+    "bounded_tilt": "t = m / (1 + abs(m))",
+    "one_x_two_transform_when_active": "q_H proportional p_H*exp(t); q_D proportional p_D; q_A proportional p_A*exp(-t)",
+    "one_x_two_transform_when_inactive": "q = p exactly",
+    "joint_transform": "KL/I-project frozen V3.1.1 matrix to q while preserving within-outcome score shape",
+    "free_scalar_parameters": [],
+    "fallback": "Frozen V3.1.1 exact probabilities and joint matrix"
+  },
+  "rationale_frozen_before_score": "The immediately prior preregistered temporal-median bounded mechanism improved pooled proper scores and pooled Top1 but failed the cross-season Top1 stability gate. This new mechanism makes one structural change only: temporally contradictory or zero-crossing availability signals are not allowed to move the baseline. It does not choose a scale, threshold, season rule, or label-conditioned subset.",
+  "primary_metrics": [
+    "1x2_logloss",
+    "1x2_brier",
+    "1x2_rps",
+    "top1_accuracy",
+    "top1_correct_count",
+    "exact_score_logloss",
+    "paired_logloss_effect_sd_required_n",
+    "season_block_metrics",
+    "signal_active_fixture_count",
+    "fallback_fixture_count",
+    "max_probability_abs_delta"
+  ],
+  "development_gates": {
+    "primary_fixture_count_exact": 713,
+    "signal_active_fixture_min": 100,
+    "pooled_1x2_logloss_gain_min": 0.0,
+    "pooled_1x2_brier_delta_max": 0.0,
+    "pooled_1x2_rps_delta_max": 0.0,
+    "pooled_top1_correct_count_gain_min": 1,
+    "both_season_blocks_1x2_logloss_nondegrade": true,
+    "both_season_blocks_top1_nondegrade": true,
+    "matrix_to_candidate_1x2_max_abs_diff": 1e-12
+  },
+  "terminal": {
+    "pass": "FPLCACHE_PIT_DIRECTION_CONSENSUS_DEV_SCORE_PASS",
+    "fail": "FPLCACHE_PIT_DIRECTION_CONSENSUS_DEV_SCORE_FAIL"
+  },
+  "interpretation_rule": "PASS or FAIL is post-view development evidence only. No production promotion is authorized. Any later scale, threshold, feature, season exception, or alternative activation logic is a new experiment and must be frozen before another outcome score."
+}
