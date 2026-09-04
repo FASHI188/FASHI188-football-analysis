@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import xg_trigger_diagnostic_fix_v2 as diagnostic_fix
 import xg_target_state_graft_replay_v1 as replay
+
+
+# Target-only replay path: install the metadata-bearing XG trigger diagnostic here,
+# never through the generic production gateway entry.
+diagnostic_fix.install()
 
 
 class _ReceiptAlias(dict):
