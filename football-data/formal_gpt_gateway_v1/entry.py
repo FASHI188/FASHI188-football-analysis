@@ -35,6 +35,11 @@ import xg_trigger_diagnostic_fix_v2
 XG_TRIGGER_DIAGNOSTIC_FIX = xg_trigger_diagnostic_fix_v2.install()
 TARGET_IDENTITY_REPLAY_FIX = target_identity_replay_fix_v1.install(gateway)
 
+# Install last: the integrity guard wraps the complete existing gateway stack and also
+# replaces the target resolver with the permanent deterministic identity bridge.
+import formal_state_integrity_guard_v1
+FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
+
 
 def _direct_complete_fixture(history):
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
@@ -77,6 +82,7 @@ def main() -> int:
             "live_gateway_adapter.json": LIVE_GATEWAY,
             "xg_trigger_diagnostic_fix_adapter.json": XG_TRIGGER_DIAGNOSTIC_FIX,
             "target_identity_replay_fix_adapter.json": TARGET_IDENTITY_REPLAY_FIX,
+            "formal_state_integrity_guard_adapter.json": FORMAL_STATE_INTEGRITY_GUARD,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -99,6 +105,7 @@ def main() -> int:
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["xg_trigger_diagnostic_fix_adapter"] = XG_TRIGGER_DIAGNOSTIC_FIX
             d["target_identity_replay_fix_adapter"] = TARGET_IDENTITY_REPLAY_FIX
+            d["formal_state_integrity_guard_adapter"] = FORMAL_STATE_INTEGRITY_GUARD
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
