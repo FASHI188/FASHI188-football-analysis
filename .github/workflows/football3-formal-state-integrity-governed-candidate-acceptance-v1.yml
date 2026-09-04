@@ -1,0 +1,192 @@
+name: Football3 Formal State Integrity Governed Candidate Acceptance V1
+
+on:
+  push:
+    branches:
+      - football3/formal-state-integrity-guard-governed-candidate-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-formal-state-integrity-governed-candidate-acceptance-v1
+  cancel-in-progress: false
+
+jobs:
+  candidate-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore byte-pinned prematch sources and state only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .accept/understat .accept/confirmation .accept/original_base .accept/original_final \
+                   .formal_state_cache/bundle .accept/integrity .accept/stuttgart .accept/formal
+          fetch_artifact () {
+            local id="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$out"
+          }
+          fetch_artifact 9798682425 .accept/understat.zip
+          fetch_artifact 9827606506 .accept/confirmation.zip
+          fetch_artifact 9918451916 .accept/original_base.zip
+          fetch_artifact 9918501049 .accept/original_final.zip
+          unzip -q .accept/understat.zip -d .accept/understat
+          unzip -q .accept/confirmation.zip -d .accept/confirmation
+          unzip -q .accept/original_base.zip -d .accept/original_base
+          unzip -q .accept/original_final.zip -d .accept/original_final
+          cp -a .accept/original_final/. .formal_state_cache/bundle/
+
+      - name: Guard unit tests and legal fallback regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 -m unittest -v football-data/formal_gpt_gateway_v1/test_formal_state_integrity_guard_v1.py
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --out "$PWD/.accept/integrity"
+          python3 - <<'PY'
+          import json, pathlib
+          d=json.loads(pathlib.Path('.accept/integrity/formal_state_integrity_regression.json').read_text())
+          assert d['status']=='PASS', d
+          assert d['case_n']>=4, d
+          assert set(d['required_competitions'])=={'GER_Bundesliga','ENG_PremierLeague','ITA_SerieA'}, d
+          assert d['promoted_case_present'] is True, d
+          assert d['all_fast_full_matrix_byte_equal'] is True, d
+          assert d['all_fast_full_probability_byte_equal'] is True, d
+          assert d['all_matrices_225_cells'] is True, d
+          assert d['legal_fallback_frozen_v1_exact'] is True, d
+          print('INTEGRITY_REGRESSION_PASS')
+          PY
+
+      - name: Rebuild anomalous Stuttgart state from pinned historical sources
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/xg_target_state_graft_replay_v2.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --original-base-bundle "$PWD/.accept/original_base" \
+            --original-final-bundle "$PWD/.accept/original_final" \
+            --state-root "$PWD/.accept/stuttgart-state" \
+            --out "$PWD/.accept/stuttgart"
+          python3 - <<'PY'
+          import json, pathlib
+          s=json.loads(pathlib.Path('.accept/stuttgart/summary.json').read_text())
+          r=json.loads(pathlib.Path('.accept/stuttgart/prediction_receipt.json').read_text())
+          t=json.loads(pathlib.Path('.accept/stuttgart/xg_trigger_audit.json').read_text())
+          assert s['status']=='PASS', s
+          assert s['cutoff']=='2026-09-04T00:25:59+00:00', s
+          assert s['source_refetch_used'] is False, s
+          assert s['target_match_xg_used'] is False, s
+          assert s['post_target_information_used'] is False, s
+          assert s['model_parameters_or_weights_changed'] is False, s
+          assert s['formal_current_or_production_pointer_changed'] is False, s
+          assert s['fusion_weights']=={'xg':0.75,'frozen_v1':0.25}, s
+          assert r['formal_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9', r
+          assert r['current_sha256']=='ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8', r
+          assert r['fallback_exact_v1'] is False, r
+          assert min(float(x) for x in t['dynamic']['evidence'])>=3.0, t
+          print('ANOMALY_REBUILD_PASS')
+          PY
+
+      - name: Execute formal gateway entry on exact frozen Stuttgart cutoff
+        run: |
+          set -euo pipefail
+          cat > .accept/formal/request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"stuttgart-koln-governed-candidate-acceptance-v1","match":{"competition_id":"GER_Bundesliga","season":"2026/27","home_team_name":"VfB Stuttgart","away_team_name":"FC Koln","kickoff":"2026-09-04T18:30:00+00:00","cutoff":"2026-09-04T00:25:59+00:00"}}
+          JSON
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/.accept/formal/request.json" \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.accept/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.accept/confirmation" \
+            --state-root "$PWD/.formal_state_cache" \
+            --out "$PWD/.accept/formal/output"
+          python3 - <<'PY'
+          import json, pathlib
+          out=pathlib.Path('.accept/formal/output')
+          s=json.loads((out/'summary.json').read_text())
+          assert s['status']=='PASS', s
+          assert s['formal_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9', s
+          assert s['formal_current_sha256']=='ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8', s
+          r=json.loads((out/'prediction_receipt.json').read_text())
+          assert r['formal_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9', r
+          assert r['current_sha256']=='ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8', r
+          assert r['fallback_exact_v1'] is False, r
+          # This lane starts from the exact frozen target-cutoff state; any live refetch is forbidden.
+          for p in out.glob('*.json'):
+              obj=json.loads(p.read_text())
+              if isinstance(obj,dict) and 'source_refetch_used' in obj:
+                  assert obj['source_refetch_used'] is False, (p,obj)
+          print('FORMAL_GATEWAY_CANDIDATE_PASS')
+          PY
+
+      - name: Validate rebuilt state bundle
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+              --bundle "$PWD/.accept/stuttgart-state/bundle" \
+              > .accept/stuttgart/state_validate.txt
+
+      - name: Record exact candidate acceptance manifest
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          root=pathlib.Path('.accept')
+          i=json.loads((root/'integrity/formal_state_integrity_regression.json').read_text())
+          s=json.loads((root/'stuttgart/summary.json').read_text())
+          r=json.loads((root/'stuttgart/prediction_receipt.json').read_text())
+          f=json.loads((root/'formal/output/summary.json').read_text())
+          fr=json.loads((root/'formal/output/prediction_receipt.json').read_text())
+          m={
+            'schema_version':'football3-formal-state-integrity-governed-candidate-acceptance-v1',
+            'status':'PASS','candidate_head':os.environ['GITHUB_SHA'],
+            'formal_head':r['formal_head'],'current_sha256':r['current_sha256'],
+            'fusion_weights':s['fusion_weights'],'model_parameters_changed':False,
+            'production_pointer_changed':False,'new_labels_read':False,
+            'historical_gaps_hidden':False,
+            'regression_case_n':i['case_n'],
+            'fast_full_matrix_byte_equal':i['all_fast_full_matrix_byte_equal'],
+            'fast_full_probability_byte_equal':i['all_fast_full_probability_byte_equal'],
+            'legal_fallback_frozen_v1_exact':i['legal_fallback_frozen_v1_exact'],
+            'stuttgart_prediction_sha':r['prediction_sha'],
+            'stuttgart_receipt_sha':r['receipt_sha'],
+            'formal_gateway_prediction_sha':fr['prediction_sha'],
+            'formal_gateway_receipt_sha':fr['receipt_sha'],
+            'formal_gateway_status':f['status'],
+            'source_refetch_used':s['source_refetch_used'],
+          }
+          (root/'acceptance_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
+          print(json.dumps(m,sort_keys=True))
+          PY
+
+      - name: Upload integrity acceptance Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-formal-state-integrity-governed-candidate-${{ github.run_id }}
+          path: |
+            .accept/acceptance_manifest.json
+            .accept/integrity/
+            .accept/stuttgart/
+            .accept/formal/output/
+          if-no-files-found: error
+          retention-days: 90
