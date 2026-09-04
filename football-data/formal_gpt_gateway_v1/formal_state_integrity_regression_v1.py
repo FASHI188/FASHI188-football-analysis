@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+# Install the governed source-contract/quarantine stack before reading frozen xG labels.
+import entry as installed_gateway_stack  # noqa: F401
 import formal_state_integrity_full_rebuild_v1 as integrity_full
 import permanent_team_identity_bridge_v1 as bridge
 import runtime as rt
@@ -211,6 +213,7 @@ def main() -> int:
     history, _ = rt.load_frozen_v1_history(repo_root)
     labels, _ = rt.load_xg_labels(history, understat, confirmation)
 
+    # Cross-season FULL rebuild regression at the frozen Stuttgart target cutoff.
     integrity_cutoff = rt._parse_dt("2026-09-04T00:25:59+00:00", "integrity cutoff")
     with tempfile.TemporaryDirectory(prefix="football3-integrity-full-") as td:
         rebuilt = integrity_full.build_integrity_base(
