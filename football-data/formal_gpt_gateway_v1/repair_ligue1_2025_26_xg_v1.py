@@ -18,10 +18,12 @@ SEASON = "2025/26"
 UNDERSTAT_YEAR = 2025
 EXPECTED_FORMAL = 306
 EXPECTED_BASE = 304
-EXPECTED_SUPPLEMENT = 2
+EXPECTED_REPAIR_ROWS = 3
+EXPECTED_EXCLUDED_BASE_ROWS = 1
 BASE_REL = Path("football-data/evidence/xg/understat_2025_26_linked/FRA_Ligue1.jsonl")
 OFFICIAL_REL = Path("football-data/processed/FRA_Ligue1/2025-26.csv")
-SUPPLEMENT_REL = Path("football-data/evidence/xg/understat_2025_26_linked_repairs/FRA_Ligue1.jsonl")
+REPAIR_REL = Path("football-data/evidence/xg/understat_2025_26_linked_repairs/FRA_Ligue1.jsonl")
+MANIFEST_REL = Path("football-data/manifests/ligue1_2025_26_xg_repair_v1.json")
 ALIASES = {"Paris Saint Germain": "Paris SG"}
 
 
@@ -53,7 +55,8 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def source_dt(value: str) -> datetime:
-    return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    x = datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    return x
 
 
 def official_rows(path: Path) -> list[dict[str, Any]]:
@@ -169,13 +172,14 @@ def link_current_source(repo_root: Path, observed_at: str) -> tuple[list[dict[st
     if len(linked) != EXPECTED_FORMAL or len(used_pairs) != EXPECTED_FORMAL:
         raise RuntimeError("current Understat identity-only link is not one-to-one complete")
     linked.sort(key=lambda r: (r["official_date"], r["official_home_team"], r["official_away_team"], r["understat_match_id"]))
-    return linked, {
+    meta = {
         "understat_source_url": url,
         "understat_source_sha256": source_sha,
         "understat_result_rows": len(results),
         "formal_rows": len(official),
         "linked_rows": len(linked),
     }
+    return linked, meta
 
 
 def comparable(row: dict[str, Any]) -> dict[str, Any]:
@@ -216,20 +220,25 @@ def main() -> int:
         new = refreshed_by_pair.get(k)
         if new is None or comparable(old) != comparable(new):
             drift.append({"pair": list(k), "old": comparable(old), "new": None if new is None else comparable(new)})
-    if drift:
-        raise RuntimeError("existing 304 linked rows drift from current source; supplement-only repair forbidden: " + json.dumps(drift[:3], ensure_ascii=False, sort_keys=True))
+    if len(drift) != EXPECTED_EXCLUDED_BASE_ROWS:
+        raise RuntimeError(f"expected exactly {EXPECTED_EXCLUDED_BASE_ROWS} corrupt base mapping, got {len(drift)}: " + json.dumps(drift[:5], ensure_ascii=False, sort_keys=True))
 
-    supplement = [r for k, r in refreshed_by_pair.items() if k not in base_by_pair]
-    supplement.sort(key=lambda r: (r["official_date"], r["official_home_team"], r["official_away_team"], r["understat_match_id"]))
-    if len(supplement) != EXPECTED_SUPPLEMENT:
-        raise RuntimeError(f"supplement rows {len(supplement)} != {EXPECTED_SUPPLEMENT}")
-    combined_pairs = set(base_by_pair) | {pair_key(r["official_home_team"], r["official_away_team"]) for r in supplement}
+    drift_keys = {tuple(x["pair"]) for x in drift}
+    repair_rows = []
+    for k, row in refreshed_by_pair.items():
+        if k not in base_by_pair or k in drift_keys:
+            repair_rows.append(row)
+    repair_rows.sort(key=lambda r: (r["official_date"], r["official_home_team"], r["official_away_team"], r["understat_match_id"]))
+    if len(repair_rows) != EXPECTED_REPAIR_ROWS:
+        raise RuntimeError(f"repair rows {len(repair_rows)} != {EXPECTED_REPAIR_ROWS}")
+    kept_base_pairs = set(base_by_pair) - drift_keys
+    combined_pairs = kept_base_pairs | {pair_key(r["official_home_team"], r["official_away_team"]) for r in repair_rows}
     if len(combined_pairs) != EXPECTED_FORMAL:
         raise RuntimeError(f"combined ordered pairs {len(combined_pairs)} != {EXPECTED_FORMAL}")
 
-    supp_bytes = b"".join(canon(r) + b"\n" for r in supplement)
-    (out / "FRA_Ligue1.supplement.jsonl").write_bytes(supp_bytes)
-    supp_sha = sha_bytes(supp_bytes)
+    repair_bytes = b"".join(canon(r) + b"\n" for r in repair_rows)
+    (out / "FRA_Ligue1.repair.jsonl").write_bytes(repair_bytes)
+    repair_sha = sha_bytes(repair_bytes)
     manifest = {
         "schema_version": SCHEMA,
         "status": "CANDIDATE_COMPLETE",
@@ -242,16 +251,18 @@ def main() -> int:
         "base_linked_path": str(BASE_REL),
         "base_linked_sha256": base_sha,
         "base_linked_rows": len(base),
-        "supplement_repo_path": str(SUPPLEMENT_REL),
-        "supplement_sha256": supp_sha,
-        "supplement_rows": len(supplement),
-        "combined_rows": len(base) + len(supplement),
+        "repair_repo_path": str(REPAIR_REL),
+        "repair_sha256": repair_sha,
+        "repair_rows": len(repair_rows),
+        "excluded_base_rows": len(drift),
+        "excluded_base_mappings": drift,
+        "combined_rows": len(base) - len(drift) + len(repair_rows),
         "formal_rows": EXPECTED_FORMAL,
         "unmatched_rows": 0,
         "ambiguous_rows": 0,
-        "supplement_identities": [
+        "repair_identities": [
             {"official_date": r["official_date"], "home": r["official_home_team"], "away": r["official_away_team"], "understat_match_id": r["understat_match_id"], "home_xg": r["home_xg"], "away_xg": r["away_xg"]}
-            for r in supplement
+            for r in repair_rows
         ],
         **source_meta,
         "target_match_xg_used": False,
