@@ -45,6 +45,22 @@ def fetch(url: str) -> bytes:
         return r.read()
 
 
+def decode_csv_text(data: bytes) -> tuple[str, str]:
+    """Decode pinned public CSV bytes without altering their SHA identity.
+
+    The historical worldfootballR league registry contains legacy Western-European
+    bytes and is not guaranteed to be UTF-8.  Decoding is metadata-only: the raw
+    byte SHA remains the frozen source identity used by the audit receipt.
+    """
+    failures: list[str] = []
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return data.decode(encoding), encoding
+        except UnicodeDecodeError as exc:
+            failures.append(f"{encoding}:{exc.start}")
+    raise RuntimeError("unable to decode pinned CSV registry: " + ",".join(failures))
+
+
 def assert_local_production_contract(contract: dict[str, Any]) -> dict[str, Any]:
     runtime = (FOOTBALL_DATA / "formal_fast_runtime_v1" / "runtime.py").read_text(encoding="utf-8")
     fusion = (FOOTBALL_DATA / "new_engine_v1" / "formal_fusion_v2.py").read_text(encoding="utf-8")
@@ -94,7 +110,8 @@ def audit_worldfootballr(contract: dict[str, Any]) -> dict[str, Any]:
     if str(release.get("tag_name")) != str(ident["fotmob_match_details_release_tag"]):
         raise RuntimeError("FotMob static release tag drift")
 
-    rows = list(csv.DictReader(io.StringIO(registry_raw.decode("utf-8-sig"))))
+    registry_text, registry_encoding = decode_csv_text(registry_raw)
+    rows = list(csv.DictReader(io.StringIO(registry_text)))
     by_id = {int(r["id"]): r for r in rows if str(r.get("id", "")).isdigit()}
     j1_id = int(ident["j1_fotmob_league_id"])
     k1_id = int(ident["k1_fotmob_league_id"])
@@ -111,6 +128,7 @@ def audit_worldfootballr(contract: dict[str, Any]) -> dict[str, Any]:
         "registry_url": registry_url,
         "registry_sha256": sha256_bytes(registry_raw),
         "registry_bytes": len(registry_raw),
+        "registry_encoding": registry_encoding,
         "release_api_url": release_url,
         "release_metadata_sha256": sha256_bytes(release_raw),
         "release_id": release["id"],
