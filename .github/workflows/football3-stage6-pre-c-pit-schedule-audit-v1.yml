@@ -1,0 +1,138 @@
+name: football3 Stage6 Pre-C PIT Schedule Audit
+
+on:
+  push:
+    branches: ['football3/stage6-pre-c-schedule-importance-rotation-v1']
+    paths:
+      - '.github/workflows/football3-stage6-pre-c-pit-schedule-audit-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  CONTRACT_BLOB: c55020acb15d580ad2092895b408eb0400f777cb
+  AUDIT_BLOB: 32cba0ac3e7f539d4198c250fb3146fe7eeeb9e6
+  TEST_BLOB: 1f72c8574fa7509490f7f28e083c1ffde331a353
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  zero-label-pit-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage contract and zero-label whitelist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/stage6-pre-c-schedule-importance-rotation-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$V311_HEAD" HEAD)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          D=football-data/research/stage6_pre_c_schedule_rotation
+          test "$(git hash-object "$D/STAGE6_PRE_C_CONTRACT.json")" = "$CONTRACT_BLOB"
+          test "$(git hash-object "$D/pit_schedule_audit.py")" = "$AUDIT_BLOB"
+          test "$(git hash-object "$D/test_pit_schedule_audit.py")" = "$TEST_BLOB"
+          python - <<'PY'
+          import json,pathlib,subprocess
+          d=pathlib.Path('football-data/research/stage6_pre_c_schedule_rotation')
+          c=json.loads((d/'STAGE6_PRE_C_CONTRACT.json').read_text())
+          assert c['status']=='FROZEN_BEFORE_CONSUMED_2020_2022_SCORING'
+          assert c['gates']['pit_schedule_coverage_min_n']==1500
+          assert c['data_roles']['2023_and_later'].startswith('FORBIDDEN')
+          assert 'MISSING' in c['data_roles']['unknown_future_competition']
+          got=set(subprocess.check_output(['git','diff','--name-only',f"{c['base']['frozen_v3_1_1_head']}...HEAD"],text=True).splitlines())
+          allowed={str(d/'STAGE6_PRE_C_CONTRACT.json'),str(d/'pit_schedule_audit.py'),str(d/'test_pit_schedule_audit.py'),'.github/workflows/football3-stage6-pre-c-pit-schedule-audit-v1.yml'}
+          assert got==allowed,(got,allowed)
+          assert not any(any(x in p for x in ('CURRENT','production_pointer','formal_enablement')) for p in got)
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Structural tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage6_pre_c_schedule_rotation
+          python -m py_compile "$D/pit_schedule_audit.py" "$D/test_pit_schedule_audit.py"
+          (cd "$D" && python test_pit_schedule_audit.py) 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download and verify frozen Understat DB only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/old
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          unzip -q /tmp/old.zip -d _inputs/old
+          test "$(sha256sum _inputs/old/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Clone versioned public schedule sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _of && mkdir _of
+          git clone -q --no-tags https://github.com/openfootball/england.git _of/england
+          git clone -q --no-tags https://github.com/openfootball/deutschland.git _of/deutschland
+          git clone -q --no-tags https://github.com/openfootball/italy.git _of/italy
+          git clone -q --no-tags https://github.com/openfootball/espana.git _of/espana
+          git clone -q --no-tags https://github.com/openfootball/champions-league.git _of/champions-league
+          for r in england deutschland italy espana champions-league; do git -C "_of/$r" fsck --no-dangling >/dev/null; done
+
+      - name: Strict pre-target PIT coverage audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/stage6_pre_c_schedule_rotation
+          rm -rf _run && mkdir _run
+          python "$D/pit_schedule_audit.py" --db _inputs/old/understat_frozen.db --repos _of --out _run --min-coverage 1500 2>&1 | tee /tmp/audit_stdout.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('_run/pit_coverage.json'))
+          assert p['target_n']==5478
+          assert p['2023_opened'] is False and p['result_or_goal_fields_read'] is False
+          assert p['final_schedule_backfill_used'] is False and p['final_lineup_or_minutes_used'] is False
+          assert p['status'] in {'STAGE6_PRE_C_PIT_COVERAGE_PASS_READY_FOR_CONSUMED_DEV_SCORING','STAGE6_PRE_C_STOP_PIT_SCHEDULE_COVERAGE'}
+          PY
+
+      - name: Seal zero-label PIT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,code,evidence}
+          D=football-data/research/stage6_pre_c_schedule_rotation
+          cp "$D/STAGE6_PRE_C_CONTRACT.json" _seal/contracts/
+          cp "$D/pit_schedule_audit.py" "$D/test_pit_schedule_audit.py" _seal/code/
+          cp _run/*.json _seal/evidence/
+          cp /tmp/tests.txt /tmp/audit_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); p=json.load(open('_run/pit_coverage.json'))
+          files={str(x.relative_to(root)):hashlib.sha256(x.read_bytes()).hexdigest() for x in sorted(root.rglob('*')) if x.is_file()}
+          (root/'MANIFEST.json').write_text(json.dumps({'schema_version':'football3-stage6-pre-c-pit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'status':p['status'],'pit_complete_n':p['pit_complete_n'],'files':files},sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed zero-label evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-stage6-pre-c-pit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
