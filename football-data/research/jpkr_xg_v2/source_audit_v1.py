@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
+FOOTBALL_DATA = HERE.parents[1]
 CONTRACT = HERE / "frozen_research_contract_v1.json"
 REGISTRY = HERE / "source_registry_v1.json"
 
@@ -46,9 +46,9 @@ def fetch(url: str) -> bytes:
 
 
 def assert_local_production_contract(contract: dict[str, Any]) -> dict[str, Any]:
-    runtime = (ROOT / "formal_fast_runtime_v1" / "runtime.py").read_text(encoding="utf-8")
-    fusion = (ROOT / "new_engine_v1" / "formal_fusion_v2.py").read_text(encoding="utf-8")
-    source_adapter = (ROOT / "formal_gpt_gateway_v1" / "formal_source_contract_v1.py").read_text(encoding="utf-8")
+    runtime = (FOOTBALL_DATA / "formal_fast_runtime_v1" / "runtime.py").read_text(encoding="utf-8")
+    fusion = (FOOTBALL_DATA / "new_engine_v1" / "formal_fusion_v2.py").read_text(encoding="utf-8")
+    source_adapter = (FOOTBALL_DATA / "formal_gpt_gateway_v1" / "formal_source_contract_v1.py").read_text(encoding="utf-8")
 
     assertions = {
         "JPN_J1_already_in_formal_scope": '"JPN_J1"' in runtime,
@@ -158,10 +158,7 @@ def main() -> int:
     # Only mechanically verified no-key/no-login public GitHub sources are fetched.
     # Human-reviewed sources rejected by terms/key requirements remain frozen in source_registry_v1.json
     # and are deliberately not contacted by this workflow.
-    mechanical_pass = (
-        wf["status"] == "ZERO_TARGET_ASSETS"
-        and sb["status"] == "ZERO_TARGET_COMPETITIONS"
-    )
+    mechanical_pass = wf["status"] == "ZERO_TARGET_ASSETS" and sb["status"] == "ZERO_TARGET_COMPETITIONS"
     if not mechanical_pass:
         # A newly appearing asset/competition is not automatically accepted; it needs a fresh
         # pre-label license/coverage audit rather than silently changing this frozen experiment.
@@ -193,7 +190,7 @@ def main() -> int:
                 "JP_KR_XG_CHALLENGER": None,
                 "FIXED_75_25_FUSION_V2": None
             },
-            "status": "STOP_DATA_COVERAGE",
+            "status": "STOP_DATA_COVERAGE"
         }
 
     receipt = {
@@ -211,11 +208,7 @@ def main() -> int:
         "production_contract_assertions": production_assertions,
         "mechanical_source_audits": [wf, sb],
         "human_reviewed_rejected_or_partial_sources": [
-            {
-                "source_id": x["source_id"],
-                "decision": x["decision"],
-                "reason": x["reason"]
-            }
+            {"source_id": x["source_id"], "decision": x["decision"], "reason": x["reason"]}
             for x in registry["sources"]
             if not x.get("mechanical_audit", False)
         ],
@@ -225,7 +218,7 @@ def main() -> int:
         "adapter_implemented": False,
         "formal_or_production_changes": False,
         "independent_acceptance_eligible": False,
-        "stop_reason": "No qualified no-key/no-login, provenance-and-license-acceptable multi-season match-level xG source was found for J1/K1. Per frozen contract, labels and OOS evaluation remain unopened.",
+        "stop_reason": "No qualified no-key/no-login, provenance-and-license-acceptable multi-season match-level xG source was found for J1/K1. Per frozen contract, labels and OOS evaluation remain unopened."
     }
     receipt["receipt_sha256"] = sha256_bytes(canon(receipt))
     (out / "jpkr_xg_source_audit_v1.json").write_bytes(canon(receipt))
@@ -237,7 +230,7 @@ def main() -> int:
         "JPN_J1": receipt["leagues"]["JPN_J1"]["status"],
         "KOR_KLeague1": receipt["leagues"]["KOR_KLeague1"]["status"],
         "labels_materialized": False,
-        "oos_run": False,
+        "oos_run": False
     }, ensure_ascii=False, sort_keys=True))
     return 0
 
