@@ -34,7 +34,7 @@ def wrap_reconstruct_cutoff_state(original, helper):
     """Bind the exact frozen Formal V2 helper only after V1 reconstructs legacy.
 
     The V1 runner keeps ``legacy`` local to reconstruct_cutoff_state/main, so a
-    module-global patch cannot work.  This adapter leaves reconstruction bytes
+    module-global patch cannot work. This adapter leaves reconstruction bytes
     and state untouched; it only attaches the official frozen helper callable
     to the returned legacy.formal namespace expected by the unchanged V1 call.
     """
@@ -71,14 +71,18 @@ def extract_helper_arg(argv: list[str]) -> pathlib.Path:
 def main() -> int:
     helper_path = extract_helper_arg(sys.argv)
     helper = loadmod("stage6_frozen_historical_xg_fusion_v2", helper_path)
-    original = base.reconstruct_cutoff_state
-    base.reconstruct_cutoff_state = wrap_reconstruct_cutoff_state(original, helper)
+    original_reconstruct = base.reconstruct_cutoff_state
+    original_map = base.map_queue_to_future
+    base.reconstruct_cutoff_state = wrap_reconstruct_cutoff_state(original_reconstruct, helper)
+    # V2's documented import-time contract installs exactly this frozen queue
+    # mapper onto the V1 module. Reassert it explicitly before the V1 entrypoint
+    # so the adapter cannot silently fall back to the old kickoff/mid re-sort.
+    base.map_queue_to_future = v2wrap.map_queue_to_future
     try:
-        # Preserve the V2 frozen-queue-order adapter; calling base.main() here
-        # would silently bypass the already-proven queue-order repair.
-        return v2wrap.main()
+        return base.main()
     finally:
-        base.reconstruct_cutoff_state = original
+        base.map_queue_to_future = original_map
+        base.reconstruct_cutoff_state = original_reconstruct
 
 
 if __name__ == "__main__":
