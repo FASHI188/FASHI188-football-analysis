@@ -1,0 +1,176 @@
+name: Football3 Non-Production Candidate Full Stack V1
+
+on:
+  push:
+    branches:
+      - football3/formal-state-integrity-guard-governed-candidate-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CANDIDATE_NON_PRODUCTION: 'true'
+  HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256: '2000528df3a951252e9da83a81034431e3c4f5b5fb5d779e25de4302a5d0cebf'
+  HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256: 'c61d695eeb5601bb74a5b6a673b71c28d17959730732e476d4361563b3436b58'
+  FORMAL_WIRING_RESEARCH_BASE_HEAD: 'd3b3e322f78c48b91477ef6e11054e51ac00fd85'
+  PR_BASE_SHA: '0187e39ef33bedf68e1e99013362b65e731ea4c9'
+
+jobs:
+  candidate-full-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Declare non-production authority boundary
+        run: |
+          set -euo pipefail
+          test "$CANDIDATE_NON_PRODUCTION" = true
+          test "$GITHUB_REF_NAME" = 'football3/formal-state-integrity-guard-governed-candidate-v1'
+          echo 'candidate_validation_only=true' > candidate_authority.txt
+          echo 'production_authority=false' >> candidate_authority.txt
+          echo 'production_branch_gate_modified=false' >> candidate_authority.txt
+      - name: Install frozen remediation dependencies
+        run: pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
+      - name: Compile complete scientific and integrity stack
+        run: |
+          python -m py_compile \
+            football-data/research/football3_core.py \
+            football-data/research/validate_football3_experiment.py \
+            football-data/research/validate_football3_research_policy_v3.py \
+            football-data/research/audit_football3_execution_surface.py \
+            football-data/research/audit_football3_changed_scientific_files.py \
+            football-data/research/audit_football3_lineage.py \
+            football-data/research/audit_football3_pr_scope.py \
+            football-data/research/run_football3_synthetic_prelabel_smoke.py \
+            football-data/new_engine_v1/formal_fusion_v2.py \
+            football-data/new_engine_v1/test_formal_fusion_v2.py \
+            governance/football3/validate_formal_wiring_contract_v2.py \
+            football-data/formal_gpt_gateway_v1/entry.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_guard_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_full_rebuild_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v2.py \
+            football-data/formal_gpt_gateway_v1/permanent_team_identity_bridge_v1.py
+      - name: Audit lineage and core tests
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/audit_football3_lineage.py
+          pytest -q football-data/research/test_football3_core.py football-data/research/test_validate_football3_experiment.py
+      - name: Run formal wiring governance and adapter adversarial tests
+        env:
+          PYTHONPATH: football-data:football-data/research
+        run: |
+          pytest -q governance/football3/test_validate_formal_wiring_contract_v2.py
+          python football-data/new_engine_v1/test_formal_fusion_v2.py
+      - name: Candidate-only semantic validation of production wiring contract
+        run: |
+          set -euo pipefail
+          # Deliberately clear branch identity and skip diff authority. This validates the
+          # frozen contract/schema only and does not grant or simulate production authority.
+          GITHUB_REF_NAME='' GITHUB_HEAD_REF='' python governance/football3/validate_formal_wiring_contract_v2.py \
+            --contract football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json \
+            --schema governance/football3/formal_wiring_contract_schema_v2.json \
+            --repo-root . --skip-diff
+      - name: Zero-label scientific smoke and execution-surface audit
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/run_football3_synthetic_prelabel_smoke.py
+          python football-data/research/audit_football3_execution_surface.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('football-data/research/football3_synthetic_prelabel_smoke_summary.json').read_text())
+          a=json.loads(Path('football-data/research/football3_execution_surface_audit_summary.json').read_text())
+          assert s['status']=='FOOTBALL3_SYNTHETIC_PRELABEL_SMOKE_PASS' and s['real_target_labels_opened']==0
+          assert a['status']=='FOOTBALL3_EXECUTION_SURFACE_AUDIT_PASS' and a['real_target_labels_opened']==0
+          assert a['models_fit_or_scored']==0 and a['sealed_pools_opened']==0
+          PY
+      - name: Validate research policy and cumulative changed scientific files
+        env:
+          PYTHONPATH: football-data/research
+        run: |
+          python football-data/research/validate_football3_research_policy_v3.py
+          python football-data/research/audit_football3_changed_scientific_files.py \
+            --base "$PR_BASE_SHA" --head HEAD \
+            --expected-guard-canonical-ast-sha256 "$HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" \
+            --expected-audit-canonical-ast-sha256 "$HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
+          python - <<'PY'
+          import subprocess, os
+          changed=subprocess.check_output(['git','diff','--name-only',f"{os.environ['PR_BASE_SHA']}...HEAD"],text=True).splitlines()
+          forbidden=['c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv','confirmation1597','reserve266','confirmation150']
+          bad=[f for f in changed if any(x.lower() in f.lower() for x in forbidden)]
+          assert not bad,bad
+          PY
+      - name: Restore byte-pinned frozen integrity sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .candidate/understat .candidate/confirmation .candidate/out
+          for spec in '9798682425 understat' '9827606506 confirmation'; do
+            set -- $spec; id=$1; name=$2
+            curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o ".candidate/${name}.zip"
+            unzip -q ".candidate/${name}.zip" -d ".candidate/${name}"
+          done
+      - name: Generic integrity unit and non-Stuttgart FULL FAST regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 -m unittest -v football-data/formal_gpt_gateway_v1/test_formal_state_integrity_guard_v1.py
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v2.py \
+            --repo-root "$PWD" --understat-db "$PWD/.candidate/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.candidate/confirmation" --out "$PWD/.candidate/out"
+          python3 - <<'PY'
+          import json, pathlib
+          d=json.loads(pathlib.Path('.candidate/out/formal_state_integrity_regression.json').read_text())
+          assert d['status']=='PASS' and d['non_stuttgart_case_n']>=4
+          assert d['target_specific_replay_used'] is False
+          assert d['all_fast_full_matrix_byte_equal'] and d['all_fast_full_probability_byte_equal'] and d['all_fast_full_route_equal']
+          assert d['legal_fallback_frozen_v1_exact'] is True
+          assert all('Stuttgart' not in (x['home']+x['away']) for x in d['cases'])
+          PY
+      - name: Prove generic entry excludes target-specific replay patches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('football-data/formal_gpt_gateway_v1/entry.py').read_text()
+          assert 'target_identity_replay_fix_v1' not in s
+          assert 'xg_trigger_diagnostic_fix_v2' not in s
+          assert 'formal_state_integrity_guard_v1' in s
+          assert 'formal_state_integrity_coverage_patch_v1' in s
+          print('GENERIC_ENTRY_SCOPE_PASS')
+          PY
+      - name: Write candidate Full Stack manifest
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          r=json.loads(pathlib.Path('.candidate/out/formal_state_integrity_regression.json').read_text())
+          m={'schema_version':'football3-non-production-candidate-full-stack-v1','status':'PASS','candidate_head':os.environ['GITHUB_SHA'],
+             'production_authority':False,'production_branch_gate_modified':False,'new_labels_read':False,
+             'target_specific_replay_in_generic_entry':False,'non_stuttgart_case_n':r['non_stuttgart_case_n'],
+             'fast_full_probability_byte_equal':r['all_fast_full_probability_byte_equal'],
+             'fast_full_matrix_byte_equal':r['all_fast_full_matrix_byte_equal'],
+             'legal_fallback_frozen_v1_exact':r['legal_fallback_frozen_v1_exact']}
+          pathlib.Path('.candidate/full_stack_manifest.json').write_text(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n')
+          PY
+      - name: Upload candidate Full Stack Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-non-production-candidate-full-stack-${{ github.run_id }}
+          path: |
+            candidate_authority.txt
+            .candidate/full_stack_manifest.json
+            .candidate/out/formal_state_integrity_regression.json
+          if-no-files-found: error
+          retention-days: 90
