@@ -54,12 +54,16 @@ jobs:
               football-data/formal_gpt_gateway_v1/entry.py
 
       - name: Run selector transition cache fallback and fail-closed regressions
+        id: unit_gate
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          rc=0
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/test_durable_state_governance_v1.py \
-            > durable_state_governance_regression.json
-          python3 - <<'PY'
+            > durable_state_governance_regression.json 2> durable_state_governance_regression.stderr || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            python3 - <<'PY' || rc=$?
           import json
           d=json.load(open('durable_state_governance_regression.json'))
           assert d['passed'] is True
@@ -69,6 +73,9 @@ jobs:
           assert set(d['deep_fail_closed']['rejected']) == required
           print('DURABLE_GOVERNANCE_UNIT_REGRESSION_PASS', d['receipt_sha256'])
           PY
+          fi
+          echo "$rc" > unit_gate_rc.txt
+          if [ "$rc" -ne 0 ]; then cat durable_state_governance_regression.stderr || true; exit "$rc"; fi
 
       - name: Download byte-bound frozen FULL rebuild sources
         env:
@@ -94,8 +101,11 @@ jobs:
             | tee frozen_source_sha256.txt
 
       - name: Run existing production 300 equivalence and automatic FAST FULL routing
+        id: eq300_gate
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          rc=0
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
             python3 football-data/formal_fast_runtime_v1/test_runtime.py \
               --mode production \
@@ -104,8 +114,9 @@ jobs:
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
               --n 300 \
               --out "$PWD/production_300_equivalence_receipt.json" \
-            | tee production_300_equivalence_stdout.txt
-          python3 - <<'PY'
+            > production_300_equivalence_stdout.txt 2> production_300_equivalence_stderr.txt || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            python3 - <<'PY' || rc=$?
           import json
           d=json.load(open('production_300_equivalence_receipt.json'))
           assert d['passed'] is True
@@ -115,18 +126,30 @@ jobs:
           assert d['automatic_routing']['passed'] is True
           print('PRODUCTION_300_EQUIVALENCE_PASS', d['receipt_sha256'])
           PY
+          fi
+          echo "$rc" > eq300_gate_rc.txt
+          if [ "$rc" -ne 0 ]; then
+            echo '--- production 300 stdout ---'; cat production_300_equivalence_stdout.txt || true
+            echo '--- production 300 stderr ---'; cat production_300_equivalence_stderr.txt || true
+            exit "$rc"
+          fi
 
       - name: Run Big5 FAST FULL repeated sealed and all-formal-scope state matrix
+        id: cross_league_gate
+        if: ${{ always() }}
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          rc=0
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/test_durable_state_cross_league_v1.py \
               --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
               --out "$PWD/durable_state_cross_league_matrix.json" \
-            | tee durable_state_cross_league_stdout.txt
-          python3 - <<'PY'
+            > durable_state_cross_league_stdout.txt 2> durable_state_cross_league_stderr.txt || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            python3 - <<'PY' || rc=$?
           import json
           d=json.load(open('durable_state_cross_league_matrix.json'))
           assert d['passed'] is True
@@ -157,62 +180,92 @@ jobs:
           assert scope['target_result_read_or_scored'] is False
           print('BIG5_REPEAT_ALL_SCOPE_MATRIX_PASS', d['receipt_sha256'])
           PY
+          fi
+          echo "$rc" > cross_league_gate_rc.txt
+          if [ "$rc" -ne 0 ]; then
+            echo '--- cross league stdout ---'; cat durable_state_cross_league_stdout.txt || true
+            echo '--- cross league stderr ---'; cat durable_state_cross_league_stderr.txt || true
+            exit "$rc"
+          fi
 
       - name: Prove implementation is generic and official runner patch is wired
+        id: static_gate
+        if: ${{ always() }}
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          rc=0
           ! grep -RinE 'Real Betis|Betis|Real Madrid' \
             football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
             football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
             football-data/formal_gpt_gateway_v1/formal_runtime_exact_noop_v1.py \
-            football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py
-          grep -q 'formal_runtime_exact_noop_v1' football-data/formal_gpt_gateway_v1/entry.py
-          grep -q 'formal_durable_state_governance_v1' football-data/formal_gpt_gateway_v1/entry.py
-          if [ -f .github/workflows/football3-formal-gpt-runner-integration-v1.yml ]; then
-            grep -q 'durable_state_selector_v1.py' .github/workflows/football3-formal-gpt-runner-integration-v1.yml
-            ! grep -q "candidates.sort(key=lambda a:(a.get('created_at'" .github/workflows/football3-formal-gpt-runner-integration-v1.yml
-          fi
+            football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py || rc=$?
+          grep -q 'formal_runtime_exact_noop_v1' football-data/formal_gpt_gateway_v1/entry.py || rc=$?
+          grep -q 'formal_durable_state_governance_v1' football-data/formal_gpt_gateway_v1/entry.py || rc=$?
+          grep -q 'durable_state_selector_v1.py' .github/workflows/football3-formal-gpt-runner-integration-v1.yml || rc=$?
+          if grep -q "candidates.sort(key=lambda a:(a.get('created_at'" .github/workflows/football3-formal-gpt-runner-integration-v1.yml; then rc=1; fi
+          echo "$rc" > static_gate_rc.txt
+          exit "$rc"
 
-      - name: Build governed validation receipt
+      - name: Build governed validation receipt and diagnostics
+        if: ${{ always() }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import hashlib,json,pathlib,subprocess
-          def load(p): return json.loads(pathlib.Path(p).read_text())
+          def text(p):
+              q=pathlib.Path(p)
+              return q.read_text(errors='replace') if q.exists() else None
+          def load(p):
+              q=pathlib.Path(p)
+              return json.loads(q.read_text()) if q.exists() else None
+          def rc(p):
+              v=text(p)
+              return int(v.strip()) if v is not None and v.strip().isdigit() else None
           head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           unit=load('durable_state_governance_regression.json')
           eq=load('production_300_equivalence_receipt.json')
           matrix=load('durable_state_cross_league_matrix.json')
+          gates={'unit':rc('unit_gate_rc.txt'),'production_300':rc('eq300_gate_rc.txt'),'cross_league':rc('cross_league_gate_rc.txt'),'static':rc('static_gate_rc.txt')}
+          passed=all(v==0 for v in gates.values())
           core={
             'schema_version':'football3-durable-state-governed-validation-receipt-v1',
             'head':head,
-            'unit_sha256':unit['receipt_sha256'],
-            'production_300_sha256':eq['receipt_sha256'],
-            'cross_league_sha256':matrix['receipt_sha256'],
-            'formal_head':matrix['formal_head'],
-            'current_sha256':matrix['current_sha256'],
-            'same_sealed_request_twice_passed':matrix['same_sealed_request_twice']['passed'],
-            'all_formal_scope_state_integrity_n':matrix['all_formal_scope_state_integrity_smoke']['n'],
+            'gates':gates,
+            'unit_sha256':unit.get('receipt_sha256') if unit else None,
+            'production_300_sha256':eq.get('receipt_sha256') if eq else None,
+            'cross_league_sha256':matrix.get('receipt_sha256') if matrix else None,
+            'formal_head':matrix.get('formal_head') if matrix else None,
+            'current_sha256':matrix.get('current_sha256') if matrix else None,
+            'same_sealed_request_twice_passed':((matrix or {}).get('same_sealed_request_twice') or {}).get('passed'),
+            'all_formal_scope_state_integrity_n':((matrix or {}).get('all_formal_scope_state_integrity_smoke') or {}).get('n'),
             'betis_result_read':False,
             'training_or_tuning_used':False,
             'scoring_used':False,
             'model_parameters_or_weights_changed':False,
             'formal_current_or_production_pointer_changed':False,
             'ready_or_merge_authorized':False,
-            'passed':True,
+            'passed':passed,
           }
           raw=json.dumps(core,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
           receipt={**core,'receipt_sha256':hashlib.sha256(raw).hexdigest()}
           pathlib.Path('durable_state_governed_validation_receipt.json').write_text(json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n')
+          diagnostics={
+            'head':head,'gates':gates,
+            'production_300_stdout':text('production_300_equivalence_stdout.txt'),
+            'production_300_stderr':text('production_300_equivalence_stderr.txt'),
+            'cross_league_stdout':text('durable_state_cross_league_stdout.txt'),
+            'cross_league_stderr':text('durable_state_cross_league_stderr.txt'),
+          }
+          pathlib.Path('validation_diagnostics.json').write_text(json.dumps(diagnostics,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n')
           print(json.dumps(receipt,sort_keys=True))
           PY
-          sha256sum durable_state_governance_regression.json \
-                    production_300_equivalence_receipt.json \
-                    durable_state_cross_league_matrix.json \
-                    durable_state_governed_validation_receipt.json \
-            | tee validation_file_sha256.txt
+          for f in durable_state_governance_regression.json production_300_equivalence_receipt.json durable_state_cross_league_matrix.json durable_state_governed_validation_receipt.json validation_diagnostics.json; do
+            if [ -f "$f" ]; then sha256sum "$f"; fi
+          done | tee validation_file_sha256.txt
 
       - name: Upload governed validation artifacts
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: football3-durable-state-cutoff-selector-governed-${{ github.run_id }}
@@ -220,12 +273,34 @@ jobs:
             authority.txt
             changed_files.txt
             frozen_source_sha256.txt
+            unit_gate_rc.txt
+            eq300_gate_rc.txt
+            cross_league_gate_rc.txt
+            static_gate_rc.txt
             durable_state_governance_regression.json
+            durable_state_governance_regression.stderr
             production_300_equivalence_receipt.json
             production_300_equivalence_stdout.txt
+            production_300_equivalence_stderr.txt
             durable_state_cross_league_matrix.json
             durable_state_cross_league_stdout.txt
+            durable_state_cross_league_stderr.txt
             durable_state_governed_validation_receipt.json
+            validation_diagnostics.json
             validation_file_sha256.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
+
+      - name: Preserve all acceptance gate failures
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          for f in unit_gate_rc.txt eq300_gate_rc.txt cross_league_gate_rc.txt static_gate_rc.txt; do
+            test -f "$f"
+            test "$(cat "$f")" = '0'
+          done
+          python3 - <<'PY'
+          import json
+          d=json.load(open('durable_state_governed_validation_receipt.json'))
+          assert d['passed'] is True
+          PY
