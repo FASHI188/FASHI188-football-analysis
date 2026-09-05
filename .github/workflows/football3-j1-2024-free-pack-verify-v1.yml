@@ -19,7 +19,7 @@ jobs:
   verify:
     name: Research-only temporary payload verification
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PAGE_URL: ${{ inputs.download_page_url }}
       WORKDIR: ${{ runner.temp }}/football3-j1-2024-free-pack-verify
@@ -29,525 +29,563 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$WORKDIR"
-          mkdir -p "$WORKDIR/raw" "$WORKDIR/extracted" "$WORKDIR/report"
+          mkdir -p "$WORKDIR/raw" "$WORKDIR/report"
           umask 077
-          printf '%s\n' "$PAGE_URL" > "$WORKDIR/report/requested_page_url.txt"
-          date -u +'%Y-%m-%dT%H:%M:%SZ' > "$WORKDIR/report/access_started_at_utc.txt"
 
-      - name: Fetch public download page without cookies or credentials
-        id: page
+      - name: Run fail-closed public payload verifier
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, sys, urllib.parse
-          u = urllib.parse.urlparse(os.environ['PAGE_URL'])
-          if u.scheme != 'https' or u.hostname not in {'www.hudl.com','hudl.com'}:
-              print('FAIL: download page must be HTTPS on hudl.com', file=sys.stderr)
-              sys.exit(20)
-          if '/gc/download/free-data-japans-2024-j1-league' not in u.path:
-              print('FAIL: unexpected Hudl path', file=sys.stderr)
-              sys.exit(21)
-          PY
-          curl --fail --silent --show-error --location --max-redirs 5 \
-            --connect-timeout 20 --max-time 90 \
-            -D "$WORKDIR/raw/page_headers.txt" \
-            -o "$WORKDIR/raw/download_page.html" \
-            -w '%{url_effective}\n%{http_code}\n' \
-            "$PAGE_URL" > "$WORKDIR/raw/page_curl_meta.txt"
-          cp "$WORKDIR/raw/page_headers.txt" "$WORKDIR/report/page_headers.txt"
-          sha256sum "$WORKDIR/raw/download_page.html" > "$WORKDIR/report/download_page.sha256"
-          stat -c '%s' "$WORKDIR/raw/download_page.html" > "$WORKDIR/report/download_page.size_bytes"
-          sed -n '1p' "$WORKDIR/raw/page_curl_meta.txt" > "$WORKDIR/report/page_final_url.txt"
-          sed -n '2p' "$WORKDIR/raw/page_curl_meta.txt" > "$WORKDIR/report/page_http_status.txt"
-
-      - name: Resolve only static public download targets and fail closed on gates
-        id: resolve
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
+          cat > "$WORKDIR/verify.py" <<'PY'
+          from __future__ import annotations
+          from collections import deque
+          from datetime import datetime, timezone
           from html.parser import HTMLParser
           from pathlib import Path
-          import json, os, re, sys, urllib.parse
+          import csv
+          import hashlib
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
 
-          work = Path(os.environ['WORKDIR'])
-          html = (work/'raw/download_page.html').read_text(errors='replace')
-          page_url = os.environ['PAGE_URL']
+          WORK = Path(os.environ['WORKDIR'])
+          RAW = WORK / 'raw'
+          REPORT = WORK / 'report'
+          PAGE_URL = os.environ['PAGE_URL']
+          RAW.mkdir(parents=True, exist_ok=True)
+          REPORT.mkdir(parents=True, exist_ok=True)
 
-          class P(HTMLParser):
-              def __init__(self):
-                  super().__init__(); self.links=[]; self.forms=[]; self.inputs=[]
-              def handle_starttag(self, tag, attrs):
-                  d=dict(attrs)
-                  if tag=='a' and d.get('href'):
-                      self.links.append((d.get('href'), d.get('download'), d.get('class',''), d.get('id','')))
-                  if tag=='form': self.forms.append(d)
-                  if tag=='input': self.inputs.append(d)
-          p=P(); p.feed(html)
+          TARGETS = {
+              'Statsbomb_J1_League.json': re.compile(r'Statsbomb[_\-. ]?J1[_\-. ]?League\.json', re.I),
+              'sb_matches.json': re.compile(r'sb[_\-. ]?matches\.json', re.I),
+              'matches_mapping.csv': re.compile(r'matches[_\-. ]?mapping\.csv', re.I),
+              'teams_mapping.csv': re.compile(r'teams[_\-. ]?mapping\.csv', re.I),
+          }
+          SIGNED_KEYS = {
+              'x-amz-signature','x-amz-credential','x-amz-expires','awsaccesskeyid',
+              'signature','expires','x-goog-signature','x-goog-credential','x-goog-expires',
+              'sig','token','uuid','confirm'
+          }
+          LOGIN_HOSTS = {'accounts.google.com'}
 
-          lower=html.lower()
-          password_input=any((i.get('type') or '').lower()=='password' for i in p.inputs)
-          gate_words=bool(re.search(r'\b(sign[ -]?in|log[ -]?in|register|create account)\b', lower))
-          agreement_checkbox=any((i.get('type') or '').lower()=='checkbox' and re.search(r'(agree|terms|consent|accept)', str(i).lower()) for i in p.inputs)
+          def utcnow():
+              return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-          candidates=[]
-          for href, download_attr, cls, ident in p.links:
-              absu=urllib.parse.urljoin(page_url, href)
-              text=' '.join([href or '', download_attr or '', cls or '', ident or '']).lower()
-              if any(k in text for k in ['download','.zip','.tar','.gz','.json','.csv','statsbomb','j1']):
-                  candidates.append(absu)
-
-          # Also discover literal URLs in page source; keep only likely downloadable resources.
-          for m in re.finditer(r'https://[^\"\'<>\\s]+', html):
-              u=m.group(0).replace('&amp;','&')
-              lu=u.lower()
-              if any(k in lu for k in ['download','.zip','.tar','.gz','.json','.csv','statsbomb','j1']):
-                  candidates.append(u)
-
-          def is_same_page(u):
-              a=urllib.parse.urlparse(u); b=urllib.parse.urlparse(page_url)
-              return (a.scheme,a.netloc,a.path)==(b.scheme,b.netloc,b.path)
-
-          def looks_signed(u):
-              q={k.lower() for k,_ in urllib.parse.parse_qsl(urllib.parse.urlparse(u).query, keep_blank_values=True)}
-              signed={'x-amz-signature','x-amz-credential','x-amz-expires','awsaccesskeyid','signature','expires','x-goog-signature','x-goog-credential','x-goog-expires','sig','token'}
-              return bool(q & signed)
-
-          clean=[]
-          for u in candidates:
-              if is_same_page(u): continue
-              pu=urllib.parse.urlparse(u)
-              if pu.scheme not in {'https'}: continue
-              if re.search(r'(login|signin|register|signup|account)', pu.path, re.I):
-                  continue
-              if looks_signed(u):
-                  (work/'report/stop_reason.txt').write_text('SIGNED_OR_ONE_TIME_URL_DETECTED\n')
-                  (work/'report/resolution.json').write_text(json.dumps({'candidates':candidates,'signed_url':u},indent=2))
-                  sys.exit(31)
-              clean.append(u)
-
-          # Fail closed if the apparent flow has explicit credential/agreement gates and no static download target.
-          if not clean:
-              reason='NO_STATIC_PUBLIC_DOWNLOAD_URL'
-              if password_input or gate_words: reason='LOGIN_OR_REGISTRATION_GATE_DETECTED'
-              elif agreement_checkbox: reason='AGREEMENT_ACCEPTANCE_GATE_DETECTED'
-              (work/'report/stop_reason.txt').write_text(reason+'\n')
-              (work/'report/resolution.json').write_text(json.dumps({
-                  'password_input':password_input,
-                  'login_or_register_words':gate_words,
-                  'agreement_checkbox':agreement_checkbox,
-                  'form_count':len(p.forms),
-                  'candidate_count':len(candidates),
-                  'static_candidate_count':0
-              },indent=2))
-              sys.exit(32)
-
-          # De-duplicate preserving order.
-          seen=set(); clean=[u for u in clean if not (u in seen or seen.add(u))]
-          (work/'report/resolution.json').write_text(json.dumps({
-              'password_input':password_input,
-              'login_or_register_words':gate_words,
-              'agreement_checkbox':agreement_checkbox,
-              'form_count':len(p.forms),
-              'candidate_count':len(candidates),
-              'static_candidates':clean
-          },indent=2))
-          (work/'raw/candidate_urls.txt').write_text('\n'.join(clean)+'\n')
-          PY
-
-      - name: Download candidate public payloads without cookie jar
-        id: download
-        shell: bash
-        run: |
-          set -euo pipefail
-          : > "$WORKDIR/report/download_manifest.tsv"
-          printf 'requested_url\tfinal_url\tdownloaded_at_utc\tsize_bytes\tsha256\tcontent_type\tcontent_disposition\tlocal_file\n' >> "$WORKDIR/report/download_manifest.tsv"
-          n=0
-          while IFS= read -r u; do
-            [ -z "$u" ] && continue
-            n=$((n+1))
-            hdr="$WORKDIR/raw/candidate_${n}.headers"
-            body="$WORKDIR/raw/candidate_${n}.bin"
-            meta="$WORKDIR/raw/candidate_${n}.meta"
-            curl --fail --silent --show-error --location --max-redirs 5 \
-              --connect-timeout 20 --max-time 180 \
-              -D "$hdr" -o "$body" \
-              -w '%{url_effective}\n%{http_code}\n%{content_type}\n' \
-              "$u" > "$meta"
-            final_url="$(sed -n '1p' "$meta")"
-            http_code="$(sed -n '2p' "$meta")"
-            ctype="$(sed -n '3p' "$meta")"
-            disp="$(grep -i '^content-disposition:' "$hdr" | tail -1 | tr -d '\r' | cut -d: -f2- | sed 's/^ *//' || true)"
-            python3 - "$final_url" <<'PY'
-          import sys, urllib.parse
-          u=sys.argv[1]
-          q={k.lower() for k,_ in urllib.parse.parse_qsl(urllib.parse.urlparse(u).query, keep_blank_values=True)}
-          bad={'x-amz-signature','x-amz-credential','x-amz-expires','awsaccesskeyid','signature','expires','x-goog-signature','x-goog-credential','x-goog-expires','sig','token'}
-          if q & bad:
-              raise SystemExit(41)
-          PY
-            # HTML response means the candidate did not resolve to a static payload; never submit forms or session state.
-            if printf '%s' "$ctype" | grep -qi 'text/html'; then
-              echo "HTML_OR_GATE_RESPONSE_FROM_CANDIDATE" > "$WORKDIR/report/stop_reason.txt"
-              exit 42
-            fi
-            size="$(stat -c '%s' "$body")"
-            sha="$(sha256sum "$body" | awk '{print $1}')"
-            ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$u" "$final_url" "$ts" "$size" "$sha" "$ctype" "$disp" "candidate_${n}.bin" >> "$WORKDIR/report/download_manifest.tsv"
-          done < "$WORKDIR/raw/candidate_urls.txt"
-
-          # Require at least one non-trivial candidate payload.
-          if [ "$n" -eq 0 ]; then
-            echo "NO_PAYLOAD_DOWNLOADED" > "$WORKDIR/report/stop_reason.txt"
-            exit 43
-          fi
-
-      - name: Extract payloads only inside runner temp
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          extracted_any=0
-          for f in "$WORKDIR"/raw/candidate_*.bin; do
-            kind="$(file -b "$f" || true)"
-            case "$kind" in
-              *Zip*)
-                mkdir -p "$WORKDIR/extracted/$(basename "$f")"
-                unzip -q "$f" -d "$WORKDIR/extracted/$(basename "$f")"
-                extracted_any=1
-                ;;
-              *gzip*|*tar*)
-                mkdir -p "$WORKDIR/extracted/$(basename "$f")"
-                tar -xf "$f" -C "$WORKDIR/extracted/$(basename "$f")"
-                extracted_any=1
-                ;;
-              *JSON*|*CSV*|*text*)
-                cp "$f" "$WORKDIR/extracted/$(basename "$f")"
-                extracted_any=1
-                ;;
-              *)
-                # Keep raw candidate in temp but do not attempt unsafe extraction.
-                ;;
-            esac
-          done
-          if [ "$extracted_any" -ne 1 ]; then
-            echo "NO_RECOGNIZED_STATIC_ARCHIVE_OR_DATA_FILE" > "$WORKDIR/report/stop_reason.txt"
-            exit 50
-          fi
-
-      - name: Audit package structure, xG schema, and match identity only
-        id: audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import csv, hashlib, json, os, re, sys
-
-          work=Path(os.environ['WORKDIR'])
-          root=work/'extracted'
-          report=work/'report'
-          files=[p for p in root.rglob('*') if p.is_file()]
-
-          def sha256(p):
-              h=hashlib.sha256()
-              with p.open('rb') as f:
-                  for b in iter(lambda:f.read(1024*1024), b''): h.update(b)
+          def sha256_file(path: Path):
+              h = hashlib.sha256()
+              with path.open('rb') as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                      h.update(chunk)
               return h.hexdigest()
 
-          structure=[]
-          for p in files:
-              structure.append({'path':str(p.relative_to(root)),'size_bytes':p.stat().st_size,'sha256':sha256(p)})
-          (report/'package_file_structure.json').write_text(json.dumps(structure,indent=2,ensure_ascii=False))
+          def is_ephemeral_or_signed(url: str):
+              q = {k.lower() for k, _ in urllib.parse.parse_qsl(urllib.parse.urlparse(url).query, keep_blank_values=True)}
+              return bool(q & SIGNED_KEYS)
 
-          def find_one(names, patterns=()):
-              exact=[]; fuzzy=[]
-              lowers={n.lower() for n in names}
-              for p in files:
-                  if p.name.lower() in lowers: exact.append(p)
-                  elif any(re.fullmatch(pat,p.name,re.I) for pat in patterns): fuzzy.append(p)
-              found=exact or fuzzy
-              return found[0] if len(found)==1 else None, [str(x.relative_to(root)) for x in found]
+          class AccessGate(RuntimeError):
+              def __init__(self, reason, url=None):
+                  self.reason = reason
+                  self.url = url
+                  super().__init__(f'{reason}: {url or ""}')
 
-          events_path, events_candidates=find_one(
-              ['Statsbomb-J1.League.json','Statsbomb_J1_League.json','sb_events.json'],
-              [r'.*j1.*league.*\.json', r'sb[_-]?events\.json'])
-          matches_path, matches_candidates=find_one(['sb_matches.json'],[r'sb[_-]?matches\.json'])
-          mm_path, mm_candidates=find_one(['matches_mapping.csv'],[r'matches[_-]?mapping\.csv'])
-          tm_path, tm_candidates=find_one(['teams_mapping.csv'],[r'teams[_-]?mapping\.csv'])
+          class GuardedRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  newurl = urllib.parse.urljoin(req.full_url, newurl)
+                  p = urllib.parse.urlparse(newurl)
+                  if p.hostname in LOGIN_HOSTS or re.search(r'/(login|signin|signup|register)(/|$)', p.path, re.I):
+                      raise AccessGate('LOGIN_OR_REGISTRATION_REDIRECT', newurl)
+                  if is_ephemeral_or_signed(newurl):
+                      raise AccessGate('SIGNED_EPHEMERAL_OR_CONFIRMATION_REDIRECT', newurl)
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-          required={
-              'events':(events_path,events_candidates),
-              'sb_matches':(matches_path,matches_candidates),
-              'matches_mapping':(mm_path,mm_candidates),
-              'teams_mapping':(tm_path,tm_candidates),
-          }
-          if any(v[0] is None for v in required.values()):
-              (report/'schema_audit.json').write_text(json.dumps({'status':'FAIL_REQUIRED_FILES','required_candidates':{k:v[1] for k,v in required.items()}},indent=2))
-              sys.exit(61)
+          OPENER = urllib.request.build_opener(GuardedRedirect())  # intentionally no cookie processor
+          OPENER.addheaders = [('User-Agent', 'Football3-J1-2024-research-only-payload-verifier/1.0')]
 
-          # Record target file provenance. Source URL is the downloaded object that contained the member;
-          # this verifier intentionally does not invent per-member HTTP URLs.
-          download_rows=[]
-          with (report/'download_manifest.tsv').open(newline='') as f:
-              download_rows=list(csv.DictReader(f,delimiter='\t'))
-          source_urls=[r['final_url'] for r in download_rows]
-          target_manifest=[]
-          for label,p in [('Statsbomb-J1.League.json',events_path),('sb_matches.json',matches_path),('matches_mapping.csv',mm_path),('teams_mapping.csv',tm_path)]:
-              target_manifest.append({
-                  'requested_label':label,
-                  'actual_member_path':str(p.relative_to(root)),
-                  'size_bytes':p.stat().st_size,
-                  'sha256':sha256(p),
-                  'source_download_final_urls':source_urls,
-              })
-          (report/'target_files_manifest.json').write_text(json.dumps(target_manifest,indent=2,ensure_ascii=False))
+          def validate_page_url(url):
+              p = urllib.parse.urlparse(url)
+              if p.scheme != 'https' or p.hostname not in {'www.hudl.com', 'hudl.com'}:
+                  raise AccessGate('INVALID_HUDL_DOWNLOAD_PAGE', url)
+              if '/gc/download/free-data-japans-2024-j1-league' not in p.path:
+                  raise AccessGate('UNEXPECTED_HUDL_DOWNLOAD_PATH', url)
 
-          # Read only fields required for structure/identity audit. Do not inspect or emit score/result fields.
-          events=json.loads(events_path.read_text(errors='strict'))
-          if isinstance(events,dict):
-              # Some exports wrap records in a top-level object.
-              for key in ('events','data','records'):
-                  if isinstance(events.get(key),list): events=events[key]; break
-          if not isinstance(events,list):
-              (report/'schema_audit.json').write_text(json.dumps({'status':'FAIL_EVENTS_NOT_LIST'},indent=2)); sys.exit(62)
+          def fetch_small(url: str, dest: Path, max_bytes=10_000_000):
+              if is_ephemeral_or_signed(url):
+                  raise AccessGate('SIGNED_EPHEMERAL_OR_CONFIRMATION_URL', url)
+              req = urllib.request.Request(url, method='GET')
+              with OPENER.open(req, timeout=45) as resp:
+                  final = resp.geturl()
+                  if is_ephemeral_or_signed(final):
+                      raise AccessGate('SIGNED_EPHEMERAL_OR_CONFIRMATION_FINAL_URL', final)
+                  ctype = resp.headers.get('Content-Type', '')
+                  data = resp.read(max_bytes + 1)
+                  if len(data) > max_bytes:
+                      raise AccessGate('UNEXPECTED_LARGE_DOCUMENT_WHILE_FETCHING_PAGE', final)
+                  dest.write_bytes(data)
+                  return {
+                      'requested_url': url,
+                      'final_url': final,
+                      'http_status': getattr(resp, 'status', None),
+                      'content_type': ctype,
+                      'headers': dict(resp.headers.items()),
+                      'size_bytes': len(data),
+                      'sha256': hashlib.sha256(data).hexdigest(),
+                      'accessed_at_utc': utcnow(),
+                  }
+
+          class LinkParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.recent = deque(maxlen=10)
+                  self.links = []
+                  self.forms = []
+                  self.inputs = []
+                  self.anchor = None
+              def handle_starttag(self, tag, attrs):
+                  d = dict(attrs)
+                  if tag == 'a' and d.get('href'):
+                      self.anchor = {'href': d['href'], 'attrs': d, 'text': [], 'context_before': ' '.join(self.recent)}
+                  elif tag == 'form':
+                      self.forms.append(d)
+                  elif tag == 'input':
+                      self.inputs.append(d)
+              def handle_data(self, data):
+                  s = ' '.join(data.split())
+                  if not s:
+                      return
+                  self.recent.append(s)
+                  if self.anchor is not None:
+                      self.anchor['text'].append(s)
+              def handle_endtag(self, tag):
+                  if tag == 'a' and self.anchor is not None:
+                      self.anchor['text'] = ' '.join(self.anchor['text'])
+                      self.links.append(self.anchor)
+                      self.anchor = None
+
+          def resolve_official_links(page_html: str):
+              p = LinkParser(); p.feed(page_html)
+              resolved = {}
+              usage_url = None
+              legal_links = []
+              for link in p.links:
+                  href = urllib.parse.urljoin(PAGE_URL, link['href'])
+                  context = ' '.join([link['context_before'], str(link['text'])])
+                  if 'How To Use This Data' in context or 'How To Use This Data' in str(link['text']):
+                      if urllib.parse.urlparse(href).hostname and urllib.parse.urlparse(href).hostname.endswith('hudl.com'):
+                          usage_url = href
+                  if re.search(r'(Terms\s*&?\s*Conditions|Software License Agreement|License Agreement)', context, re.I):
+                      legal_links.append(href)
+                  for label, pat in TARGETS.items():
+                      if pat.search(context):
+                          resolved.setdefault(label, []).append(href)
+
+              # Fallback: associate official Drive hrefs with nearest preceding target filename in raw HTML.
+              for m in re.finditer(r'https://drive\.google\.com/file/d/[^\"\'<>\s]+', page_html):
+                  href = m.group(0).replace('&amp;', '&')
+                  context = re.sub(r'<[^>]+>', ' ', page_html[max(0, m.start()-1200):m.start()])
+                  context = ' '.join(context.split())
+                  for label, pat in TARGETS.items():
+                      if pat.search(context):
+                          resolved.setdefault(label, []).append(href)
+
+              out = {}
+              for label in TARGETS:
+                  vals = []
+                  seen = set()
+                  for u in resolved.get(label, []):
+                      if u not in seen:
+                          vals.append(u); seen.add(u)
+                  if len(vals) != 1:
+                      raise AccessGate(f'OFFICIAL_LINK_RESOLUTION_{label}_{len(vals)}_CANDIDATES')
+                  out[label] = vals[0]
+              return out, usage_url, sorted(set(legal_links)), p
+
+          def drive_direct_attempt(official_href: str):
+              p = urllib.parse.urlparse(official_href)
+              if p.hostname not in {'drive.google.com', 'www.drive.google.com'}:
+                  return official_href
+              m = re.search(r'/file/d/([^/]+)/', p.path)
+              if not m:
+                  raise AccessGate('UNRECOGNIZED_GOOGLE_DRIVE_FILE_URL', official_href)
+              file_id = m.group(1)
+              # Standard unauthenticated Google Drive download endpoint. No cookies, confirm token, login, or session are supplied.
+              return f'https://drive.google.com/uc?export=download&id={urllib.parse.quote(file_id)}'
+
+          def download_binary(label: str, official_href: str):
+              attempt_url = drive_direct_attempt(official_href)
+              if is_ephemeral_or_signed(attempt_url):
+                  raise AccessGate('SIGNED_EPHEMERAL_OR_CONFIRMATION_ATTEMPT_URL', attempt_url)
+              dest = RAW / label
+              req = urllib.request.Request(attempt_url, method='GET')
+              started = utcnow()
+              try:
+                  with OPENER.open(req, timeout=120) as resp:
+                      final = resp.geturl()
+                      if is_ephemeral_or_signed(final):
+                          raise AccessGate('SIGNED_EPHEMERAL_OR_CONFIRMATION_FINAL_URL', final)
+                      ctype = resp.headers.get('Content-Type', '')
+                      disp = resp.headers.get('Content-Disposition', '')
+                      # HTML from Drive means the static unauthenticated endpoint did not yield the file.
+                      if 'text/html' in ctype.lower():
+                          sample = resp.read(1_000_000).decode('utf-8', errors='replace').lower()
+                          reason = 'HTML_OR_INTERSTITIAL_FROM_DOWNLOAD_ENDPOINT'
+                          if re.search(r'(sign in|log in|accounts\.google\.com)', sample):
+                              reason = 'LOGIN_REQUIRED_BY_DOWNLOAD_ENDPOINT'
+                          elif re.search(r'(confirm|virus scan|too large|download anyway)', sample):
+                              reason = 'CONFIRMATION_OR_COOKIE_FLOW_REQUIRED_BY_DOWNLOAD_ENDPOINT'
+                          raise AccessGate(reason, final)
+                      h = hashlib.sha256(); size = 0
+                      with dest.open('wb') as f:
+                          while True:
+                              chunk = resp.read(1024 * 1024)
+                              if not chunk: break
+                              size += len(chunk); h.update(chunk); f.write(chunk)
+                      return {
+                          'label': label,
+                          'official_page_href': official_href,
+                          'download_attempt_url': attempt_url,
+                          'final_download_url': final,
+                          'downloaded_at_utc': started,
+                          'size_bytes': size,
+                          'sha256': h.hexdigest(),
+                          'content_type': ctype,
+                          'content_disposition': disp,
+                          'local_temp_path': str(dest),
+                      }
+              except AccessGate:
+                  if dest.exists(): dest.unlink()
+                  raise
 
           def getv(obj, *paths):
               for path in paths:
-                  if path in obj: return obj.get(path)
-                  cur=obj; ok=True
+                  if isinstance(obj, dict) and path in obj:
+                      return obj.get(path)
+                  cur = obj; ok = True
                   for part in path.split('.'):
-                      if isinstance(cur,dict) and part in cur: cur=cur[part]
-                      else: ok=False; break
+                      if isinstance(cur, dict) and part in cur:
+                          cur = cur[part]
+                      else:
+                          ok = False; break
                   if ok: return cur
               return None
+
           def has_path(obj, *paths):
+              sentinel = object()
               for path in paths:
-                  if path in obj: return True
-                  cur=obj; ok=True
+                  if isinstance(obj, dict) and path in obj:
+                      return True
+                  cur = obj; ok = True
                   for part in path.split('.'):
-                      if isinstance(cur,dict) and part in cur: cur=cur[part]
-                      else: ok=False; break
+                      if isinstance(cur, dict) and part in cur:
+                          cur = cur[part]
+                      else:
+                          ok = False; break
                   if ok: return True
               return False
 
-          shot_total=0; xg_present=0; xg_nonnull=0; event_match_ids=set(); event_team_nonnull=0
-          for e in events:
-              if not isinstance(e,dict): continue
-              mid=getv(e,'match_id','match.id')
-              if mid is not None: event_match_ids.add(str(mid))
-              if getv(e,'team.id','team_id') is not None: event_team_nonnull+=1
-              typ=getv(e,'type.name','type_name','type')
-              is_shot=(typ=='Shot') or (isinstance(typ,dict) and typ.get('name')=='Shot')
-              if is_shot:
-                  shot_total+=1
-                  if has_path(e,'shot.statsbomb_xg','shot_statsbomb_xg'):
-                      xg_present+=1
-                      xv=getv(e,'shot.statsbomb_xg','shot_statsbomb_xg')
-                      if xv is not None and xv!='': xg_nonnull+=1
+          def iter_json_array(path: Path, chunk_size=4 * 1024 * 1024):
+              dec = json.JSONDecoder()
+              with path.open('r', encoding='utf-8-sig') as f:
+                  buf = ''; pos = 0; started = False; done = False
+                  while not done:
+                      if pos > 0:
+                          buf = buf[pos:]; pos = 0
+                      chunk = f.read(chunk_size)
+                      if chunk: buf += chunk
+                      elif not buf.strip(): break
+                      while True:
+                          while pos < len(buf) and buf[pos].isspace(): pos += 1
+                          if not started:
+                              if pos >= len(buf): break
+                              if buf[pos] != '[': raise ValueError('top-level JSON is not an array')
+                              started = True; pos += 1; continue
+                          while pos < len(buf) and (buf[pos].isspace() or buf[pos] == ','): pos += 1
+                          if pos >= len(buf): break
+                          if buf[pos] == ']': done = True; pos += 1; break
+                          try:
+                              obj, end = dec.raw_decode(buf, pos)
+                          except json.JSONDecodeError:
+                              if chunk: break
+                              raise
+                          yield obj; pos = end
+                      if not chunk and not done:
+                          if buf[pos:].strip(): raise ValueError('truncated JSON array')
+                          break
 
-          matches=json.loads(matches_path.read_text(errors='strict'))
-          if isinstance(matches,dict):
-              for key in ('matches','data','records'):
-                  if isinstance(matches.get(key),list): matches=matches[key]; break
-          if not isinstance(matches,list):
-              (report/'schema_audit.json').write_text(json.dumps({'status':'FAIL_MATCHES_NOT_LIST'},indent=2)); sys.exit(63)
+          def load_json_array_small(path: Path):
+              data = json.loads(path.read_text(encoding='utf-8-sig'))
+              if isinstance(data, list): return data
+              if isinstance(data, dict):
+                  for k in ('matches','data','records'):
+                      if isinstance(data.get(k), list): return data[k]
+              raise ValueError('expected JSON array')
 
-          match_ids=set(); identities={}; complete={'match_id':0,'home_team':0,'away_team':0,'date':0,'kickoff':0}
-          for m in matches:
-              if not isinstance(m,dict): continue
-              mid=getv(m,'match_id','match.id')
-              home=getv(m,'home_team.home_team_id','home_team.id','home_team_id','home_team.home_team_name','home_team.name')
-              away=getv(m,'away_team.away_team_id','away_team.id','away_team_id','away_team.away_team_name','away_team.name')
-              date=getv(m,'match_date','date','match.date')
-              kickoff=getv(m,'kick_off','kickoff','kick_off_time','match_time','match.kick_off')
-              vals={'match_id':mid,'home_team':home,'away_team':away,'date':date,'kickoff':kickoff}
-              for k,v in vals.items():
-                  if v is not None and v!='': complete[k]+=1
-              if mid is not None:
-                  s=str(mid); match_ids.add(s); identities[s]={'match_id':mid,'home_team':home,'away_team':away,'date':date,'kickoff':kickoff}
+          def read_csv(path: Path):
+              with path.open('r', encoding='utf-8-sig', newline='') as f:
+                  return list(csv.DictReader(f))
 
-          def read_csv(path):
-              with path.open(newline='',encoding='utf-8-sig') as f: return list(csv.DictReader(f))
-          mm=read_csv(mm_path); tm=read_csv(tm_path)
-          mm_fields=list(mm[0].keys()) if mm else []
-          tm_fields=list(tm[0].keys()) if tm else []
-          def choose_sb_id(fields):
-              cands=[f for f in fields if 'statsbomb' in f.lower() and 'id' in f.lower()]
-              if not cands: cands=[f for f in fields if f.lower() in {'sb_id','sb_match_id','match_id','statsbomb_id'}]
-              return cands[0] if cands else None
-          mm_id_col=choose_sb_id(mm_fields)
-          mm_ids={str(r.get(mm_id_col)) for r in mm if mm_id_col and r.get(mm_id_col) not in (None,'')}
+          def choose_statsbomb_id(fields):
+              c = [f for f in fields if 'statsbomb' in f.lower() and 'id' in f.lower()]
+              if not c:
+                  c = [f for f in fields if f.lower() in {'sb_id','sb_match_id','match_id','statsbomb_id'}]
+              return c[0] if c else None
 
-          missing_events=sorted(match_ids-event_match_ids)
-          extra_events=sorted(event_match_ids-match_ids)
-          missing_event_identities=[identities[x] for x in missing_events if x in identities]
-          mapping_missing=sorted(match_ids-mm_ids) if mm_id_col else []
-          mapping_extra=sorted(mm_ids-match_ids) if mm_id_col else []
+          def text_from_html(path: Path):
+              class T(HTMLParser):
+                  def __init__(self): super().__init__(); self.parts=[]
+                  def handle_data(self, d):
+                      s=' '.join(d.split())
+                      if s: self.parts.append(s)
+              t=T(); t.feed(path.read_text(errors='replace')); return '\n'.join(t.parts)
 
-          nmatch=len(matches)
-          identity_rates={k:(complete[k]/nmatch if nmatch else 0.0) for k in complete}
-          audit={
-              'status':'AUDITED',
-              'events_actual_path':str(events_path.relative_to(root)),
-              'matches_actual_path':str(matches_path.relative_to(root)),
-              'matches_mapping_actual_path':str(mm_path.relative_to(root)),
-              'teams_mapping_actual_path':str(tm_path.relative_to(root)),
-              'events_row_count':len(events),
-              'unique_event_match_id_count':len(event_match_ids),
-              'sb_matches_row_count':len(matches),
-              'unique_sb_matches_match_id_count':len(match_ids),
-              'shot_total':shot_total,
-              'xg_field_path_detected':'shot.statsbomb_xg',
-              'xg_field_present_count':xg_present,
-              'xg_field_nonnull_count':xg_nonnull,
-              'xg_field_present_rate':(xg_present/shot_total if shot_total else 0.0),
-              'xg_field_nonnull_rate':(xg_nonnull/shot_total if shot_total else 0.0),
-              'identity_complete_counts':complete,
-              'identity_complete_rates':identity_rates,
-              'matches_mapping_rows':len(mm),
-              'matches_mapping_fields':mm_fields,
-              'matches_mapping_statsbomb_id_column':mm_id_col,
-              'matches_mapping_unique_statsbomb_ids':len(mm_ids),
-              'matches_mapping_missing_from_mapping':mapping_missing,
-              'matches_mapping_extra_vs_sb_matches':mapping_extra,
-              'teams_mapping_rows':len(tm),
-              'teams_mapping_fields':tm_fields,
-              'event_match_ids_missing_vs_sb_matches':missing_events,
-              'event_match_ids_extra_vs_sb_matches':extra_events,
-              'missing_event_match_identities_no_results':missing_event_identities,
-          }
-          schema_pass=(
-              len(match_ids)==380 and len(event_match_ids)==380 and
-              shot_total>0 and xg_present==shot_total and xg_nonnull==shot_total and
-              all(abs(identity_rates[k]-1.0)<1e-12 for k in identity_rates) and
-              mm_id_col is not None and mm_ids==match_ids and len(mm)==380 and
-              not missing_events and not extra_events
-          )
-          audit['payload_schema_pass']=schema_pass
-          (report/'schema_audit.json').write_text(json.dumps(audit,indent=2,ensure_ascii=False))
+          def short_keyword_windows(text: str, source: str):
+              words = re.findall(r'\S+', text)
+              key = re.compile(r'\b(research|non[- ]?commercial|evaluation|model|archive|store|storage|retain|retention|derived|derivative|analysis|analyze|analyse)\b', re.I)
+              out=[]
+              for i,w in enumerate(words):
+                  if key.search(w):
+                      excerpt=' '.join(words[max(0,i-8):min(len(words),i+12)])
+                      out.append({'source':source,'excerpt_max_20_words':excerpt})
+                      if len(out) >= 12: break
+              return out
 
-          # Human-readable missing list, explicitly excluding all score/result fields.
-          with (report/'missing_matches_no_results.tsv').open('w',encoding='utf-8') as f:
-              f.write('match_id\tdate\tkickoff\thome_team\taway_team\treason\n')
-              for x in missing_event_identities:
-                  f.write(f"{x.get('match_id','')}\t{x.get('date','')}\t{x.get('kickoff','')}\t{x.get('home_team','')}\t{x.get('away_team','')}\tMISSING_FROM_EVENT_PAYLOAD\n")
-              for mid in mapping_missing:
-                  x=identities.get(mid,{})
-                  f.write(f"{x.get('match_id',mid)}\t{x.get('date','')}\t{x.get('kickoff','')}\t{x.get('home_team','')}\t{x.get('away_team','')}\tMISSING_FROM_MATCHES_MAPPING\n")
-
-          if not schema_pass:
-              sys.exit(64)
-          PY
-
-      - name: Search package and page for license or usage documents
-        id: license
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          from html.parser import HTMLParser
-          import json, os, re, urllib.parse
-
-          work=Path(os.environ['WORKDIR']); root=work/'extracted'; report=work/'report'
-          files=[p for p in root.rglob('*') if p.is_file()]
-          legal=[]
-          name_re=re.compile(r'(^|[-_.])(readme|license|licence|terms|agreement|eula|copying|notice)([-_.]|$)',re.I)
-          for p in files:
-              if name_re.search(p.name):
-                  legal.append({'name':p.name,'path':str(p.relative_to(root)),'size_bytes':p.stat().st_size})
-
-          page=work/'raw/download_page.html'
-          page_links=[]
-          if page.exists():
-              html=page.read_text(errors='replace')
-              class P(HTMLParser):
-                  def __init__(self): super().__init__(); self.links=[]
-                  def handle_starttag(self,tag,attrs):
-                      d=dict(attrs)
-                      if tag=='a' and d.get('href'): self.links.append(d['href'])
-              p=P(); p.feed(html)
-              for href in p.links:
-                  u=urllib.parse.urljoin(os.environ['PAGE_URL'],href)
-                  if re.search(r'(terms|license|licence|agreement|conditions)',u,re.I): page_links.append(u)
-
-          # Extract only short <=20-word keyword windows from package text files; do not infer legal meaning.
-          excerpts=[]
-          keywords=re.compile(r'\b(research|non[- ]?commercial|evaluation|model|store|storage|archive|derived|derivative|retain|retention|analysis|analyse|analyze)\b',re.I)
-          for item in legal:
-              p=root/item['path']
-              if p.suffix.lower() in {'.txt','.md','.rst','.html','.htm','.csv',''} and p.stat().st_size < 2_000_000:
-                  try: text=p.read_text(errors='replace')
-                  except Exception: continue
-                  words=re.findall(r'\S+',text)
-                  for i,w in enumerate(words):
-                      if keywords.search(w):
-                          lo=max(0,i-8); hi=min(len(words),i+12)
-                          excerpt=' '.join(words[lo:hi])
-                          excerpts.append({'file':item['path'],'excerpt_max_20_words':excerpt})
-                          if len([x for x in excerpts if x['file']==item['path']])>=8: break
-
-          out={
-              'dataset_specific_legal_files':legal,
-              'download_page_legal_links':sorted(set(page_links)),
-              'short_verbatim_keyword_windows':excerpts,
-              'automatic_legal_conclusion':'HOLD',
-              'reason':'No automated legal inference. LICENSE_PASS requires explicit dataset-specific permission for all four requested rights.'
-          }
-          (report/'license_evidence.json').write_text(json.dumps(out,indent=2,ensure_ascii=False))
-          PY
-
-      - name: Build small fail-closed verification receipt
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import json, os
-          work=Path(os.environ['WORKDIR']); r=work/'report'
-          def readj(name):
-              p=r/name
-              if not p.exists(): return None
-              try: return json.loads(p.read_text())
-              except Exception: return None
-          schema=readj('schema_audit.json') or {}
-          lic=readj('license_evidence.json') or {}
-          stop=(r/'stop_reason.txt').read_text().strip() if (r/'stop_reason.txt').exists() else None
-          receipt={
+          receipt = {
               'schema':'football3-j1-2024-free-pack-minimal-verification-v1',
               'research_only':True,
               'model_run':False,
               'training':False,
               'tuning':False,
               'prediction':False,
+              'performance_evaluation':False,
               'oos_opened':False,
               'production_changes':False,
               'raw_data_uploaded_as_artifact':False,
-              'access_stop_reason':stop,
               'license_status':'LICENSE_HOLD',
-              'payload_schema_status':'PAYLOAD_SCHEMA_PASS' if schema.get('payload_schema_pass') else 'PAYLOAD_SCHEMA_FAIL',
-              'unique_match_ids':schema.get('unique_sb_matches_match_id_count'),
-              'event_unique_match_ids':schema.get('unique_event_match_id_count'),
-              'shot_total':schema.get('shot_total'),
-              'xg_field_path':schema.get('xg_field_path_detected'),
-              'xg_present_rate':schema.get('xg_field_present_rate'),
-              'xg_nonnull_rate':schema.get('xg_field_nonnull_rate'),
-              'identity_complete_rates':schema.get('identity_complete_rates'),
-              'missing_event_match_identities_no_results':schema.get('missing_event_match_identities_no_results'),
-              'license_evidence_files':lic.get('dataset_specific_legal_files'),
+              'payload_schema_status':'PAYLOAD_SCHEMA_FAIL',
               'eligible_for_j1_single_season_research_only_pilot':False,
-              'eligibility_reason':'Requires human confirmation of dataset-specific license rights; no automatic transition to model evaluation.'
           }
-          (r/'verification_receipt.json').write_text(json.dumps(receipt,indent=2,ensure_ascii=False))
-          PY
-          (cd "$WORKDIR/report" && sha256sum *.json *.tsv *.txt *.sha256 2>/dev/null | sort > SHA256SUMS.txt || true)
 
-      - name: Upload report only, never raw data
+          exit_code = 1
+          try:
+              validate_page_url(PAGE_URL)
+              (REPORT/'requested_page_url.txt').write_text(PAGE_URL+'\n')
+              page_meta = fetch_small(PAGE_URL, RAW/'download_page.html')
+              (REPORT/'download_page_snapshot.json').write_text(json.dumps(page_meta, indent=2, ensure_ascii=False))
+              html = (RAW/'download_page.html').read_text(errors='replace')
+              official_links, usage_url, generic_legal_links, parsed = resolve_official_links(html)
+              (REPORT/'official_links.json').write_text(json.dumps({
+                  'targets': official_links,
+                  'how_to_use_data': usage_url,
+                  'generic_legal_links': generic_legal_links,
+                  'observed_form_count': len(parsed.forms),
+                  'observed_password_input_count': sum(1 for i in parsed.inputs if (i.get('type') or '').lower()=='password'),
+              }, indent=2, ensure_ascii=False))
+
+              download_manifest=[]
+              for label in TARGETS:
+                  download_manifest.append(download_binary(label, official_links[label]))
+              (REPORT/'download_manifest.json').write_text(json.dumps(download_manifest, indent=2, ensure_ascii=False))
+              with (REPORT/'download_manifest.tsv').open('w', encoding='utf-8', newline='') as f:
+                  cols=['label','official_page_href','download_attempt_url','final_download_url','downloaded_at_utc','size_bytes','sha256','content_type','content_disposition']
+                  w=csv.DictWriter(f,fieldnames=cols,delimiter='\t'); w.writeheader()
+                  for row in download_manifest: w.writerow({k:row.get(k,'') for k in cols})
+
+              # Composite dataset identity is a manifest hash; source publishes separate files, not one archive.
+              bundle_lines=[f"{r['sha256']}  {r['label']}" for r in sorted(download_manifest,key=lambda x:x['label'])]
+              bundle_text='\n'.join(bundle_lines)+'\n'
+              (REPORT/'TARGET_SHA256SUMS.txt').write_text(bundle_text)
+              bundle_sha=hashlib.sha256(bundle_text.encode()).hexdigest()
+              (REPORT/'dataset_bundle_manifest_sha256.txt').write_text(bundle_sha+'\n')
+
+              events_path=RAW/'Statsbomb_J1_League.json'
+              matches_path=RAW/'sb_matches.json'
+              mm_path=RAW/'matches_mapping.csv'
+              tm_path=RAW/'teams_mapping.csv'
+
+              event_match_ids=set(); event_team_ids=set(); shot_total=0; xg_present=0; xg_nonnull=0; event_rows=0
+              for e in iter_json_array(events_path):
+                  event_rows += 1
+                  if not isinstance(e, dict): continue
+                  mid=getv(e,'match_id','match.id')
+                  if mid is not None: event_match_ids.add(str(mid))
+                  tid=getv(e,'team.id','team_id')
+                  if tid is not None: event_team_ids.add(str(tid))
+                  typ=getv(e,'type.name','type_name','type')
+                  is_shot=(typ=='Shot') or (isinstance(typ,dict) and typ.get('name')=='Shot')
+                  if is_shot:
+                      shot_total += 1
+                      if has_path(e,'shot.statsbomb_xg','shot_statsbomb_xg'):
+                          xg_present += 1
+                          xv=getv(e,'shot.statsbomb_xg','shot_statsbomb_xg')
+                          if xv is not None and xv != '': xg_nonnull += 1
+
+              matches=load_json_array_small(matches_path)
+              match_ids=set(); match_team_ids=set(); identities={}
+              complete={'match_id':0,'home_team':0,'away_team':0,'date':0,'kickoff':0}
+              for m in matches:
+                  if not isinstance(m,dict): continue
+                  mid=getv(m,'match_id','match.id')
+                  home_id=getv(m,'home_team.home_team_id','home_team.id','home_team_id')
+                  away_id=getv(m,'away_team.away_team_id','away_team.id','away_team_id')
+                  home_name=getv(m,'home_team.home_team_name','home_team.name','home_team_name')
+                  away_name=getv(m,'away_team.away_team_name','away_team.name','away_team_name')
+                  date=getv(m,'match_date','date','match.date')
+                  kickoff=getv(m,'kick_off','kickoff','kick_off_time','match_time','match.kick_off')
+                  home = home_id if home_id not in (None,'') else home_name
+                  away = away_id if away_id not in (None,'') else away_name
+                  vals={'match_id':mid,'home_team':home,'away_team':away,'date':date,'kickoff':kickoff}
+                  for k,v in vals.items():
+                      if v not in (None,''): complete[k]+=1
+                  if home_id not in (None,''): match_team_ids.add(str(home_id))
+                  if away_id not in (None,''): match_team_ids.add(str(away_id))
+                  if mid not in (None,''):
+                      smid=str(mid); match_ids.add(smid)
+                      identities[smid]={'match_id':mid,'date':date,'kickoff':kickoff,'home_team':home_name or home_id,'away_team':away_name or away_id}
+
+              mm=read_csv(mm_path); tm=read_csv(tm_path)
+              mm_fields=list(mm[0].keys()) if mm else []
+              tm_fields=list(tm[0].keys()) if tm else []
+              mm_id_col=choose_statsbomb_id(mm_fields)
+              tm_id_col=choose_statsbomb_id(tm_fields)
+              mm_ids={str(r.get(mm_id_col)) for r in mm if mm_id_col and r.get(mm_id_col) not in (None,'')}
+              tm_ids={str(r.get(tm_id_col)) for r in tm if tm_id_col and r.get(tm_id_col) not in (None,'')}
+
+              missing_events=sorted(match_ids-event_match_ids)
+              extra_events=sorted(event_match_ids-match_ids)
+              mapping_missing=sorted(match_ids-mm_ids) if mm_id_col else sorted(match_ids)
+              mapping_extra=sorted(mm_ids-match_ids) if mm_id_col else []
+              team_mapping_missing=sorted(match_team_ids-tm_ids) if tm_id_col else sorted(match_team_ids)
+              nmatch=len(matches)
+              identity_rates={k:(complete[k]/nmatch if nmatch else 0.0) for k in complete}
+              missing_rows=[]
+              seen_missing=set()
+              for mid,reason in [(x,'MISSING_FROM_EVENT_PAYLOAD') for x in missing_events] + [(x,'MISSING_FROM_MATCHES_MAPPING') for x in mapping_missing]:
+                  key=(mid,reason)
+                  if key in seen_missing: continue
+                  seen_missing.add(key)
+                  x=identities.get(mid,{})
+                  missing_rows.append({'match_id':x.get('match_id',mid),'date':x.get('date'),'kickoff':x.get('kickoff'),'home_team':x.get('home_team'),'away_team':x.get('away_team'),'reason':reason})
+              with (REPORT/'missing_matches_no_results.tsv').open('w',encoding='utf-8',newline='') as f:
+                  cols=['match_id','date','kickoff','home_team','away_team','reason']; w=csv.DictWriter(f,fieldnames=cols,delimiter='\t'); w.writeheader(); w.writerows(missing_rows)
+
+              schema_pass=(
+                  len(match_ids)==380 and len(event_match_ids)==380 and
+                  shot_total>0 and xg_present==shot_total and xg_nonnull==shot_total and
+                  all(abs(identity_rates[k]-1.0)<1e-12 for k in identity_rates) and
+                  mm_id_col is not None and len(mm)==380 and mm_ids==match_ids and
+                  tm_id_col is not None and not team_mapping_missing and
+                  not missing_events and not extra_events
+              )
+              schema={
+                  'payload_schema_pass':schema_pass,
+                  'events_row_count':event_rows,
+                  'unique_event_match_id_count':len(event_match_ids),
+                  'sb_matches_row_count':len(matches),
+                  'unique_sb_matches_match_id_count':len(match_ids),
+                  'shot_total':shot_total,
+                  'xg_field_path_detected':'shot.statsbomb_xg',
+                  'xg_field_present_count':xg_present,
+                  'xg_field_nonnull_count':xg_nonnull,
+                  'xg_field_present_rate':(xg_present/shot_total if shot_total else 0.0),
+                  'xg_field_nonnull_rate':(xg_nonnull/shot_total if shot_total else 0.0),
+                  'identity_complete_counts':complete,
+                  'identity_complete_rates':identity_rates,
+                  'matches_mapping_rows':len(mm),
+                  'matches_mapping_fields':mm_fields,
+                  'matches_mapping_statsbomb_id_column':mm_id_col,
+                  'matches_mapping_unique_statsbomb_ids':len(mm_ids),
+                  'matches_mapping_missing_from_mapping':mapping_missing,
+                  'matches_mapping_extra_vs_sb_matches':mapping_extra,
+                  'teams_mapping_rows':len(tm),
+                  'teams_mapping_fields':tm_fields,
+                  'teams_mapping_statsbomb_id_column':tm_id_col,
+                  'teams_mapping_missing_match_team_ids':team_mapping_missing,
+                  'event_match_ids_missing_vs_sb_matches':missing_events,
+                  'event_match_ids_extra_vs_sb_matches':extra_events,
+                  'missing_match_identities_no_results':missing_rows,
+                  'discrepancy_376_vs_380':'NO_4_MATCH_DEFICIT_IN_OFFICIAL_PAYLOAD' if len(match_ids)==380 and len(event_match_ids)==380 else 'PAYLOAD_DIFFERENCE_REQUIRES_REVIEW',
+              }
+              (REPORT/'schema_audit.json').write_text(json.dumps(schema,indent=2,ensure_ascii=False))
+
+              # Dataset-specific usage evidence is fetched separately; generic legal links never auto-upgrade license status.
+              license_evidence={'dataset_specific_documents':[],'generic_legal_links':generic_legal_links,'short_verbatim_keyword_windows':[],'automatic_legal_conclusion':'LICENSE_HOLD'}
+              if usage_url:
+                  try:
+                      meta=fetch_small(usage_url,RAW/'how_to_use_data.html')
+                      text=text_from_html(RAW/'how_to_use_data.html')
+                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','url':usage_url,'fetch':meta})
+                      license_evidence['short_verbatim_keyword_windows'] += short_keyword_windows(text,'How To Use This Data')
+                  except Exception as e:
+                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','url':usage_url,'fetch_error':str(e)})
+              # Target files are separate raw data files; search their sibling list is impossible without inventing package members.
+              license_evidence['package_embedded_readme_license_user_agreement_found']=False
+              license_evidence['reason']='No legal inference is automated. LICENSE_PASS requires explicit dataset-specific permission for private non-commercial research, fixed-model evaluation, local SHA archival, and retaining derived aggregates.'
+              (REPORT/'license_evidence.json').write_text(json.dumps(license_evidence,indent=2,ensure_ascii=False))
+
+              receipt.update({
+                  'license_status':'LICENSE_HOLD',
+                  'payload_schema_status':'PAYLOAD_SCHEMA_PASS' if schema_pass else 'PAYLOAD_SCHEMA_FAIL',
+                  'dataset_bundle_manifest_sha256':bundle_sha,
+                  'unique_match_ids':len(match_ids),
+                  'event_unique_match_ids':len(event_match_ids),
+                  'shot_total':shot_total,
+                  'xg_field_path':'shot.statsbomb_xg',
+                  'xg_present_rate':schema['xg_field_present_rate'],
+                  'xg_nonnull_rate':schema['xg_field_nonnull_rate'],
+                  'identity_complete_rates':identity_rates,
+                  'missing_match_identities_no_results':missing_rows,
+                  'eligible_for_j1_single_season_research_only_pilot':False,
+                  'eligibility_reason':'Payload schema must pass and dataset-specific license rights must be confirmed by human review before any model evaluation.'
+              })
+              exit_code = 0 if schema_pass else 72
+
+          except AccessGate as e:
+              receipt['access_stop_reason']=e.reason
+              receipt['access_stop_url']=e.url
+              (REPORT/'stop_reason.txt').write_text(e.reason+'\n')
+              if e.url: (REPORT/'stop_url.txt').write_text(e.url+'\n')
+              exit_code = 70
+          except Exception as e:
+              receipt['verification_error']=f'{type(e).__name__}: {e}'
+              (REPORT/'stop_reason.txt').write_text('VERIFIER_ERROR\n')
+              exit_code = 71
+          finally:
+              (REPORT/'verification_receipt.json').write_text(json.dumps(receipt,indent=2,ensure_ascii=False))
+              (REPORT/'verifier_exit_code.txt').write_text(str(exit_code)+'\n')
+              sums=[]
+              for p in sorted(REPORT.iterdir()):
+                  if p.is_file() and p.name!='SHA256SUMS.txt':
+                      sums.append(f'{sha256_file(p)}  {p.name}')
+              (REPORT/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+          sys.exit(exit_code)
+          PY
+
+          set +e
+          python3 "$WORKDIR/verify.py"
+          rc=$?
+          set -e
+          echo "$rc" > "$WORKDIR/report/verifier_exit_code.txt"
+          exit 0
+
+      - name: Assert raw data is excluded from artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$WORKDIR/report"
+          if find "$WORKDIR/report" -type f -size +10M | grep -q .; then
+            echo 'Report unexpectedly contains a file >10MB; refusing artifact upload.' >&2
+            exit 80
+          fi
+          if find "$WORKDIR/report" -type f \( -name 'Statsbomb_J1_League.json' -o -name 'sb_matches.json' -o -name 'matches_mapping.csv' -o -name 'teams_mapping.csv' \) | grep -q .; then
+            echo 'Raw target data found under report path; refusing artifact upload.' >&2
+            exit 81
+          fi
+
+      - name: Upload small verification report only
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -557,23 +595,25 @@ jobs:
           retention-days: 1
           compression-level: 9
 
-      - name: Enforce fail-closed completion
+      - name: Enforce fail-closed result and prohibit automatic pilot transition
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f "$WORKDIR/report/stop_reason.txt" ]; then
-            echo "Stopped by access/gate policy: $(cat "$WORKDIR/report/stop_reason.txt")"
-            exit 70
-          fi
+          rc="$(cat "$WORKDIR/report/verifier_exit_code.txt" 2>/dev/null || echo 99)"
           python3 - <<'PY'
           from pathlib import Path
           import json, os, sys
           p=Path(os.environ['WORKDIR'])/'report/verification_receipt.json'
-          if not p.exists(): sys.exit(71)
+          if not p.exists(): sys.exit(99)
           r=json.loads(p.read_text())
-          # Schema may pass, but license remains HOLD until human review of dataset-specific terms.
-          if r.get('payload_schema_status')!='PAYLOAD_SCHEMA_PASS': sys.exit(72)
-          if r.get('license_status')!='LICENSE_HOLD': sys.exit(73)
-          print('PAYLOAD_SCHEMA_PASS; LICENSE_HOLD; no model evaluation executed.')
+          if r.get('model_run') or r.get('training') or r.get('tuning') or r.get('prediction') or r.get('performance_evaluation') or r.get('oos_opened') or r.get('production_changes'):
+              sys.exit(98)
+          if r.get('eligible_for_j1_single_season_research_only_pilot'):
+              sys.exit(97)
           PY
+          if [ "$rc" -ne 0 ]; then
+            echo "Verifier stopped/failed closed with code $rc"
+            exit "$rc"
+          fi
+          echo 'Payload schema audit completed. LICENSE_HOLD remains mandatory; no model evaluation was started.'
