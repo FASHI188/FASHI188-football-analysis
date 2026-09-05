@@ -1,0 +1,101 @@
+name: football3 Historical Discipline Source Schema Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-discipline-source-schema-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-discipline-source-schema-audit-v1.yml'
+      - 'football-data/research/historical_discipline_source_schema_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANCHOR_HEAD: a797559bacdef49733a22d2d55713cfa5b20710e
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-discipline-source-schema-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b|historical_fusion_v3_1_1'; then exit 1; fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-discipline-source-schema-audit-v1.yml|football-data/research/historical_discipline_source_schema_audit_v1/*) ;;
+              *) echo "unexpected path $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parquet reader
+        run: python -m pip install --disable-pip-version-check pyarrow
+      - name: Frozen zero-label contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_discipline_source_schema_audit_v1
+          python -m py_compile "$D/audit_discipline_source_schema.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_discipline_source_schema_audit_v1/DISCIPLINE_SOURCE_SCHEMA_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_LABEL_SOURCE_AUDIT'
+          assert c['audit']['model_fit'] is False
+          assert c['audit']['candidate_probabilities'] is False
+          assert c['audit']['read_outcome_labels'] is False
+          assert c['audit']['read_prospective_1335'] is False
+          assert c['audit']['read_historical_2023_confirmation'] is False
+          PY
+      - name: Download inspect and hash sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_discipline_source_schema_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_discipline_source_schema.py" --contract "$D/DISCIPLINE_SOURCE_SCHEMA_AUDIT_CONTRACT.json" --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/discipline_source_schema_audit.json'))
+          assert x['status'] in ('DISCIPLINE_SOURCE_SCHEMA_AUDIT_PASS','DISCIPLINE_SOURCE_SCHEMA_AUDIT_STOP_NO_MECHANICAL_IDENTITY_JOIN')
+          assert x['model_fits']==0 and x['candidate_probabilities']==0 and x['outcome_labels_read'] is False
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          assert set(x['files'])=={'fixtures.parquet','match_stats.parquet','teams.parquet'}
+          PY
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_discipline_source_schema_audit_v1
+          cp "$D/DISCIPLINE_SOURCE_SCHEMA_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_discipline_source_schema.py" _seal/code/
+          cp _run/discipline_source_schema_audit.json /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          x=json.load(open('_run/discipline_source_schema_audit.json'))
+          m={'schema_version':'football3-discipline-source-schema-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':x['status'],'join_feasibility':x['join_feasibility'],'source_sha256':{k:v['sha256'] for k,v in x['files'].items()},'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Upload sealed source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-discipline-source-schema-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
