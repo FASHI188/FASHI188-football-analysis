@@ -1,0 +1,71 @@
+{
+  "schema_version": "football3-historical-score-shape-candidate-contract-v1",
+  "status": "FROZEN_BEFORE_CONSUMED_HISTORY_CANDIDATE_SCORING",
+  "research_only": true,
+  "scientific_rationale": {
+    "post_b_side_residual": "no robust cross-year side or draw correction survived residual diagnostics; do not mutate B 1X2 probabilities",
+    "post_b_importance_residual": "PIT table-importance features improved low-score binary logloss in both 2021 and 2022 rolling tests",
+    "score_shape_residual": "balanced matches underpredicted 1-1 while strong-gap matches overpredicted <=2-goal mass",
+    "design": "score-matrix-only calibration with exact B 1X2 region preservation"
+  },
+  "data_roles": {
+    "state_history": "2014-2022 completed Big5 only",
+    "development_labels": "2020-2022 already-consumed historical labels only",
+    "rolling_tests": [2021, 2022],
+    "historical_confirmation_2023": "LOCKED_NOT_SELECTED_OR_READ",
+    "prospective_1335": "FORBIDDEN_DO_NOT_READ_RESULTS_LABELS_XG_OR_AJAX"
+  },
+  "base": {
+    "frozen_v3_1_1_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+    "stage6_b_head": "9cb97764de1250fd08c6d0880559192e66352ce3",
+    "stage6_b_half_life": 16.0,
+    "stage6_b_coefficient": 0.10,
+    "stage6_b_edge_clip": [-3.0, 3.0],
+    "stage6_b_draw_unchanged": true
+  },
+  "candidate_family": {
+    "importance_low2": "fit fixed-ridge offset logistic correction to total-goals<=2 using PIT importance_diff and importance_mean; apply correction as within-1X2-region low-score exponential tilt",
+    "regime_shape": "train-derived balance quintiles; balanced bottom quintile gets intercept-only 1-1 cell tilt within draw region; strong-gap top quintile gets intercept-only <=2-goal tilt within each 1X2 region",
+    "combined": "importance_low2 then regime_shape sequentially, preserving every 1X2 region after each transform"
+  },
+  "fit_rules": {
+    "fixed_ridge": 0.01,
+    "importance_features": ["importance_diff", "importance_mean"],
+    "balance_lower_quantile": 0.20,
+    "balance_upper_quantile": 0.80,
+    "max_abs_log_tilt": 0.35,
+    "rolling_train_only_prior_seasons": true,
+    "feature_standardization_fit_on_train_only": true,
+    "same_kickoff_batch_isolation": true,
+    "target_lineup_not_used": true,
+    "target_result_not_used_before_feature_snapshot": true,
+    "no_hyperparameter_grid": true
+  },
+  "selection_rule": {
+    "candidate_names": ["importance_low2", "regime_shape", "combined"],
+    "require_exact_score_logloss_nonpositive_each_fold": true,
+    "require_mean_total_goals_logloss_nonpositive": true,
+    "require_1x2_preservation": true,
+    "rank": "lowest mean rolling exact-score logloss delta, then lowest mean total-goals logloss delta, then contract candidate order",
+    "if_none_eligible": "STOP_NO_SCORE_SHAPE_CANDIDATE"
+  },
+  "gates": {
+    "max_1x2_abs_error": 1e-12,
+    "max_abs_probability_change_per_score_cell": 0.08,
+    "exact_score_fold_delta_max": 0.0,
+    "mean_total_goals_delta_max": 0.0
+  },
+  "frozen_boundaries": {
+    "formal_v2_unchanged": true,
+    "frozen_v3_1_1_unchanged": true,
+    "stage6_b_unchanged": true,
+    "CURRENT_unchanged": true,
+    "production_pointer_unchanged": true,
+    "formal_enablement_unchanged": true
+  },
+  "terminal": {
+    "pass": "HISTORICAL_SCORE_SHAPE_CANDIDATE_FROZEN_2023_CONFIRMATION_REQUIRED",
+    "none": "HISTORICAL_SCORE_SHAPE_NO_STABLE_CANDIDATE",
+    "fail": "HISTORICAL_SCORE_SHAPE_CANDIDATE_ERROR"
+  }
+}
