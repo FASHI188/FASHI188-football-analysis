@@ -1,0 +1,76 @@
+name: Football3 Durable State Selector Bundle Hardening V1
+
+on:
+  push:
+    branches:
+      - football3/durable-state-cutoff-selector-governed-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-durable-state-selector-bundle-hardening-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  selector-bundle-hardening:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prove protected scientific surfaces unchanged
+        run: |
+          set -euo pipefail
+          git diff --name-only a1a8f8aab170d10a57e1c107dac5524cc31a6a9a...HEAD | tee selector_hardening_changed_files.txt
+          if grep -E '(^|/)(formal_fusion_v2\.py|pure_engine\.py|historical_xg_challenger\.py|CURRENT|formal_pointer\.json|model_lock\.json)$' selector_hardening_changed_files.txt; then
+            echo 'protected formal model/CURRENT surface changed' >&2
+            exit 1
+          fi
+
+      - name: Run bundle-level cutoff-aware selector integration regression
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 -m py_compile \
+              football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
+              football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+              football-data/formal_gpt_gateway_v1/test_durable_state_selector_bundle_v1.py
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/test_durable_state_selector_bundle_v1.py \
+            > durable_state_selector_bundle_regression.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('durable_state_selector_bundle_regression.json'))
+          assert d['passed'] is True
+          assert d['artifact_created_at'] == '2026-09-04T18:30:00+00:00'
+          assert d['state_cutoff'] == '2026-09-04T13:19:44+00:00'
+          assert d['target_cutoff'] == '2026-09-04T18:00:00+00:00'
+          assert d['prediction_clock_excluded_from_source_clock'] is True
+          assert d['future_state_fail_closed'] is True
+          assert d['target_result_read_or_scored'] is False
+          print('SELECTOR_BUNDLE_HARDENING_PASS', d['receipt_sha256'])
+          PY
+          sha256sum durable_state_selector_bundle_regression.json | tee selector_bundle_file_sha256.txt
+          printf 'ready=false\nmerge=false\nproduction_activation=false\nairtable_write=false\n' > selector_hardening_authority.txt
+
+      - name: Upload selector bundle hardening receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-durable-state-selector-bundle-hardening-${{ github.run_id }}
+          path: |
+            selector_hardening_changed_files.txt
+            selector_hardening_authority.txt
+            durable_state_selector_bundle_regression.json
+            selector_bundle_file_sha256.txt
+          if-no-files-found: error
+          retention-days: 90
