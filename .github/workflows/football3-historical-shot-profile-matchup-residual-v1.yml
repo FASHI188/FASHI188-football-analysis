@@ -1,0 +1,149 @@
+name: football3 Historical Shot Profile Matchup Residual V1
+
+on:
+  push:
+    branches: ['football3/historical-shot-profile-matchup-residual-v1']
+    paths:
+      - '.github/workflows/football3-historical-shot-profile-matchup-residual-v1.yml'
+      - 'football-data/research/historical_shot_profile_matchup_residual_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANCHOR_HEAD: 2e5245a1fb214041b64c845eaa0501a69acd62fc
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+
+jobs:
+  residual-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-shot-profile-matchup-residual-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then exit 1; fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-shot-profile-matchup-residual-v1.yml|football-data/research/historical_shot_profile_matchup_residual_v1/*) ;;
+              *) echo "unexpected path $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Structural guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_shot_profile_matchup_residual_v1
+          python -m py_compile "$D/run_shot_profile_matchup_residual.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_shot_profile_matchup_residual_v1/SHOT_PROFILE_MATCHUP_RESIDUAL_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_RESIDUAL_SCREEN'
+          assert c['data_roles']['historical_confirmation_2023'].startswith('LOCKED')
+          assert c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          assert c['method']['no_hyperparameter_grid'] is True
+          assert c['method']['diagnostic_only_no_probability_candidate_frozen'] is True
+          PY
+      - name: Download and verify six frozen inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{v2,xg,v1,old,usr1,v31}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"; unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+      - name: Run frozen-B residual screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_shot_profile_matchup_residual_v1
+          rm -rf _run && mkdir _run
+          python "$D/run_shot_profile_matchup_residual.py" \
+            --contract "$D/SHOT_PROFILE_MATCHUP_RESIDUAL_CONTRACT.json" \
+            --v311 football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31 _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1 _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2 _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg _inputs/xg/code/historical_xg_challenger.py \
+            --v1 _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/shot_profile_matchup_residual.json'))
+          assert x['status'] in ('SHOT_PROFILE_MATCHUP_RESIDUAL_SCREEN_PASS','SHOT_PROFILE_MATCHUP_RESIDUAL_SCREEN_STOP_COVERAGE')
+          assert x['development_n']==5478 and x['source_max_season_loaded']==2022
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          assert x['stage6_b_active_n']==5463
+          PY
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_shot_profile_matchup_residual_v1
+          cp "$D/SHOT_PROFILE_MATCHUP_RESIDUAL_CONTRACT.json" _seal/contract/
+          cp "$D/run_shot_profile_matchup_residual.py" _seal/code/
+          cp _run/shot_profile_matchup_residual.json /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          x=json.load(open('_run/shot_profile_matchup_residual.json'))
+          m={'schema_version':'football3-shot-profile-matchup-residual-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':x['status'],'coverage':x['coverage'],'classification':x['classification'],'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-shot-profile-matchup-residual-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
