@@ -1,0 +1,172 @@
+name: football3 Historical Wyscout Counterattack Regime Source Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-wyscout-counterattack-regime-source-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-wyscout-counterattack-regime-source-audit-v1.yml'
+      - 'football-data/research/historical_wyscout_counterattack_regime_source_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: ca509f0f143c750d241a95d2afbd361b93777d22
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  WYS_COMMIT: ebc4c54c1093c420a81ce442c69e4186fab33bb4
+  WYS_ARCHIVE_SHA256: 1abe552b90d6a698777005bf03ada538a3030708231e11f9f3bfd1084f2b7218
+  PARENT_ARTIFACT_ID: '9973053323'
+  PARENT_ARTIFACT_DIGEST: sha256:ef0819fab79b3464146a90d344a47edd0268976592d4e665ff483ebc96a0fab7
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-wyscout-counterattack-regime-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify source-audit contract and parent Artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          x=json.load(open('football-data/research/historical_wyscout_counterattack_regime_source_audit_v1/SOURCE_AUDIT_CONTRACT.json'))
+          assert x['status']=='PRE_REGISTERED_ZERO_LABEL_SOURCE_AUDIT'
+          assert x['mechanism']['family']=='transition_counterattack_regime'
+          assert x['mechanism']['raw_marker']=='Wyscout tag 1901 counter_attack'
+          assert x['mechanism']['candidate_not_yet_fit'] is True
+          assert x['frozen_boundaries']['historical_confirmation_2023']=='LOCKED_NOT_READ'
+          assert x['frozen_boundaries']['prospective_1335']=='FORBIDDEN_NOT_TOUCHED'
+          PY
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PARENT_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$PARENT_ARTIFACT_DIGEST"
+
+      - name: Download exact public source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 2 "https://codeload.github.com/koenvo/wyscout-soccer-match-event-dataset/tar.gz/${WYS_COMMIT}" -o /tmp/wys.tar.gz
+          got="$(sha256sum /tmp/wys.tar.gz | awk '{print $1}')"
+          test "$got" = "$WYS_ARCHIVE_SHA256"
+          mkdir -p /tmp/wys && tar -xzf /tmp/wys.tar.gz -C /tmp/wys
+          find /tmp/wys -mindepth 1 -maxdepth 1 -type d | head -1 > /tmp/WYS_ROOT
+
+      - name: Full 1826-match tag-1901 zero-label audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,re,statistics
+          from pathlib import Path
+          root=Path(open('/tmp/WYS_ROOT').read().strip())
+          readme=(root/'processed-v2/README.md').read_text(encoding='utf-8')
+          expected={'matches_England.json':380,'matches_Spain.json':380,'matches_Italy.json':380,'matches_Germany.json':306,'matches_France.json':380}
+          pat=re.compile(r'^\|\[(\d+)\]\(files/(\d+)\.json\)\|.*?\|.*?\|(matches_[A-Za-z_]+\.json)\|$',re.M)
+          rows=[(int(a),src) for a,b,src in pat.findall(readme) if a==b and src in expected]
+          assert len(rows)==1826
+          by_league={k:{'fixtures':0,'counter_events':0,'team_match_n':0,'team_match_nonzero':0,'team_match_ge3':0,'team_match_ge5':0,'shares':[]} for k in expected}
+          event_types={}; all_team_rows=[]; total_tag=0
+          for mid,src in rows:
+            d=json.load(open(root/f'processed-v2/files/{mid}.json',encoding='utf-8'))
+            ev=d['events']; teams=sorted({int(e.get('teamId',0) or 0) for e in ev if int(e.get('teamId',0) or 0)>0})
+            assert len(teams)==2
+            z={t:{'events':0,'counter':0} for t in teams}
+            for e in ev:
+              t=int(e.get('teamId',0) or 0)
+              if t not in z: continue
+              z[t]['events']+=1
+              tags={int(a.get('id')) for a in (e.get('tags') or []) if isinstance(a,dict) and a.get('id') is not None}
+              if 1901 in tags:
+                z[t]['counter']+=1; total_tag+=1
+                n=e.get('eventName','UNKNOWN'); event_types[n]=event_types.get(n,0)+1
+            q=by_league[src]; q['fixtures']+=1
+            for t,v in z.items():
+              share=v['counter']/v['events'] if v['events'] else 0.0
+              q['team_match_n']+=1; q['counter_events']+=v['counter']; q['shares'].append(share)
+              q['team_match_nonzero']+=int(v['counter']>0); q['team_match_ge3']+=int(v['counter']>=3); q['team_match_ge5']+=int(v['counter']>=5)
+              all_team_rows.append({'match_id':mid,'source_file':src,'team_id':t,'event_n':v['events'],'counter_attack_event_n':v['counter'],'counter_attack_event_share':share})
+          assert total_tag>0
+          league_out={}
+          for k,q in by_league.items():
+            assert q['fixtures']==expected[k]
+            league_out[k]={
+              'fixtures':q['fixtures'],'counter_events':q['counter_events'],'team_match_n':q['team_match_n'],
+              'team_match_nonzero_rate':q['team_match_nonzero']/q['team_match_n'],
+              'team_match_ge3_rate':q['team_match_ge3']/q['team_match_n'],
+              'team_match_ge5_rate':q['team_match_ge5']/q['team_match_n'],
+              'share_mean':statistics.fmean(q['shares']),
+              'share_stdev':statistics.pstdev(q['shares'])
+            }
+          shares=[x['counter_attack_event_share'] for x in all_team_rows]
+          nonzero=sum(x['counter_attack_event_n']>0 for x in all_team_rows)/len(all_team_rows)
+          ge3=sum(x['counter_attack_event_n']>=3 for x in all_team_rows)/len(all_team_rows)
+          ge5=sum(x['counter_attack_event_n']>=5 for x in all_team_rows)/len(all_team_rows)
+          all_leagues_present=all(v['counter_events']>0 for v in league_out.values())
+          between_team_variation=statistics.pstdev(shares)>0
+          candidate_source_eligible=all_leagues_present and between_team_variation and nonzero>=0.50
+          out=Path('_seal'); out.mkdir(exist_ok=True)
+          (out/'TEAM_MATCH_COUNTERATTACK_AUDIT.jsonl').write_text(''.join(json.dumps(x,sort_keys=True)+'\n' for x in all_team_rows))
+          audit={
+            'schema_version':'football3-wyscout-counterattack-source-audit-result-v1',
+            'status':'COUNTERATTACK_SOURCE_PASS_CANDIDATE_ALLOWED' if candidate_source_eligible else 'COUNTERATTACK_SOURCE_CLOSE_NO_CANDIDATE',
+            'fixture_n':1826,'team_match_n':len(all_team_rows),'tag1901_total_n':total_tag,
+            'tag1901_by_event_type':event_types,'team_match_nonzero_rate':nonzero,'team_match_ge3_rate':ge3,'team_match_ge5_rate':ge5,
+            'raw_share_mean':statistics.fmean(shares),'raw_share_stdev':statistics.pstdev(shares),
+            'all_five_leagues_have_tag1901':all_leagues_present,'between_team_variation_nonzero':between_team_variation,
+            'league_metrics':league_out,'candidate_source_eligible':candidate_source_eligible,
+            'zero_is_observed_value_not_missing':True,'labels_used_for_model_fit':False,'candidate_fit_performed':False,
+            'historical_confirmation_2023_opened':False,'prospective_1335_touched':False
+          }
+          (out/'SOURCE_AUDIT_RESULT.json').write_text(json.dumps(audit,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Seal manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp football-data/research/historical_wyscout_counterattack_regime_source_audit_v1/SOURCE_AUDIT_CONTRACT.json _seal/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); a=json.load(open(root/'SOURCE_AUDIT_RESULT.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={'schema_version':'football3-wyscout-counterattack-source-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],'status':a['status'],'fixture_n':a['fixture_n'],'tag1901_total_n':a['tag1901_total_n'],'team_match_nonzero_rate':a['team_match_nonzero_rate'],'candidate_source_eligible':a['candidate_source_eligible'],'historical_confirmation_2023_opened':False,'prospective_1335_touched':False,'formal_model_changed':False,'CURRENT_changed':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed counterattack source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-wyscout-counterattack-source-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
