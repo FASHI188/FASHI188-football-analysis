@@ -1,0 +1,198 @@
+name: football3 Historical Wyscout Counterattack Regime Candidate V1
+
+on:
+  push:
+    branches: ['football3/historical-wyscout-counterattack-regime-candidate-v1']
+    paths:
+      - '.github/workflows/football3-historical-wyscout-counterattack-regime-candidate-v1.yml'
+      - 'football-data/research/historical_wyscout_counterattack_regime_candidate_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: 67dfd6f09dc61ab5437e0719182c6c1fd76a83e0
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  SOURCE_ARTIFACT_ID: '9973109378'
+  SOURCE_ARTIFACT_DIGEST: sha256:5296996c68a0353f5d2dd3a4ee96a956f238c824357625e23172c2c1d6280c95
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  DB_ARTIFACT_ID: '9798682425'
+  DB_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+  WYS_COMMIT: ebc4c54c1093c420a81ce442c69e4186fab33bb4
+  WYS_ARCHIVE_SHA256: 1abe552b90d6a698777005bf03ada538a3030708231e11f9f3bfd1084f2b7218
+
+jobs:
+  screen-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-wyscout-counterattack-regime-candidate-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-wyscout-counterattack-regime-candidate-v1.yml|football-data/research/historical_wyscout_counterattack_regime_candidate_v1/*) ;;
+              '') ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen contract and runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_wyscout_counterattack_regime_candidate_v1
+          python -m py_compile "$D/run_counterattack_regime_screen.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_wyscout_counterattack_regime_candidate_v1/COUNTERATTACK_REGIME_CANDIDATE_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_OLD_SOURCE_SCREENING_EVALUATION'
+          assert c['parent_source']['head']=='67dfd6f09dc61ab5437e0719182c6c1fd76a83e0'
+          assert c['parent_source']['artifact_id']==9973109378
+          assert c['parent_source']['source_gate']=='COUNTERATTACK_SOURCE_PASS_CANDIDATE_ALLOWED'
+          assert c['semantic_dedup']['index_head']=='fcae7d5a23803a4b348f045526070981d16d5822'
+          assert c['semantic_dedup']['not_a_rename_replay'] is True
+          assert c['feature']['lookback_completed_league_matches']==8
+          assert c['feature']['minimum_prior_matches']==3
+          assert c['feature']['same_calendar_date_isolation'] is True
+          assert c['baseline']['target_season']==2017
+          assert c['baseline']['postmatch_understat_h_w_h_d_h_l_forbidden'] is True
+          assert c['model']['fixed_ridge']==0.01
+          assert c['model']['no_hyperparameter_grid'] is True
+          assert c['model']['no_threshold_search'] is True
+          assert c['model']['no_rescue_if_fail'] is True
+          assert c['data_roles']['historical_confirmation_2023']=='LOCKED_NOT_READ'
+          assert c['data_roles']['prospective_1335']=='FORBIDDEN_NOT_TOUCHED'
+          assert c['boundaries']['formal_weight']==0
+          PY
+
+      - name: Download and verify frozen parent source, V1 and Understat DB
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{source,v1,db}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$SOURCE_ARTIFACT_ID" "$SOURCE_ARTIFACT_DIGEST" /tmp/source.zip _inputs/source
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$DB_ARTIFACT_ID" "$DB_ARTIFACT_DIGEST" /tmp/db.zip _inputs/db
+          test "$(sha256sum _inputs/db/understat_frozen.db | awk '{print $1}')" = "$DB_SHA256"
+          test -f _inputs/v1/pure_engine.py
+          python - <<'PY'
+          import json
+          m=json.load(open('_inputs/source/MANIFEST.json'))
+          assert m['github_sha']=='67dfd6f09dc61ab5437e0719182c6c1fd76a83e0'
+          assert m['status']=='COUNTERATTACK_SOURCE_PASS_CANDIDATE_ALLOWED'
+          assert m['candidate_source_eligible'] is True
+          assert m['historical_confirmation_2023_opened'] is False
+          assert m['prospective_1335_touched'] is False
+          v=json.load(open('_inputs/v1/evidence/historical_oos_result.json'))
+          assert v['selected_parameters']['half_life_days']==260.0
+          assert v['selected_parameters']['prior_matches']==10.0
+          assert v['selected_parameters']['cross_season_shrink']==0.66
+          PY
+
+      - name: Download exact pinned public Wyscout source
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 2 "https://codeload.github.com/koenvo/wyscout-soccer-match-event-dataset/tar.gz/${WYS_COMMIT}" -o /tmp/wys.tar.gz
+          test "$(sha256sum /tmp/wys.tar.gz | awk '{print $1}')" = "$WYS_ARCHIVE_SHA256"
+          mkdir -p /tmp/wys && tar -xzf /tmp/wys.tar.gz -C /tmp/wys
+          find /tmp/wys -mindepth 1 -maxdepth 1 -type d | head -1 > /tmp/WYS_ROOT
+
+      - name: Run frozen old-source strict-PIT screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_wyscout_counterattack_regime_candidate_v1
+          rm -rf _run && mkdir _run
+          python "$D/run_counterattack_regime_screen.py" \
+            --contract "$D/COUNTERATTACK_REGIME_CANDIDATE_CONTRACT.json" \
+            --db _inputs/db/understat_frozen.db \
+            --wys-root "$(cat /tmp/WYS_ROOT)" \
+            --pure-engine _inputs/v1/pure_engine.py \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/COUNTERATTACK_REGIME_SCREEN_RESULT.json'))
+          assert x['status'] in ('COUNTERATTACK_REGIME_OLD_SOURCE_SCREEN_PASS_REQUIRES_NEWER_SOURCE_CONFIRMATION','COUNTERATTACK_REGIME_OLD_SOURCE_SCREEN_FAIL_CLOSE_EXACT_FORMULATION_NO_RETUNE')
+          assert x['target_n']==1826
+          assert x['rolling_oos_n']>900
+          assert x['feature_audit']['bilateral_feature_coverage']>=0.88
+          assert x['identity_audit']['mapped_n']==1826
+          assert len(x['fold_results'])==3
+          assert x['historical_confirmation_2023_opened'] is False
+          assert x['prospective_1335_touched'] is False
+          assert x['formal_weight']==0
+          assert x['CURRENT_changed'] is False and x['formal_model_changed'] is False
+          assert x['retune_allowed'] is False
+          PY
+
+      - name: Seal candidate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence,parent}
+          D=football-data/research/historical_wyscout_counterattack_regime_candidate_v1
+          cp "$D/COUNTERATTACK_REGIME_CANDIDATE_CONTRACT.json" _seal/contract/
+          cp "$D/run_counterattack_regime_screen.py" _seal/code/
+          cp _run/COUNTERATTACK_REGIME_SCREEN_RESULT.json _seal/evidence/
+          cp _run/IDENTITY_MAPPING.jsonl _seal/evidence/
+          cp /tmp/stdout.txt _seal/evidence/
+          cp _inputs/source/MANIFEST.json _seal/parent/COUNTERATTACK_SOURCE_MANIFEST.json
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); x=json.load(open('_run/COUNTERATTACK_REGIME_SCREEN_RESULT.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={'schema_version':'football3-wyscout-counterattack-regime-candidate-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],
+             'status':x['status'],'screening_pass':x['screening_pass'],'target_n':x['target_n'],'rolling_oos_n':x['rolling_oos_n'],'feature_coverage':x['feature_audit']['bilateral_feature_coverage'],
+             'pooled_deltas':x['pooled']['deltas'],'checks':x['checks'],'max_probability_abs_delta':x['max_probability_abs_delta'],
+             'newer_source_confirmation_required_if_pass':True,'historical_confirmation_2023_opened':False,'prospective_1335_touched':False,
+             'formal_model_changed':False,'CURRENT_changed':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-wyscout-counterattack-regime-candidate-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
