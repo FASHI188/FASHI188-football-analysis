@@ -37,10 +37,13 @@ def _get_json(url: str, token: str) -> dict[str, Any]:
 
 def _download(url: str, token: str, path: Path) -> None:
     req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
+    # GitHub's artifact endpoint redirects to signed object storage. Keep the
+    # repository token on the GitHub request only; forwarding it to the storage
+    # host overrides the signed URL's authentication and yields HTTP 401.
+    req.add_unredirected_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req) as response, path.open("wb") as out:
         shutil.copyfileobj(response, out)
 
