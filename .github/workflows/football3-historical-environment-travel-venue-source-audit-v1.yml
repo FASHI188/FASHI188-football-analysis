@@ -1,0 +1,163 @@
+name: football3 Historical Environment Travel Venue Source Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-environment-travel-venue-source-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-environment-travel-venue-source-audit-v1.yml'
+      - 'football-data/research/historical_environment_travel_venue_source_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: 2259f07b889e8a09d3de3897557a6255a8b8e571
+  CONTRACT_HEAD: a6b4e97d54761fd095ac08b538af462911f5cb80
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  UNDERSTAT_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  UNDERSTAT_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+  SCHEDULE_ARTIFACT_ID: '9931906066'
+  SCHEDULE_ARTIFACT_DIGEST: sha256:af3d085ced7bf747928d66860b610c9531b262365e24c269c6cceca7419f4bbf
+  SCHEDULE_HEAD: d29a78846faa84cc526fe2ab7e0f0ac6e7d3f603
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-environment-travel-venue-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git merge-base "$CONTRACT_HEAD" HEAD)" = "$CONTRACT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-environment-travel-venue-source-audit-v1.yml|football-data/research/historical_environment_travel_venue_source_audit_v1/*) ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Frozen zero-model source-feasibility contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_environment_travel_venue_source_audit_v1
+          python -m py_compile "$D/audit_environment_source_estate.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_environment_travel_venue_source_audit_v1/ENVIRONMENT_SOURCE_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_MODEL_SOURCE_FEASIBILITY_AUDIT'
+          assert c['parent']['head']=='2259f07b889e8a09d3de3897557a6255a8b8e571'
+          assert c['strict_pit_rules']['match_specific_venue_identity_required'] is True
+          assert c['strict_pit_rules']['deterministic_nonfuzzy_team_or_fixture_join_required'] is True
+          assert c['strict_pit_rules']['weather_requires_forecast_issued_before_kickoff'] is True
+          assert c['strict_pit_rules']['realized_weather_forbidden'] is True
+          assert c['strict_pit_rules']['reanalysis_weather_forbidden'] is True
+          assert c['strict_pit_rules']['current_venue_assumption_for_historical_fixture_forbidden'] is True
+          assert c['frozen_source_estate']['registered_historical_fixture_venue_coordinate_source'] is None
+          assert c['frozen_source_estate']['registered_fixed_lead_weather_forecast_archive_covering_all_2020_2022'] is None
+          assert c['gates']['minimum_match_specific_venue_identity_coverage']==0.98
+          assert c['gates']['minimum_coordinate_coverage']==0.98
+          assert c['gates']['minimum_fixed_lead_weather_forecast_coverage']==0.98
+          assert c['boundaries']['model_fit']==0 and c['boundaries']['candidate_probability']==0 and c['boundaries']['outcome_label_access']==0
+          assert c['data_roles']['historical_confirmation_2023'].startswith('LOCKED')
+          assert c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          PY
+
+      - name: Download and verify frozen source evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            mkdir -p "$dest" && unzip -q "$zip" -d "$dest"
+          }
+          rm -rf _input _sched
+          verify_one "$UNDERSTAT_ARTIFACT_ID" "$UNDERSTAT_ARTIFACT_DIGEST" /tmp/understat.zip _input
+          verify_one "$SCHEDULE_ARTIFACT_ID" "$SCHEDULE_ARTIFACT_DIGEST" /tmp/schedule.zip _sched
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = "$UNDERSTAT_DB_SHA256"
+          SCHED="$(find _sched -name pit_coverage.json -print -quit)"
+          test -n "$SCHED"
+          python - "$SCHED" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          assert p['status']=='STAGE6_PRE_C_STOP_PIT_SCHEDULE_COVERAGE'
+          assert p['target_n']==5478 and p['pit_complete_n']==0
+          assert p['2023_opened'] is False and p['result_or_goal_fields_read'] is False
+          assert p['final_schedule_backfill_used'] is False and p['final_lineup_or_minutes_used'] is False
+          PY
+          cp "$SCHED" /tmp/pit_coverage.json
+
+      - name: Run zero-label current-source-estate audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_environment_travel_venue_source_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_environment_source_estate.py" --contract "$D/ENVIRONMENT_SOURCE_AUDIT_CONTRACT.json" --db _input/understat_frozen.db --schedule-evidence /tmp/pit_coverage.json --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/environment_source_audit.json'))
+          assert x['status'] in ('ENVIRONMENT_SOURCE_AUDIT_PASS_FREEZE_ONE_SOURCE_BACKED_MECHANISM_ONLY','ENVIRONMENT_SOURCE_AUDIT_FAIL_CLOSE_CURRENT_SOURCE_ESTATE_NO_FIT')
+          assert x['model_fit']==0 and x['candidate_probability']==0 and x['outcome_label_access']==0
+          assert x['target_n']==5478 and x['per_season']=={'2020':1826,'2021':1826,'2022':1826}
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          PY
+
+      - name: Seal source-feasibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_environment_travel_venue_source_audit_v1
+          cp "$D/ENVIRONMENT_SOURCE_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_environment_source_estate.py" _seal/code/
+          cp _run/environment_source_audit.json /tmp/pit_coverage.json /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); x=json.load(open('_run/environment_source_audit.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={'schema_version':'football3-environment-travel-venue-source-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],'status':x['status'],'scientific_source_pass':x['scientific_source_pass'],'checks':x['checks'],'match_specific_venue_identity_coverage':x['match_specific_venue_identity_coverage'],'coordinate_coverage':x['coordinate_coverage'],'model_fit':0,'candidate_probability':0,'outcome_label_access':0,'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed source-feasibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-environment-travel-venue-source-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
