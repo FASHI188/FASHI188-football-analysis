@@ -1,0 +1,166 @@
+name: football3 Historical Prior xGBuildup Responsibility Source Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-prior-xgbuildup-responsibility-source-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-prior-xgbuildup-responsibility-source-audit-v1.yml'
+      - 'football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1/**'
+      - 'football-data/research/historical_mechanism_dedup_index_v2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: f2a4465ca520841ab043fd7bd2e9916936e7438b
+  PRIOR_DEDUP_HEAD: fcae7d5a23803a4b348f045526070981d16d5822
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  OLD_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-xgbuildup-responsibility-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git merge-base "$PRIOR_DEDUP_HEAD" HEAD)" = "$PRIOR_DEDUP_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|historical_fusion_v3_1_1_joint_score|stage6_pre_b_deep_ppda|stage6_pre_b_prospective'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-prior-xgbuildup-responsibility-source-audit-v1.yml|football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1/*|football-data/research/historical_mechanism_dedup_index_v2/*) ;;
+              '') ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Frozen contract, de-dup and runner guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1
+          python -m py_compile "$D/audit_xgbuildup_responsibility_source.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1/XGBUILDUP_RESPONSIBILITY_SOURCE_AUDIT_CONTRACT.json'))
+          d=json.load(open('football-data/research/historical_mechanism_dedup_index_v2/MECHANISM_DEDUP_INDEX.json'))
+          assert c['status']=='FROZEN_BEFORE_ZERO_LABEL_SOURCE_AUDIT'
+          assert c['parent_research']['head']=='f2a4465ca520841ab043fd7bd2e9916936e7438b'
+          assert c['source']['artifact_id']==9798682425
+          assert c['source']['database_sha256']=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert c['feature']['family']=='prior_xgbuildup_responsibility_concentration'
+          assert c['feature']['lookback_completed_league_matches']==8
+          assert c['feature']['minimum_prior_matches']==3
+          assert c['feature']['same_calendar_date_isolation'] is True
+          assert c['semantic_dedup']['dedup_key']==['mechanism_definition','exact_formula','lookback','PIT_semantics','input_fields','model_action_axis']
+          assert d['latest_completed_mechanism']['status']=='SHOOTER_XG_RESPONSIBILITY_CANDIDATE_DEVELOPMENT_FAIL_CLOSE_NO_RETUNE'
+          assert d['new_semantic_screen']['advanced_exactly_one']['field']=='xGBuildup'
+          assert d['new_semantic_screen']['advanced_exactly_one']['stage']=='ZERO_LABEL_SOURCE_AUDIT_ONLY'
+          assert c['boundaries']['outcome_labels_read'] is False
+          assert c['boundaries']['model_fit'] is False
+          assert c['boundaries']['historical_confirmation_2023_opened'] is False
+          assert c['boundaries']['prospective_1335_touched'] is False
+          PY
+
+      - name: Download and verify frozen Understat source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          rm -rf _input && mkdir _input
+          unzip -q /tmp/old.zip -d _input
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = "$OLD_DB_SHA256"
+
+      - name: Run zero-label source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_xgbuildup_responsibility_source.py" --contract "$D/XGBUILDUP_RESPONSIBILITY_SOURCE_AUDIT_CONTRACT.json" --db _input/understat_frozen.db --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/xgbuildup_responsibility_source_audit.json'))
+          assert x['target_n']==5478
+          assert x['outcome_labels_read'] is False
+          assert x['home_away_goals_read'] is False
+          assert x['model_fit'] is False
+          assert x['candidate_probability'] is False
+          assert x['historical_confirmation_2023_opened'] is False
+          assert x['prospective_1335_touched'] is False
+          assert x['status'] in ('XGBUILDUP_RESPONSIBILITY_SOURCE_PASS','XGBUILDUP_RESPONSIBILITY_SOURCE_FAIL_CLOSE')
+          PY
+
+      - name: Seal source-audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_xgbuildup_responsibility_source_audit_v1
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence,dedup}
+          cp "$D/XGBUILDUP_RESPONSIBILITY_SOURCE_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_xgbuildup_responsibility_source.py" _seal/code/
+          cp football-data/research/historical_mechanism_dedup_index_v2/MECHANISM_DEDUP_INDEX.json _seal/dedup/
+          cp _run/xgbuildup_responsibility_source_audit.json /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          x=json.load(open('_run/xgbuildup_responsibility_source_audit.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={
+            'schema_version':'football3-xgbuildup-responsibility-source-audit-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'parent_head':os.environ['PARENT_HEAD'],
+            'prior_dedup_head':os.environ['PRIOR_DEDUP_HEAD'],
+            'status':x['status'],
+            'checks':x['checks'],
+            'target_n':x['target_n'],
+            'player_id_nonnull_rate':x['player_id_nonnull_rate'],
+            'xgbuildup_nonnull_rate':x['xgbuildup_nonnull_rate'],
+            'bilateral_feature_coverage':x['bilateral_feature_coverage'],
+            'max_abs_pearson_corr':x['max_abs_pearson_corr'],
+            'model_fit':False,'outcome_labels_read':False,
+            'historical_confirmation_2023_opened':False,'prospective_1335_touched':False,
+            'files':files
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-xgbuildup-responsibility-source-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
