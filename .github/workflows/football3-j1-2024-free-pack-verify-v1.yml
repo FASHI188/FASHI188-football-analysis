@@ -3,10 +3,11 @@ name: Football3 J1 2024 Free Pack Verify V1
 on:
   workflow_dispatch:
     inputs:
-      download_page_url:
-        description: 'Exact Hudl public J1 2024 download page URL supplied by the user'
+      confirm_research_only:
+        description: 'Confirm research-only payload verification; no model run, training, tuning, prediction, OOS, or production change'
         required: true
-        type: string
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,9 +22,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      PAGE_URL: ${{ inputs.download_page_url }}
+      SOURCE_URL: ${{ secrets.HUDL_J1_SOURCE_URL }}
+      CONFIRM_RESEARCH_ONLY: ${{ inputs.confirm_research_only }}
       WORKDIR: ${{ runner.temp }}/football3-j1-2024-free-pack-verify
     steps:
+      - name: Validate confirmation and mask source secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${CONFIRM_RESEARCH_ONLY}" != "true" ]; then
+            echo 'Manual research-only confirmation was not granted.' >&2
+            exit 2
+          fi
+          if [ -z "${SOURCE_URL:-}" ]; then
+            echo 'Repository secret HUDL_J1_SOURCE_URL is missing or empty.' >&2
+            exit 3
+          fi
+          echo "::add-mask::$SOURCE_URL"
+
       - name: Prepare isolated runner temp directory
         shell: bash
         run: |
@@ -48,14 +64,13 @@ jobs:
           import os
           import re
           import sys
-          import urllib.error
           import urllib.parse
           import urllib.request
 
           WORK = Path(os.environ['WORKDIR'])
           RAW = WORK / 'raw'
           REPORT = WORK / 'report'
-          PAGE_URL = os.environ['PAGE_URL']
+          SOURCE_URL = os.environ['SOURCE_URL']
           RAW.mkdir(parents=True, exist_ok=True)
           REPORT.mkdir(parents=True, exist_ok=True)
 
@@ -75,12 +90,31 @@ jobs:
           def utcnow():
               return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
+          def sha256_text(text: str):
+              return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
           def sha256_file(path: Path):
               h = hashlib.sha256()
               with path.open('rb') as f:
                   for chunk in iter(lambda: f.read(1024 * 1024), b''):
                       h.update(chunk)
               return h.hexdigest()
+
+          def url_meta(url: str):
+              p = urllib.parse.urlparse(url)
+              return {
+                  'host': p.hostname,
+                  'url_sha256': sha256_text(url),
+              }
+
+          def redact_urls(text: str):
+              if not isinstance(text, str):
+                  text = str(text)
+              text = text.replace(SOURCE_URL, '[SOURCE_URL_REDACTED]')
+              return re.sub(r'https?://[^\s\]\[\)\(<>\"\']+', '[URL_REDACTED]', text)
+
+          def safe_error(exc: Exception):
+              return redact_urls(f'{type(exc).__name__}: {exc}')
 
           def is_ephemeral_or_signed(url: str):
               q = {k.lower() for k, _ in urllib.parse.parse_qsl(urllib.parse.urlparse(url).query, keep_blank_values=True)}
@@ -89,8 +123,8 @@ jobs:
           class AccessGate(RuntimeError):
               def __init__(self, reason, url=None):
                   self.reason = reason
-                  self.url = url
-                  super().__init__(f'{reason}: {url or ""}')
+                  self.url_evidence = url_meta(url) if url else None
+                  super().__init__(reason)
 
           class GuardedRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -103,9 +137,9 @@ jobs:
                   return super().redirect_request(req, fp, code, msg, headers, newurl)
 
           OPENER = urllib.request.build_opener(GuardedRedirect())
-          OPENER.addheaders = [('User-Agent', 'Football3-J1-2024-research-only-payload-verifier/1.0')]
+          OPENER.addheaders = [('User-Agent', 'Football3-J1-2024-research-only-payload-verifier/1.1')]
 
-          def validate_page_url(url):
+          def validate_source_url(url):
               p = urllib.parse.urlparse(url)
               if p.scheme != 'https' or p.hostname not in {'www.hudl.com', 'hudl.com'}:
                   raise AccessGate('INVALID_HUDL_DOWNLOAD_PAGE', url)
@@ -126,11 +160,10 @@ jobs:
                       raise AccessGate('UNEXPECTED_LARGE_DOCUMENT_WHILE_FETCHING_PAGE', final)
                   dest.write_bytes(data)
                   return {
-                      'requested_url': url,
-                      'final_url': final,
+                      'requested': url_meta(url),
+                      'final': url_meta(final),
                       'http_status': getattr(resp, 'status', None),
-                      'content_type': ctype,
-                      'headers': dict(resp.headers.items()),
+                      'content_type': redact_urls(ctype),
                       'size_bytes': len(data),
                       'sha256': hashlib.sha256(data).hexdigest(),
                       'accessed_at_utc': utcnow(),
@@ -171,11 +204,10 @@ jobs:
               usage_url = None
               legal_links = []
               for link in p.links:
-                  href = urllib.parse.urljoin(PAGE_URL, link['href'])
+                  href = urllib.parse.urljoin(SOURCE_URL, link['href'])
                   context = ' '.join([link['context_before'], str(link['text'])])
                   if 'How To Use This Data' in context or 'How To Use This Data' in str(link['text']):
-                      if urllib.parse.urlparse(href).hostname and urllib.parse.urlparse(href).hostname.endswith('hudl.com'):
-                          usage_url = href
+                      usage_url = href
                   if re.search(r'(Terms\s*&?\s*Conditions|Software License Agreement|License Agreement)', context, re.I):
                       legal_links.append(href)
                   for label, pat in TARGETS.items():
@@ -238,22 +270,23 @@ jobs:
                       with dest.open('wb') as f:
                           while True:
                               chunk = resp.read(1024 * 1024)
-                              if not chunk: break
+                              if not chunk:
+                                  break
                               size += len(chunk); h.update(chunk); f.write(chunk)
                       return {
                           'label': label,
-                          'official_page_href': official_href,
-                          'download_attempt_url': attempt_url,
-                          'final_download_url': final,
+                          'official_page_href': url_meta(official_href),
+                          'download_attempt': url_meta(attempt_url),
+                          'final_download': url_meta(final),
                           'downloaded_at_utc': started,
                           'size_bytes': size,
                           'sha256': h.hexdigest(),
-                          'content_type': ctype,
-                          'content_disposition': disp,
-                          'local_temp_path': str(dest),
+                          'content_type': redact_urls(ctype),
+                          'content_disposition': redact_urls(disp),
                       }
               except AccessGate:
-                  if dest.exists(): dest.unlink()
+                  if dest.exists():
+                      dest.unlink()
                   raise
 
           def getv(obj, *paths):
@@ -266,7 +299,8 @@ jobs:
                           cur = cur[part]
                       else:
                           ok = False; break
-                  if ok: return cur
+                  if ok:
+                      return cur
               return None
 
           def has_path(obj, *paths):
@@ -279,7 +313,8 @@ jobs:
                           cur = cur[part]
                       else:
                           ok = False; break
-                  if ok: return True
+                  if ok:
+                      return True
               return False
 
           def iter_json_array(path: Path, chunk_size=4 * 1024 * 1024):
@@ -290,8 +325,10 @@ jobs:
                       if pos > 0:
                           buf = buf[pos:]; pos = 0
                       chunk = f.read(chunk_size)
-                      if chunk: buf += chunk
-                      elif not buf.strip(): break
+                      if chunk:
+                          buf += chunk
+                      elif not buf.strip():
+                          break
                       while True:
                           while pos < len(buf) and buf[pos].isspace(): pos += 1
                           if not started:
@@ -313,10 +350,12 @@ jobs:
 
           def load_json_array_small(path: Path):
               data = json.loads(path.read_text(encoding='utf-8-sig'))
-              if isinstance(data, list): return data
+              if isinstance(data, list):
+                  return data
               if isinstance(data, dict):
                   for k in ('matches','data','records'):
-                      if isinstance(data.get(k), list): return data[k]
+                      if isinstance(data.get(k), list):
+                          return data[k]
               raise ValueError('expected JSON array')
 
           def read_csv(path: Path):
@@ -331,21 +370,24 @@ jobs:
 
           def text_from_html(path: Path):
               class T(HTMLParser):
-                  def __init__(self): super().__init__(); self.parts=[]
+                  def __init__(self):
+                      super().__init__(); self.parts=[]
                   def handle_data(self, d):
                       s=' '.join(d.split())
                       if s: self.parts.append(s)
-              t=T(); t.feed(path.read_text(errors='replace')); return '\n'.join(t.parts)
+              t=T(); t.feed(path.read_text(errors='replace'))
+              return redact_urls('\n'.join(t.parts))
 
           def short_keyword_windows(text: str, source: str):
-              words = re.findall(r'\S+', text)
+              words = re.findall(r'\S+', redact_urls(text))
               key = re.compile(r'\b(research|non[- ]?commercial|evaluation|model|archive|store|storage|retain|retention|derived|derivative|analysis|analyze|analyse)\b', re.I)
               out=[]
               for i,w in enumerate(words):
                   if key.search(w):
                       excerpt=' '.join(words[max(0,i-8):min(len(words),i+12)])
                       out.append({'source':source,'excerpt_max_20_words':excerpt})
-                      if len(out) >= 12: break
+                      if len(out) >= 12:
+                          break
               return out
 
           receipt = {
@@ -362,20 +404,20 @@ jobs:
               'license_status':'LICENSE_HOLD',
               'payload_schema_status':'PAYLOAD_SCHEMA_FAIL',
               'eligible_for_j1_single_season_research_only_pilot':False,
+              'source_url_reporting':'FULL_URL_PROHIBITED_HOST_AND_SHA256_ONLY',
           }
 
           exit_code = 1
           try:
-              validate_page_url(PAGE_URL)
-              (REPORT/'requested_page_url.txt').write_text(PAGE_URL+'\n')
-              page_meta = fetch_small(PAGE_URL, RAW/'download_page.html')
+              validate_source_url(SOURCE_URL)
+              page_meta = fetch_small(SOURCE_URL, RAW/'download_page.html')
               (REPORT/'download_page_snapshot.json').write_text(json.dumps(page_meta, indent=2, ensure_ascii=False))
               html = (RAW/'download_page.html').read_text(errors='replace')
               official_links, usage_url, generic_legal_links, parsed = resolve_official_links(html)
               (REPORT/'official_links.json').write_text(json.dumps({
-                  'targets': official_links,
-                  'how_to_use_data': usage_url,
-                  'generic_legal_links': generic_legal_links,
+                  'targets': {k:url_meta(v) for k,v in official_links.items()},
+                  'how_to_use_data': url_meta(usage_url) if usage_url else None,
+                  'generic_legal_links': [url_meta(u) for u in generic_legal_links],
                   'observed_form_count': len(parsed.forms),
                   'observed_password_input_count': sum(1 for i in parsed.inputs if (i.get('type') or '').lower()=='password'),
               }, indent=2, ensure_ascii=False))
@@ -385,9 +427,23 @@ jobs:
                   download_manifest.append(download_binary(label, official_links[label]))
               (REPORT/'download_manifest.json').write_text(json.dumps(download_manifest, indent=2, ensure_ascii=False))
               with (REPORT/'download_manifest.tsv').open('w', encoding='utf-8', newline='') as f:
-                  cols=['label','official_page_href','download_attempt_url','final_download_url','downloaded_at_utc','size_bytes','sha256','content_type','content_disposition']
+                  cols=['label','official_href_host','official_href_sha256','attempt_host','attempt_sha256','final_host','final_sha256','downloaded_at_utc','size_bytes','sha256','content_type','content_disposition']
                   w=csv.DictWriter(f,fieldnames=cols,delimiter='\t'); w.writeheader()
-                  for row in download_manifest: w.writerow({k:row.get(k,'') for k in cols})
+                  for row in download_manifest:
+                      w.writerow({
+                          'label':row['label'],
+                          'official_href_host':row['official_page_href']['host'],
+                          'official_href_sha256':row['official_page_href']['url_sha256'],
+                          'attempt_host':row['download_attempt']['host'],
+                          'attempt_sha256':row['download_attempt']['url_sha256'],
+                          'final_host':row['final_download']['host'],
+                          'final_sha256':row['final_download']['url_sha256'],
+                          'downloaded_at_utc':row['downloaded_at_utc'],
+                          'size_bytes':row['size_bytes'],
+                          'sha256':row['sha256'],
+                          'content_type':row['content_type'],
+                          'content_disposition':row['content_disposition'],
+                      })
 
               bundle_lines=[f"{r['sha256']}  {r['label']}" for r in sorted(download_manifest,key=lambda x:x['label'])]
               bundle_text='\n'.join(bundle_lines)+'\n'
@@ -403,11 +459,14 @@ jobs:
               event_match_ids=set(); event_team_ids=set(); shot_total=0; xg_present=0; xg_nonnull=0; event_rows=0
               for e in iter_json_array(events_path):
                   event_rows += 1
-                  if not isinstance(e, dict): continue
+                  if not isinstance(e, dict):
+                      continue
                   mid=getv(e,'match_id','match.id')
-                  if mid is not None: event_match_ids.add(str(mid))
+                  if mid is not None:
+                      event_match_ids.add(str(mid))
                   tid=getv(e,'team.id','team_id')
-                  if tid is not None: event_team_ids.add(str(tid))
+                  if tid is not None:
+                      event_team_ids.add(str(tid))
                   typ=getv(e,'type.name','type_name','type')
                   is_shot=(typ=='Shot') or (isinstance(typ,dict) and typ.get('name')=='Shot')
                   if is_shot:
@@ -415,13 +474,15 @@ jobs:
                       if has_path(e,'shot.statsbomb_xg','shot_statsbomb_xg'):
                           xg_present += 1
                           xv=getv(e,'shot.statsbomb_xg','shot_statsbomb_xg')
-                          if xv is not None and xv != '': xg_nonnull += 1
+                          if xv is not None and xv != '':
+                              xg_nonnull += 1
 
               matches=load_json_array_small(matches_path)
               match_ids=set(); match_team_ids=set(); identities={}
               complete={'match_id':0,'home_team':0,'away_team':0,'date':0,'kickoff':0}
               for m in matches:
-                  if not isinstance(m,dict): continue
+                  if not isinstance(m,dict):
+                      continue
                   mid=getv(m,'match_id','match.id')
                   home_id=getv(m,'home_team.home_team_id','home_team.id','home_team_id')
                   away_id=getv(m,'away_team.away_team_id','away_team.id','away_team_id')
@@ -433,9 +494,12 @@ jobs:
                   away = away_id if away_id not in (None,'') else away_name
                   vals={'match_id':mid,'home_team':home,'away_team':away,'date':date,'kickoff':kickoff}
                   for k,v in vals.items():
-                      if v not in (None,''): complete[k]+=1
-                  if home_id not in (None,''): match_team_ids.add(str(home_id))
-                  if away_id not in (None,''): match_team_ids.add(str(away_id))
+                      if v not in (None,''):
+                          complete[k]+=1
+                  if home_id not in (None,''):
+                      match_team_ids.add(str(home_id))
+                  if away_id not in (None,''):
+                      match_team_ids.add(str(away_id))
                   if mid not in (None,''):
                       smid=str(mid); match_ids.add(smid)
                       identities[smid]={'match_id':mid,'date':date,'kickoff':kickoff,'home_team':home_name or home_id,'away_team':away_name or away_id}
@@ -459,12 +523,14 @@ jobs:
               seen_missing=set()
               for mid,reason in [(x,'MISSING_FROM_EVENT_PAYLOAD') for x in missing_events] + [(x,'MISSING_FROM_MATCHES_MAPPING') for x in mapping_missing]:
                   key=(mid,reason)
-                  if key in seen_missing: continue
+                  if key in seen_missing:
+                      continue
                   seen_missing.add(key)
                   x=identities.get(mid,{})
                   missing_rows.append({'match_id':x.get('match_id',mid),'date':x.get('date'),'kickoff':x.get('kickoff'),'home_team':x.get('home_team'),'away_team':x.get('away_team'),'reason':reason})
               with (REPORT/'missing_matches_no_results.tsv').open('w',encoding='utf-8',newline='') as f:
-                  cols=['match_id','date','kickoff','home_team','away_team','reason']; w=csv.DictWriter(f,fieldnames=cols,delimiter='\t'); w.writeheader(); w.writerows(missing_rows)
+                  cols=['match_id','date','kickoff','home_team','away_team','reason']
+                  w=csv.DictWriter(f,fieldnames=cols,delimiter='\t'); w.writeheader(); w.writerows(missing_rows)
 
               schema_pass=(
                   len(match_ids)==380 and len(event_match_ids)==380 and
@@ -505,15 +571,20 @@ jobs:
               }
               (REPORT/'schema_audit.json').write_text(json.dumps(schema,indent=2,ensure_ascii=False))
 
-              license_evidence={'dataset_specific_documents':[],'generic_legal_links':generic_legal_links,'short_verbatim_keyword_windows':[],'automatic_legal_conclusion':'LICENSE_HOLD'}
+              license_evidence={
+                  'dataset_specific_documents':[],
+                  'generic_legal_links':[url_meta(u) for u in generic_legal_links],
+                  'short_verbatim_keyword_windows':[],
+                  'automatic_legal_conclusion':'LICENSE_HOLD'
+              }
               if usage_url:
                   try:
                       meta=fetch_small(usage_url,RAW/'how_to_use_data.html')
                       text=text_from_html(RAW/'how_to_use_data.html')
-                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','url':usage_url,'fetch':meta})
+                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','location':url_meta(usage_url),'fetch':meta})
                       license_evidence['short_verbatim_keyword_windows'] += short_keyword_windows(text,'How To Use This Data')
                   except Exception as e:
-                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','url':usage_url,'fetch_error':str(e)})
+                      license_evidence['dataset_specific_documents'].append({'name':'How To Use This Data','location':url_meta(usage_url),'fetch_error':safe_error(e)})
               license_evidence['package_embedded_readme_license_user_agreement_found']=False
               license_evidence['reason']='No legal inference is automated. LICENSE_PASS requires explicit dataset-specific permission for private non-commercial research, fixed-model evaluation, local SHA archival, and retaining derived aggregates.'
               (REPORT/'license_evidence.json').write_text(json.dumps(license_evidence,indent=2,ensure_ascii=False))
@@ -537,12 +608,12 @@ jobs:
 
           except AccessGate as e:
               receipt['access_stop_reason']=e.reason
-              receipt['access_stop_url']=e.url
+              if e.url_evidence:
+                  receipt['access_stop_url_evidence']=e.url_evidence
               (REPORT/'stop_reason.txt').write_text(e.reason+'\n')
-              if e.url: (REPORT/'stop_url.txt').write_text(e.url+'\n')
               exit_code = 70
           except Exception as e:
-              receipt['verification_error']=f'{type(e).__name__}: {e}'
+              receipt['verification_error']=safe_error(e)
               (REPORT/'stop_reason.txt').write_text('VERIFIER_ERROR\n')
               exit_code = 71
           finally:
@@ -563,19 +634,28 @@ jobs:
           echo "$rc" > "$WORKDIR/report/verifier_exit_code.txt"
           exit 0
 
-      - name: Assert raw data is excluded from artifact
+      - name: Assert raw data and URLs are excluded from artifact
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          echo "::add-mask::$SOURCE_URL"
           test -d "$WORKDIR/report"
           if find "$WORKDIR/report" -type f -size +10M | grep -q .; then
             echo 'Report unexpectedly contains a file >10MB; refusing artifact upload.' >&2
             exit 80
           fi
-          if find "$WORKDIR/report" -type f \( -name 'Statsbomb_J1_League.json' -o -name 'sb_matches.json' -o -name 'matches_mapping.csv' -o -name 'teams_mapping.csv' \) | grep -q .; then
+          if find "$WORKDIR/report" -type f \( -name 'Statsbomb_J1_League.json' -o -name 'Statsbomb-J1.League.json' -o -name 'sb_matches.json' -o -name 'matches_mapping.csv' -o -name 'teams_mapping.csv' \) | grep -q .; then
             echo 'Raw target data found under report path; refusing artifact upload.' >&2
             exit 81
+          fi
+          if grep -RIlE 'https?://' "$WORKDIR/report" >/dev/null 2>&1; then
+            echo 'A complete URL was detected in report output; refusing artifact upload.' >&2
+            exit 82
+          fi
+          if grep -RIlF -- "$SOURCE_URL" "$WORKDIR/report" >/dev/null 2>&1; then
+            echo 'The source secret value was detected in report output; refusing artifact upload.' >&2
+            exit 83
           fi
 
       - name: Upload small verification report only
