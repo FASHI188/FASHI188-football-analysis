@@ -1,0 +1,148 @@
+name: football3 Historical EPL Modern Process Acquisition V1
+
+on:
+  push:
+    branches: ['football3/historical-epl-modern-process-acquisition-v1']
+    paths:
+      - '.github/workflows/football3-historical-epl-modern-process-acquisition-v1.yml'
+      - 'football-data/research/historical_epl_modern_process_acquisition_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANCHOR_HEAD: 125b701333405aa548418a0644c6da2049bed6f5
+  STAGE6_B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  acquire-audit-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-epl-modern-process-acquisition-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$STAGE6_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-epl-modern-process-acquisition-v1.yml|football-data/research/historical_epl_modern_process_acquisition_v1/*) ;;
+              *) echo "unexpected changed path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Structural contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_epl_modern_process_acquisition_v1
+          python -m py_compile "$D/acquire_epl_modern_process.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_epl_modern_process_acquisition_v1/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_NETWORK_ACQUISITION'
+          assert c['source_head']=='125b701333405aa548418a0644c6da2049bed6f5'
+          assert c['seasons']['replication_audit']==2022
+          assert c['seasons']['modern_development']==[2024,2025]
+          assert c['replication_gate']['required_four_field_match_rate']==1.0
+          assert c['governance']['no_candidate_scoring'] is True
+          assert c['governance']['prospective_1335_not_read_or_joined'] is True
+          PY
+
+      - name: Download and verify frozen 2022 Understat database
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _old && mkdir _old
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" > /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          unzip -tq /tmp/old.zip
+          unzip -q /tmp/old.zip -d _old
+          test -s _old/understat_frozen.db
+
+      - name: Acquire completed modern process data and replication audit
+        id: acquire
+        shell: bash
+        run: |
+          set -uo pipefail
+          rm -rf _run && mkdir _run
+          D=football-data/research/historical_epl_modern_process_acquisition_v1
+          set +e
+          python "$D/acquire_epl_modern_process.py" \
+            --contract "$D/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json" \
+            --old-db _old/understat_frozen.db \
+            --out _run 2>&1 | tee /tmp/acquire_stdout.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "runner_rc=$rc" >> "$GITHUB_OUTPUT"
+          test -s _run/acquisition_receipt.json
+          test -s _run/epl_2024_2025_process_identity.jsonl
+
+      - name: Seal acquisition evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_epl_modern_process_acquisition_v1
+          cp "$D/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json" _seal/contract/
+          cp "$D/acquire_epl_modern_process.py" _seal/code/
+          cp _run/* _seal/evidence/
+          cp /tmp/acquire_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          r=json.load(open('_run/acquisition_receipt.json'))
+          m={'schema_version':'football3-epl-modern-process-acquisition-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'modern_process_rows':r['modern_process_rows'],'modern_dataset_sha256':r['modern_dataset_sha256'],'prospective_1335_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed acquisition evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-epl-modern-process-acquisition-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce frozen replication gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/acquisition_receipt.json'))
+          assert r['status']=='EPL_MODERN_PROCESS_ACQUISITION_REPLICATION_PASS',r
+          assert r['modern_process_rows']==760
+          assert r['replication_audit']['passed'] is True
+          assert r['replication_audit']['identity_match_rate']==1.0
+          assert r['replication_audit']['four_field_match_rate']==1.0
+          assert r['candidate_scoring_performed'] is False
+          assert r['prospective_1335_touched'] is False
+          PY
