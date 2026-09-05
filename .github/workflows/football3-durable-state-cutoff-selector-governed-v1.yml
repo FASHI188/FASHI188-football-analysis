@@ -47,6 +47,7 @@ jobs:
             python3 -m py_compile \
               football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
               football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+              football-data/formal_gpt_gateway_v1/formal_runtime_exact_noop_v1.py \
               football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py \
               football-data/formal_gpt_gateway_v1/test_durable_state_governance_v1.py \
               football-data/formal_gpt_gateway_v1/test_durable_state_cross_league_v1.py \
@@ -115,7 +116,7 @@ jobs:
           print('PRODUCTION_300_EQUIVALENCE_PASS', d['receipt_sha256'])
           PY
 
-      - name: Run Big5 FAST FULL and LaLiga delta empty-delta matrix
+      - name: Run Big5 FAST FULL repeated sealed and all-formal-scope state matrix
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
@@ -135,12 +136,26 @@ jobs:
               assert r['fast_path']=='FAST_PATH'
               assert r['full_path']=='FULL_REBUILD_PATH'
               assert r['empty_delta_path']=='FAST_PATH'
+              assert r['empty_delta_transition_status']=='NO_OP_DELTA'
+              assert r['empty_delta_state_resealed'] is False
               assert r['non_empty_delta_n']>0
               assert r['fast_full_state_exact'] is True
               assert r['empty_full_state_exact'] is True
+              assert r['repeat_sealed_request']['passed'] is True
+              assert all(r['repeat_sealed_request']['sha_equal'].values())
+              assert r['repeat_sealed_request']['state_bundle_unchanged'] is True
+          repeated=d['same_sealed_request_twice']
+          assert repeated['passed'] is True
+          assert all(repeated['sha_equal'].values())
+          assert repeated['state_bundle_unchanged'] is True
           la=d['la_liga_delta_and_empty_delta']
           assert la['non_empty_delta_n']>0 and la['empty_delta_n']==0
-          print('BIG5_FAST_FULL_MATRIX_PASS', d['receipt_sha256'])
+          assert la['empty_delta_transition_status']=='NO_OP_DELTA'
+          assert la['empty_delta_state_resealed'] is False
+          scope=d['all_formal_scope_state_integrity_smoke']
+          assert scope['passed'] is True and scope['n']==16
+          assert scope['target_result_read_or_scored'] is False
+          print('BIG5_REPEAT_ALL_SCOPE_MATRIX_PASS', d['receipt_sha256'])
           PY
 
       - name: Prove implementation is generic and official runner patch is wired
@@ -149,7 +164,9 @@ jobs:
           ! grep -RinE 'Real Betis|Betis|Real Madrid' \
             football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
             football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_runtime_exact_noop_v1.py \
             football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py
+          grep -q 'formal_runtime_exact_noop_v1' football-data/formal_gpt_gateway_v1/entry.py
           grep -q 'formal_durable_state_governance_v1' football-data/formal_gpt_gateway_v1/entry.py
           if [ -f .github/workflows/football3-formal-gpt-runner-integration-v1.yml ]; then
             grep -q 'durable_state_selector_v1.py' .github/workflows/football3-formal-gpt-runner-integration-v1.yml
@@ -172,10 +189,13 @@ jobs:
             'unit_sha256':unit['receipt_sha256'],
             'production_300_sha256':eq['receipt_sha256'],
             'cross_league_sha256':matrix['receipt_sha256'],
-            'formal_head':eq['formal_head'],
-            'current_sha256':eq.get('current_sha256'),
+            'formal_head':matrix['formal_head'],
+            'current_sha256':matrix['current_sha256'],
+            'same_sealed_request_twice_passed':matrix['same_sealed_request_twice']['passed'],
+            'all_formal_scope_state_integrity_n':matrix['all_formal_scope_state_integrity_smoke']['n'],
             'betis_result_read':False,
             'training_or_tuning_used':False,
+            'scoring_used':False,
             'model_parameters_or_weights_changed':False,
             'formal_current_or_production_pointer_changed':False,
             'ready_or_merge_authorized':False,
