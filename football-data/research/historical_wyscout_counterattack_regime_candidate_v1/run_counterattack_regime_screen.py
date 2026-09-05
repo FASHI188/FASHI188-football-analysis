@@ -122,47 +122,49 @@ def load_understat(db: pathlib.Path) -> tuple[list[dict],list[dict]]:
 
 
 def map_identity(wys: list[dict], under_target: list[dict]) -> tuple[dict[int,dict],dict]:
+    # Provider dates are not a reliable identity key for postponed fixtures: Wyscout can carry
+    # the actual played date while the frozen Understat schedule row can retain the original date.
+    # A directed home-away pair is unique within each top-flight league season, so identity uses
+    # league + ordered team names only. Calendar-date difference is evidence only; outcomes are never used.
     by_league=collections.defaultdict(list)
     for u in under_target:
         by_league[u['league']].append(u)
     used=set(); out={}; evidence=[]; low=[]
     for w in sorted(wys,key=lambda z:(z['date'],z['source_file'],z['wys_match_id'])):
-        wd=date.fromisoformat(w['date'])
-        cand=[]
-        for u in by_league[w['league']]:
-            if int(u['id']) in used:
-                continue
-            ud=date.fromisoformat(str(u['date'])[:10]); dd=abs((ud-wd).days)
-            if dd<=1:
-                cand.append((u,dd))
-        if not cand:
-            raise RuntimeError(f'no Understat identity candidate within +/-1 day {w["wys_match_id"]} {w["date"]} {w["home_name"]}-{w["away_name"]}')
+        cand=[u for u in by_league[w['league']] if int(u['id']) not in used]
         scored=[]
-        for u,dd in cand:
+        for u in cand:
             hs=name_sim(w['home_name'],u['team_h']); as_=name_sim(w['away_name'],u['team_a'])
             rev=name_sim(w['home_name'],u['team_a'])+name_sim(w['away_name'],u['team_h'])
-            direct=hs+as_; combined=direct-0.15*dd
-            scored.append((combined,direct,direct-rev,hs,as_,dd,u))
-        scored.sort(key=lambda x:(x[0],x[1],x[2]),reverse=True)
+            direct=hs+as_
+            scored.append((direct,direct-rev,hs,as_,u))
+        scored.sort(key=lambda x:(x[0],x[1]),reverse=True)
+        if not scored:
+            raise RuntimeError(f'no Understat league identity candidates {w["wys_match_id"]} {w["league"]}')
         best=scored[0]; second=scored[1][0] if len(scored)>1 else -1.0
-        if best[1] < 1.15 or best[0]-second < 0.10 or best[2] <= 0.05:
+        if best[0] < 1.60 or best[0]-second < 0.15 or best[1] <= 0.20:
             low.append({'w':w['wys_match_id'],'date':w['date'],'home':w['home_name'],'away':w['away_name'],
-                        'combined_score':best[0],'name_score':best[1],'margin':best[0]-second,'orientation_margin':best[2],
-                        'date_delta_days':best[5],'under_home':best[6]['team_h'],'under_away':best[6]['team_a']})
+                        'name_score':best[0],'margin':best[0]-second,'orientation_margin':best[1],
+                        'under_home':best[4]['team_h'],'under_away':best[4]['team_a']})
             continue
-        u=best[6]; used.add(int(u['id'])); out[w['wys_match_id']]=u
+        u=best[4]
+        wd=date.fromisoformat(w['date']); ud=date.fromisoformat(str(u['date'])[:10]); dd=(ud-wd).days
+        used.add(int(u['id'])); out[w['wys_match_id']]=u
         evidence.append({'wys_match_id':w['wys_match_id'],'understat_id':int(u['id']),'understat_fid':int(u['fid']),
-                         'league':w['league'],'wys_date':w['date'],'under_date':str(u['date'])[:10],'date_delta_days':best[5],
+                         'league':w['league'],'wys_date':w['date'],'under_date':str(u['date'])[:10],'under_minus_wys_days':dd,
                          'wys_home':w['home_name'],'wys_away':w['away_name'],'under_home':u['team_h'],'under_away':u['team_a'],
-                         'name_score':best[1],'runner_up_margin':best[0]-second})
+                         'name_score':best[0],'runner_up_margin':best[0]-second})
     if low:
         raise RuntimeError('identity mapping low-confidence examples: '+json.dumps(low[:20],ensure_ascii=False))
     if len(out)!=1826 or len(used)!=1826:
         raise RuntimeError(f'identity mapping incomplete: map={len(out)} used={len(used)}')
-    delta_counts=collections.Counter(int(x['date_delta_days']) for x in evidence)
+    delta_counts=collections.Counter(int(x['under_minus_wys_days']) for x in evidence)
+    max_abs=max(abs(int(x['under_minus_wys_days'])) for x in evidence)
     return out, {'mapped_n':len(out),'min_name_score':min(x['name_score'] for x in evidence),
                  'min_runner_up_margin':min(x['runner_up_margin'] for x in evidence),
-                 'date_delta_days_counts':dict(sorted(delta_counts.items())),'mapping_used_outcome':False,'rows':evidence}
+                 'date_delta_days_counts':dict(sorted(delta_counts.items())),'max_abs_date_delta_days':max_abs,
+                 'mapping_keys':['league','ordered_home_name','ordered_away_name'],'date_used_as_hard_key':False,
+                 'mapping_used_outcome':False,'rows':evidence}
 
 
 def build_source_features(wys: list[dict], identity: dict[int,dict], lookback: int, min_prior: int) -> tuple[dict[int,dict],dict]:
