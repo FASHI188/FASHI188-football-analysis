@@ -1,0 +1,93 @@
+name: football3 prior shot-bodypart source audit v1
+on:
+  push:
+    branches: [football3/historical-prior-shot-bodypart-source-audit-v1]
+    paths:
+      - '.github/workflows/football3-historical-prior-shot-bodypart-source-audit-v1.yml'
+      - 'football-data/research/historical_prior_shot_bodypart_source_audit_v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PARENT_HEAD: ee3fb89edd4d5535d542b9c32b655f746e5b6475
+      FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+      V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+      B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+      UNDERSTAT_ARTIFACT_ID: '9798682425'
+      UNDERSTAT_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+      UNDERSTAT_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+      D: football-data/research/historical_prior_shot_bodypart_source_audit_v1
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-shot-bodypart-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then echo forbidden >&2; exit 1; fi
+          while IFS= read -r p; do case "$p" in .github/workflows/football3-historical-prior-shot-bodypart-source-audit-v1.yml|football-data/research/historical_prior_shot_bodypart_source_audit_v1/*|'') ;; *) echo "unexpected $p" >&2; exit 1;; esac; done <<< "$changed"
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile "$D/audit_shot_bodypart_source.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_prior_shot_bodypart_source_audit_v1/SHOT_BODYPART_SOURCE_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_MODEL_SOURCE_AUDIT' and c['parent']['head']=='ee3fb89edd4d5535d542b9c32b655f746e5b6475'
+          assert c['feature']['key']=='shot_bodypart_hhi_fit_abs' and c['feature']['lookback_completed_matches']==8 and c['feature']['minimum_prior_matches']==3
+          assert c['redundancy_audit']['selection_or_search_allowed'] is False
+          assert c['boundaries']['model_fit']==0 and c['boundaries']['candidate_probability']==0 and c['boundaries']['outcome_label_access']==0
+          assert c['gates']['minimum_match_feature_coverage']==0.98 and c['gates']['minimum_shot_type_nonblank_fraction']==0.98 and c['gates']['maximum_absolute_redundancy_correlation']==0.95
+          PY
+      - name: Download and verify frozen Understat source
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}")"
+          test "$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "$UNDERSTAT_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" -o /tmp/u.zip
+          test "sha256:$(sha256sum /tmp/u.zip|awk '{print $1}')" = "$UNDERSTAT_ARTIFACT_DIGEST"
+          rm -rf _input && mkdir _input && unzip -q /tmp/u.zip -d _input
+          test "$(sha256sum _input/understat_frozen.db|awk '{print $1}')" = "$UNDERSTAT_DB_SHA256"
+      - name: Run zero-label shot-bodypart source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir _run
+          python "$D/audit_shot_bodypart_source.py" --contract "$D/SHOT_BODYPART_SOURCE_AUDIT_CONTRACT.json" --db _input/understat_frozen.db --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/shot_bodypart_source_audit.json'))
+          assert x['status'] in ('SHOT_BODYPART_SOURCE_AUDIT_PASS_FREEZE_ONE_SCALAR_CANDIDATE_ONLY','SHOT_BODYPART_SOURCE_AUDIT_FAIL_CLOSE_AS_DUPLICATE_OR_INSUFFICIENT_SOURCE')
+          assert x['target_n']==5478 and x['target_counts']=={'2020':1826,'2021':1826,'2022':1826}
+          assert x['model_fit']==0 and x['outcome_label_access']==0 and x['historical_confirmation_2023_labels_opened'] is False and x['prospective_1335_data_touched'] is False
+          PY
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          cp "$D/SHOT_BODYPART_SOURCE_AUDIT_CONTRACT.json" _seal/contract/; cp "$D/audit_shot_bodypart_source.py" _seal/code/; cp _run/* /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); x=json.load(open('_run/shot_bodypart_source_audit.json')); files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+          (root/'MANIFEST.json').write_text(json.dumps({'schema_version':'football3-prior-shot-bodypart-source-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],'status':x['status'],'checks':x['checks'],'match_feature_coverage':x['match_feature_coverage'],'shot_type_nonblank_fraction':x['shot_type_nonblank_fraction'],'maximum_absolute_redundancy_correlation':x['maximum_absolute_redundancy_correlation'],'model_fit':0,'outcome_label_access':0,'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files},sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: 'football3-prior-shot-bodypart-source-audit-${{ github.sha }}', path: _seal, retention-days: 90, if-no-files-found: error}
