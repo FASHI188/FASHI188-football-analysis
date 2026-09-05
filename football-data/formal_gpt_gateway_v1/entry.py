@@ -25,6 +25,12 @@ LIVE_XG_QUARANTINE_FAST_REUSE = live_xg_quarantine_fast_reuse_v2.install()
 import live_fast_reuse_audit_v1
 LIVE_FAST_AUDIT = live_fast_reuse_audit_v1.install()
 import gateway
+
+# An exact-cutoff verified empty delta is a real no-op. Install this before any
+# gateway wrappers capture the runtime path so repeat sealed requests remain byte-stable.
+import formal_runtime_exact_noop_v1
+FORMAL_RUNTIME_EXACT_NOOP = formal_runtime_exact_noop_v1.install()
+
 import live_source_failure_probe_v1
 LIVE_SOURCE_FAILURE_PROBE = live_source_failure_probe_v1.install(gateway)
 import live_gateway_patch_v1
@@ -109,6 +115,7 @@ def main() -> int:
             "live_xg_quarantine_fast_reuse_adapter.json": LIVE_XG_QUARANTINE_FAST_REUSE,
             "live_fast_reuse_adapter.json": LIVE_FAST_AUDIT,
             "live_fast_reuse_audit.json": fast_audit,
+            "formal_runtime_exact_noop_adapter.json": FORMAL_RUNTIME_EXACT_NOOP,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
@@ -138,6 +145,7 @@ def main() -> int:
             d["live_xg_quarantine_fast_reuse_adapter"] = LIVE_XG_QUARANTINE_FAST_REUSE
             d["live_fast_reuse_adapter"] = LIVE_FAST_AUDIT
             d["live_fast_reuse_audit"] = fast_audit
+            d["formal_runtime_exact_noop_adapter"] = FORMAL_RUNTIME_EXACT_NOOP
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
