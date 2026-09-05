@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Install the explicit authoritative result-semantic adjudication before any
-# gateway/source wrappers capture runtime functions. V2 delegates all xG identity
-# joining to the original runtime loader and only supplies the authorized semantic
-# validation view for the single adjudicated fixture.
+# gateway/source wrappers capture runtime functions. V2 is the governed successor
+# to formal_result_adjudication_v1: it preserves that contract while adding the
+# bounded identity bridge and delayed-settlement V1 release-order handling.
 import formal_result_adjudication_v2
 FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
 
