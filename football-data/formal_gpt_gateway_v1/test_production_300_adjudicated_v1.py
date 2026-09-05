@@ -16,6 +16,7 @@ import runtime as rt
 import test_runtime as tr
 
 SCHEMA = "football3-production-300-adjudicated-acceptance-v1"
+_REFERENCE_V1_AVAILABLE: dict[int, dict[str, dict[str, Any]]] = defaultdict(dict)
 
 
 def reference_events(history: list[rt.HistoryFixture], labels: dict[str, rt.XGLabel]) -> list[dict[str, Any]]:
@@ -68,6 +69,21 @@ def reference_events(history: list[rt.HistoryFixture], labels: dict[str, rt.XGLa
     return events
 
 
+def _reference_rebuild_v1(state: rt.hxg.ChallengerState) -> None:
+    available = _REFERENCE_V1_AVAILABLE[id(state)]
+    rebuilt = rt.v1_engine.EngineState(params=state.base.params)
+    by_kickoff: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for event in available.values():
+        by_kickoff[event["row"].kickoff].append(event)
+    for _, items in sorted(by_kickoff.items()):
+        rows = [event["row"] for event in items]
+        rebuilt.apply_batch(
+            [row.v1_fixture() for row in rows],
+            {event["row"].fixture_id: (int(event["home_goals"]), int(event["away_goals"])) for event in items},
+        )
+    state.base = rebuilt
+
+
 def reference_apply_group(state: rt.hxg.ChallengerState, group: list[dict[str, Any]]) -> None:
     releases = [e for e in group if e["event_type"] == "LABEL_RELEASE"]
     freezes = [e for e in group if e["event_type"] == "FIXTURE_FREEZE"]
@@ -82,11 +98,22 @@ def reference_apply_group(state: rt.hxg.ChallengerState, group: list[dict[str, A
             state.apply_released_batch(fixtures, labs, as_of=items[0]["event_at"], update_base=False)
         vitems = [event for event in items if event["enters_v1"]]
         if vitems:
-            rows = [event["row"] for event in vitems]
-            state.base.apply_batch(
-                [row.v1_fixture() for row in rows],
-                {event["row"].fixture_id: (int(event["home_goals"]), int(event["away_goals"])) for event in vitems},
-            )
+            available = _REFERENCE_V1_AVAILABLE[id(state)]
+            for event in vitems:
+                fid = event["row"].fixture_id
+                if fid in available:
+                    raise AssertionError(f"duplicate reference V1 release: {fid}")
+                available[fid] = event
+            last = state.base.last_update_time
+            late = last is not None and any(event["row"].kickoff < last for event in vitems)
+            if late:
+                _reference_rebuild_v1(state)
+            else:
+                rows = [event["row"] for event in vitems]
+                state.base.apply_batch(
+                    [row.v1_fixture() for row in rows],
+                    {event["row"].fixture_id: (int(event["home_goals"]), int(event["away_goals"])) for event in vitems},
+                )
     by_kickoff = defaultdict(list)
     for event in freezes:
         by_kickoff[event["row"].kickoff].append(event)
@@ -160,6 +187,7 @@ def main() -> int:
 
     # Independent reference path is monkeypatched only in the test harness; runtime
     # FAST/FULL continues through the installed formal adjudication adapter.
+    _REFERENCE_V1_AVAILABLE.clear()
     tr.reference_events = reference_events
     tr.reference_apply_group = reference_apply_group
 
@@ -177,6 +205,7 @@ def main() -> int:
         "pit_regression": pit,
         "independent_reference_stream": True,
         "runtime_history_delta_events_reused_by_reference": False,
+        "reference_delayed_v1_policy": "REPLAY_AVAILABLE_LABELS_IN_KICKOFF_ORDER",
         "formal_model_or_weights_changed": False,
         "current_pointer_changed": False,
     }
