@@ -60,27 +60,35 @@ jobs:
         run: |
           set -euo pipefail
           D=football-data/research/historical_epl_modern_process_acquisition_v1
-          python -m py_compile "$D/acquire_epl_modern_process.py"
+          python -m py_compile "$D/acquire_epl_modern_process.py" "$D/normalize_and_audit_v12.py"
           python - <<'PY'
           import json
           D='football-data/research/historical_epl_modern_process_acquisition_v1'
           c=json.load(open(f'{D}/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json'))
           a=json.load(open(f'{D}/EPL_MODERN_PROCESS_ACQUISITION_SOURCE_AMENDMENT_V1_1.json'))
+          n=json.load(open(f'{D}/EPL_MODERN_PROCESS_IDENTITY_NORMALIZATION_AMENDMENT_V1_2.json'))
           assert c['status']=='FROZEN_BEFORE_NETWORK_ACQUISITION'
           assert c['source_head']=='125b701333405aa548418a0644c6da2049bed6f5'
           assert c['seasons']['replication_audit']==2022
           assert c['seasons']['modern_development']==[2024,2025]
-          assert c['replication_gate']['required_four_field_match_rate']==1.0
           assert c['governance']['no_candidate_scoring'] is True
           assert c['governance']['prospective_1335_not_read_or_joined'] is True
           assert a['status']=='FROZEN_AFTER_HTML_TRANSPORT_FAILURE_BEFORE_ANY_DATA_ACCEPTANCE'
           assert a['supersedes_scientific_contract'] is False
           assert a['allowed_change']=='transport only'
-          assert a['unchanged_rules']['required_four_field_match_rate']==1.0
-          assert a['unchanged_rules']['modern_expected_rows']==760
-          assert a['unchanged_rules']['candidate_scoring_allowed'] is False
-          assert a['unchanged_rules']['2023_allowed'] is False
-          assert a['unchanged_rules']['prospective_1335_allowed'] is False
+          assert n['status']=='FROZEN_AFTER_REPLICATION_ID_NAMESPACE_DIAGNOSTIC_BEFORE_ANY_CANDIDATE_SCORING'
+          assert n['supersedes_scientific_contract'] is False
+          assert n['evidence_trigger']['run_id']==33947192742
+          assert n['evidence_trigger']['artifact_id']==9963699311
+          assert n['diagnosed_identity_rule']['frozen_db_provider_fixture_column']=='general_game_stats.id'
+          assert n['diagnosed_identity_rule']['required_2022_provider_id_match_n']==380
+          assert n['diagnosed_identity_rule']['required_2022_secondary_identity_match_n']==380
+          assert n['diagnosed_numeric_normalization']['frozen_db_ppda_serialization']=='decimal quantize to 4 places using ROUND_HALF_UP'
+          assert n['diagnosed_numeric_normalization']['required_2022_four_field_match_n_after_normalization']==380
+          assert n['unchanged_scientific_rules']['modern_expected_rows']==760
+          assert n['unchanged_scientific_rules']['candidate_scoring_allowed'] is False
+          assert n['unchanged_scientific_rules']['2023_allowed'] is False
+          assert n['unchanged_scientific_rules']['prospective_1335_allowed'] is False
           PY
 
       - name: Download and verify frozen 2022 Understat database
@@ -96,7 +104,7 @@ jobs:
           unzip -q /tmp/old.zip -d _old
           test -s _old/understat_frozen.db
 
-      - name: Acquire completed modern process data and replication audit
+      - name: Acquire completed modern process data
         id: acquire
         shell: bash
         run: |
@@ -111,9 +119,20 @@ jobs:
             --out _run 2>&1 | tee /tmp/acquire_stdout.txt
           rc=${PIPESTATUS[0]}
           set -e
-          echo "runner_rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "base_runner_rc=$rc" >> "$GITHUB_OUTPUT"
           test -s _run/acquisition_receipt.json
+          test -s _run/epl_2022_replication_process_identity.jsonl
           test -s _run/epl_2024_2025_process_identity.jsonl
+
+      - name: Apply frozen identity and PPDA normalization audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_epl_modern_process_acquisition_v1
+          python "$D/normalize_and_audit_v12.py" \
+            --amendment "$D/EPL_MODERN_PROCESS_IDENTITY_NORMALIZATION_AMENDMENT_V1_2.json" \
+            --old-db _old/understat_frozen.db \
+            --out _run 2>&1 | tee /tmp/normalization_stdout.txt
 
       - name: Seal acquisition evidence
         shell: bash
@@ -123,15 +142,16 @@ jobs:
           D=football-data/research/historical_epl_modern_process_acquisition_v1
           cp "$D/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json" _seal/contract/
           cp "$D/EPL_MODERN_PROCESS_ACQUISITION_SOURCE_AMENDMENT_V1_1.json" _seal/contract/
-          cp "$D/acquire_epl_modern_process.py" _seal/code/
+          cp "$D/EPL_MODERN_PROCESS_IDENTITY_NORMALIZATION_AMENDMENT_V1_2.json" _seal/contract/
+          cp "$D/acquire_epl_modern_process.py" "$D/normalize_and_audit_v12.py" _seal/code/
           cp _run/* _seal/evidence/
-          cp /tmp/acquire_stdout.txt _seal/evidence/
+          cp /tmp/acquire_stdout.txt /tmp/normalization_stdout.txt _seal/evidence/
           python - <<'PY'
           import hashlib,json,os,pathlib
           root=pathlib.Path('_seal')
           files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
           r=json.load(open('_run/acquisition_receipt.json'))
-          m={'schema_version':'football3-epl-modern-process-acquisition-artifact-v1.1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'transport_amendment':r['transport_amendment'],'modern_process_rows':r['modern_process_rows'],'modern_dataset_sha256':r['modern_dataset_sha256'],'prospective_1335_touched':False,'files':files}
+          m={'schema_version':'football3-epl-modern-process-acquisition-artifact-v1.2','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'transport_amendment':r['transport_amendment'],'identity_normalization_amendment':r['identity_normalization_amendment'],'modern_process_rows':r['modern_process_rows'],'modern_dataset_sha256':r['modern_dataset_sha256'],'prospective_1335_touched':False,'files':files}
           (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
           PY
 
@@ -150,12 +170,19 @@ jobs:
           python - <<'PY'
           import json
           r=json.load(open('_run/acquisition_receipt.json'))
+          a=r['replication_audit']
           assert r['status']=='EPL_MODERN_PROCESS_ACQUISITION_REPLICATION_PASS',r
           assert r['transport_amendment']=='football3-epl-modern-process-acquisition-source-amendment-v1.1'
+          assert r['identity_normalization_amendment']=='football3-epl-modern-process-identity-normalization-amendment-v1.2'
           assert r['modern_process_rows']==760
-          assert r['replication_audit']['passed'] is True
-          assert r['replication_audit']['identity_match_rate']==1.0
-          assert r['replication_audit']['four_field_match_rate']==1.0
+          assert r['ppda_storage_normalization']=='ROUND_HALF_UP_4DP_TO_MATCH_FROZEN_DB_PIPELINE'
+          assert a['passed'] is True
+          assert a['provider_id_match_n']==380
+          assert a['secondary_identity_match_n']==380
+          assert a['four_field_match_n_after_round_half_up_4dp']==380
+          assert a['provider_id_match_rate']==1.0
+          assert a['secondary_identity_match_rate']==1.0
+          assert a['four_field_match_rate_after_round_half_up_4dp']==1.0
           assert r['candidate_scoring_performed'] is False
           assert r['prospective_1335_touched'] is False
           PY
