@@ -106,7 +106,7 @@ def metric(rows,pkey,mkey=None):
 def paired_required_n(rows):
     vals=[]
     for r in rows:
-        y=int(r['y']); vals.append(-math.log(max(EPS,float(r['baseline_b_p'][y])))+math.log(max(EPS,float(r['candidate_p'][y])))
+        y=int(r['y']); vals.append(-math.log(max(EPS,float(r['baseline_b_p'][y]))) + math.log(max(EPS,float(r['candidate_p'][y]))))
     effect=sum(vals)/len(vals); sd=statistics.stdev(vals) if len(vals)>1 else 0.0
     z=1.959963984540054+0.8416212335729143; req=None if effect<=0 or sd<=0 else math.ceil((z*sd/effect)**2)
     return {'mean_logloss_improvement':effect,'paired_sd':sd,'required_n':req}
