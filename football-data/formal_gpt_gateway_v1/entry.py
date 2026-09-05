@@ -65,6 +65,12 @@ FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_
 import formal_state_integrity_coverage_patch_v1
 FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
 
+# Durable state governance is outermost: a verified cutoff-aware state selection
+# must be bound before prediction, and transition/cache/fallback semantics are
+# checked after the unchanged formal model call.
+import formal_durable_state_governance_v1
+FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gateway)
+
 
 def _direct_complete_fixture(history):
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
@@ -113,6 +119,7 @@ def main() -> int:
             "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
+            "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -141,6 +148,7 @@ def main() -> int:
             d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
+            d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
