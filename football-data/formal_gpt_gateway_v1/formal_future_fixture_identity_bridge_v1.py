@@ -8,6 +8,16 @@ import live_gateway_patch_v1 as live_gateway
 import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
 
+# Install the generic cross-season state-key contract before this bridge resolves
+# any sealed fixture. The installer also upgrades the returning-club integrity
+# classification before the generic integrity guard is installed by entry.py.
+import cross_season_team_state_binding_v1 as cross_season_identity
+CROSS_SEASON_IDENTITY = cross_season_identity.install()
+
+# Additive formal receipt contract only; no model probabilities are changed.
+import formal_receipt_distribution_contract_v1 as receipt_distribution
+RECEIPT_DISTRIBUTION = receipt_distribution.install()
+
 SCHEMA = "football3-formal-future-fixture-identity-bridge-v1"
 
 
@@ -94,7 +104,9 @@ def install(gateway_module) -> dict[str, Any]:
         "sealed_runtime_input_uses_canonical_identity": True,
         "request_names_preserved": True,
         "fixture_time_preserved": True,
-        "identity_source": "validated_frozen_state_plus_permanent_team_identity_bridge",
+        "identity_source": "validated_frozen_state_plus_cross_season_permanent_identity_bridge",
+        "cross_season_identity_contract": CROSS_SEASON_IDENTITY,
+        "receipt_distribution_contract": RECEIPT_DISTRIBUTION,
         "result_or_xg_identity_selection": False,
         "fuzzy_cross_club_substitution": False,
         "model_parameters_or_weights_changed": False,
