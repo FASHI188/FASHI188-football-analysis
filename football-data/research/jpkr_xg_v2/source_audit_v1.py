@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 FOOTBALL_DATA = HERE.parents[1]
 CONTRACT = HERE / "frozen_research_contract_v1.json"
 REGISTRY = HERE / "source_registry_v1.json"
+REFRESH = HERE / "source_refresh_2026-09-05.json"
 
 SCHEMA = "football3-jpkr-xg-source-audit-v1"
 USER_AGENT = "football3-jpkr-xg-research-audit-v1"
@@ -49,7 +50,7 @@ def decode_csv_text(data: bytes) -> tuple[str, str]:
     """Decode pinned public CSV bytes without altering their SHA identity.
 
     The historical worldfootballR league registry contains legacy Western-European
-    bytes and is not guaranteed to be UTF-8.  Decoding is metadata-only: the raw
+    bytes and is not guaranteed to be UTF-8. Decoding is metadata-only: the raw
     byte SHA remains the frozen source identity used by the audit receipt.
     """
     failures: list[str] = []
@@ -94,6 +95,49 @@ def assert_local_production_contract(contract: dict[str, Any]) -> dict[str, Any]
         bad = [k for k, v in assertions.items() if not v]
         raise RuntimeError("production contract assertion failed: " + ",".join(bad))
     return assertions
+
+
+def assert_zero_label_refresh(refresh: dict[str, Any]) -> dict[str, Any]:
+    if refresh.get("schema_version") != "football3-jpkr-xg-zero-label-source-refresh-v1":
+        raise RuntimeError("source refresh schema mismatch")
+    required_false = ("labels_materialized", "oos_evaluation_opened", "production_changes")
+    if any(refresh.get(k) is not False for k in required_false):
+        raise RuntimeError("source refresh crossed zero-label/research-only boundary")
+    if refresh.get("research_only") is not True or refresh.get("frozen_contract_unchanged") is not True:
+        raise RuntimeError("source refresh governance assertion failed")
+    if refresh.get("formal_model_head") != "e12f5d1193be5d81f60301cf34ab2140e11712a9":
+        raise RuntimeError("source refresh formal HEAD drift")
+    if refresh.get("integration_head") != "a1a8f8aab170d10a57e1c107dac5524cc31a6a9a":
+        raise RuntimeError("source refresh integration HEAD drift")
+    findings = refresh.get("findings")
+    if not isinstance(findings, dict):
+        raise RuntimeError("source refresh findings missing")
+    for comp in ("JPN_J1", "KOR_KLeague1"):
+        item = findings.get(comp)
+        if not isinstance(item, dict):
+            raise RuntimeError(f"source refresh finding missing: {comp}")
+        if item.get("decision") != "STOP_DATA_COVERAGE":
+            raise RuntimeError(f"source refresh decision drift: {comp}")
+        if item.get("qualified_source_count") != 0 or item.get("qualified_match_level_xg_rows") != 0:
+            raise RuntimeError(f"source refresh unexpectedly qualified data: {comp}")
+        if item.get("qualified_seasons") != []:
+            raise RuntimeError(f"source refresh unexpectedly qualified seasons: {comp}")
+    unchanged = refresh.get("unchanged_frozen_decision")
+    if not isinstance(unchanged, dict):
+        raise RuntimeError("source refresh frozen decision missing")
+    if unchanged.get("adapter_implementation_allowed") is not False or unchanged.get("oos_run_allowed") is not False:
+        raise RuntimeError("source refresh unexpectedly opened adapter/OOS gate")
+    if unchanged.get("fallback_route") != "FROZEN_V1_EXACT_FALLBACK":
+        raise RuntimeError("source refresh fallback route drift")
+    return {
+        "research_only": True,
+        "frozen_contract_unchanged": True,
+        "labels_materialized": False,
+        "oos_evaluation_opened": False,
+        "production_changes": False,
+        "JPN_J1": "STOP_DATA_COVERAGE",
+        "KOR_KLeague1": "STOP_DATA_COVERAGE",
+    }
 
 
 def audit_worldfootballr(contract: dict[str, Any]) -> dict[str, Any]:
@@ -181,17 +225,17 @@ def main() -> int:
 
     contract = read_json(CONTRACT)
     registry = read_json(REGISTRY)
+    refresh = read_json(REFRESH)
     production_assertions = assert_local_production_contract(contract)
+    refresh_assertions = assert_zero_label_refresh(refresh)
     wf = audit_worldfootballr(contract)
     sb = audit_statsbomb_open_data(contract)
 
     # Only mechanically verified no-key/no-login public GitHub sources are fetched.
-    # Human-reviewed sources rejected by terms/key requirements remain frozen in source_registry_v1.json
-    # and are deliberately not contacted by this workflow.
+    # Human-reviewed rejected/partial candidates are not contacted by this workflow.
+    # Fresh human-reviewed evidence is sealed through REFRESH without reopening labels.
     mechanical_pass = wf["status"] == "ZERO_TARGET_ASSETS" and sb["status"] == "ZERO_TARGET_COMPETITIONS"
     if not mechanical_pass:
-        # A newly appearing asset/competition is not automatically accepted; it needs a fresh
-        # pre-label license/coverage audit rather than silently changing this frozen experiment.
         status = "STOP_SOURCE_IDENTITY_DRIFT_REAUDIT_REQUIRED"
     else:
         status = "STOP_DATA_COVERAGE"
@@ -235,28 +279,34 @@ def main() -> int:
         "fusion_weights": {"xg": 0.75, "v1": 0.25},
         "contract_sha256": sha256_file(CONTRACT),
         "source_registry_sha256": sha256_file(REGISTRY),
+        "source_refresh_sha256": sha256_file(REFRESH),
         "production_contract_assertions": production_assertions,
+        "zero_label_source_refresh_assertions": refresh_assertions,
         "mechanical_source_audits": [wf, sb],
         "human_reviewed_rejected_or_partial_sources": [
             {"source_id": x["source_id"], "decision": x["decision"], "reason": x["reason"]}
             for x in registry["sources"]
             if not x.get("mechanical_audit", False)
         ],
+        "human_reviewed_source_refresh": refresh["findings"],
+        "human_reviewed_source_refresh_observed_at": refresh["observed_at"],
         "leagues": leagues,
         "labels_materialized": False,
         "oos_run": False,
         "adapter_implemented": False,
         "formal_or_production_changes": False,
         "independent_acceptance_eligible": False,
-        "stop_reason": "No qualified no-key/no-login, provenance-and-license-acceptable multi-season match-level xG source was found for J1/K1. Per frozen contract, labels and OOS evaluation remain unopened."
+        "stop_reason": "No qualified no-key/no-login, provenance-and-license-acceptable multi-season match-level xG source was found for J1/K1. Fresh zero-label evidence confirms genuine official xG exists, but it still fails the frozen license/provenance/multi-season machine-archive gate; labels and OOS evaluation remain unopened."
     }
     receipt["receipt_sha256"] = sha256_bytes(canon(receipt))
     (out / "jpkr_xg_source_audit_v1.json").write_bytes(canon(receipt))
     (out / "frozen_research_contract_v1.json").write_bytes(CONTRACT.read_bytes())
     (out / "source_registry_v1.json").write_bytes(REGISTRY.read_bytes())
+    (out / REFRESH.name).write_bytes(REFRESH.read_bytes())
     print(json.dumps({
         "status": receipt["status"],
         "receipt_sha256": receipt["receipt_sha256"],
+        "source_refresh_sha256": receipt["source_refresh_sha256"],
         "JPN_J1": receipt["leagues"]["JPN_J1"]["status"],
         "KOR_KLeague1": receipt["leagues"]["KOR_KLeague1"]["status"],
         "labels_materialized": False,
