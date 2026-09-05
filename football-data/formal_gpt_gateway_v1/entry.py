@@ -5,6 +5,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Install the explicit authoritative result-semantic adjudication before any
+# gateway/source wrappers capture runtime functions. V2 is the governed successor
+# to formal_result_adjudication_v1: it preserves that contract while adding the
+# bounded identity bridge and delayed-settlement V1 release-order handling.
+import formal_result_adjudication_v2
+FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
+
 import formal_source_contract_v1
 
 COMPAT = formal_source_contract_v1.install()
@@ -25,6 +32,12 @@ LIVE_XG_QUARANTINE_FAST_REUSE = live_xg_quarantine_fast_reuse_v2.install()
 import live_fast_reuse_audit_v1
 LIVE_FAST_AUDIT = live_fast_reuse_audit_v1.install()
 import gateway
+
+# An exact-cutoff verified empty delta is a real no-op. Install this before any
+# gateway wrappers capture the runtime path so repeat sealed requests remain byte-stable.
+import formal_runtime_exact_noop_v1
+FORMAL_RUNTIME_EXACT_NOOP = formal_runtime_exact_noop_v1.install()
+
 import live_source_failure_probe_v1
 LIVE_SOURCE_FAILURE_PROBE = live_source_failure_probe_v1.install(gateway)
 import live_gateway_patch_v1
@@ -65,6 +78,12 @@ FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_
 import formal_state_integrity_coverage_patch_v1
 FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
 
+# Durable state governance is outermost: a verified cutoff-aware state selection
+# must be bound before prediction, and transition/cache/fallback semantics are
+# checked after the unchanged formal model call.
+import formal_durable_state_governance_v1
+FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gateway)
+
 
 def _direct_complete_fixture(history):
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
@@ -93,6 +112,7 @@ def main() -> int:
         audit = formal_source_contract_v1.audit_snapshot()
         fast_audit = live_fast_reuse_audit_v1.snapshot()
         adapters = {
+            "formal_result_adjudication_adapter.json": FORMAL_RESULT_ADJUDICATION,
             "source_contract_adapter.json": COMPAT,
             "source_contract_resolution.json": SOURCE_RESOLUTION,
             "live_delta_adapter.json": LIVE_DELTA,
@@ -103,6 +123,7 @@ def main() -> int:
             "live_xg_quarantine_fast_reuse_adapter.json": LIVE_XG_QUARANTINE_FAST_REUSE,
             "live_fast_reuse_adapter.json": LIVE_FAST_AUDIT,
             "live_fast_reuse_audit.json": fast_audit,
+            "formal_runtime_exact_noop_adapter.json": FORMAL_RUNTIME_EXACT_NOOP,
             "live_source_failure_probe_adapter.json": LIVE_SOURCE_FAILURE_PROBE,
             "live_gateway_adapter.json": LIVE_GATEWAY,
             "formal_future_fixture_identity_bridge_adapter.json": FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE,
@@ -113,6 +134,7 @@ def main() -> int:
             "formal_cache_reuse_binding_adapter.json": FORMAL_CACHE_REUSE_BINDING,
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
+            "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -120,6 +142,7 @@ def main() -> int:
         p = out / "summary.json"
         if p.exists():
             d = json.loads(p.read_text(encoding="utf-8"))
+            d["formal_result_adjudication_adapter"] = FORMAL_RESULT_ADJUDICATION
             d["source_contract_adapter"] = COMPAT
             d["source_contract_audit"] = audit
             d["source_contract_resolution"] = SOURCE_RESOLUTION
@@ -131,6 +154,7 @@ def main() -> int:
             d["live_xg_quarantine_fast_reuse_adapter"] = LIVE_XG_QUARANTINE_FAST_REUSE
             d["live_fast_reuse_adapter"] = LIVE_FAST_AUDIT
             d["live_fast_reuse_audit"] = fast_audit
+            d["formal_runtime_exact_noop_adapter"] = FORMAL_RUNTIME_EXACT_NOOP
             d["live_source_failure_probe_adapter"] = LIVE_SOURCE_FAILURE_PROBE
             d["live_gateway_adapter"] = LIVE_GATEWAY
             d["formal_future_fixture_identity_bridge_adapter"] = FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE
@@ -141,6 +165,7 @@ def main() -> int:
             d["formal_cache_reuse_binding_adapter"] = FORMAL_CACHE_REUSE_BINDING
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
+            d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "

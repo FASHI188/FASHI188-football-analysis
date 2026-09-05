@@ -1,0 +1,126 @@
+name: Football3 Production 300 Equivalence Required V1
+
+on:
+  push:
+    branches:
+      - football3/durable-state-cutoff-selector-governed-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-production-300-equivalence-required-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  production-300-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prove authority and protected scientific surfaces unchanged
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 5d44be4da1acd85c448bb043470e727f4de034b2 HEAD
+          git diff --name-only 5d44be4da1acd85c448bb043470e727f4de034b2...HEAD | tee production300_changed_files.txt
+          if grep -E '(^|/)(formal_fusion_v2\.py|pure_engine\.py|historical_xg_challenger\.py|CURRENT|formal_pointer\.json|model_lock\.json)$' production300_changed_files.txt; then
+            echo 'protected formal model/CURRENT surface changed' >&2
+            exit 1
+          fi
+          printf 'draft=true\nready=false\nmerge=false\nproduction_activation=false\nairtable_write=false\n' > production300_authority.txt
+
+      - name: Download frozen production sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          sha256sum .runtime_sources/understat/understat_frozen.db \
+                    .runtime_sources/confirmation/confirmation_identity.jsonl \
+                    .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl \
+            | tee production300_source_sha256.txt
+
+      - name: Compile production 300 adjudicated acceptance
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 -m py_compile \
+              football-data/formal_gpt_gateway_v1/formal_result_adjudication_v1.py \
+              football-data/formal_gpt_gateway_v1/formal_result_adjudication_v2.py \
+              football-data/formal_gpt_gateway_v1/formal_frozen_xg_identity_adjudication_v1.py \
+              football-data/formal_gpt_gateway_v1/test_production_300_adjudicated_v1.py
+
+      - name: Run required production 300 equivalence
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/test_production_300_adjudicated_v1.py \
+              --mode production \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --n 300 \
+              --out "$PWD/production_300_equivalence_receipt.json" \
+            | tee production_300_equivalence_stdout.txt
+          test -s production_300_equivalence_receipt.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('production_300_equivalence_receipt.json'))
+          assert d['passed'] is True
+          assert d['mode']=='production'
+          eq=d['equivalence_300']
+          assert eq['n']==300 and eq['passed'] is True
+          assert eq['max_abs_1x2'] <= 1e-12
+          assert eq['max_abs_score_matrix_cell'] <= 1e-12
+          assert eq['cache_state_exact'] is True
+          assert d['automatic_routing']['passed'] is True
+          a=d['adjudication_acceptance']
+          assert a['pit_regression']['passed'] is True
+          assert a['pit_regression']['on_field_xg_result']==[1,1]
+          assert a['pit_regression']['formal_settlement_result']==[0,2]
+          assert a['pit_regression']['sample_deleted'] is False
+          assert a['pit_regression']['source_score_rewritten'] is False
+          assert a['pit_regression']['conflict_gate_relaxed_without_authority'] is False
+          assert a['independent_reference_stream'] is True
+          assert a['runtime_history_delta_events_reused_by_reference'] is False
+          assert a['adapter']['identity_policy'].startswith('exact-normalized')
+          print('PRODUCTION_300_REQUIRED_PASS', d['receipt_sha256'])
+          PY
+          sha256sum production_300_equivalence_receipt.json | tee production300_receipt_file_sha256.txt
+
+      - name: Upload required production 300 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-production-300-equivalence-required-${{ github.run_id }}
+          path: |
+            production300_authority.txt
+            production300_changed_files.txt
+            production300_source_sha256.txt
+            production_300_equivalence_stdout.txt
+            production_300_equivalence_receipt.json
+            production300_receipt_file_sha256.txt
+          if-no-files-found: error
+          retention-days: 90
