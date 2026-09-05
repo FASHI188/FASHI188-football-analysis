@@ -1,0 +1,109 @@
+name: football3 R43AF1 K1 Residual Volatility Screen
+
+on:
+  push:
+    branches: ['football3/r43af1-k1-residual-volatility-screen']
+    paths:
+      - '.github/workflows/football3-r43af1-k1-residual-volatility-screen.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PREREG_HEAD: 90627c4b0a7cc2f49c7ce318097e26ce7d2c7437
+
+jobs:
+  frozen-screen-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/r43af1-k1-residual-volatility-screen'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PREREG_HEAD" HEAD)" = "$PREREG_HEAD"
+          changed="$(git diff --name-only "$PREREG_HEAD...HEAD")"
+          test "$changed" = '.github/workflows/football3-r43af1-k1-residual-volatility-screen.yml'
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b|historical_fusion_v3_1_1|historical_xg_fusion_v2_formal'; then
+            echo 'forbidden frozen-path mutation' >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install frozen-run dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check numpy pandas pyarrow scikit-learn
+
+      - name: Compile and run preregistered screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/experiments/r43af1_k1_residual_volatility_screen
+          python -m py_compile "$D/run_r43af1.py"
+          python "$D/run_r43af1.py" run 2>&1 | tee /tmp/r43af1_stdout.txt
+          python "$D/run_r43af1.py" verify 2>&1 | tee -a /tmp/r43af1_stdout.txt
+          python - <<'PY'
+          import json
+          p='football-data/experiments/r43af1_k1_residual_volatility_screen/results/summary_r43af1.json'
+          x=json.load(open(p,encoding='utf-8'))
+          assert x['status']=='COMPLETE'
+          assert x['formal_weight']==0
+          assert x['governance']['same_r9_consumed_20k_history'] is True
+          assert x['governance']['current_match_result_or_xg_used_in_features'] is False
+          assert x['governance']['same_date_updates_withheld'] is True
+          assert x['governance']['feature_set_predeclared'] is True
+          assert x['governance']['window_search'] is False
+          assert x['governance']['hyperparameter_search'] is False
+          assert x['governance']['promotion_allowed_from_this_run'] is False
+          print(json.dumps({'validation_gate':x['validation']['strong_validation_gate'],'action':x['action'],'historical_test_opened':x['historical_test'] is not None},sort_keys=True))
+          PY
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{code,evidence}
+          D=football-data/experiments/r43af1_k1_residual_volatility_screen
+          cp "$D/run_r43af1.py" _seal/code/
+          cp "$D/results/summary_r43af1.json" _seal/evidence/
+          cp /tmp/r43af1_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          result=json.load(open(root/'evidence/summary_r43af1.json',encoding='utf-8'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          manifest={
+            'schema_version':'football3-r43af1-k1-residual-volatility-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'preregistered_head':os.environ['PREREG_HEAD'],
+            'formal_weight':0,
+            'validation_gate':result['validation']['strong_validation_gate'],
+            'historical_test_opened':result['historical_test'] is not None,
+            'action':result['action'],
+            'promotion_allowed':False,
+            'files':files,
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+          PY
+
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-r43af1-k1-residual-volatility-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
