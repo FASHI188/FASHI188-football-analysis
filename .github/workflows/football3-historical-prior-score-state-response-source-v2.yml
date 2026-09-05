@@ -1,0 +1,132 @@
+name: football3 Historical Prior Score-State Response Source V2
+
+on:
+  push:
+    branches: ['football3/historical-prior-score-state-response-source-v2']
+    paths:
+      - '.github/workflows/football3-historical-prior-score-state-response-source-v2.yml'
+      - 'football-data/research/historical_prior_score_state_response_source_v2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: fffcb7900dadc0d0d52c5849c831f4ecc5ff01e0
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-score-state-response-source-v2'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-prior-score-state-response-source-v2.yml|football-data/research/historical_prior_score_state_response_source_v2/*) ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_score_state_response_source_v2
+          python -m py_compile "$D/audit_prior_score_state_response_source_v2.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_prior_score_state_response_source_v2/PRIOR_SCORE_STATE_RESPONSE_SOURCE_V2_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_MODEL_CORRECTED_SOURCE_AUDIT'
+          assert c['lineage']['own_goal_semantics_head']=='fffcb7900dadc0d0d52c5849c831f4ecc5ff01e0'
+          assert c['mechanics']['score_change_rule']['OwnGoal']=='credit opposite event h_a'
+          assert c['mechanics']['team_profiles_are_side_specific'] is True
+          assert c['gates']['minimum_exact_final_score_reconstruction_rate']==0.95
+          assert c['gates']['minimum_target_profile_coverage']==0.90
+          assert c['boundaries']['original_source_gate_thresholds_unchanged_from_goal_only_audit'] is True
+          assert c['boundaries']['model_fit']==0 and c['boundaries']['candidate_probability']==0
+          assert c['boundaries']['candidate_requires_separate_frozen_contract'] is True
+          assert c['data_roles']['historical_confirmation_2023'].startswith('LOCKED')
+          assert c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          PY
+
+      - name: Download and verify frozen Understat source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          unzip -tq /tmp/old.zip
+          rm -rf _input && mkdir _input && unzip -q /tmp/old.zip -d _input
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Run corrected zero-model source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_score_state_response_source_v2
+          rm -rf _run && mkdir _run
+          python "$D/audit_prior_score_state_response_source_v2.py" --contract "$D/PRIOR_SCORE_STATE_RESPONSE_SOURCE_V2_CONTRACT.json" --db _input/understat_frozen.db --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/prior_score_state_response_corrected_source_v2.json'))
+          assert x['model_fit']==0 and x['candidate_probability']==0
+          assert x['historical_confirmation_2023_labels_opened'] is False and x['prospective_1335_data_touched'] is False
+          assert x['history_game_n']==16332 and x['target_n']==5478 and x['own_goal_event_n']==1343
+          assert x['status'] in ('PRIOR_SCORE_STATE_RESPONSE_CORRECTED_SOURCE_PASS','PRIOR_SCORE_STATE_RESPONSE_CORRECTED_SOURCE_FAIL_CLOSE_LANE')
+          PY
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_prior_score_state_response_source_v2
+          cp "$D/PRIOR_SCORE_STATE_RESPONSE_SOURCE_V2_CONTRACT.json" _seal/contract/
+          cp "$D/audit_prior_score_state_response_source_v2.py" _seal/code/
+          cp _run/prior_score_state_response_corrected_source_v2.json /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); x=json.load(open('_run/prior_score_state_response_corrected_source_v2.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={'schema_version':'football3-prior-score-state-response-source-v2-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],'status':x['status'],'gates':x['gates'],'exact_final_score_reconstruction_rate':x['exact_final_score_reconstruction_rate'],'target_profile_coverage':x['target_profile_coverage'],'model_fit':0,'candidate_probability':0,'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-prior-score-state-response-source-v2-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
