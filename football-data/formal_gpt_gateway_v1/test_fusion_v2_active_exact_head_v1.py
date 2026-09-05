@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import tempfile
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import formal_result_adjudication_v1 as adjudication
+import formal_result_adjudication_v2 as adjudication
 
 ADJUDICATION = adjudication.install()
 import formal_runtime_exact_noop_v1 as exact_noop
