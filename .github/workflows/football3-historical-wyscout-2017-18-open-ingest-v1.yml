@@ -1,0 +1,228 @@
+name: football3 Historical Wyscout 2017-18 Open Ingest V1
+
+on:
+  push:
+    branches: ['football3/historical-wyscout-2017-18-open-ingest-v1']
+    paths:
+      - '.github/workflows/football3-historical-wyscout-2017-18-open-ingest-v1.yml'
+      - 'football-data/research/historical_wyscout_2017_18_open_ingest_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: 43d18389bf94eab411468e5a7676d09ccad4bb70
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  WYS_REPO: koenvo/wyscout-soccer-match-event-dataset
+  WYS_COMMIT: ebc4c54c1093c420a81ce442c69e4186fab33bb4
+
+jobs:
+  ingest-audit-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-wyscout-2017-18-open-ingest-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-wyscout-2017-18-open-ingest-v1.yml|football-data/research/historical_wyscout_2017_18_open_ingest_v1/*) ;;
+              '') ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify ingest contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          p='football-data/research/historical_wyscout_2017_18_open_ingest_v1/SOURCE_CONTRACT.json'
+          x=json.load(open(p))
+          assert x['status']=='PRE_REGISTERED_SOURCE_INGEST'
+          assert x['parent_head']=='43d18389bf94eab411468e5a7676d09ccad4bb70'
+          assert x['source']['processed_mirror_commit']=='ebc4c54c1093c420a81ce442c69e4186fab33bb4'
+          assert x['scope']['expected_fixture_n']==1826
+          assert x['research_policy']['first_stage']=='ZERO_LABEL_SOURCE_AND_MECHANISM_FEASIBILITY_ONLY'
+          assert x['research_policy']['candidate_not_preselected'] is True
+          assert x['frozen_boundaries']['historical_confirmation_2023']=='LOCKED_NOT_READ'
+          assert x['frozen_boundaries']['prospective_1335']=='FORBIDDEN_NOT_TOUCHED'
+          PY
+
+      - name: Download pinned public Wyscout processed archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://codeload.github.com/${WYS_REPO}/tar.gz/${WYS_COMMIT}"
+          curl -fL --retry 4 --retry-delay 2 "$url" -o /tmp/wyscout-open.tar.gz
+          sha256sum /tmp/wyscout-open.tar.gz | tee /tmp/WYS_ARCHIVE_SHA256.txt
+          mkdir -p /tmp/wys
+          tar -xzf /tmp/wyscout-open.tar.gz -C /tmp/wys
+          root="$(find /tmp/wys -mindepth 1 -maxdepth 1 -type d | head -1)"
+          test -f "$root/processed-v2/README.md"
+          echo "$root" > /tmp/WYS_ROOT
+
+      - name: Full 1826-match zero-label source audit and feature probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,re,hashlib,statistics,os
+          from pathlib import Path
+          root=Path(open('/tmp/WYS_ROOT').read().strip())
+          readme=(root/'processed-v2/README.md').read_text(encoding='utf-8')
+          expected={
+            'matches_England.json':380,
+            'matches_Spain.json':380,
+            'matches_Italy.json':380,
+            'matches_Germany.json':306,
+            'matches_France.json':380,
+          }
+          rows=[]
+          pat=re.compile(r'^\|\[(\d+)\]\(files/(\d+)\.json\)\|.*?\|.*?\|(matches_[A-Za-z_]+\.json)\|$',re.M)
+          for a,b,src in pat.findall(readme):
+            assert a==b
+            if src in expected: rows.append((int(a),src))
+          counts={k:sum(1 for _,s in rows if s==k) for k in expected}
+          assert counts==expected,(counts,expected)
+          assert len(rows)==1826,len(rows)
+
+          inv=[]; probes=[]
+          total_events=xy2_events=pass_events=pass_xy2=0
+          bilateral_two_team=0; pass_xy_bilateral=0; duel_bilateral=0
+          for i,(mid,src) in enumerate(rows,1):
+            p=root/f'processed-v2/files/{mid}.json'
+            assert p.is_file(),p
+            d=json.load(open(p,encoding='utf-8'))
+            ev=d.get('events')
+            assert isinstance(ev,list) and ev
+            teams=sorted({int(e.get('teamId',0) or 0) for e in ev if int(e.get('teamId',0) or 0)>0})
+            if len(teams)==2: bilateral_two_team+=1
+            else: raise AssertionError((mid,teams))
+            by={t:{'events':0,'passes':0,'pass_xy':0,'accurate_pass':0,'progressive_probe':0,'final_third_entry_probe':0,'duels':0,'duel_xy':0} for t in teams}
+            for e in ev:
+              total_events+=1
+              for k in ('matchId','eventName','teamId','matchPeriod','eventSec'):
+                assert k in e,(mid,k)
+              pos=e.get('positions') or []
+              good2=(len(pos)>=2 and all(isinstance(q,dict) and isinstance(q.get('x'),(int,float)) and isinstance(q.get('y'),(int,float)) for q in pos[:2]))
+              if good2: xy2_events+=1
+              t=int(e.get('teamId',0) or 0)
+              if t not in by: continue
+              z=by[t]; z['events']+=1
+              name=e.get('eventName')
+              if name=='Pass':
+                pass_events+=1; z['passes']+=1
+                tags={int(a.get('id')) for a in (e.get('tags') or []) if isinstance(a,dict) and a.get('id') is not None}
+                if 1801 in tags: z['accurate_pass']+=1
+                if good2:
+                  pass_xy2+=1; z['pass_xy']+=1
+                  x0=float(pos[0]['x']); x1=float(pos[1]['x'])
+                  if 1801 in tags and (x1-x0)>=15: z['progressive_probe']+=1
+                  if 1801 in tags and x0<66<=x1: z['final_third_entry_probe']+=1
+              if name=='Duel':
+                z['duels']+=1
+                if good2: z['duel_xy']+=1
+            pass_ok=all(z['passes']>=20 and z['pass_xy']/z['passes']>=0.98 for z in by.values())
+            duel_ok=all(z['duels']>=1 and z['duel_xy']/z['duels']>=0.98 for z in by.values())
+            if pass_ok: pass_xy_bilateral+=1
+            if duel_ok: duel_bilateral+=1
+            inv.append({'match_id':mid,'source_file':src,'team_ids':teams,'event_n':len(ev),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+            for t,z in by.items():
+              z.update({'match_id':mid,'source_file':src,'team_id':t})
+              probes.append(z)
+          assert bilateral_two_team==1826
+          out=Path('_seal'); out.mkdir(exist_ok=True)
+          (out/'MATCH_INVENTORY.jsonl').write_text(''.join(json.dumps(x,sort_keys=True)+'\n' for x in inv))
+          (out/'TEAM_MATCH_FEATURE_PROBE.jsonl').write_text(''.join(json.dumps(x,sort_keys=True)+'\n' for x in probes))
+          audit={
+            'schema_version':'football3-wyscout-open-source-audit-v1',
+            'status':'WYSOUT_OPEN_2017_18_BIG5_SOURCE_AUDIT_COMPLETE',
+            'fixture_n':len(rows),
+            'expected_by_source_file':expected,
+            'observed_by_source_file':counts,
+            'two_team_fixture_n':bilateral_two_team,
+            'event_n':total_events,
+            'event_two_position_xy_n':xy2_events,
+            'event_two_position_xy_rate':xy2_events/total_events,
+            'pass_n':pass_events,
+            'pass_two_position_xy_n':pass_xy2,
+            'pass_two_position_xy_rate':pass_xy2/pass_events,
+            'bilateral_pass_xy_eligible_fixture_n':pass_xy_bilateral,
+            'bilateral_pass_xy_eligible_rate':pass_xy_bilateral/len(rows),
+            'bilateral_duel_xy_eligible_fixture_n':duel_bilateral,
+            'bilateral_duel_xy_eligible_rate':duel_bilateral/len(rows),
+            'probe_semantics':{
+              'progressive_probe':'accurate pass and end_x-start_x >= 15; feasibility probe only, not frozen candidate',
+              'final_third_entry_probe':'accurate pass with start_x < 66 <= end_x; feasibility probe only, not frozen candidate'
+            },
+            'labels_used_for_model_fit':False,
+            'candidate_fit_performed':False,
+            'historical_confirmation_2023_opened':False,
+            'prospective_1335_touched':False
+          }
+          (out/'SOURCE_AUDIT.json').write_text(json.dumps(audit,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Seal evidence manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp football-data/research/historical_wyscout_2017_18_open_ingest_v1/SOURCE_CONTRACT.json _seal/
+          cp /tmp/WYS_ARCHIVE_SHA256.txt _seal/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          audit=json.load(open(root/'SOURCE_AUDIT.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={
+            'schema_version':'football3-historical-wyscout-open-ingest-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'parent_head':os.environ['PARENT_HEAD'],
+            'source_repo':os.environ['WYS_REPO'],
+            'source_commit':os.environ['WYS_COMMIT'],
+            'status':audit['status'],
+            'fixture_n':audit['fixture_n'],
+            'bilateral_pass_xy_eligible_rate':audit['bilateral_pass_xy_eligible_rate'],
+            'bilateral_duel_xy_eligible_rate':audit['bilateral_duel_xy_eligible_rate'],
+            'candidate_fit_performed':False,
+            'historical_confirmation_2023_opened':False,
+            'prospective_1335_touched':False,
+            'formal_model_changed':False,
+            'CURRENT_changed':False,
+            'files':files
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed Wyscout open ingest audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-wyscout-open-ingest-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
