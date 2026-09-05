@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import formal_result_adjudication_v1 as adjudication
+import formal_result_adjudication_v2 as adjudication
 
 ADJUDICATION = adjudication.install()
 
