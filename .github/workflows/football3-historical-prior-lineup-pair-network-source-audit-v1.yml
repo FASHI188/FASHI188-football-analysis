@@ -1,0 +1,148 @@
+name: football3 Historical Prior Lineup Pair Network Source Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-prior-lineup-pair-network-source-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-prior-lineup-pair-network-source-audit-v1.yml'
+      - 'football-data/research/historical_prior_lineup_pair_network_source_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: fa9580f943c64fd8f39d202a7f98b7597133036c
+  CONTRACT_HEAD: f839873ac834dc5fd568b41f3834a598be00222a
+  XI_REFERENCE_HEAD: d4e7cbb6df5cfaae564877db31416689936a5772
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  SOURCE_ARTIFACT_ID: '9798682425'
+  SOURCE_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  SOURCE_DB_SHA256: f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-lineup-pair-network-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git merge-base "$CONTRACT_HEAD" HEAD)" = "$CONTRACT_HEAD"
+          test "$(git cat-file -t "$XI_REFERENCE_HEAD")" = commit
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-prior-lineup-pair-network-source-audit-v1.yml|football-data/research/historical_prior_lineup_pair_network_source_audit_v1/*) ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Frozen zero-model contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_lineup_pair_network_source_audit_v1
+          python -m py_compile "$D/audit_pair_network_source.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_prior_lineup_pair_network_source_audit_v1/PAIR_NETWORK_SOURCE_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_MODEL_SOURCE_AUDIT'
+          assert c['parent']['head']=='fa9580f943c64fd8f39d202a7f98b7597133036c'
+          assert c['source']['historical_pit_xi_reference_head']=='d4e7cbb6df5cfaae564877db31416689936a5772'
+          assert c['source']['database_sha256']=='f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          assert c['feature']['key']=='pair_mean_prior_starter_pair_hhi'
+          assert c['feature']['lookback_valid_completed_lineups']==8
+          assert c['feature']['minimum_valid_completed_lineups']==8
+          assert c['feature']['current_match_lineup_forbidden'] is True
+          assert c['cohort']['same_calendar_date_batch_isolation'] is True
+          assert c['redundancy_audit']['selection_or_search_allowed'] is False
+          assert c['gates']['minimum_match_feature_coverage']==0.98
+          assert c['gates']['maximum_absolute_redundancy_correlation']==0.95
+          assert c['boundaries']['model_fit']==0
+          assert c['boundaries']['candidate_probability']==0
+          assert c['boundaries']['outcome_label_access']==0
+          assert c['data_roles']['historical_confirmation_2023'].startswith('LOCKED')
+          assert c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          PY
+
+      - name: Download and verify frozen Understat source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$SOURCE_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" -o /tmp/source.zip
+          test "sha256:$(sha256sum /tmp/source.zip | awk '{print $1}')" = "$SOURCE_ARTIFACT_DIGEST"
+          unzip -tq /tmp/source.zip
+          rm -rf _input && mkdir _input && unzip -q /tmp/source.zip -d _input
+          test "$(sha256sum _input/understat_frozen.db | awk '{print $1}')" = "$SOURCE_DB_SHA256"
+
+      - name: Run frozen zero-label source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_lineup_pair_network_source_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_pair_network_source.py" --contract "$D/PAIR_NETWORK_SOURCE_AUDIT_CONTRACT.json" --db _input/understat_frozen.db --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/pair_network_source_audit.json'))
+          assert x['status'] in ('PAIR_NETWORK_SOURCE_AUDIT_PASS_FREEZE_ONE_SCALAR_CANDIDATE_ONLY','PAIR_NETWORK_SOURCE_AUDIT_FAIL_CLOSE_AS_DUPLICATE_OR_INSUFFICIENT_SOURCE')
+          assert x['model_fit']==0 and x['candidate_probability']==0 and x['outcome_label_access']==0
+          assert x['target_n']==5478
+          assert x['target_counts']=={'2020':1826,'2021':1826,'2022':1826}
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          PY
+
+      - name: Seal source-audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_prior_lineup_pair_network_source_audit_v1
+          cp "$D/PAIR_NETWORK_SOURCE_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_pair_network_source.py" _seal/code/
+          cp _run/pair_network_source_audit.json _run/pair_network_prematch_receipts.jsonl /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          x=json.load(open('_run/pair_network_source_audit.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={'schema_version':'football3-prior-lineup-pair-network-source-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'parent_head':os.environ['PARENT_HEAD'],'status':x['status'],'checks':x['checks'],'match_feature_coverage':x['match_feature_coverage'],'valid_target_side_fraction':x['valid_target_side_fraction'],'redundancy_correlations':x['redundancy_correlations'],'model_fit':0,'candidate_probability':0,'outcome_label_access':0,'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed source-audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-prior-lineup-pair-network-source-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
