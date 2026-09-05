@@ -1,0 +1,145 @@
+name: football3 Historical Prior Shot Lateral Width Candidate V1
+on:
+  push:
+    branches: ['football3/historical-prior-shot-lateral-width-candidate-v1']
+    paths:
+      - '.github/workflows/football3-historical-prior-shot-lateral-width-candidate-v1.yml'
+      - 'football-data/research/historical_prior_shot_lateral_width_candidate_v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+env:
+  ANCHOR_HEAD: b70d9039df0556fb642fb5588478014bace55b34
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+  SOURCE_ARTIFACT_ID: '9967572485'
+  SOURCE_ARTIFACT_DIGEST: sha256:3b3cca5991c17e8543994ed73006f7226cfd6823e8b8148d065df7f7f2be8f82
+jobs:
+  candidate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, persist-credentials: false}
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-shot-lateral-width-candidate-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then echo forbidden >&2; exit 1; fi
+          while IFS= read -r p; do case "$p" in .github/workflows/football3-historical-prior-shot-lateral-width-candidate-v1.yml|football-data/research/historical_prior_shot_lateral_width_candidate_v1/*|'') ;; *) echo "unexpected $p" >&2; exit 1;; esac; done <<< "$changed"
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Frozen contract and runner guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_shot_lateral_width_candidate_v1
+          python -m py_compile "$D/run_shot_lateral_width_candidate.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_prior_shot_lateral_width_candidate_v1/SHOT_LATERAL_WIDTH_CANDIDATE_CONTRACT.json'))
+          assert c['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
+          assert c['parent']['head']=='b70d9039df0556fb642fb5588478014bace55b34'
+          assert c['parent']['run_id']==33959832347 and c['parent']['artifact_id']==9967572485
+          assert c['parent']['artifact_digest']=='sha256:3b3cca5991c17e8543994ed73006f7226cfd6823e8b8148d065df7f7f2be8f82'
+          assert c['parent']['source_gate']=='SHOT_LATERAL_WIDTH_SOURCE_AUDIT_PASS_FREEZE_ONE_SCALAR_CANDIDATE_ONLY'
+          assert c['feature']['key']=='shot_lateral_width_fit_abs' and c['method']['fixed_ridge']==0.01
+          assert c['method']['no_candidate_family_search'] is True and c['method']['no_hyperparameter_grid'] is True and c['method']['no_threshold_search'] is True and c['method']['no_posthoc_calibration'] is True and c['method']['no_probability_clipping'] is True and c['method']['no_retune_after_result'] is True
+          assert c['gates']['minimum_feature_coverage']==0.98 and c['gates']['max_outcome_probability_abs_delta']==0.08
+          assert c['data_roles']['historical_confirmation_2023'].startswith('LOCKED') and c['data_roles']['prospective_1335'].startswith('FORBIDDEN')
+          PY
+      - name: Download and verify seven frozen inputs
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{v2,xg,v1,old,usr1,v31,source}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            test "$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip"|awk '{print $1}')" = "$expected"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          verify_one "$SOURCE_ARTIFACT_ID" "$SOURCE_ARTIFACT_DIGEST" /tmp/source.zip _inputs/source
+          test "$(sha256sum _inputs/old/understat_frozen.db|awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          test -f _inputs/source/evidence/shot_lateral_width_prematch_receipts.jsonl
+          python - <<'PY'
+          import json
+          x=json.load(open('_inputs/source/evidence/shot_lateral_width_source_audit.json'))
+          assert x['status']=='SHOT_LATERAL_WIDTH_SOURCE_AUDIT_PASS_FREEZE_ONE_SCALAR_CANDIDATE_ONLY'
+          assert x['target_n']==5478 and x['match_feature_covered_n']==5433
+          assert x['y_nonblank_fraction']==1.0 and x['maximum_absolute_redundancy_correlation']==0.19946192597707962
+          assert x['model_fit']==0 and x['outcome_label_access']==0 and x['historical_confirmation_2023_labels_opened'] is False and x['prospective_1335_data_touched'] is False
+          PY
+      - name: Run frozen shot lateral-width candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_shot_lateral_width_candidate_v1
+          rm -rf _run && mkdir _run
+          python "$D/run_shot_lateral_width_candidate.py" \
+            --contract "$D/SHOT_LATERAL_WIDTH_CANDIDATE_CONTRACT.json" \
+            --source-receipts _inputs/source/evidence/shot_lateral_width_prematch_receipts.jsonl \
+            --v311 football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31 _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1 _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2 _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg _inputs/xg/code/historical_xg_challenger.py \
+            --v1 _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json,pathlib
+          x=json.load(open('_run/shot_lateral_width_candidate_result.json'))
+          assert x['status'] in ('SHOT_LATERAL_WIDTH_CANDIDATE_DEVELOPMENT_PASS_FREEZE_PARAMS_ONLY','SHOT_LATERAL_WIDTH_CANDIDATE_DEVELOPMENT_FAIL_CLOSE_NO_RETUNE')
+          assert x['development_n']==5478 and x['rolling_oos_n']==3652 and x['source_max_season_loaded']==2022
+          assert x['coverage']==5433/5478 and x['stage6_b_active_n']==5463
+          assert x['historical_confirmation_2023_labels_opened'] is False and x['prospective_1335_data_touched'] is False
+          assert pathlib.Path('_run/FROZEN_SHOT_LATERAL_WIDTH_PARAMS.json').exists() is x['scientific_pass']
+          PY
+      - name: Seal candidate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_prior_shot_lateral_width_candidate_v1
+          cp "$D/SHOT_LATERAL_WIDTH_CANDIDATE_CONTRACT.json" _seal/contract/; cp "$D/run_shot_lateral_width_candidate.py" _seal/code/; cp _run/shot_lateral_width_candidate_result.json /tmp/stdout.txt _seal/evidence/
+          if test -f _run/FROZEN_SHOT_LATERAL_WIDTH_PARAMS.json; then cp _run/FROZEN_SHOT_LATERAL_WIDTH_PARAMS.json _seal/evidence/; fi
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); x=json.load(open('_run/shot_lateral_width_candidate_result.json')); files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+          (root/'MANIFEST.json').write_text(json.dumps({'schema_version':'football3-shot-lateral-width-candidate-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'source_artifact_id':int(os.environ['SOURCE_ARTIFACT_ID']),'source_artifact_digest':os.environ['SOURCE_ARTIFACT_DIGEST'],'status':x['status'],'scientific_pass':x['scientific_pass'],'checks':x['checks'],'pooled_deltas':x['pooled']['deltas'],'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files},sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: 'football3-shot-lateral-width-candidate-${{ github.sha }}', path: _seal, retention-days: 90, if-no-files-found: error}
