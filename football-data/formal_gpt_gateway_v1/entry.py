@@ -5,6 +5,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Install the explicit authoritative result-semantic adjudication before any
+# gateway/source wrappers capture runtime functions. This does not rewrite a
+# source score: V1 receives the official settlement result at its conservative
+# authority time while XG retains the played-match result tied to the frozen xG.
+import formal_result_adjudication_v1
+FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v1.install()
+
 import formal_source_contract_v1
 
 COMPAT = formal_source_contract_v1.install()
@@ -105,6 +112,7 @@ def main() -> int:
         audit = formal_source_contract_v1.audit_snapshot()
         fast_audit = live_fast_reuse_audit_v1.snapshot()
         adapters = {
+            "formal_result_adjudication_adapter.json": FORMAL_RESULT_ADJUDICATION,
             "source_contract_adapter.json": COMPAT,
             "source_contract_resolution.json": SOURCE_RESOLUTION,
             "live_delta_adapter.json": LIVE_DELTA,
@@ -134,6 +142,7 @@ def main() -> int:
         p = out / "summary.json"
         if p.exists():
             d = json.loads(p.read_text(encoding="utf-8"))
+            d["formal_result_adjudication_adapter"] = FORMAL_RESULT_ADJUDICATION
             d["source_contract_adapter"] = COMPAT
             d["source_contract_audit"] = audit
             d["source_contract_resolution"] = SOURCE_RESOLUTION
