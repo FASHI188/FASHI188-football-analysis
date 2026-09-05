@@ -1,0 +1,126 @@
+name: Football3 FUSION V2 Active Exact Head Acceptance V1
+
+on:
+  push:
+    branches:
+      - football3/durable-state-cutoff-selector-governed-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-fusion-v2-active-exact-head-acceptance-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fusion-v2-active-exact-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prove authority and exact branch ancestry
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 5d44be4da1acd85c448bb043470e727f4de034b2 HEAD
+          test "$GITHUB_REF_NAME" = 'football3/durable-state-cutoff-selector-governed-v1'
+          git diff --name-only 5d44be4da1acd85c448bb043470e727f4de034b2...HEAD | tee fusion_changed_files.txt
+          if grep -E '(^|/)(formal_fusion_v2\.py|pure_engine\.py|historical_xg_challenger\.py|CURRENT|formal_pointer\.json|model_lock\.json)$' fusion_changed_files.txt; then
+            echo 'protected formal model/CURRENT surface changed' >&2
+            exit 1
+          fi
+          printf 'draft=true\nready=false\nmerge=false\nproduction_activation=false\nairtable_write=false\n' > fusion_authority.txt
+
+      - name: Download frozen production source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          sha256sum .runtime_sources/understat/understat_frozen.db \
+                    .runtime_sources/confirmation/confirmation_identity.jsonl \
+                    .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl \
+            | tee fusion_source_sha256.txt
+
+      - name: Compile exact-head active Fusion acceptance
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 -m py_compile \
+              football-data/formal_gpt_gateway_v1/formal_result_adjudication_v1.py \
+              football-data/formal_gpt_gateway_v1/formal_runtime_exact_noop_v1.py \
+              football-data/formal_gpt_gateway_v1/test_fusion_v2_active_exact_head_v1.py
+
+      - name: Invoke real formal model and enforce active Fusion gates
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+            python3 football-data/formal_gpt_gateway_v1/test_fusion_v2_active_exact_head_v1.py \
+              --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --expected-runtime-head "$GITHUB_SHA" \
+              --out "$PWD/fusion_v2_active_exact_head_receipt.json" \
+            | tee fusion_v2_active_exact_head_stdout.txt
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('fusion_v2_active_exact_head_receipt.json'))
+          assert d['passed'] is True
+          assert d['runtime_exact_head'] == os.environ['GITHUB_SHA']
+          assert d['formal_model_invoked'] is True
+          assert d['formal_model_call_path'] == 'runtime._prediction_from_state -> formal_v2.predict_formal_batch'
+          assert d['effective_evidence_n'] == 4
+          assert len(d['effective_evidence']) == 4
+          assert min(d['effective_evidence']) >= d['formal_min_effective_evidence'] == 3.0
+          assert d['all_effective_evidence_gate_passed'] is True
+          assert d['model_route'] == 'FUSION_V2_ACTIVE'
+          assert d['fallback_class'] == 'NONE'
+          assert d['fallback_exact_v1'] is False
+          ff=d['fast_full']
+          assert ff['fast_path']=='FAST_PATH' and ff['full_path']=='FULL_REBUILD_PATH'
+          assert ff['state_exact'] is True and ff['prediction_equivalence']['passed'] is True
+          r=d['repeated_sealed_request']
+          assert r['passed'] is True and all(r['sha_equal'].values()) and r['state_bundle_unchanged'] is True
+          e=d['empty_delta']
+          assert e['delta_n']==0 and e['path']=='FAST_PATH' and e['transition_status']=='NO_OP_DELTA'
+          assert e['source_refetch_used'] is False and e['state_resealed'] is False
+          assert d['target']['target_result_read_or_scored'] is False
+          print('REAL_FUSION_V2_ACTIVE_EXACT_HEAD_PASS', d['receipt_sha256'])
+          PY
+          sha256sum fusion_v2_active_exact_head_receipt.json | tee fusion_receipt_file_sha256.txt
+
+      - name: Upload exact-head active Fusion receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-fusion-v2-active-exact-head-${{ github.run_id }}
+          path: |
+            fusion_authority.txt
+            fusion_changed_files.txt
+            fusion_source_sha256.txt
+            fusion_v2_active_exact_head_stdout.txt
+            fusion_v2_active_exact_head_receipt.json
+            fusion_receipt_file_sha256.txt
+          if-no-files-found: error
+          retention-days: 90
