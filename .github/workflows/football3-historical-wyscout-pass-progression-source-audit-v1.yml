@@ -1,0 +1,172 @@
+name: football3 Historical Wyscout Pass Progression Source Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-wyscout-pass-progression-source-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-wyscout-pass-progression-source-audit-v1.yml'
+      - 'football-data/research/historical_wyscout_pass_progression_source_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: ca509f0f143c750d241a95d2afbd361b93777d22
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  DEDUP_HEAD: fcae7d5a23803a4b348f045526070981d16d5822
+  WYS_REPO: koenvo/wyscout-soccer-match-event-dataset
+  WYS_COMMIT: ebc4c54c1093c420a81ce442c69e4186fab33bb4
+  WYS_ARCHIVE_SHA256: 1abe552b90d6a698777005bf03ada538a3030708231e11f9f3bfd1084f2b7218
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-wyscout-pass-progression-source-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          git cat-file -e "$DEDUP_HEAD^{commit}"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-wyscout-pass-progression-source-audit-v1.yml|football-data/research/historical_wyscout_pass_progression_source_audit_v1/*) ;;
+              '') ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen zero-label contract and runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_wyscout_pass_progression_source_audit_v1
+          python -m py_compile "$D/run_source_audit.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_wyscout_pass_progression_source_audit_v1/SOURCE_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_LABEL_SOURCE_AUDIT'
+          assert c['parent_source']['head']=='ca509f0f143c750d241a95d2afbd361b93777d22'
+          assert c['parent_source']['source_commit']=='ebc4c54c1093c420a81ce442c69e4186fab33bb4'
+          assert c['parent_source']['archive_sha256']=='1abe552b90d6a698777005bf03ada538a3030708231e11f9f3bfd1084f2b7218'
+          assert c['semantic_dedup']['index_head']=='fcae7d5a23803a4b348f045526070981d16d5822'
+          assert c['semantic_dedup']['stage6_b_head']=='9cb97764de1250fd08c6d0880559192e66352ce3'
+          assert c['semantic_dedup']['adjudication']=='DISTINCT_INFORMATION_AXIS_ALLOWED_FOR_ZERO_LABEL_SOURCE_AUDIT'
+          assert c['mechanism']['feature_name']=='forward_x_gain_per_accurate_pass'
+          assert c['mechanism']['distance_threshold'] is None
+          assert c['mechanism']['no_progressive_pass_threshold'] is True
+          assert c['mechanism']['strict_pit_lookback_completed_same_league_matches']==8
+          assert c['mechanism']['strict_pit_min_prior_matches']==3
+          assert c['boundaries']['zero_label_only'] is True
+          assert c['boundaries']['model_fit_allowed'] is False
+          assert c['boundaries']['historical_confirmation_2023']=='LOCKED_NOT_READ'
+          assert c['boundaries']['prospective_1335']=='FORBIDDEN_NOT_TOUCHED'
+          assert c['boundaries']['formal_weight']==0
+          PY
+
+      - name: Download and verify exact pinned public Wyscout archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 2 "https://codeload.github.com/${WYS_REPO}/tar.gz/${WYS_COMMIT}" -o /tmp/wys.tar.gz
+          test "$(sha256sum /tmp/wys.tar.gz | awk '{print $1}')" = "$WYS_ARCHIVE_SHA256"
+          mkdir -p /tmp/wys && tar -xzf /tmp/wys.tar.gz -C /tmp/wys
+          root="$(find /tmp/wys -mindepth 1 -maxdepth 1 -type d | head -1)"
+          test -f "$root/processed-v2/README.md"
+          echo "$root" > /tmp/WYS_ROOT
+
+      - name: Run full 1826-match zero-label pass progression source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_wyscout_pass_progression_source_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/run_source_audit.py" \
+            --contract "$D/SOURCE_AUDIT_CONTRACT.json" \
+            --wys-root "$(cat /tmp/WYS_ROOT)" \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/SOURCE_AUDIT_RESULT.json'))
+          assert x['status'] in ('PASS_PROGRESSION_SOURCE_PASS_CANDIDATE_ALLOWED','PASS_PROGRESSION_SOURCE_FAIL_CLOSE_NO_CANDIDATE')
+          assert x['fixture_n']==1826 and x['team_match_n']==3652
+          assert x['candidate_fit_performed'] is False
+          assert x['outcome_fields_used'] is False
+          assert x['index_match_label_parsed'] is False
+          assert x['historical_confirmation_2023_opened'] is False
+          assert x['prospective_1335_touched'] is False
+          assert x['formal_model_changed'] is False and x['CURRENT_changed'] is False
+          assert x['formal_weight']==0
+          PY
+
+      - name: Seal source audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_wyscout_pass_progression_source_audit_v1
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          cp "$D/SOURCE_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/run_source_audit.py" _seal/code/
+          cp .github/workflows/football3-historical-wyscout-pass-progression-source-audit-v1.yml _seal/code/
+          cp _run/SOURCE_AUDIT_RESULT.json _seal/evidence/
+          cp _run/TEAM_MATCH_FEATURES.jsonl _seal/evidence/
+          cp _run/STRICT_PIT_FEATURES.jsonl _seal/evidence/
+          cp /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          x=json.load(open('_run/SOURCE_AUDIT_RESULT.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={
+            'schema_version':'football3-wyscout-pass-progression-source-audit-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'parent_head':os.environ['PARENT_HEAD'],
+            'source_commit':os.environ['WYS_COMMIT'],
+            'source_archive_sha256':os.environ['WYS_ARCHIVE_SHA256'],
+            'status':x['status'],
+            'source_gate_pass':x['source_gate_pass'],
+            'fixture_n':x['fixture_n'],
+            'team_match_n':x['team_match_n'],
+            'raw_bilateral_valid_fixture_rate':x['raw_audit']['raw_bilateral_valid_fixture_rate'],
+            'strict_pit_bilateral_feature_coverage':x['strict_pit_audit']['strict_pit_bilateral_feature_coverage'],
+            'proxy_max_abs_correlation':x['proxy_redundancy']['max_abs'],
+            'candidate_fit_performed':False,
+            'historical_confirmation_2023_opened':False,
+            'prospective_1335_touched':False,
+            'formal_model_changed':False,
+            'CURRENT_changed':False,
+            'files':files,
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed pass progression source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-wyscout-pass-progression-source-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
