@@ -1,0 +1,176 @@
+name: football3 Historical Modern B Availability Replay V1
+
+on:
+  push:
+    branches: ['football3/historical-b-availability-modern-replay-v1']
+    paths:
+      - '.github/workflows/football3-historical-b-availability-modern-replay-v1.yml'
+      - 'football-data/research/historical_b_availability_modern_replay_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANCHOR_HEAD: 4a5475c93b01459fccafb4cc2066c51ca1f838ec
+  STAGE6_B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  PROCESS_ARTIFACT_ID: '9963772148'
+  PROCESS_DIGEST: sha256:59f17f78831a541ac8496758efa851c1b998ba4684f37873176e140a5b4e2bfb
+  TILT_ARTIFACT_ID: '9926198993'
+  TILT_DIGEST: sha256:fbfb9fc6fc7334aaf38455e00980642f86a8862b1d446bf333b56239a3d2b317
+  STRESS_ARTIFACT_ID: '9876751277'
+  STRESS_DIGEST: sha256:bc2fa9c21f55de74f180331d3d0cc5007c496ed426a38cd1613f29375188049a
+  HISTORY_ARTIFACT_ID: '9876641831'
+  HISTORY_DIGEST: sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c
+
+jobs:
+  score-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-b-availability-modern-replay-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$STAGE6_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-b-availability-modern-replay-v1.yml|football-data/research/historical_b_availability_modern_replay_v1/*) ;;
+              *) echo "unexpected changed path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Frozen contract and scorer guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_b_availability_modern_replay_v1
+          python -m py_compile "$D/run_modern_b_availability.py"
+          python - <<'PY'
+          import json
+          D='football-data/research/historical_b_availability_modern_replay_v1'
+          c=json.load(open(f'{D}/MODERN_B_AVAILABILITY_COMBINATION_CONTRACT_V1.json'))
+          assert c['status']=='FROZEN_BEFORE_B_ON_AVAILABILITY_COMBINATION_SCORING'
+          assert c['anchor_head']=='4a5475c93b01459fccafb4cc2066c51ca1f838ec'
+          assert c['stage6_b_transport']['source_head']=='9cb97764de1250fd08c6d0880559192e66352ce3'
+          assert c['stage6_b_transport']['bridge_coefficient']==0.10
+          assert c['stage6_b_transport']['half_life_matches']==16.0
+          assert c['availability_transport']['max_abs_tilt']==0.5
+          assert c['scope']['primary_exact_kickoff_count']==713
+          assert c['scope']['expected_b_active_primary713']==700
+          assert c['scope']['historical_confirmation_2023_read'] is False
+          assert c['scope']['prospective_1335_touched'] is False
+          assert c['authorization']['outcome_scoring_allowed'] is True
+          for k in ('training_allowed','tuning_allowed','parameter_search_allowed','candidate_selection_allowed','formal_weight_change_allowed','CURRENT_change_allowed','production_pointer_change_allowed','formal_enablement_change_allowed','promotion_allowed'):
+              assert c['authorization'][k] is False
+          PY
+
+      - name: Download and verify four frozen artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _process _tilt _stress _history
+          mkdir _process _tilt _stress _history
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PROCESS_ARTIFACT_ID}/zip" > /tmp/process.zip
+          test "sha256:$(sha256sum /tmp/process.zip | awk '{print $1}')" = "$PROCESS_DIGEST"
+          unzip -tq /tmp/process.zip && unzip -q /tmp/process.zip -d _process
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${TILT_ARTIFACT_ID}/zip" > /tmp/tilt.zip
+          test "sha256:$(sha256sum /tmp/tilt.zip | awk '{print $1}')" = "$TILT_DIGEST"
+          unzip -tq /tmp/tilt.zip && unzip -q /tmp/tilt.zip -d _tilt
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${STRESS_ARTIFACT_ID}/zip" > /tmp/stress.zip
+          test "sha256:$(sha256sum /tmp/stress.zip | awk '{print $1}')" = "$STRESS_DIGEST"
+          unzip -tq /tmp/stress.zip && unzip -q /tmp/stress.zip -d _stress
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${HISTORY_ARTIFACT_ID}/zip" > /tmp/history.zip
+          test "sha256:$(sha256sum /tmp/history.zip | awk '{print $1}')" = "$HISTORY_DIGEST"
+          unzip -tq /tmp/history.zip && unzip -q /tmp/history.zip -d _history
+
+      - name: Score frozen B plus frozen availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir _run
+          D=football-data/research/historical_b_availability_modern_replay_v1
+          python "$D/run_modern_b_availability.py" \
+            --contract "$D/MODERN_B_AVAILABILITY_COMBINATION_CONTRACT_V1.json" \
+            --process-dir _process \
+            --tilt-dir _tilt \
+            --stress-dir _stress \
+            --history-dir _history \
+            --out _run | tee /tmp/score_stdout.txt
+          test -s _run/development_score_result.json
+          test -s _run/predictions_label_free.jsonl
+
+      - name: Enforce frozen scientific gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/development_score_result.json'))
+          assert r['status']=='MODERN_B_PLUS_FPLCACHE_AVAILABILITY_DEV_PASS',r
+          assert r['input_counts']=={'process':760,'tilt':760,'stress_epl':760,'labels':760}
+          assert r['b_coverage']['active_primary713']==700
+          assert r['historical_confirmation_2023_read'] is False
+          assert r['prospective_1335_touched'] is False
+          assert r['training_performed'] is False
+          assert r['tuning_performed'] is False
+          assert r['parameter_search_performed'] is False
+          assert r['candidate_selection_performed'] is False
+          assert r['formal_v2_changed'] is False
+          assert r['frozen_v3_1_1_changed'] is False
+          assert r['stage6_b_frozen_candidate_changed'] is False
+          assert r['CURRENT_changed'] is False
+          assert r['production_pointer_changed'] is False
+          assert r['formal_enablement_changed'] is False
+          assert all(r['gates'].values()),r['gates']
+          PY
+
+      - name: Seal research evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_b_availability_modern_replay_v1
+          cp "$D/MODERN_B_AVAILABILITY_COMBINATION_CONTRACT_V1.json" _seal/contract/
+          cp "$D/run_modern_b_availability.py" _seal/code/
+          cp _run/development_score_result.json _run/season_blocks.json _run/predictions_label_free.jsonl _run/artifact_slug.txt _seal/evidence/
+          cp /tmp/score_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          r=json.load(open('_run/development_score_result.json'))
+          m={'schema_version':'football3-modern-b-plus-fplcache-availability-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'prediction_label_free_sha256':r['prediction_label_free_sha256'],'primary_n':r['primary_b_plus_availability']['n'],'prospective_1335_touched':False,'historical_confirmation_2023_read':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed research evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-modern-b-availability-replay-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
