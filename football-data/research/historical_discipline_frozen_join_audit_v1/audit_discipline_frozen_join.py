@@ -72,7 +72,7 @@ def main():
         if len(ids)==1:
             joined.append({'target_fid':r['fid'],'source_fixture_id':ids[0],'date':r['date'],'season':r['season'],'league':r['league'],'team_h':r['team_h'],'team_a':r['team_a'],'source_known_at_present':ids[0] in known_at_nonnull})
         elif len(ids)>1:
-            ambiguous.append({'target_fid':r['fid'],'date':r['date'],'team_h':r['team_h'],'team_a':r['team_a'],'source_fixture_ids':ids})
+            ambiguous.append({'target_fid':r['fid'],'date':r['date'],'season':r['season'],'league':r['league'],'team_h':r['team_h'],'team_a':r['team_a'],'source_fixture_ids':ids})
         else:
             unmatched.append({'target_fid':r['fid'],'date':r['date'],'season':r['season'],'league':r['league'],'team_h':r['team_h'],'team_a':r['team_a'],'canon_h':r['h'],'canon_a':r['a']})
 
