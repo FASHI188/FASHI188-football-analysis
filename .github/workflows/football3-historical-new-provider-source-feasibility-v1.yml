@@ -1,0 +1,144 @@
+name: football3 Historical New Provider Source Feasibility V1
+
+on:
+  push:
+    branches: ['football3/historical-new-provider-source-feasibility-v1']
+    paths:
+      - '.github/workflows/football3-historical-new-provider-source-feasibility-v1.yml'
+      - 'football-data/research/historical_new_provider_source_feasibility_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PARENT_HEAD: a9a989a4701c75fae89dd38a4d200ba487596b8d
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  CLOSEOUT_ARTIFACT_ID: '9971706158'
+  CLOSEOUT_ARTIFACT_DIGEST: sha256:99a55abfa1c5bde38d07862260eae175bb4ff6d9341f79e3a60da4fa24b8d5f7
+
+jobs:
+  seal-provider-feasibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and frozen-boundary guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-new-provider-source-feasibility-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$PARENT_HEAD" HEAD)" = "$PARENT_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$PARENT_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective|historical_fusion_v3_1_1_joint_score'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-new-provider-source-feasibility-v1.yml|football-data/research/historical_new_provider_source_feasibility_v1/*) ;;
+              '') ;;
+              *) echo "unexpected path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify frozen feasibility decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='football-data/research/historical_new_provider_source_feasibility_v1/NEW_PROVIDER_SOURCE_FEASIBILITY.json'
+          x=json.load(open(p))
+          assert x['status']=='NEW_PROVIDER_SOURCE_FEASIBILITY_COMPLETE_SAMPLE_REQUIRED'
+          assert x['parent_closeout']['head']=='a9a989a4701c75fae89dd38a4d200ba487596b8d'
+          assert x['parent_closeout']['artifact_id']==9971706158
+          assert x['required_gate']['target_big5_fixture_n']==5478
+          assert x['required_gate']['minimum_bilateral_strict_pit_coverage']==0.98
+          assert x['public_data_decision']['any_source_certified_now_for_mechanical_98pct_gate'] is False
+          assert x['priority_order'][0]=='Stats Perform Opta F24 XY vendor sample'
+          assert x['priority_order'][1]=='Hudl Statsbomb standard Event Data vendor sample'
+          assert x['next_mechanical_step']['status']=='BLOCKED_ON_NEW_PROVIDER_SAMPLE_OR_ACCESS'
+          assert x['next_mechanical_step']['provider_purchase_or_secret_authorized'] is False
+          assert x['frozen_boundaries']['historical_confirmation_2023']=='LOCKED_NOT_READ'
+          assert x['frozen_boundaries']['prospective_1335']=='FORBIDDEN_NOT_TOUCHED'
+          assert x['frozen_boundaries']['CURRENT_change'] is False
+          PY
+
+      - name: Verify parent existing-source closeout artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CLOSEOUT_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$CLOSEOUT_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CLOSEOUT_ARTIFACT_ID}/zip" -o /tmp/closeout.zip
+          test "sha256:$(sha256sum /tmp/closeout.zip | awk '{print $1}')" = "$CLOSEOUT_ARTIFACT_DIGEST"
+          rm -rf _closeout && mkdir _closeout
+          unzip -q /tmp/closeout.zip -d _closeout
+          python - <<'PY'
+          import json
+          m=json.load(open('_closeout/MANIFEST.json'))
+          assert m['github_sha']=='a9a989a4701c75fae89dd38a4d200ba487596b8d'
+          assert m['status']=='HISTORICAL_EXISTING_SOURCE_MARGINAL_EXHAUSTION_CLOSE'
+          assert m['scientific_conclusion']=='MARGINAL_INFORMATION_EXHAUSTED_FOR_HIGH_VALUE_STRICT_PIT_CANDIDATES'
+          assert m['next_research_class']=='GENUINELY_NEW_INFORMATION_SOURCE_ONLY'
+          assert m['historical_confirmation_2023_opened'] is False
+          assert m['prospective_1335_touched'] is False
+          assert m['formal_model_changed'] is False and m['CURRENT_changed'] is False
+          PY
+
+      - name: Seal provider-feasibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{decision,parent_evidence}
+          cp football-data/research/historical_new_provider_source_feasibility_v1/NEW_PROVIDER_SOURCE_FEASIBILITY.json _seal/decision/
+          cp _closeout/MANIFEST.json _seal/parent_evidence/EXISTING_SOURCE_CLOSEOUT_MANIFEST.json
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          d=json.load(open(root/'decision/NEW_PROVIDER_SOURCE_FEASIBILITY.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={
+            'schema_version':'football3-historical-new-provider-source-feasibility-artifact-v1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'parent_head':os.environ['PARENT_HEAD'],
+            'status':d['status'],
+            'preferred_first_sample':d['priority_order'][0],
+            'second_sample':d['priority_order'][1],
+            'any_source_certified_now':False,
+            'next_status':d['next_mechanical_step']['status'],
+            'provider_purchase_or_secret_authorized':False,
+            'historical_confirmation_2023_opened':False,
+            'prospective_1335_touched':False,
+            'formal_model_changed':False,
+            'CURRENT_changed':False,
+            'files':files
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed provider feasibility
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-historical-new-provider-source-feasibility-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
