@@ -1,0 +1,136 @@
+name: football3 Historical Discipline Frozen Join Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-discipline-frozen-join-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-discipline-frozen-join-audit-v1.yml'
+      - 'football-data/research/historical_discipline_frozen_join_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANCHOR_HEAD: b4f3681b88bfefcc8b26f9ec50296dc35a1620b3
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  FIXTURES_SHA: 7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7
+  MATCH_STATS_SHA: 2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9
+  TEAMS_SHA: 5529282b37ad51437142dd7c6d32fb60bbbdd56953dc432e3b9247dca17a2fa5
+
+jobs:
+  join-audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-discipline-frozen-join-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b|historical_fusion_v3_1_1'; then exit 1; fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-discipline-frozen-join-audit-v1.yml|football-data/research/historical_discipline_frozen_join_audit_v1/*) ;;
+              *) echo "unexpected path $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parquet reader
+        run: python -m pip install --disable-pip-version-check pyarrow
+      - name: Frozen zero-label join contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_discipline_frozen_join_audit_v1
+          python -m py_compile "$D/audit_discipline_frozen_join.py"
+          python - <<'PY'
+          import json
+          c=json.load(open('football-data/research/historical_discipline_frozen_join_audit_v1/DISCIPLINE_FROZEN_JOIN_AUDIT_CONTRACT.json'))
+          assert c['status']=='FROZEN_ZERO_LABEL_JOIN_AUDIT'
+          assert c['target']['expected_n']==5478
+          assert c['gates']['minimum_unique_join_coverage']==0.80
+          assert c['gates']['maximum_ambiguous_target_rate']==0.01
+          assert c['mechanical_identity_rule']['fuzzy_matching'] is False
+          assert c['mechanical_identity_rule']['score_or_result_assistance'] is False
+          assert c['audit']['model_fit'] is False and c['audit']['read_target_outcomes'] is False
+          assert c['audit']['read_external_discipline_values'] is False
+          assert c['audit']['read_historical_2023_confirmation'] is False
+          assert c['audit']['read_prospective_1335'] is False
+          PY
+      - name: Download and verify frozen identity inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/old _inputs/ext
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}")"
+          got="$(printf '%s' "$meta" | python -c 'import json,sys;print(json.load(sys.stdin)["digest"])')"
+          test "$got" = "$OLD_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_ARTIFACT_ID}/zip" -o /tmp/old.zip
+          test "sha256:$(sha256sum /tmp/old.zip | awk '{print $1}')" = "$OLD_ARTIFACT_DIGEST"
+          unzip -tq /tmp/old.zip && unzip -q /tmp/old.zip -d _inputs/old
+          test "$(sha256sum _inputs/old/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+          curl -fsSL -A 'football3-discipline-frozen-join-audit/1.0' 'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/fixtures.parquet?download=true' -o _inputs/ext/fixtures.parquet
+          curl -fsSL -A 'football3-discipline-frozen-join-audit/1.0' 'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/match_stats.parquet?download=true' -o _inputs/ext/match_stats.parquet
+          curl -fsSL -A 'football3-discipline-frozen-join-audit/1.0' 'https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/teams.parquet?download=true' -o _inputs/ext/teams.parquet
+          test "$(sha256sum _inputs/ext/fixtures.parquet | awk '{print $1}')" = "$FIXTURES_SHA"
+          test "$(sha256sum _inputs/ext/match_stats.parquet | awk '{print $1}')" = "$MATCH_STATS_SHA"
+          test "$(sha256sum _inputs/ext/teams.parquet | awk '{print $1}')" = "$TEAMS_SHA"
+      - name: Run zero-label frozen cohort join audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_discipline_frozen_join_audit_v1
+          rm -rf _run && mkdir _run
+          python "$D/audit_discipline_frozen_join.py" \
+            --contract "$D/DISCIPLINE_FROZEN_JOIN_AUDIT_CONTRACT.json" \
+            --db _inputs/old/understat_frozen.db \
+            --fixtures _inputs/ext/fixtures.parquet \
+            --match-stats _inputs/ext/match_stats.parquet \
+            --teams _inputs/ext/teams.parquet \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+          python - <<'PY'
+          import json
+          x=json.load(open('_run/discipline_frozen_join_audit.json'))
+          assert x['status'] in ('DISCIPLINE_FROZEN_JOIN_AUDIT_PASS','DISCIPLINE_FROZEN_JOIN_AUDIT_FAIL')
+          assert x['target_n']==5478
+          assert x['model_fits']==0 and x['candidate_probabilities']==0
+          assert x['outcome_labels_read'] is False and x['external_discipline_values_read'] is False
+          assert x['historical_confirmation_2023_labels_opened'] is False and x['prospective_1335_data_touched'] is False
+          PY
+      - name: Seal join evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_discipline_frozen_join_audit_v1
+          cp "$D/DISCIPLINE_FROZEN_JOIN_AUDIT_CONTRACT.json" _seal/contract/
+          cp "$D/audit_discipline_frozen_join.py" _seal/code/
+          cp _run/discipline_frozen_join_audit.json _run/joined_identity.jsonl /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          x=json.load(open('_run/discipline_frozen_join_audit.json'))
+          m={'schema_version':'football3-discipline-frozen-join-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':x['status'],'coverage':x['coverage'],'ambiguous_rate':x['ambiguous_rate'],'gates':x['gates'],'source_sha256':x['source_sha256'],'target_db_sha256':x['target_db_sha256'],'historical_confirmation_2023_labels_opened':False,'prospective_1335_data_touched':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Upload sealed join audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-discipline-frozen-join-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
