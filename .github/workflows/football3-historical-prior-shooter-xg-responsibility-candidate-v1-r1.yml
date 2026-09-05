@@ -1,0 +1,197 @@
+name: football3 Shooter xG Responsibility Candidate V1 Mechanical Replay
+
+on:
+  push:
+    branches: ['football3/historical-prior-shooter-xg-responsibility-candidate-v1']
+    paths:
+      - '.github/workflows/football3-historical-prior-shooter-xg-responsibility-candidate-v1-r1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASE_HEAD: 4d7727cb0e72e5faff6c50a8294d3b6fc8eb3298
+  SOURCE_HEAD: 3ec7d854b0bc8eb7f1da25a96cbc8b7cca64370a
+  CONTRACT_HEAD: e6842f6850ee3183e63175bc7885006c531988da
+  DEDUP_HEAD: fcae7d5a23803a4b348f045526070981d16d5822
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  SOURCE_ARTIFACT_ID: '9970827120'
+  SOURCE_ARTIFACT_DIGEST: sha256:c5b4aad9afd5e6fad965be5467b171bd68458467780302f1cbd8985227c9255a
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e
+  V1_ARTIFACT_ID: '9732754224'
+  V1_ARTIFACT_DIGEST: sha256:5f0af0c428f19492715669c8e4fb2451ee94bf373f17f5560ff1a42114375bcb
+  OLD_ARTIFACT_ID: '9798682425'
+  OLD_ARTIFACT_DIGEST: sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba
+  USR1_ARTIFACT_ID: '9848912219'
+  USR1_ARTIFACT_DIGEST: sha256:eed8de4ef193b9991f2aad71c5a7a3db65821bf7cc37bd0adb8cb521a615c99a
+  V31_ARTIFACT_ID: '9855441319'
+  V31_ARTIFACT_DIGEST: sha256:2e46d18491e1ef31dfa4bf6f0992ee23b72d46389dda22ce7f07465f21bca4e3
+
+jobs:
+  mechanical-replay-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove mechanical-only replay delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-prior-shooter-xg-responsibility-candidate-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$BASE_HEAD" HEAD)" = "$BASE_HEAD"
+          test "$(git merge-base "$SOURCE_HEAD" HEAD)" = "$SOURCE_HEAD"
+          test "$(git merge-base "$CONTRACT_HEAD" HEAD)" = "$CONTRACT_HEAD"
+          test "$(git merge-base "$DEDUP_HEAD" HEAD)" = "$DEDUP_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$B_HEAD"
+          changed="$(git diff --name-only "$BASE_HEAD...HEAD")"
+          test "$changed" = '.github/workflows/football3-historical-prior-shooter-xg-responsibility-candidate-v1-r1.yml'
+          test "$(git show "$BASE_HEAD":football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1/SHOOTER_XG_RESPONSIBILITY_CANDIDATE_CONTRACT.json | sha256sum | awk '{print $1}')" = "$(sha256sum football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1/SHOOTER_XG_RESPONSIBILITY_CANDIDATE_CONTRACT.json | awk '{print $1}')"
+          test "$(git show "$BASE_HEAD":football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1/run_shooter_xg_responsibility_candidate.py | sha256sum | awk '{print $1}')" = "$(sha256sum football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1/run_shooter_xg_responsibility_candidate.py | awk '{print $1}')"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download and verify identical frozen inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs && mkdir -p _inputs/{source,v2,xg,v1,old,usr1,v31}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}")"
+            got="$(printf '%s' "$meta" | python -c 'import json,sys; print(json.load(sys.stdin)["digest"])')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$SOURCE_ARTIFACT_ID" "$SOURCE_ARTIFACT_DIGEST" /tmp/source.zip _inputs/source
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$V1_ARTIFACT_ID" "$V1_ARTIFACT_DIGEST" /tmp/v1.zip _inputs/v1
+          verify_one "$OLD_ARTIFACT_ID" "$OLD_ARTIFACT_DIGEST" /tmp/old.zip _inputs/old
+          verify_one "$USR1_ARTIFACT_ID" "$USR1_ARTIFACT_DIGEST" /tmp/usr1.zip _inputs/usr1
+          verify_one "$V31_ARTIFACT_ID" "$V31_ARTIFACT_DIGEST" /tmp/v31.zip _inputs/v31
+          test "$(sha256sum _inputs/old/understat_frozen.db | awk '{print $1}')" = 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+      - name: Deterministic candidate replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1
+          rm -rf _run && mkdir _run
+          python "$D/run_shooter_xg_responsibility_candidate.py" \
+            --contract "$D/SHOOTER_XG_RESPONSIBILITY_CANDIDATE_CONTRACT.json" \
+            --v311 football-data/research/historical_fusion_v3_1_1_joint_score/historical_fusion_v3_1_1_joint_score.py \
+            --v31 _inputs/v31/code/historical_fusion_v3_1.py \
+            --usr1 _inputs/usr1/code/historical_fusion_v3_upset_safe.py \
+            --v2 _inputs/v2/code/historical_xg_fusion_v2.py \
+            --xg _inputs/xg/code/historical_xg_challenger.py \
+            --v1 _inputs/v1/pure_engine.py \
+            --v1-result _inputs/v1/evidence/historical_oos_result.json \
+            --db _inputs/old/understat_frozen.db \
+            --xg-identity _inputs/xg/data/XG_DATA_IDENTITY.json \
+            --out _run 2>&1 | tee /tmp/stdout.txt
+
+      - name: Normalize receipt-only field names and enforce frozen scientific result
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp _run/shooter_xg_responsibility_candidate_result.json _run/shooter_xg_responsibility_candidate_result.raw.json
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('_run/shooter_xg_responsibility_candidate_result.json')
+          x=json.loads(p.read_text())
+          assert x['status']=='SHOOTER_XG_RESPONSIBILITY_CANDIDATE_DEVELOPMENT_FAIL_CLOSE_NO_RETUNE'
+          assert x['scientific_pass'] is False
+          assert x['development_n']==5478 and x['rolling_oos_n']==3652
+          assert x['coverage']==0.9917853231106243
+          assert x['source_audit_reproduction']['bilateral_feature_n']==5433
+          assert x['source_max_season_loaded']==2022
+          assert x['historical_confirmation_2023_labels_opened'] is False
+          assert x['prospective_1335_data_touched'] is False
+          assert x['frozen_params_written'] is False
+          assert x['pooled']['deltas']['hits']==-2
+          assert abs(x['pooled']['deltas']['top1_pp'] - (-0.05476451259583959)) < 1e-15
+          assert abs(x['pooled']['deltas']['logloss'] - 8.562387202026844e-05) < 1e-15
+          assert x['fold_results'][0]['deltas']['hits']==-3
+          assert x['fold_results'][1]['deltas']['hits']==1
+          # First execution failed only because these two receipt labels interpreted the
+          # make_snapshots return object incorrectly. They were not used by any fit/prediction/gate.
+          present=x.pop('stage6_b_active_n')
+          key_n=x.pop('snapshot_receipt_n')
+          assert present==5478 and key_n==5
+          x['mechanical_receipt_normalization']={
+            'first_failed_run_id':33970987458,
+            'first_failed_job_id':101319341840,
+            'reason':'post-result assertion expected snaprec.active=5463 but runner field counted snapshot objects present=5478; scientific probabilities and gates already completed before assertion',
+            'raw_stage6_b_snapshot_object_present_n':present,
+            'raw_snaprec_top_level_key_n':key_n,
+            'scientific_fields_changed':False,
+            'contract_changed':False,
+            'runner_changed':False
+          }
+          p.write_text(json.dumps(x,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Seal failed candidate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_prior_shooter_xg_responsibility_candidate_v1
+          cp "$D/SHOOTER_XG_RESPONSIBILITY_CANDIDATE_CONTRACT.json" _seal/contract/
+          cp "$D/run_shooter_xg_responsibility_candidate.py" _seal/code/
+          cp _run/shooter_xg_responsibility_candidate_result.json _seal/evidence/
+          cp _run/shooter_xg_responsibility_candidate_result.raw.json _seal/evidence/
+          cp /tmp/stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          x=json.load(open('_run/shooter_xg_responsibility_candidate_result.json'))
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          m={
+            'schema_version':'football3-shooter-xg-responsibility-candidate-artifact-v1-r1',
+            'github_sha':os.environ['GITHUB_SHA'],
+            'base_scientific_head':os.environ['BASE_HEAD'],
+            'source_head':os.environ['SOURCE_HEAD'],
+            'contract_head':os.environ['CONTRACT_HEAD'],
+            'dedup_head':os.environ['DEDUP_HEAD'],
+            'status':x['status'],
+            'scientific_pass':False,
+            'coverage':x['coverage'],
+            'checks':x['checks'],
+            'pooled_deltas':x['pooled']['deltas'],
+            'mechanical_receipt_normalization':x['mechanical_receipt_normalization'],
+            'historical_confirmation_2023_labels_opened':False,
+            'prospective_1335_data_touched':False,
+            'files':files
+          }
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-shooter-xg-responsibility-candidate-r1-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
