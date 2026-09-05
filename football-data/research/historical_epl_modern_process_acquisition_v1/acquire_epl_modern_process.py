@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import datetime as dt
+import gzip
 import hashlib
 import json
 import math
@@ -24,12 +25,16 @@ def fetch(url: str) -> bytes:
             'Referer': 'https://understat.com/league/EPL',
             'X-Requested-With': 'XMLHttpRequest',
             'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
+            'Accept-Encoding': 'gzip',
         },
     )
     with urllib.request.urlopen(req, timeout=45) as r:
         data = r.read()
+        encoding = (r.headers.get('Content-Encoding') or '').lower()
     if not data:
         raise RuntimeError(f'empty response: {url}')
+    if encoding == 'gzip' or data[:2] == b'\x1f\x8b':
+        data = gzip.decompress(data)
     return data
 
 
