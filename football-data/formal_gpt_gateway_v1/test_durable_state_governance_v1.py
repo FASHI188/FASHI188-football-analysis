@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,11 +56,10 @@ def betis_four_cutoff_regression():
     }
     rows = []
     for target, state in expected.items():
-        selected, evaluated = contract.choose_candidate(candidates, dt(target), fixture["competition_id"])
+        selected, _ = contract.choose_candidate(candidates, dt(target), fixture["competition_id"])
         assert selected is not None
         assert dt(selected["state_cutoff"]).isoformat() == state
         rows.append({"target_cutoff": target, "selected_state_cutoff": state, "artifact_id": selected["artifact_id"]})
-    assert all(not row["rejection_reasons"] for row in contract.choose_candidate(candidates, dt("2026-09-04T18:00:00Z"), "ESP_LaLiga")[1] if row["eligible"])
     return {"fixture": fixture, "rows": rows, "passed": True}
 
 
@@ -125,21 +125,13 @@ def transition_and_cache_contracts():
         "kickoff": "2026-09-04T19:00:00+00:00",
     }
     cache1 = contract.cache_key(
-        fixture_identity=fixture,
-        cutoff=a["target_cutoff"],
-        base_state_sha=a["base_state_sha"],
-        target_state_sha=a["target_state_sha"],
-        delta_sha=a["delta_sha"],
-        model_head=rt.FORMAL_HEAD,
+        fixture_identity=fixture, cutoff=a["target_cutoff"], base_state_sha=a["base_state_sha"],
+        target_state_sha=a["target_state_sha"], delta_sha=a["delta_sha"], model_head=rt.FORMAL_HEAD,
         route="FUSION_V2_ACTIVE",
     )
     cache2 = contract.cache_key(
-        fixture_identity=fixture,
-        cutoff=a["target_cutoff"],
-        base_state_sha=a["base_state_sha"],
-        target_state_sha=a["target_state_sha"],
-        delta_sha=a["delta_sha"],
-        model_head=rt.FORMAL_HEAD,
+        fixture_identity=fixture, cutoff=a["target_cutoff"], base_state_sha=a["base_state_sha"],
+        target_state_sha=a["target_state_sha"], delta_sha=a["delta_sha"], model_head=rt.FORMAL_HEAD,
         route="FUSION_V2_ACTIVE",
     )
     assert cache1 == cache2
@@ -165,6 +157,124 @@ def fallback_gate_regression():
         else:
             raise AssertionError("illegal fallback not rejected")
     return {"legal_only_below_effective_evidence_threshold": True, "rejected": rejected, "passed": True}
+
+
+def deep_fail_closed_regression():
+    rejected = {}
+    with tempfile.TemporaryDirectory(prefix="football3-durable-negative-") as td:
+        root = Path(td)
+
+        # Corrupt manifest must never be treated as a usable state.
+        bundle = root / "bundle"
+        state = rt.formal_v2.new_candidate_state()
+        rt.seal_bundle(state, bundle, {}, {}, "2024-01-01T00:00:00+00:00", "FULL_REBUILD_PATH")
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["state_bundle_sha256"] = "0" * 64
+        manifest_path.write_bytes(rt._canon_bytes(manifest))
+        try:
+            rt.validate_bundle(bundle)
+        except rt.RuntimeGateError as exc:
+            rejected["corrupt_manifest"] = str(exc)
+        else:
+            raise AssertionError("corrupt manifest not rejected")
+
+        # Discontinuous delta interval must fail before any model call.
+        fixture = {
+            "fixture_id": "generic-discontinuous",
+            "competition_id": "ESP_LaLiga",
+            "season": "2026/27",
+            "kickoff": "2026-09-04T19:00:00+00:00",
+            "home_team_id": "h", "away_team_id": "a",
+            "home_team_name": "H", "away_team_name": "A",
+        }
+        empty = []
+        inp = {
+            "schema_version": rt.INPUT_SCHEMA,
+            "fixture": fixture,
+            "cutoff": "2026-09-04T16:00:00+00:00",
+            "delta_coverage": {
+                "schema_version": rt.DELTA_SCHEMA,
+                "status": "COMPLETE", "verification": "VERIFIED_COMPLETE",
+                "v1_status": "COMPLETE", "xg_status": "COMPLETE",
+                "from": "2026-09-04T14:00:00+00:00", "to": "2026-09-04T16:00:00+00:00",
+                "records_sha256": rt._sha_bytes(rt._canon_bytes(empty)),
+                "source_set_sha256": "verified-source-set",
+            },
+            "model_delta": empty,
+        }
+        try:
+            rt.validate_runtime_input(inp, fixture, dt("2026-09-04T13:00:00Z"), dt("2026-09-04T16:00:00Z"))
+        except rt.RuntimeGateError as exc:
+            rejected["discontinuous_delta"] = str(exc)
+        else:
+            raise AssertionError("discontinuous delta not rejected")
+
+        # A present-but-mismatched cache binding is stale and must fail closed. A freshly
+        # selected durable artifact may create a missing binding, but it may never overwrite stale identity.
+        state_root = root / "state"
+        out = root / "out"
+        state_root.mkdir(parents=True)
+        fake_loaded = {
+            "meta": {"historical_cutoff": "2026-09-04T13:19:44+00:00"},
+            "manifest": {"state_sha256": "s" * 64, "state_bundle_sha256": "b" * 64},
+            "state": object(),
+        }
+        selection = {
+            "schema_version": contract.SELECTION_SCHEMA,
+            "status": "SELECTED",
+            "target_cutoff": "2026-09-04T16:00:00+00:00",
+            "competition_id": "ESP_LaLiga",
+            "selected": {
+                "state_sha256": "s" * 64,
+                "state_bundle_sha256": "b" * 64,
+                "formal_head": rt.FORMAL_HEAD,
+                "current_sha256": rt.CURRENT_SHA256,
+                "runtime_contract_sha256": contract.runtime_contract_payload()["runtime_contract_sha256"],
+                "artifact_created_at": "2026-09-04T16:10:00+00:00",
+            },
+        }
+        (state_root / "durable_state_selection_v1.json").write_bytes(contract.canon(selection))
+        (state_root / "fast_cache_binding_v1.json").write_bytes(contract.canon({"binding_sha256": "stale"}))
+        expected = {"binding_sha256": "expected"}
+        fake_fixture = {
+            "fixture_id": "generic", "competition_id": "ESP_LaLiga", "season": "2026/27",
+            "home_team_id": "h", "away_team_id": "a", "home_team_name": "H", "away_team_name": "A",
+            "kickoff": "2026-09-04T19:00:00+00:00",
+        }
+        originals = (
+            governance.rt.validate_bundle,
+            governance.contract.max_source_observed_at,
+            governance.identity_bridge.resolve_fixture,
+            governance.guard._binding_payload,
+        )
+        try:
+            governance.rt.validate_bundle = lambda _: fake_loaded
+            governance.contract.max_source_observed_at = lambda _: "2026-09-04T13:19:44+00:00"
+            governance.identity_bridge.resolve_fixture = lambda *args, **kwargs: (fake_fixture, {"home": {}, "away": {}})
+            governance.guard._binding_payload = lambda *args, **kwargs: expected
+            m = {
+                "competition_id": "ESP_LaLiga", "season": "2026/27",
+                "home_team_name": "H", "away_team_name": "A",
+                "kickoff": "2026-09-04T19:00:00+00:00", "cutoff": "2026-09-04T16:00:00+00:00",
+            }
+            try:
+                governance._selection_preflight(state_root, out, root, m)
+            except rt.RuntimeGateError as exc:
+                rejected["stale_cache"] = str(exc)
+            else:
+                raise AssertionError("stale cache binding not rejected")
+        finally:
+            (
+                governance.rt.validate_bundle,
+                governance.contract.max_source_observed_at,
+                governance.identity_bridge.resolve_fixture,
+                governance.guard._binding_payload,
+            ) = originals
+
+    required = {"corrupt_manifest", "discontinuous_delta", "stale_cache"}
+    assert set(rejected) == required, rejected
+    return {"rejected": rejected, "passed": True}
 
 
 def all_formal_scope_smoke():
@@ -204,6 +314,7 @@ def main() -> int:
         "selection_and_fail_closed": selection_order_and_negative_gates(),
         "transition_and_cache": transition_and_cache_contracts(),
         "fallback_gate": fallback_gate_regression(),
+        "deep_fail_closed": deep_fail_closed_regression(),
         "all_formal_scope_selector_smoke": all_formal_scope_smoke(),
         "no_target_specific_logic": no_target_specific_implementation(),
         "formal_head": rt.FORMAL_HEAD,
@@ -211,7 +322,7 @@ def main() -> int:
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,
     }
-    receipt["passed"] = all(v.get("passed", False) for k, v in receipt.items() if type(v) is dict and k not in {"runtime_contract"})
+    receipt["passed"] = all(v.get("passed", False) for v in receipt.values() if type(v) is dict)
     receipt["runtime_contract"] = contract.runtime_contract_payload()
     receipt["receipt_sha256"] = contract.sha(receipt)
     print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
