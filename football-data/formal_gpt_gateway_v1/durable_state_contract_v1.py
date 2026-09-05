@@ -53,20 +53,23 @@ def nested_dicts(obj: Any):
 
 
 def max_source_observed_at(loaded: dict[str, Any]) -> str:
-    """Latest data-availability/PIT timestamp represented by the sealed state.
+    """Latest source/PIT timestamp represented by the sealed state.
 
-    Build/upload/acquisition wall-clock timestamps are intentionally excluded. They are
-    separate provenance clocks and must never make a historically sealed state appear newer.
+    This clock is deliberately distinct from artifact creation, state build/apply wall-clock
+    activity and prediction execution time. In particular, ``last_prediction_time`` is never
+    source provenance and must not make an otherwise historical state appear to contain future
+    information.
     """
     candidates: list[datetime] = []
     meta = loaded.get("meta") or {}
     candidates.append(parse_dt(str(meta.get("historical_cutoff")), "state cutoff"))
 
     state = loaded.get("state")
+    # These two fields can only move when historical model state consumes an event/label.
+    # last_prediction_time is intentionally excluded: prediction execution is a separate clock.
     for value in (
         getattr(getattr(state, "base", None), "last_update_time", None),
         getattr(state, "last_apply_time", None),
-        getattr(state, "last_prediction_time", None),
     ):
         if value is not None:
             candidates.append(value.astimezone(timezone.utc))
