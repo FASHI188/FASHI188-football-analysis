@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import runtime as rt
@@ -12,6 +12,7 @@ import test_runtime as tr
 import formal_runtime_exact_noop_v1 as exact_noop
 
 EXACT_NOOP = exact_noop.install()
+UTC = timezone.utc
 
 
 def _pick_target(history, comp: str):
@@ -157,6 +158,47 @@ def run_one(history, labels, source, identity, comp: str, root: Path):
     }
 
 
+def _all_formal_scope_runtime_smoke(history, labels, source, identity, root: Path):
+    # Fixed pre-target state. Target labels/results are never read for selection or assertions.
+    cutoff = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
+    state, _ = rt.replay_history_state(history, labels, cutoff)
+    rows = []
+    for comp in rt.FORMAL_SCOPE:
+        targets = [r for r in history if r.competition_id == comp and r.kickoff > cutoff + timedelta(hours=2)]
+        targets.sort(key=lambda r: (r.kickoff, r.fixture_id))
+        if not targets:
+            raise AssertionError(f"formal scope smoke target unavailable: {comp}")
+        target = targets[0]
+        bundle = root / f"formal-scope-{comp}"
+        rt.seal_bundle(state, bundle, source, identity, cutoff.isoformat(), "FULL_REBUILD_PATH")
+        inp = tr.runtime_input(target, cutoff, cutoff, [], "COMPLETE")
+        input_path = root / f"formal-scope-{comp}.json"
+        input_path.write_bytes(rt._canon_bytes(inp))
+        receipt = rt.predict_match(
+            comp, target.home_team_name, target.away_team_name,
+            target.kickoff, cutoff, bundle, input_path,
+        )
+        validated = rt.validate_bundle(bundle)
+        if validated["manifest"]["state_sha256"] != receipt["state_sha256"]:
+            raise AssertionError(f"formal scope state receipt mismatch: {comp}")
+        rows.append({
+            "competition_id": comp,
+            "fixture_id": target.fixture_id,
+            "target_kickoff": target.kickoff.isoformat(),
+            "cutoff": cutoff.isoformat(),
+            "calculation_path": receipt["calculation_path"],
+            "model_route": receipt["model_route"],
+            "fallback_exact_v1": bool(receipt["fallback_exact_v1"]),
+            "state_sha256": receipt["state_sha256"],
+            "input_sha256": receipt["runtime_input_sha"],
+            "prediction_sha256": receipt["prediction_sha"],
+            "target_result_read_or_scored": False,
+        })
+    if {r["competition_id"] for r in rows} != set(rt.FORMAL_SCOPE):
+        raise AssertionError("formal scope runtime smoke coverage mismatch")
+    return {"passed": True, "n": len(rows), "rows": rows, "target_result_read_or_scored": False}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-root", required=True)
@@ -172,9 +214,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="football3-durable-big5-") as td:
         root = Path(td)
         matrix = [run_one(history, labels, source, identity, comp, root) for comp in big5]
+        formal_scope_smoke = _all_formal_scope_runtime_smoke(history, labels, source, identity, root)
     la = next(row for row in matrix if row["competition_id"] == "ESP_LaLiga")
     assert la["non_empty_delta_n"] > 0 and la["empty_delta_n"] == 0
     assert la["repeat_sealed_request"]["passed"] is True
+    assert formal_scope_smoke["n"] == len(rt.FORMAL_SCOPE) == 16
     receipt = {
         "schema_version": "football3-durable-state-cross-league-matrix-v1",
         "formal_head": rt.FORMAL_HEAD,
@@ -182,6 +226,7 @@ def main() -> int:
         "exact_noop_adapter": EXACT_NOOP,
         "big5_fast_full_matrix": matrix,
         "same_sealed_request_twice": la["repeat_sealed_request"],
+        "all_formal_scope_state_integrity_smoke": formal_scope_smoke,
         "la_liga_delta_and_empty_delta": {
             "non_empty_delta_n": la["non_empty_delta_n"],
             "empty_delta_n": 0,
@@ -197,7 +242,7 @@ def main() -> int:
     }
     receipt["receipt_sha256"] = tr.sha(receipt)
     Path(args.out).write_bytes(tr.canon(receipt))
-    print(json.dumps({"status": "PASS", "sha256": receipt["receipt_sha256"], "matrix": matrix}, sort_keys=True))
+    print(json.dumps({"status": "PASS", "sha256": receipt["receipt_sha256"], "matrix": matrix, "formal_scope_n": formal_scope_smoke["n"]}, sort_keys=True))
     return 0
 
 
