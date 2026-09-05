@@ -1,0 +1,148 @@
+name: Football3 Cross-Season Team State Binding Acceptance V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-cross-season-team-state-binding-acceptance-v1
+  cancel-in-progress: false
+
+jobs:
+  governed-acceptance:
+    if: ${{ github.event.pull_request.head.ref == 'football3/cross-season-team-state-binding-governed-v1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind exact PR HEAD and protected-scope diff
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --name-only "$BASE_SHA"...HEAD | tee changed-files.txt
+          if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)' changed-files.txt; then
+            echo 'protected model/CURRENT/raw alias scope changed' >&2
+            exit 1
+          fi
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/cross_season_team_state_binding_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_receipt_distribution_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_future_fixture_identity_bridge_v1.py \
+            football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py
+
+      - name: Restore immutable pre-target state and frozen rebuild sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .formal_state_cache/bundle .runtime_sources/understat .runtime_sources/confirmation acceptance
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9973225479/zip" -o .runtime_sources/state.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/state.zip -d .formal_state_cache/bundle
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$PWD/.formal_state_cache/bundle" | tee acceptance/state-validate-before.txt
+          sha256sum .formal_state_cache/bundle/* | sort > acceptance/state-files-before.sha256
+
+      - name: Execute Nottingham Forest vs Tottenham through formal production entry
+        run: |
+          set -euo pipefail
+          cat > acceptance/request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"cross-season-governed-acceptance-nfo-tottenham-sealed-v1","match":{"competition_id":"ENG_PremierLeague","season":"2026/27","kickoff":"2026-09-05T14:00:00+00:00","cutoff":"2026-09-04T13:19:44+00:00","home_team_name":"Nottingham Forest","away_team_name":"Tottenham Hotspur"}}
+          JSON
+          rm -rf acceptance/run1 acceptance/run2
+          mkdir -p acceptance/run1 acceptance/run2
+          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/acceptance/request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --state-root "$PWD/.formal_state_cache" --out "$PWD/acceptance/run1" | tee acceptance/run1/stdout.txt
+          python3 - <<'PY'
+          import json, pathlib
+          r=json.load(open('acceptance/run1/prediction_receipt.json'))
+          b=json.load(open('acceptance/run1/team_identity_bridge.json'))
+          assert b['home']['current_name']=='Nottingham Forest'
+          assert b['away']['current_name']=='Tottenham Hotspur'
+          assert b['home']['historical_state_team_id']!='gteam_b9a2c0c9e15b02a5'
+          assert b['away']['historical_state_team_id']!='gteam_546b6448aad76887'
+          assert b['home']['participation_classification'] in ('CONTINUING_CLUB','RENAMED_OR_REKEYED_CLUB')
+          assert b['away']['participation_classification'] in ('CONTINUING_CLUB','RENAMED_OR_REKEYED_CLUB')
+          assert b['home']['historical_match_count']>0 and b['away']['historical_match_count']>0
+          assert r['state_integrity_guard']['status']=='PASS'
+          assert r['fallback_class'] in ('NONE','NORMAL_FALLBACK')
+          assert r['fallback_class']!='DATA_STATE_ANOMALY'
+          assert r['history_counts']['home_linked_2025_26_xg_matches']>0
+          assert r['history_counts']['away_linked_2025_26_xg_matches']>0
+          assert r['model_route']=='FUSION_V2_ACTIVE'
+          assert r['fallback_exact_v1'] is False
+          assert r['mu_home'] is None and r['mu_away'] is None
+          assert r['mu_semantics']=='NOT_DEFINED_FOR_GLOBAL_MIXTURE_SINGLE_POISSON_MU_NOT_CLAIMED'
+          assert 0.0 <= r['over_2_5'] <= 1.0
+          assert abs(r['btts_yes']-r['btts']['yes']) < 1e-15
+          assert r['top_3_exact_scores']==r['top_scores'][:3]
+          assert r['one_x_two_top1']['selection'] in ('HOME','DRAW','AWAY')
+          pathlib.Path('acceptance/nfo-tot-assertions.json').write_text(json.dumps({'status':'PASS','model_route':r['model_route'],'fallback_class':r['fallback_class'],'prediction_sha':r['prediction_sha'],'state_sha':r['state_sha256']},sort_keys=True)+'\n')
+          PY
+
+      - name: Audit seven focus domains and all sixteen formal domains
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py \
+            --repo-root "$PWD" --bundle "$PWD/.formal_state_cache/bundle" --out-dir "$PWD/acceptance/audit"
+
+      - name: Verify sealed determinism and state immutability
+        run: |
+          set -euo pipefail
+          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/acceptance/request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --state-root "$PWD/.formal_state_cache" --out "$PWD/acceptance/run2" | tee acceptance/run2/stdout.txt
+          python3 - <<'PY'
+          import json
+          a=json.load(open('acceptance/run1/prediction_receipt.json'))
+          b=json.load(open('acceptance/run2/prediction_receipt.json'))
+          for k in ('state_sha256','state_bundle_sha','runtime_input_sha','prediction_sha'):
+              assert a[k]==b[k], (k,a[k],b[k])
+          assert a['team_identity_bridge']==b['team_identity_bridge']
+          PY
+          sha256sum .formal_state_cache/bundle/* | sort > acceptance/state-files-after.sha256
+          diff -u acceptance/state-files-before.sha256 acceptance/state-files-after.sha256
+
+      - name: Upload governed acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-season-team-state-binding-acceptance-${{ github.run_id }}
+          path: |
+            acceptance/
+            changed-files.txt
+          if-no-files-found: error
+          retention-days: 90
