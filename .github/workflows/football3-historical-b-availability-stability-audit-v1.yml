@@ -1,0 +1,167 @@
+name: football3 Historical B Availability Stability Audit V1
+
+on:
+  push:
+    branches: ['football3/historical-b-availability-stability-audit-v1']
+    paths:
+      - '.github/workflows/football3-historical-b-availability-stability-audit-v1.yml'
+      - 'football-data/research/historical_b_availability_stability_audit_v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ANCHOR_HEAD: a3ec4c30e819c8fc8cad26d5948e3365bd74f989
+  STAGE6_B_HEAD: 9cb97764de1250fd08c6d0880559192e66352ce3
+  V311_HEAD: a90762a97515f3edd564e8ad204db0d0d4231494
+  FORMAL_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+  PARENT_ARTIFACT_ID: '9964065004'
+  PARENT_ARTIFACT_DIGEST: sha256:e06f27d0e8fcc5f3b2e49e577679dea0382d7d3f4e41d95a5845054ae2f6175b
+  HISTORY_ARTIFACT_ID: '9876641831'
+  HISTORY_ARTIFACT_DIGEST: sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c
+
+jobs:
+  audit-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Exact lineage and isolation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/historical-b-availability-stability-audit-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$ANCHOR_HEAD" HEAD)" = "$ANCHOR_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/stage6-pre-b-preshot-deep-ppda-v1 | cut -f1)" = "$STAGE6_B_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-fusion-v3-1-1-joint-score-v1 | cut -f1)" = "$V311_HEAD"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          changed="$(git diff --name-only "$ANCHOR_HEAD...HEAD")"
+          if printf '%s\n' "$changed" | grep -E 'CURRENT|production_pointer|formal_enablement|stage6_pre_b_deep_ppda|stage6_pre_b_prospective'; then
+            echo 'forbidden frozen-path mutation' >&2; exit 1
+          fi
+          while IFS= read -r p; do
+            case "$p" in
+              .github/workflows/football3-historical-b-availability-stability-audit-v1.yml|football-data/research/historical_b_availability_stability_audit_v1/*) ;;
+              *) echo "unexpected changed path: $p" >&2; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Frozen contract and runner guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=football-data/research/historical_b_availability_stability_audit_v1
+          python -m py_compile "$D/run_stability_audit.py"
+          python - <<'PY'
+          import json
+          D='football-data/research/historical_b_availability_stability_audit_v1'
+          c=json.load(open(f'{D}/STABILITY_AUDIT_CONTRACT_V1.json'))
+          assert c['status']=='FROZEN_BEFORE_FINE_GRAINED_STABILITY_SCORING'
+          assert c['anchor_head']=='a3ec4c30e819c8fc8cad26d5948e3365bd74f989'
+          assert c['scope']['primary_exact_kickoff_n']==713
+          assert c['scope']['b_active_n']==700
+          assert c['deterministic_partitions']['chronological_half_season']['expected_counts']=={'2024_H1':185,'2024_H2':185,'2025_H1':171,'2025_H2':172}
+          assert c['deterministic_partitions']['baseline_strength_regime']['parity_gap_lt']==0.08
+          assert c['deterministic_partitions']['baseline_strength_regime']['strong_top_probability_gte']==0.60
+          assert c['stability_gates']['temporal_top1_nondegrade_min_blocks']==3
+          assert c['authorization']['outcome_scoring_allowed'] is True
+          for k in ('training_allowed','tuning_allowed','parameter_search_allowed','threshold_search_allowed','candidate_selection_allowed','prediction_modification_allowed','formal_weight_change_allowed','CURRENT_change_allowed','production_pointer_change_allowed','formal_enablement_change_allowed','promotion_allowed'):
+              assert c['authorization'][k] is False
+          PY
+
+      - name: Download and verify frozen parent and labels
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _parent _history && mkdir _parent _history
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PARENT_ARTIFACT_ID}/zip" > /tmp/parent.zip
+          test "sha256:$(sha256sum /tmp/parent.zip | awk '{print $1}')" = "$PARENT_ARTIFACT_DIGEST"
+          unzip -tq /tmp/parent.zip && unzip -q /tmp/parent.zip -d _parent
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${HISTORY_ARTIFACT_ID}/zip" > /tmp/history.zip
+          test "sha256:$(sha256sum /tmp/history.zip | awk '{print $1}')" = "$HISTORY_ARTIFACT_DIGEST"
+          unzip -tq /tmp/history.zip && unzip -q /tmp/history.zip -d _history
+
+      - name: Run frozen no-tuning stability audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir _run
+          D=football-data/research/historical_b_availability_stability_audit_v1
+          python "$D/run_stability_audit.py" \
+            --contract "$D/STABILITY_AUDIT_CONTRACT_V1.json" \
+            --parent-dir _parent \
+            --history-dir _history \
+            --out _run | tee /tmp/audit_stdout.txt
+          test -s _run/stability_audit_result.json
+          test -s _run/temporal_blocks.json
+          test -s _run/strength_regimes.json
+
+      - name: Validate scientific terminal and invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/stability_audit_result.json'))
+          assert r['status'] in ('MODERN_B_AVAILABILITY_STABILITY_AUDIT_PASS','MODERN_B_AVAILABILITY_STABILITY_AUDIT_FAIL')
+          assert r['research_only'] is True
+          assert r['fresh_confirmation'] is False
+          assert r['promotion_allowed'] is False
+          assert r['training_performed'] is False
+          assert r['tuning_performed'] is False
+          assert r['parameter_search_performed'] is False
+          assert r['threshold_search_performed'] is False
+          assert r['prediction_modification_performed'] is False
+          assert r['historical_confirmation_2023_read'] is False
+          assert r['prospective_1335_touched'] is False
+          assert r['formal_v2_changed'] is False
+          assert r['frozen_v3_1_1_changed'] is False
+          assert r['stage6_b_frozen_candidate_changed'] is False
+          assert r['CURRENT_changed'] is False
+          assert r['production_pointer_changed'] is False
+          assert r['formal_enablement_changed'] is False
+          assert all(r['parent_reproduction_checks'].values())
+          assert [x['n'] for x in r['temporal_blocks']]==[185,185,171,172]
+          expected='MODERN_B_AVAILABILITY_STABILITY_AUDIT_PASS' if all(r['gates'].values()) else 'MODERN_B_AVAILABILITY_STABILITY_AUDIT_FAIL'
+          assert r['status']==expected
+          PY
+
+      - name: Seal audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
+          D=football-data/research/historical_b_availability_stability_audit_v1
+          cp "$D/STABILITY_AUDIT_CONTRACT_V1.json" _seal/contract/
+          cp "$D/run_stability_audit.py" _seal/code/
+          cp _run/stability_audit_result.json _run/temporal_blocks.json _run/strength_regimes.json _run/terminal.txt _seal/evidence/
+          cp /tmp/audit_stdout.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal')
+          files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
+          r=json.load(open('_run/stability_audit_result.json'))
+          m={'schema_version':'football3-modern-b-availability-stability-audit-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'failed_gates':r['failed_gates'],'parent_prediction_sha256':r['parent_prediction_sha256'],'prospective_1335_touched':False,'historical_confirmation_2023_read':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload sealed audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-modern-b-availability-stability-audit-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 90
