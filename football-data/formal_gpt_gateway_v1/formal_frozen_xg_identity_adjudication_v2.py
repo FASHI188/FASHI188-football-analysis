@@ -181,14 +181,13 @@ def adjudication_entries() -> dict[str, dict[str, Any]]:
 
 def install() -> dict[str, Any]:
     global _INSTALLED
-    if _INSTALLED:
-        return {
-            "schema_version": SCHEMA,
-            "installed": True,
-            "idempotent": True,
-            "manifest_sha256": contract.MANIFEST_CANONICAL_SHA256,
-        }
     contract._manifest()
+    # Reassert the governed runtime bindings on every call.  Some legacy source
+    # adapters are still installed during entry bootstrap and replace
+    # ``rt.load_xg_labels`` after this module's first installation.  Treating an
+    # already-installed call as a no-op silently restored the pre-adjudication
+    # loader in the real gateway while isolated acceptance tests kept the right
+    # loader.  Idempotence here means deterministic rebinding, not skipping it.
     rt.load_xg_labels = _load_xg_labels
     rt.history_delta_events = contract._history_delta_events
     rt._validate_delta_records = contract._validate_delta_records

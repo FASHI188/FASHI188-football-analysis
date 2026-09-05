@@ -7,6 +7,7 @@ from typing import Any
 
 import live_delta_acquisition_v1 as live
 import source_contract_resolution_v1 as source_resolution
+import formal_state_integrity_full_rebuild_v1 as integrity_full_rebuild
 import runtime as rt
 
 
@@ -28,8 +29,15 @@ def _fixture(comp: str, season: str, home: str, away: str, kickoff) -> dict[str,
     }
 
 
-def _build_frozen_base(bundle: Path, repo_root: Path, understat_db: Path, confirmation_dir: Path) -> dict[str, Any]:
-    return source_resolution.build_resolved_base(repo_root, understat_db, confirmation_dir, bundle)
+def _build_frozen_base(bundle: Path, repo_root: Path, understat_db: Path, confirmation_dir: Path,
+                       target_cutoff) -> dict[str, Any]:
+    # FULL escalation must use the same governed integrity builder as the outer
+    # state-integrity guard. The older quarantine builder predates explicit
+    # authoritative/on-field result adjudication and cannot represent that
+    # split without dropping a valid XG label.
+    return integrity_full_rebuild.build_integrity_base(
+        bundle, repo_root, understat_db, confirmation_dir, target_cutoff
+    )
 
 
 def _sealed_input(fixture: dict[str, Any], cutoff, report: dict[str, Any]) -> dict[str, Any]:
@@ -117,7 +125,7 @@ def install(gateway_module) -> dict[str, Any]:
             if lower < base_limit or lower >= requested_ceiling:
                 raise rt.RuntimeGateError("cached state outside prospective live continuity window")
         except rt.RuntimeGateError:
-            _build_frozen_base(bundle, repo_root, understat_db, confirmation_dir)
+            _build_frozen_base(bundle, repo_root, understat_db, confirmation_dir, requested_ceiling)
             gateway_route = "FULL_ACQUIRE_REBUILD"
 
         try:
@@ -125,7 +133,7 @@ def install(gateway_module) -> dict[str, Any]:
         except live.AcquisitionError as exc:
             fast_attempt_gap = {"reason": str(exc), "report": exc.report}
             # FAST incompleteness automatically escalates to FULL from the immutable complete V1 + explicit-XG-quarantine base.
-            base = _build_frozen_base(bundle, repo_root, understat_db, confirmation_dir)
+            base = _build_frozen_base(bundle, repo_root, understat_db, confirmation_dir, requested_ceiling)
             gateway_route = "FULL_ACQUIRE_REBUILD"
             try:
                 live_result = _acquire_apply_and_seal(

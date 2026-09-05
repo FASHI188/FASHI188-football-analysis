@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import durable_state_contract_v1 as contract
 import durable_state_selector_v1 as selector
@@ -20,6 +23,28 @@ def _dt(value: str):
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="football3-selector-bundle-") as td:
+        # GitHub artifact downloads redirect to signed object storage. The GitHub
+        # token must authenticate the first request without being forwarded to the
+        # redirect target, where it would invalidate the signed storage request.
+        captured = []
+
+        def fake_urlopen(request):
+            captured.append(request)
+            return io.BytesIO(b"artifact-bytes")
+
+        download = Path(td) / "artifact.zip"
+        with mock.patch.object(selector.urllib.request, "urlopen", fake_urlopen):
+            selector._download("https://api.github.com/repos/o/r/actions/artifacts/1/zip", "secret", download)
+        request = captured[0]
+        assert request.unredirected_hdrs["Authorization"] == "Bearer secret"
+        assert "Authorization" not in request.headers
+        redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "https://objects.example.invalid/signed.zip"
+        )
+        assert redirected is not None
+        assert redirected.get_header("Authorization") is None
+        assert download.read_bytes() == b"artifact-bytes"
+
         bundle = Path(td) / "bundle"
         state = rt.formal_v2.new_candidate_state()
         manifest = rt.seal_bundle(

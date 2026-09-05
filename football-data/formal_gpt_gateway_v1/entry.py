@@ -15,6 +15,10 @@ FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
 import formal_source_contract_v1
 
 COMPAT = formal_source_contract_v1.install()
+# The legacy source-contract installer assigns its historical compatibility
+# loader into runtime. Reassert the governed result/identity contract before
+# downstream gateway modules capture or call runtime functions.
+FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
 import source_contract_resolution_v1
 SOURCE_RESOLUTION = source_contract_resolution_v1.install()
 import live_delta_semantics_v2
