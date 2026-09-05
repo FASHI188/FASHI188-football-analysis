@@ -63,7 +63,9 @@ jobs:
           python -m py_compile "$D/acquire_epl_modern_process.py"
           python - <<'PY'
           import json
-          c=json.load(open('football-data/research/historical_epl_modern_process_acquisition_v1/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json'))
+          D='football-data/research/historical_epl_modern_process_acquisition_v1'
+          c=json.load(open(f'{D}/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json'))
+          a=json.load(open(f'{D}/EPL_MODERN_PROCESS_ACQUISITION_SOURCE_AMENDMENT_V1_1.json'))
           assert c['status']=='FROZEN_BEFORE_NETWORK_ACQUISITION'
           assert c['source_head']=='125b701333405aa548418a0644c6da2049bed6f5'
           assert c['seasons']['replication_audit']==2022
@@ -71,6 +73,14 @@ jobs:
           assert c['replication_gate']['required_four_field_match_rate']==1.0
           assert c['governance']['no_candidate_scoring'] is True
           assert c['governance']['prospective_1335_not_read_or_joined'] is True
+          assert a['status']=='FROZEN_AFTER_HTML_TRANSPORT_FAILURE_BEFORE_ANY_DATA_ACCEPTANCE'
+          assert a['supersedes_scientific_contract'] is False
+          assert a['allowed_change']=='transport only'
+          assert a['unchanged_rules']['required_four_field_match_rate']==1.0
+          assert a['unchanged_rules']['modern_expected_rows']==760
+          assert a['unchanged_rules']['candidate_scoring_allowed'] is False
+          assert a['unchanged_rules']['2023_allowed'] is False
+          assert a['unchanged_rules']['prospective_1335_allowed'] is False
           PY
 
       - name: Download and verify frozen 2022 Understat database
@@ -96,6 +106,7 @@ jobs:
           set +e
           python "$D/acquire_epl_modern_process.py" \
             --contract "$D/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json" \
+            --source-amendment "$D/EPL_MODERN_PROCESS_ACQUISITION_SOURCE_AMENDMENT_V1_1.json" \
             --old-db _old/understat_frozen.db \
             --out _run 2>&1 | tee /tmp/acquire_stdout.txt
           rc=${PIPESTATUS[0]}
@@ -111,6 +122,7 @@ jobs:
           rm -rf _seal && mkdir -p _seal/{contract,code,evidence}
           D=football-data/research/historical_epl_modern_process_acquisition_v1
           cp "$D/EPL_MODERN_PROCESS_ACQUISITION_CONTRACT.json" _seal/contract/
+          cp "$D/EPL_MODERN_PROCESS_ACQUISITION_SOURCE_AMENDMENT_V1_1.json" _seal/contract/
           cp "$D/acquire_epl_modern_process.py" _seal/code/
           cp _run/* _seal/evidence/
           cp /tmp/acquire_stdout.txt _seal/evidence/
@@ -119,7 +131,7 @@ jobs:
           root=pathlib.Path('_seal')
           files={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file()}
           r=json.load(open('_run/acquisition_receipt.json'))
-          m={'schema_version':'football3-epl-modern-process-acquisition-artifact-v1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'modern_process_rows':r['modern_process_rows'],'modern_dataset_sha256':r['modern_dataset_sha256'],'prospective_1335_touched':False,'files':files}
+          m={'schema_version':'football3-epl-modern-process-acquisition-artifact-v1.1','github_sha':os.environ['GITHUB_SHA'],'anchor_head':os.environ['ANCHOR_HEAD'],'status':r['status'],'transport_amendment':r['transport_amendment'],'modern_process_rows':r['modern_process_rows'],'modern_dataset_sha256':r['modern_dataset_sha256'],'prospective_1335_touched':False,'files':files}
           (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
           PY
 
@@ -139,6 +151,7 @@ jobs:
           import json
           r=json.load(open('_run/acquisition_receipt.json'))
           assert r['status']=='EPL_MODERN_PROCESS_ACQUISITION_REPLICATION_PASS',r
+          assert r['transport_amendment']=='football3-epl-modern-process-acquisition-source-amendment-v1.1'
           assert r['modern_process_rows']==760
           assert r['replication_audit']['passed'] is True
           assert r['replication_audit']['identity_match_rate']==1.0
