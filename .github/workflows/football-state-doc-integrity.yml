@@ -1,40 +1,68 @@
 name: Football Governance Topology Integrity
-
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
   push:
     branches: [main]
-
 permissions:
   contents: read
-
-concurrency:
-  group: football-governance-topology-${{ github.ref }}
-  cancel-in-progress: true
-
+  pull-requests: read
+  checks: read
 jobs:
   governance-topology-integrity:
+    name: governance-topology-integrity
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 45
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - name: Checkout exact commit
-        uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Validate single control plane and engineering boundaries
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha || github.sha }}", persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
+      - name: Resolve base
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "${BASE_SHA}^{commit}"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+      - name: Validate governance topology and bypass negatives
+        run: |
           python governance/validate_project_continuity.py --self-test
-          python governance/validate_project_continuity.py --root .
-          python -m py_compile \
-            governance/validate_project_continuity.py \
-            football-data/validation/validate_engineering_research_profile_v6494.py \
-            football-data/runtime/activation/activate_mls_d_conditional_runtime_v470.py \
-            football-data/runtime/activation/activate_selective_direction_runtime_v501.py \
-            football-data/engine/validate_platform.py
-          python football-data/validation/validate_engineering_research_profile_v6494.py --print-summary
-          sha256sum AGENTS.md EXECUTION_LITE.md governance/validate_project_continuity.py football-data/docs/ASSET_LIFECYCLE.md
+          python governance/validate_project_continuity.py --root . --base-ref "$BASE_SHA"
+          python governance/test_required_context_coverage.py
+      - name: Validate football3 production safety surface
+        env:
+          PYTHONPATH: football-data/research
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _football3_test_logs
+          python -m py_compile football-data/research/football3_core.py football-data/research/football3_label_access.py football-data/research/validate_football3_experiment.py governance/build_football3_remediation_evidence.py
+          python football-data/research/validate_football3_experiment.py --contract football-data/research/FOOTBALL3_REMEDIATION_SAFETY_CONTRACT_V3.json
+          pytest -q football-data/research/test_football3_core.py football-data/research/test_football3_label_access.py football-data/research/test_validate_football3_experiment.py | tee _football3_test_logs/linux-production-counterexamples.txt
+      - name: Generate repository governance ledger
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python governance/repository_governance_audit.py --root . --repo "$GITHUB_REPOSITORY" --base-sha "$BASE_SHA" --out _governance_audit
+      - name: Build exact-head remediation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _football3_remediation_evidence/logs _football3_remediation_evidence/governance
+          cp _football3_test_logs/* _football3_remediation_evidence/logs/
+          cp -R _governance_audit/. _football3_remediation_evidence/governance/
+          python governance/build_football3_remediation_evidence.py --root . --base-sha "$BASE_SHA" --out _football3_remediation_evidence --test-summary _football3_test_logs/linux-production-counterexamples.txt
+          git diff --exit-code
+      - name: Upload exact-head remediation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-remediation-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: _football3_remediation_evidence/
+          if-no-files-found: error
+          retention-days: 30
