@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Install the explicit authoritative result-semantic adjudication before any
-# gateway/source wrappers capture runtime functions. This does not rewrite a
-# source score: V1 receives the official settlement result at its conservative
-# authority time while XG retains the played-match result tied to the frozen xG.
-import formal_result_adjudication_v1
-FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v1.install()
+# gateway/source wrappers capture runtime functions. V2 delegates all xG identity
+# joining to the original runtime loader and only supplies the authorized semantic
+# validation view for the single adjudicated fixture.
+import formal_result_adjudication_v2
+FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
 
 import formal_source_contract_v1
 
