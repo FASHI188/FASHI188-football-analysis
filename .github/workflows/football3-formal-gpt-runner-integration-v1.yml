@@ -84,73 +84,58 @@ jobs:
           print(json.dumps(audit,sort_keys=True))
           PY
 
-      - name: Restore latest durable formal state Artifact
+      - name: Restore cutoff-aware eligible durable formal state Artifact
+        id: durable_selector
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .runtime_sources .formal_state_cache/bundle
-          rm -rf .formal_state_cache/bundle/*
-          python3 - <<'PY'
-          import json, os, pathlib, urllib.request
-          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
-          req=urllib.request.Request(
-              f'https://api.github.com/repos/{repo}/actions/artifacts?per_page=100',
-              headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'},
-          )
-          with urllib.request.urlopen(req) as r:
-              data=json.load(r)
-          allowed={'football3/formal-gpt-runner-integration-v1','football3/formal-gpt-runner-request-carrier-v1'}
-          candidates=[]
-          for a in data.get('artifacts',[]):
-              wr=a.get('workflow_run') or {}
-              if (not a.get('expired') and str(a.get('name','')).startswith('formal-gpt-runner-state-')
-                      and wr.get('head_branch') in allowed):
-                  candidates.append(a)
-          candidates.sort(key=lambda a:(a.get('created_at',''),int(a.get('id',0))))
-          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
-          if not candidates:
-              p.write_text(json.dumps({'status':'NO_DURABLE_STATE_ARTIFACT'},sort_keys=True)+'\n')
-          else:
-              a=candidates[-1]
-              p.write_text(json.dumps({'status':'FOUND','artifact_id':a['id'],'name':a['name'],
-                  'digest':a.get('digest'),'created_at':a.get('created_at'),
-                  'head_branch':(a.get('workflow_run') or {}).get('head_branch')},sort_keys=True)+'\n')
-          PY
+          rm -rf .formal_state_cache
+          mkdir -p .runtime_sources .formal_state_cache football-data/formal_gpt_gateway_v1/output
           if python3 - <<'PY'
           import json
-          d=json.load(open('.runtime_sources/state_artifact_candidate.json'))
-          raise SystemExit(0 if d.get('status')=='FOUND' else 1)
+          d=json.load(open('.runtime_sources/invocation_request.json'))
+          raise SystemExit(0 if type(d.get('match')) is dict else 1)
           PY
           then
-            ARTIFACT_ID="$(python3 -c "import json; print(json.load(open('.runtime_sources/state_artifact_candidate.json'))['artifact_id'])")"
-            curl --fail --location --silent --show-error \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
-              -o .runtime_sources/state.zip
-            unzip -q .runtime_sources/state.zip -d .formal_state_cache/bundle
-            if PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
-                 python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
-                   --bundle "$PWD/.formal_state_cache/bundle" \
-                 > .runtime_sources/state_artifact_validate.txt 2>&1
-            then
-              python3 - <<'PY'
-          import json, pathlib
-          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
-          d=json.loads(p.read_text()); d['validation']='PASS'
-          p.write_text(json.dumps(d,sort_keys=True)+'\n')
-          PY
+            echo 'prediction_required=true' >> "$GITHUB_OUTPUT"
+            set +e
+            PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
+              python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+                --repo "$GITHUB_REPOSITORY" \
+                --request "$PWD/.runtime_sources/invocation_request.json" \
+                --cache-root "$PWD/.formal_state_cache" \
+                --audit "$PWD/.runtime_sources/state_artifact_candidate.json" \
+              > .runtime_sources/durable_selector_stdout.txt 2>&1
+            rc=$?
+            set -e
+            cat .runtime_sources/durable_selector_stdout.txt
+            if [ "$rc" -eq 0 ]; then
+              echo 'selected=true' >> "$GITHUB_OUTPUT"
             else
-              cat .runtime_sources/state_artifact_validate.txt
-              rm -rf .formal_state_cache/bundle
+              echo 'selected=false' >> "$GITHUB_OUTPUT"
+              cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
               python3 - <<'PY'
-          import json, pathlib
-          p=pathlib.Path('.runtime_sources/state_artifact_candidate.json')
-          d=json.loads(p.read_text()); d['validation']='FAIL_REMOVED'
-          p.write_text(json.dumps(d,sort_keys=True)+'\n')
+          import json,pathlib
+          audit=json.load(open('.runtime_sources/state_artifact_candidate.json'))
+          gap={
+              'schema_version':'football3-formal-durable-state-governance-v1',
+              'status':'DATA_STATE_ANOMALY',
+              'fallback_class':'DATA_STATE_ANOMALY',
+              'fallback_reason':audit.get('reason') or 'DURABLE_SELECTOR_FAILED',
+              'selector_status':audit.get('status'),
+              'target_cutoff':audit.get('target_cutoff'),
+              'competition_id':audit.get('competition_id'),
+              'prediction_sha':None,'receipt_sha':None,
+              'manual_or_auxiliary_fallback_used':False,'fail_closed':True,
+          }
+          pathlib.Path('football-data/formal_gpt_gateway_v1/output/formal_gap.json').write_text(json.dumps(gap,sort_keys=True,separators=(',',':'))+'\n')
           PY
             fi
+          else
+            echo 'prediction_required=false' >> "$GITHUB_OUTPUT"
+            echo 'selected=not-required' >> "$GITHUB_OUTPUT"
+            printf '%s\n' '{"schema_version":"football3-durable-state-selection-v1","status":"SKIPPED_NON_PREDICTION_MODE"}' > .runtime_sources/state_artifact_candidate.json
           fi
           cat .runtime_sources/state_artifact_candidate.json
 
@@ -175,14 +160,18 @@ jobs:
 
       - name: Execute frozen original formal runner through gateway
         id: execute
+        if: ${{ steps.durable_selector.outputs.prediction_required != 'true' || steps.durable_selector.outputs.selected == 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
           rm -rf football-data/formal_gpt_gateway_v1/output
           mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
           cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
-          if [ -f .runtime_sources/state_artifact_candidate.json ]; then
-            cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
+          cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
+          if [ "${{ steps.durable_selector.outputs.prediction_required }}" = 'true' ]; then
+            export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
+          else
+            export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
           fi
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/entry.py \
@@ -210,7 +199,7 @@ jobs:
           PY
 
       - name: Probe missing input routes to FULL and fails closed
-        if: ${{ always() }}
+        if: ${{ always() && (steps.durable_selector.outputs.prediction_required != 'true' || steps.durable_selector.outputs.selected == 'true') }}
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
@@ -247,6 +236,10 @@ jobs:
           path: .formal_state_cache/bundle/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Preserve durable selector failure as job failure
+        if: ${{ always() && steps.durable_selector.outputs.prediction_required == 'true' && steps.durable_selector.outputs.selected != 'true' }}
+        run: exit 1
 
       - name: Preserve main gateway failure as job failure
         if: ${{ always() && steps.execute.outcome == 'failure' }}
