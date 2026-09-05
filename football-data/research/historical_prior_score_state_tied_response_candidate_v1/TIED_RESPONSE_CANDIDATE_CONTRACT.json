@@ -1,0 +1,101 @@
+{
+  "schema_version": "football3-prior-score-state-tied-response-candidate-contract-v1",
+  "status": "FROZEN_BEFORE_CANDIDATE_EVALUATION",
+  "research_only": true,
+  "parent": {
+    "branch": "football3/historical-prior-score-state-response-source-v2",
+    "head": "ec53de126680dc70ef0d801b961b69bdc332cedc",
+    "run_id": 33957266011,
+    "artifact_id": 9966765728,
+    "artifact_digest": "sha256:21c3225e0c83a6712f7a7dd2b2e230fcf4c74fabcdcf53fa1989e0591eec7457",
+    "source_gate": "PRIOR_SCORE_STATE_RESPONSE_CORRECTED_SOURCE_PASS"
+  },
+  "frozen_bases": {
+    "formal_v2_head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "v311_head": "a90762a97515f3edd564e8ad204db0d0d4231494",
+    "stage6_b_head": "9cb97764de1250fd08c6d0880559192e66352ce3",
+    "stage6_b_coefficient": 0.1,
+    "stage6_b_half_life": 16.0
+  },
+  "data_roles": {
+    "development": "2020-2022 consumed historical labels only",
+    "rolling_tests": [2021, 2022],
+    "state_history": "Big5 2014-2022 completed history strictly prior to target date snapshot",
+    "historical_confirmation_2023": "LOCKED_NOT_SELECTED_OR_READ_IN_THIS_LANE",
+    "prospective_1335": "FORBIDDEN_NOT_TOUCHED"
+  },
+  "feature": {
+    "family": "prior_score_state_tied_response",
+    "key": "pair_mean_tied_activity_rate_minus_all_activity_rate",
+    "definition": "For each team over its latest 8 clean completed league matches, compute 90*(nonpenalty xG_for+xG_against while tied)/tied_minutes minus 90*(nonpenalty xG_for+xG_against over all score states)/all_minutes; match feature is the arithmetic mean of home and away team values.",
+    "interpretation": "Negative values mean the pair historically suppresses nonpenalty chance activity specifically while level relative to its own overall match-state activity.",
+    "lookback_completed_matches": 8,
+    "minimum_clean_prior_matches": 3,
+    "minimum_tied_minutes": 1.0,
+    "same_date_batch_isolation": true,
+    "own_goal_rule": "Goal credits event h_a; OwnGoal credits opposite event h_a",
+    "penalty_shots_excluded": true,
+    "no_target_match_events": true,
+    "no_feature_family_search": true,
+    "no_feature_threshold_search": true,
+    "no_feature_smoothing_parameter": true
+  },
+  "method": {
+    "axis": "draw_only",
+    "model": "offset logistic on Frozen Stage6 B draw probability",
+    "formula": "logit(PD_candidate)=logit(PD_B)+beta0+beta1*z",
+    "fixed_ridge": 0.01,
+    "ridge_on_intercept": false,
+    "train_standardization_only": true,
+    "rolling_training": {
+      "2021": [2020],
+      "2022": [2020, 2021]
+    },
+    "preserve_conditional_home_away_ratio": true,
+    "score_matrix_rule": "region-rescale Frozen Stage6 B score matrix to candidate 1X2 while preserving within-result-region shape",
+    "no_candidate_family_search": true,
+    "no_hyperparameter_grid": true,
+    "no_threshold_search": true,
+    "no_posthoc_calibration": true,
+    "no_probability_clipping": true
+  },
+  "gates": {
+    "minimum_feature_coverage": 0.98,
+    "draw_logloss_each_fold_strict_improvement": true,
+    "each_fold_top1_delta_hits_min": 0,
+    "pooled_top1_delta_hits_min": 0,
+    "pooled_1x2_logloss_delta_max": 0.0,
+    "pooled_1x2_brier_delta_max": 0.0,
+    "pooled_1x2_rps_delta_max": 0.0,
+    "pooled_exact_score_logloss_delta_max": 0.0,
+    "pooled_total_goals_logloss_delta_max": 0.0,
+    "max_outcome_probability_abs_delta": 0.08,
+    "conditional_home_away_ratio_max_abs_error": 1e-12,
+    "matrix_1x2_max_abs_error": 1e-12
+  },
+  "nonduplication": {
+    "historical_fusion_v3_shot_regime": "V3 uses rolling overall shot/xG quality, open-play/set-piece composition and finishing/keeper residuals; this feature is a within-team contrast conditioned on prior score state tied versus all states.",
+    "c070g_state_duration": "C070G models within-match state-duration transitions after kickoff; this candidate uses only completed prior matches to form a prematch team response profile.",
+    "chance_burstiness": "Chance burstiness uses timing-bin concentration irrespective of score state; this candidate conditions prior xG activity on tied state.",
+    "r43af1_residual_volatility": "R43AF1 uses residual second moments/RMSE; this candidate uses state-conditioned chance intensity contrast."
+  },
+  "after_pass": {
+    "freeze_final_params_using_all_2020_2022_consumed_development": true,
+    "do_not_open_2023": true,
+    "do_not_open_1335": true,
+    "next": "find and preregister a genuinely unconsumed historical confirmation cohort before label scoring"
+  },
+  "boundaries": {
+    "formal_weight": 0,
+    "formal_v2_unchanged": true,
+    "frozen_v3_1_1_unchanged": true,
+    "stage6_b_unchanged": true,
+    "CURRENT_unchanged": true,
+    "production_pointer_unchanged": true,
+    "formal_enablement_unchanged": true
+  },
+  "terminal": {
+    "pass": "TIED_RESPONSE_CANDIDATE_DEVELOPMENT_PASS_FREEZE_PARAMS_ONLY",
+    "fail": "TIED_RESPONSE_CANDIDATE_DEVELOPMENT_FAIL_CLOSE_NO_RETUNE"
+  }
+}
