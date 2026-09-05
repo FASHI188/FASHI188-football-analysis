@@ -20,9 +20,10 @@ def fetch(url: str) -> bytes:
     req = urllib.request.Request(
         url,
         headers={
-            'User-Agent': 'Mozilla/5.0 football3-research/1.0',
+            'User-Agent': 'Mozilla/5.0 (compatible; football3-research/1.0)',
             'Referer': 'https://understat.com/league/EPL',
             'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
         },
     )
     with urllib.request.urlopen(req, timeout=45) as r:
@@ -34,14 +35,40 @@ def fetch(url: str) -> bytes:
 
 def parse_embedded(html: bytes, var: str):
     text = html.decode('utf-8')
-    pat = rf"var\s+{re.escape(var)}\s*=\s*JSON\.parse\('(.+?)'\)"
-    m = re.search(pat, text, flags=re.S)
-    if not m:
-        raise RuntimeError(f'{var} not found')
-    raw = m.group(1)
-    # Understat stores JSON in a JS string using backslash escapes (primarily \\xHH).
-    decoded = codecs.escape_decode(raw.encode('utf-8'))[0].decode('utf-8')
-    return json.loads(decoded)
+    patterns = [
+        rf"(?:var|let|const)\s+{re.escape(var)}\s*=\s*JSON\.parse\(\s*'((?:\\.|[^'])*)'\s*\)",
+        rf'(?:var|let|const)\s+{re.escape(var)}\s*=\s*JSON\.parse\(\s*"((?:\\.|[^"])*)"\s*\)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, flags=re.S)
+        if m:
+            raw = m.group(1)
+            decoded = codecs.escape_decode(raw.encode('utf-8'))[0].decode('utf-8')
+            return json.loads(decoded)
+    raise RuntimeError(f'{var} not found')
+
+
+def load_provider_payload(page_url: str, ajax_url: str) -> tuple[dict, dict]:
+    # Run 33946985994 proved the Actions transport did not expose embedded
+    # teamsData on the league HTML. The frozen v1.1 source amendment therefore
+    # permits only the same-provider getLeagueData transport; scientific fields,
+    # replication gates and season identities are unchanged.
+    ajax = fetch(ajax_url)
+    try:
+        obj = json.loads(ajax.decode('utf-8'))
+    except Exception as exc:
+        raise RuntimeError(f'Understat AJAX response is not JSON: {ajax_url}') from exc
+    if not isinstance(obj, dict) or not isinstance(obj.get('teams'), dict) or not isinstance(obj.get('dates'), list):
+        raise RuntimeError(f'Understat AJAX shape drift: {ajax_url}')
+    receipt = {
+        'transport': 'getLeagueData',
+        'page_identity_url': page_url,
+        'source_url': ajax_url,
+        'source_response_sha256': sha256_bytes(ajax),
+        'source_response_bytes': len(ajax),
+        'top_level_keys': sorted(obj.keys()),
+    }
+    return obj, receipt
 
 
 def ppda_value(hist: dict) -> float:
@@ -54,24 +81,17 @@ def ppda_value(hist: dict) -> float:
 
 
 def norm_datetime(x: str) -> str:
-    # Understat league fixtures and team history use the same naive UTC-like string.
     return dt.datetime.fromisoformat(str(x)).strftime('%Y-%m-%d %H:%M:%S')
 
 
-def build_season(season: int, url: str) -> tuple[list[dict], dict]:
-    html = fetch(url)
-    teams_obj = parse_embedded(html, 'teamsData')
-    dates = parse_embedded(html, 'datesData')
+def build_season(season: int, page_url: str, ajax_url: str) -> tuple[list[dict], dict]:
+    payload, transport_receipt = load_provider_payload(page_url, ajax_url)
+    teams = payload['teams']
+    dates = payload['dates']
 
-    # Current Understat pages expose teamsData as an id-keyed object.
-    teams = teams_obj.get('teams', teams_obj) if isinstance(teams_obj, dict) else teams_obj
     by_team_date_role: dict[tuple[str, str, str], dict] = {}
     titles: dict[str, str] = {}
-    if isinstance(teams, dict):
-        iterable = teams.items()
-    else:
-        iterable = [(str(x.get('id')), x) for x in teams]
-    for tid, obj in iterable:
+    for tid, obj in teams.items():
         tid = str(obj.get('id', tid))
         titles[tid] = str(obj['title'])
         for h in obj.get('history', []):
@@ -113,9 +133,7 @@ def build_season(season: int, url: str) -> tuple[list[dict], dict]:
 
     receipt = {
         'season_start_year': int(season),
-        'source_url': url,
-        'source_response_sha256': sha256_bytes(html),
-        'source_response_bytes': len(html),
+        **transport_receipt,
         'completed_dates_fixtures': sum(bool(x.get('isResult')) for x in dates),
         'process_rows': len(rows),
         'missing_process_join_n': len(missing),
@@ -145,25 +163,28 @@ def audit_against_frozen_db(rows: list[dict], db_path: pathlib.Path, c: dict) ->
     max_ppda_abs = 0.0
     max_deep_abs = 0.0
     for fid in common_ids:
-        a = old[fid]
-        b = new[fid]
+        oldr = old[fid]
+        newr = new[fid]
         diffs = {
-            'h_deep': abs(float(a['h_deep']) - float(b['h_deep'])),
-            'a_deep': abs(float(a['a_deep']) - float(b['a_deep'])),
-            'h_ppda': abs(float(a['h_ppda']) - float(b['h_ppda'])),
-            'a_ppda': abs(float(a['a_ppda']) - float(b['a_ppda'])),
+            'h_deep': abs(float(oldr['h_deep']) - float(newr['h_deep'])),
+            'a_deep': abs(float(oldr['a_deep']) - float(newr['a_deep'])),
+            'h_ppda': abs(float(oldr['h_ppda']) - float(newr['h_ppda'])),
+            'a_ppda': abs(float(oldr['a_ppda']) - float(newr['a_ppda'])),
         }
         max_deep_abs = max(max_deep_abs, diffs['h_deep'], diffs['a_deep'])
         max_ppda_abs = max(max_ppda_abs, diffs['h_ppda'], diffs['a_ppda'])
-        ok = diffs['h_deep'] <= deep_tol and diffs['a_deep'] <= deep_tol and diffs['h_ppda'] <= ppda_tol and diffs['a_ppda'] <= ppda_tol
+        ok = (
+            diffs['h_deep'] <= deep_tol and diffs['a_deep'] <= deep_tol
+            and diffs['h_ppda'] <= ppda_tol and diffs['a_ppda'] <= ppda_tol
+        )
         if ok:
             four_match += 1
         elif len(mismatches) < 10:
-            mismatches.append({'fid': fid, 'diffs': diffs, 'old': a, 'new': b})
+            mismatches.append({'fid': fid, 'diffs': diffs, 'old': oldr, 'new': newr})
     match_rate = four_match / max(1, len(old))
+    expected = int(c['seasons']['expected_completed_fixtures_each'])
     passed = (
-        len(old) == int(c['seasons']['expected_completed_fixtures_each'])
-        and len(new) == int(c['seasons']['expected_completed_fixtures_each'])
+        len(old) == expected and len(new) == expected
         and identity_match_rate >= float(c['replication_gate']['required_fixture_identity_match_rate'])
         and match_rate >= float(c['replication_gate']['required_four_field_match_rate'])
     )
@@ -190,26 +211,36 @@ def write_jsonl(path: pathlib.Path, rows: list[dict]):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--contract', type=pathlib.Path, required=True)
+    ap.add_argument('--source-amendment', type=pathlib.Path, required=True)
     ap.add_argument('--old-db', type=pathlib.Path, required=True)
     ap.add_argument('--out', type=pathlib.Path, required=True)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     c = json.loads(a.contract.read_text(encoding='utf-8'))
+    amend = json.loads(a.source_amendment.read_text(encoding='utf-8'))
     assert c['status'] == 'FROZEN_BEFORE_NETWORK_ACQUISITION'
+    assert amend['status'] == 'FROZEN_AFTER_HTML_TRANSPORT_FAILURE_BEFORE_ANY_DATA_ACCEPTANCE'
+    assert amend['supersedes_scientific_contract'] is False
+    assert amend['allowed_change'] == 'transport only'
     assert c['governance']['no_candidate_scoring'] is True
     assert c['governance']['prospective_1335_not_read_or_joined'] is True
+    assert amend['unchanged_rules']['required_four_field_match_rate'] == c['replication_gate']['required_four_field_match_rate']
+    assert amend['unchanged_rules']['modern_expected_rows'] == c['seasons']['expected_modern_completed_fixtures']
 
     season_rows = {}
     receipts = {}
     for s in (2022, 2024, 2025):
-        rows, rec = build_season(s, c['source']['urls'][str(s)])
+        rows, rec = build_season(s, c['source']['urls'][str(s)], amend['ajax_urls'][str(s)])
         season_rows[s] = rows
         receipts[str(s)] = rec
 
     repl = audit_against_frozen_db(season_rows[2022], a.old_db, c)
     expected = int(c['seasons']['expected_completed_fixtures_each'])
     modern = season_rows[2024] + season_rows[2025]
-    modern_counts_ok = len(season_rows[2024]) == expected and len(season_rows[2025]) == expected and len(modern) == int(c['seasons']['expected_modern_completed_fixtures'])
+    modern_counts_ok = (
+        len(season_rows[2024]) == expected and len(season_rows[2025]) == expected
+        and len(modern) == int(c['seasons']['expected_modern_completed_fixtures'])
+    )
     modern_all_finite = all(
         all(math.isfinite(float(r[k])) for k in ('h_deep', 'a_deep', 'h_ppda', 'a_ppda'))
         for r in modern
@@ -220,10 +251,11 @@ def main() -> int:
     write_jsonl(a.out / 'epl_2022_replication_process_identity.jsonl', season_rows[2022])
     dataset_sha = hashlib.sha256((a.out / 'epl_2024_2025_process_identity.jsonl').read_bytes()).hexdigest()
     receipt = {
-        'schema_version': 'football3-epl-modern-process-acquisition-receipt-v1',
+        'schema_version': 'football3-epl-modern-process-acquisition-receipt-v1.1',
         'status': status,
         'research_only': True,
         'provider': c['source']['provider'],
+        'transport_amendment': amend['schema_version'],
         'season_receipts': receipts,
         'replication_audit': repl,
         'modern_counts_ok': modern_counts_ok,
