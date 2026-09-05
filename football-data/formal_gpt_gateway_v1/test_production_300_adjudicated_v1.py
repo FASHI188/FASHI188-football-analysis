@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import math
+import statistics
 import sys
+import time
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
@@ -121,6 +124,83 @@ def reference_apply_group(state: rt.hxg.ChallengerState, group: list[dict[str, A
         state.predict_batch([event["row"].xg_fixture() for event in items], include_matrix=False, lightweight=True)
 
 
+def run_equivalence_adjudicated(history, labels, source, identity, n: int, tmp: Path) -> dict[str, Any]:
+    """Production-300 equivalence with the formal fail-closed late-settlement contract.
+
+    The ordinary FAST delta remains the tested path. If a delayed authoritative V1
+    settlement would reverse kickoff chronology, the runtime adapter deliberately
+    raises V1_LATE_RELEASE_REQUIRES_FULL_REBUILD. The acceptance harness then takes
+    the same trusted FULL reconstruction required by the governed resolver and
+    continues exact state/prediction comparison against an independently built
+    availability-gated reference stream.
+    """
+    sample = tr.mechanical_sample(history, n)
+    sample_identity = [{"fixture_id": r.fixture_id, "kickoff": r.kickoff.isoformat(), "competition_id": r.competition_id} for r in sample]
+    seed_cutoff = tr.choose_safe_seed_cutoff(sample)
+
+    refs = reference_events(history, labels)
+    ref_state = rt.formal_v2.new_candidate_state(); ref_pos = 0
+    ref_pos = tr.reference_advance(ref_state, refs, ref_pos, seed_cutoff)
+
+    seed_fast, _ = rt.replay_history_state(history, labels, seed_cutoff)
+    cache_state = rt.deserialize_state(rt.serialize_v1_state(seed_fast.base), rt.serialize_xg_state(seed_fast))
+    prev = seed_cutoff
+    max1 = maxm = 0.0; meta_ok = True; cutoff_ok = True; state_equal = True; fallback = active = 0
+    paths = defaultdict(int); fast_core = []; late_release_full_rebuild_n = 0
+
+    for target in sample:
+        cutoff = target.kickoff - timedelta(minutes=60)
+        ref_pos = tr.reference_advance(ref_state, refs, ref_pos, cutoff)
+        ref_for_prediction = rt.deserialize_state(rt.serialize_v1_state(ref_state.base), rt.serialize_xg_state(ref_state))
+        pfull = rt._prediction_from_state(ref_for_prediction, target.xg_fixture())
+
+        delta = tr.make_delta(history, labels, prev, cutoff, target.fixture_id)
+        inp = tr.runtime_input(target, prev, cutoff, delta, "COMPLETE")
+        t = time.perf_counter()
+        checked = rt.validate_runtime_input(inp, tr.target_payload(target), prev, cutoff)
+        try:
+            rt.apply_delta(cache_state, checked["delta"], cutoff)
+        except rt.RuntimeGateError as exc:
+            if str(exc) != "V1_LATE_RELEASE_REQUIRES_FULL_REBUILD":
+                raise
+            cache_state, _ = rt.replay_history_state(history, labels, cutoff)
+            late_release_full_rebuild_n += 1
+        cache_state = rt.deserialize_state(rt.serialize_v1_state(cache_state.base), rt.serialize_xg_state(cache_state))
+        fast_for_prediction = rt.deserialize_state(rt.serialize_v1_state(cache_state.base), rt.serialize_xg_state(cache_state))
+        pfast = rt._prediction_from_state(fast_for_prediction, target.xg_fixture())
+        fast_core.append(time.perf_counter() - t)
+
+        eq = tr.compare_with_cutoff(pfast, pfull, cutoff, cutoff)
+        max1 = max(max1, eq["max_1x2"]); maxm = max(maxm, eq["max_matrix"])
+        meta_ok = meta_ok and bool(eq.get("metadata_equal")); cutoff_ok = cutoff_ok and bool(eq["cutoff_equal"])
+        sv1 = rt.serialize_v1_state(cache_state.base); sxg = rt.serialize_xg_state(cache_state)
+        rv1 = rt.serialize_v1_state(ref_state.base); rxg = rt.serialize_xg_state(ref_state)
+        state_equal = state_equal and sv1 == rv1 and sxg == rxg
+        if not eq["passed"] or not (sv1 == rv1 and sxg == rxg):
+            raise AssertionError(f"equivalence failure fixture={target.fixture_id}: pred={eq} state_equal={sv1 == rv1 and sxg == rxg}")
+        audit = pfast["row"]["audit"]
+        paths[str(audit["route"])] += 1
+        fallback += int(bool(audit["fallback_exact_v1"])); active += int(not bool(audit["fallback_exact_v1"]))
+        prev = cutoff
+
+    core = sorted(fast_core)
+    core_timing = {
+        "n": len(core), "mean_s": statistics.mean(core), "median_s": statistics.median(core),
+        "p95_s": core[min(len(core) - 1, math.ceil(.95 * len(core)) - 1)], "min_s": core[0], "max_s": core[-1],
+    }
+    bench = tr.benchmark_paths(history, labels, source, identity, sample, tmp)
+    return {
+        "passed": max1 <= 1e-12 and maxm <= 1e-12 and meta_ok and cutoff_ok and state_equal,
+        "n": n, "selection_rule": "sort 2024/25 Big-5 by kickoff,competition,fixture_id; take floor(i*N/n), i=0..n-1",
+        "sample_identity_sha256": tr.sha(sample_identity), "first": sample_identity[0], "last": sample_identity[-1],
+        "max_abs_1x2": max1, "max_abs_score_matrix_cell": maxm, "metadata_equal": meta_ok, "cutoff_equal": cutoff_ok,
+        "cache_state_exact": state_equal, "formal_routes": dict(paths), "active_n": active, "fallback_n": fallback,
+        "fast_core_timing": core_timing, "route_benchmark": bench, "sample": sample,
+        "late_release_full_rebuild_n": late_release_full_rebuild_n,
+        "late_release_policy": "FAIL_CLOSED_TO_TRUSTED_FULL_REBUILD",
+    }
+
+
 def adjudication_pit_regression(history: list[rt.HistoryFixture], labels: dict[str, rt.XGLabel]) -> dict[str, Any]:
     entries = adjudication.adjudication_entries()
     if set(entries) != {"8ac7540a70af27118955481e"}:
@@ -185,11 +265,10 @@ def main() -> int:
     conf = Path(_arg("--confirmation-dir"))
     out = Path(_arg("--out"))
 
-    # Independent reference path is monkeypatched only in the test harness; runtime
-    # FAST/FULL continues through the installed formal adjudication adapter.
     _REFERENCE_V1_AVAILABLE.clear()
     tr.reference_events = reference_events
     tr.reference_apply_group = reference_apply_group
+    tr.run_equivalence = run_equivalence_adjudicated
 
     history, labels, _, _ = tr.production_corpus(repo_root, under, conf)
     pit = adjudication_pit_regression(history, labels)
@@ -206,6 +285,7 @@ def main() -> int:
         "independent_reference_stream": True,
         "runtime_history_delta_events_reused_by_reference": False,
         "reference_delayed_v1_policy": "REPLAY_AVAILABLE_LABELS_IN_KICKOFF_ORDER",
+        "fast_delayed_v1_policy": "FAIL_CLOSED_TO_TRUSTED_FULL_REBUILD",
         "formal_model_or_weights_changed": False,
         "current_pointer_changed": False,
     }
