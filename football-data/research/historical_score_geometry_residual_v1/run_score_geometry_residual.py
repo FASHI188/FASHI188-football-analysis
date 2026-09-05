@@ -19,6 +19,8 @@ import run_baseline_residual_diagnostics as resid
 import run_score_shape_candidate as shape
 
 EPS = 1e-15
+IMPORTANCE_FIXED_RIDGE = 0.01
+IMPORTANCE_MAX_ABS_LOG_TILT = 0.35
 HEADS = ('draw_11', 'home_margin1', 'away_margin1')
 REGION = {'draw_11': 1, 'home_margin1': 0, 'away_margin1': 2}
 
@@ -82,7 +84,7 @@ def fit_importance(train, c):
     X = shape.design(train, keys, means, sds)
     y = [int(r['hg'] + r['ag'] <= 2) for r in train]
     off = [resid.logit(r['b_low']) for r in train]
-    beta = resid.fit_offset(X, y, off, float(c['base']['importance_fixed_ridge']))
+    beta = resid.fit_offset(X, y, off, IMPORTANCE_FIXED_RIDGE)
     return {'keys': keys, 'means': means, 'sds': sds, 'beta': beta}
 
 
@@ -96,7 +98,7 @@ def eta_from_model(r, model, cap):
 
 
 def apply_importance(r, m, model, c):
-    eta = eta_from_model(r, model, float(c['base']['importance_max_abs_log_tilt']))
+    eta = eta_from_model(r, model, IMPORTANCE_MAX_ABS_LOG_TILT)
     return shape.apply_region_tilt(m, lambda h, a: h + a <= 2, eta)
 
 
