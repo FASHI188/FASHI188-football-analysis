@@ -426,8 +426,14 @@ def main() -> int:
     ap.add_argument("--n",type=int,default=300)
     args=ap.parse_args()
     under=Path(args.understat_db); conf=Path(args.confirmation_dir)
+    production_adjudication=None
     if args.mode=="production":
         if not args.repo_root: raise SystemExit("--repo-root required in production mode")
+        # Production equivalence must exercise the exact same frozen result/identity
+        # adjudication and delayed-settlement release-order semantics installed by entry.py.
+        # This changes only the regression harness bootstrap; model/CURRENT/weights stay frozen.
+        import formal_result_adjudication_v2
+        production_adjudication=formal_result_adjudication_v2.install()
         history,labels,source,identity=production_corpus(Path(args.repo_root),under,conf)
     else:
         history,labels,source,identity=local_corpus(under,conf)
@@ -445,6 +451,7 @@ def main() -> int:
                 "understat_db":rt._sha_file(under),"confirmation_identity":rt._sha_file(conf/"confirmation_identity.jsonl"),
                 "confirmation_vault":rt._sha_file(conf/"confirmation_xg_result_vault.jsonl")},
             "corpus":{"fixture_n":len(history),"xg_label_n":len(labels),"identity_sha256":sha([{"fixture_id":r.fixture_id,"kickoff":r.kickoff.isoformat()} for r in history])},
+            "production_result_adjudication":production_adjudication,
             "equivalence_300":eq,"v1_exact_fallback":fallback,"same_kickoff_isolation":same,
             "target_label_isolation":target,"automatic_routing":routes,
             "claim":"CACHE_FULL_EQUIVALENT_ON_FROZEN_HISTORY_AUTOROUTE_RELIABLE_PENDING_INDEPENDENT_ENGINEERING_REVIEW",
