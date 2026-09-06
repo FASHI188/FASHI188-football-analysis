@@ -18,7 +18,7 @@ jobs:
   sealed-focus-probes:
     if: ${{ github.event.pull_request.head.ref == 'football3/cross-season-team-state-binding-governed-v1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,26 +29,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Bind exact PR HEAD and fetch verified frozen state
+      - name: Bind exact PR HEAD and frozen FULL sources
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          mkdir -p .focus_state/bundle .runtime_sources/understat .runtime_sources/confirmation acceptance/focus
-          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9973225479/zip" -o .focus_state/state.zip
-          unzip -q .focus_state/state.zip -d .focus_state/bundle
+          mkdir -p .focus_state .runtime_sources/understat .runtime_sources/confirmation acceptance/focus
           curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" -o .runtime_sources/understat.zip
           curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" -o .runtime_sources/confirmation.zip
           unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
-          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
-          python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$PWD/.focus_state/bundle" | tee acceptance/focus/state-validate.txt
-          sha256sum .focus_state/bundle/* | sort > acceptance/focus/state-before.sha256
 
       - name: Build six real sealed fixture requests
         run: |
@@ -102,22 +96,34 @@ jobs:
           (root/'fixture-references.json').write_text(json.dumps(fixtures,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
           PY
 
-      - name: Execute six real fixtures through formal sealed entry
+      - name: Select durable state independently and execute six sealed formal entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
         run: |
           set -euo pipefail
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
           for request in acceptance/focus/*.request.json; do
             key="$(basename "$request" .request.json)"
-            out="acceptance/focus/${key}"
-            mkdir -p "$out"
+            state="$PWD/.focus_state/${key}"
+            out="$PWD/acceptance/focus/${key}"
+            rm -rf "$state" "$out"
+            mkdir -p "$state" "$out"
+            python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+              --repo "$GITHUB_REPOSITORY" --request "$PWD/$request" \
+              --cache-root "$state" --audit "$out/durable_state_selection.json"
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+              --bundle "$state/bundle" | tee "$out/state-validate-before.txt"
+            cp "$state/durable_state_selection_v1.json" "$out/durable_state_selection_bound.json"
+            sha256sum "$state"/bundle/* | sort > "$out/state-files-before.sha256"
             python3 football-data/formal_gpt_gateway_v1/entry.py \
               --request "$PWD/$request" --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-              --state-root "$PWD/.focus_state" --out "$PWD/$out" | tee "$out/stdout.txt"
+              --state-root "$state" --out "$out" | tee "$out/stdout.txt"
+            sha256sum "$state"/bundle/* | sort > "$out/state-files-after.sha256"
+            diff -u "$out/state-files-before.sha256" "$out/state-files-after.sha256"
           done
-          sha256sum .focus_state/bundle/* | sort > acceptance/focus/state-after.sha256
-          diff -u acceptance/focus/state-before.sha256 acceptance/focus/state-after.sha256
 
       - name: Verify sealed formal-entry receipts
         run: |
@@ -127,16 +133,20 @@ jobs:
           root=pathlib.Path('acceptance/focus')
           refs=json.load(open(root/'fixture-references.json'))
           rows=[]
-          expected_state='8bdae966606a094b7d7c24dc20661eef463b062ad935d0c1784a7a91018415b7'
           for key, fixture in sorted(refs.items()):
               out=root/key
               r=json.load(open(out/'prediction_receipt.json'))
               b=json.load(open(out/'team_identity_bridge.json'))
+              sel=json.load(open(out/'durable_state_selection_bound.json'))
+              assert sel['status']=='SELECTED', (key,sel.get('status'))
+              assert sel['competition_id']==fixture['competition_id']
+              assert sel['target_cutoff']=='2026-09-04T13:19:44+00:00'
               assert r['status']=='PASS', (key,r.get('status'),r.get('fallback_reason'))
               assert r['state_integrity_guard']['status']=='PASS', (key,r['state_integrity_guard'])
               assert r['fallback_class']!='DATA_STATE_ANOMALY', (key,r['fallback_class'])
               assert r['manual_or_auxiliary_fallback_used'] is False
-              assert r['state_sha256']==expected_state, (key,r['state_sha256'])
+              assert r['state_sha256']==sel['selected']['state_sha256'], (key,r['state_sha256'],sel['selected']['state_sha256'])
+              assert r['state_bundle_sha']==sel['selected']['state_bundle_sha256'], (key,r['state_bundle_sha'],sel['selected']['state_bundle_sha256'])
               assert r['state_mutated'] is False
               assert r['source_refetch_used'] is False
               assert r['gateway_route']=='SEALED_EXACT_CUTOFF_REPLAY'
@@ -150,6 +160,11 @@ jobs:
                 'model_route':r['model_route'],'fallback_class':r['fallback_class'],
                 'prediction_sha':r['prediction_sha'],'receipt_sha':r['receipt_sha'],
                 'runtime_input_sha':r['runtime_input_sha'],'state_sha256':r['state_sha256'],
+                'state_bundle_sha256':r['state_bundle_sha'],
+                'selected_artifact_id':sel['selected']['artifact_id'],
+                'selected_artifact_digest':sel['selected'].get('artifact_digest'),
+                'selected_workflow_run_id':sel['selected']['workflow_run_id'],
+                'selection_sha256':sel['selection_sha256'],
                 'team_identity_mapping_sha256':b['mapping_sha256'],
               })
           core={'schema_version':'football3-focus-domain-formal-entry-probes-v1','status':'PASS','probe_count':len(rows),'probes':rows}
