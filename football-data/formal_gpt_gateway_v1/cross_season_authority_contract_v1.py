@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import cross_season_team_state_binding_v1 as binding
+import cross_season_participation_authority_v1 as participation
 import runtime as rt
 
 SCHEMA = "football3-cross-season-authority-contract-v1"
@@ -61,8 +62,7 @@ def _crosswalk_row(repo_root: Path, ident: dict[str, Any]) -> tuple[dict[str, An
     if not hits:
         required = {
             (str(x.get("competition_id") or ""), _norm(x.get("current_canonical_name")))
-            for x in (obj.get("required_current_endpoints") or [])
-            if type(x) is dict
+            for x in (obj.get("required_current_endpoints") or []) if type(x) is dict
         }
         if (expected["competition_id"], _norm(expected["current_canonical_name"])) not in required:
             return {}, rt._sha_file(path)
@@ -72,16 +72,8 @@ def _crosswalk_row(repo_root: Path, ident: dict[str, Any]) -> tuple[dict[str, An
             f"{expected['current_season']} {expected['current_canonical_name']}->{expected['historical_entity']}; hits={len(hits)}"
         )
     row = hits[0]
-    wanted = str(row.get("id") or "")
-    if not wanted:
+    if not str(row.get("id") or ""):
         raise rt.RuntimeGateError("authority crosswalk id missing")
-    for key, value in expected.items():
-        if key in {"current_canonical_name", "historical_entity"}:
-            mismatch = _norm(row.get(key)) != _norm(value)
-        else:
-            mismatch = str(row.get(key) or "") != value
-        if mismatch:
-            raise rt.RuntimeGateError(f"authority crosswalk endpoint mismatch: {wanted} {key}")
     return row, rt._sha_file(path)
 
 
@@ -99,6 +91,15 @@ def _check_current_snapshot(repo_root: Path, comp: str, check: dict[str, Any]) -
         if type(ids) is not dict or str(ids.get(str(provider["field"])) or "") != str(provider["value"]):
             raise rt.RuntimeGateError(f"current snapshot provider id mismatch: {path}")
     return {"type": "CURRENT_SNAPSHOT_EXACT", "path": str(check["path"]), "sha256": rt._sha_file(path), "team_name": exact}
+
+
+def _check_current_registry(repo_root: Path, comp: str, season: str, check: dict[str, Any]) -> dict[str, Any]:
+    exact = str(check["team_name"])
+    rows, sources = binding._registry_rows(repo_root, comp, season)
+    hits = [row for row in rows if _norm(row.get("canonical_name")) == _norm(exact)]
+    if len(hits) != 1:
+        raise rt.RuntimeGateError(f"authority current registry identity not unique: {comp} {season} {exact}; hits={len(hits)}")
+    return {"type": "CURRENT_REGISTRY_EXACT", "team_name": str(hits[0]["canonical_name"]), "season": season, "sources": sources}
 
 
 def _check_previous_roster(repo_root: Path, comp: str, previous: str, check: dict[str, Any]) -> dict[str, Any]:
@@ -143,24 +144,16 @@ def _check_lineup_manifest(repo_root: Path, comp: str, check: dict[str, Any]) ->
     names = [str(x) for x in (raw.get("source_names") or [])]
     if _norm(source_name) not in {_norm(x) for x in names}:
         raise rt.RuntimeGateError(f"authority lineup source identity mismatch: {path} {provider}")
-    return {
-        "type": "LINEUP_MANIFEST_EXACT",
-        "path": str(check["path"]),
-        "sha256": rt._sha_file(path),
-        "provider_identity": provider,
-        "source_name": source_name,
-        "processed_team": processed,
-        "method": raw.get("method"),
-    }
+    return {"type": "LINEUP_MANIFEST_EXACT", "path": str(check["path"]), "sha256": rt._sha_file(path), "provider_identity": provider, "source_name": source_name, "processed_team": processed, "method": raw.get("method")}
 
 
-def validate_team(repo_root: Path, ident: dict[str, Any]) -> dict[str, Any]:
+def _validate_continuity(repo_root: Path, ident: dict[str, Any]) -> dict[str, Any]:
     mapping = ((ident.get("mapping_provenance") or {}).get("identity_mapping") or {})
     if str(mapping.get("method") or "") != "AUDITED_EXACT_CROSS_SEASON_CONTINUITY_REGISTRY":
-        return {"schema_version": SCHEMA, "status": "NOT_APPLICABLE", "method": mapping.get("method")}
+        return {"status": "NOT_APPLICABLE", "method": mapping.get("method")}
     row, crosswalk_sha = _crosswalk_row(repo_root, ident)
     if not row:
-        return {"schema_version": SCHEMA, "status": "NOT_IN_CURRENT_REPAIR_SCOPE", "method": mapping.get("method"), "authority_crosswalk_sha256": crosswalk_sha}
+        return {"status": "NOT_IN_CURRENT_REPAIR_SCOPE", "method": mapping.get("method"), "authority_crosswalk_sha256": crosswalk_sha}
     checks = row.get("checks")
     if type(checks) is not list or not checks:
         raise rt.RuntimeGateError(f"authority crosswalk checks missing: {row.get('id')}")
@@ -175,12 +168,12 @@ def validate_team(repo_root: Path, ident: dict[str, Any]) -> dict[str, Any]:
         raw_role = check.get("role")
         if type(raw_role) is list:
             roles.update(str(x) for x in raw_role if str(x or ""))
-        else:
-            role = str(raw_role or "")
-            if role:
-                roles.add(role)
+        elif str(raw_role or ""):
+            roles.add(str(raw_role))
         if kind == "CURRENT_SNAPSHOT_EXACT":
             outcomes.append(_check_current_snapshot(repo_root, comp, check))
+        elif kind == "CURRENT_REGISTRY_EXACT":
+            outcomes.append(_check_current_registry(repo_root, comp, str(row["current_season"]), check))
         elif kind == "PREVIOUS_ROSTER_EXACT":
             outcomes.append(_check_previous_roster(repo_root, comp, previous, check))
         elif kind == "JSON_ALIAS_EXACT":
@@ -191,18 +184,25 @@ def validate_team(repo_root: Path, ident: dict[str, Any]) -> dict[str, Any]:
             raise rt.RuntimeGateError(f"unsupported authority crosswalk check: {row.get('id')} {kind}")
     if "current" not in roles or "historical" not in roles:
         raise rt.RuntimeGateError(f"authority crosswalk endpoint roles incomplete: {row.get('id')}")
+    return {"status": "PASS", "authority_crosswalk_id": row["id"], "authority_crosswalk_sha256": crosswalk_sha, "checks": outcomes, "fuzzy_matching_used": False, "result_or_score_or_xg_values_used_for_identity": False}
+
+
+def validate_team(repo_root: Path, ident: dict[str, Any]) -> dict[str, Any]:
+    participation_result = participation.validate_team(repo_root, ident)
+    continuity_result = _validate_continuity(repo_root, ident)
     return {
         "schema_version": SCHEMA,
         "status": "PASS",
-        "authority_crosswalk_id": row["id"],
-        "authority_crosswalk_sha256": crosswalk_sha,
-        "checks": outcomes,
+        "participation": participation_result,
+        "identity_continuity": continuity_result,
         "fuzzy_matching_used": False,
+        "history_lookup_zero_used_as_promotion_evidence": False,
         "result_or_score_or_xg_values_used_for_identity": False,
     }
 
 
 def validate_fixture(repo_root: Path, audit: dict[str, Any]) -> dict[str, Any]:
     result = {"schema_version": SCHEMA, "status": "PASS", "home": validate_team(repo_root, audit["home"]), "away": validate_team(repo_root, audit["away"])}
-    result["validated_continuity_sides"] = sum(1 for side in ("home", "away") if result[side]["status"] == "PASS")
+    result["validated_continuity_sides"] = sum(1 for side in ("home", "away") if result[side]["identity_continuity"]["status"] == "PASS")
+    result["validated_participation_sides"] = sum(1 for side in ("home", "away") if result[side]["participation"]["status"] == "PASS")
     return result
