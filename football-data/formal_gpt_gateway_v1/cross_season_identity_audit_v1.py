@@ -19,23 +19,8 @@ EXPECTED_FORMAL_SCOPE = (
 )
 
 
-def _json(path: Path) -> dict[str, Any]:
-    obj = json.loads(path.read_text(encoding="utf-8"))
-    if type(obj) is not dict:
-        raise RuntimeError(f"object required: {path}")
-    return obj
-
-
 def _current_season(repo: Path, comp: str) -> str:
-    obj = _json(repo / bridge.CURRENT_REGISTRY)
-    c = (obj.get("competitions") or {}).get(comp)
-    if type(c) is not dict:
-        raise RuntimeError(f"registry competition missing: {comp}")
-    hint = str(c.get("processed_latest_season_hint") or "")
-    season = bridge._current_from_hint(hint)
-    if not season:
-        raise RuntimeError(f"current season unresolved: {comp} hint={hint}")
-    return season
+    return bridge.current_season(repo, comp)
 
 
 def _rows(repo: Path, comp: str, season: str) -> list[dict[str, Any]]:
@@ -54,7 +39,10 @@ def _one(repo: Path, loaded: dict[str, Any], comp: str, season: str, name: str) 
     strength_ok = bool(ident["state_local_evidence"]) and bool(ident["state_global_evidence"])
     legal_xg = bool(ident["legal_xg_coverage_available"])
     xg_ok = (linked > 0) if legal_xg else None
-    if returning and (not result_ok or not strength_ok or (legal_xg and not xg_ok)):
+    if bool(ident.get("participation_classification_uses_history_lookup_zero")):
+        status = "DATA_STATE_ANOMALY"
+        reason = "PARTICIPATION_CLASSIFICATION_USED_HISTORY_LOOKUP_ZERO"
+    elif returning and (not result_ok or not strength_ok or (legal_xg and not xg_ok)):
         status = "DATA_STATE_ANOMALY"
         reason = "RETURNING_CLUB_HISTORICAL_STATE_MISSING"
     else:
@@ -73,6 +61,7 @@ def _one(repo: Path, loaded: dict[str, Any], comp: str, season: str, name: str) 
         "historical_state_team_id": ident["historical_state_team_id"],
         "previous_season_identity": ident["previous_season_identity"],
         "participation_classification": cls,
+        "participation_classification_uses_history_lookup_zero": bool(ident.get("participation_classification_uses_history_lookup_zero")),
         "historical_match_count": int(ident["historical_match_count"]),
         "historical_matches_by_season": ident["historical_matches_by_season"],
         "linked_xg_count": int(linked),
@@ -90,6 +79,7 @@ def _domain(repo: Path, loaded: dict[str, Any], comp: str) -> dict[str, Any]:
     season = _current_season(repo, comp)
     previous = bridge._previous_season(season)
     roster = _rows(repo, comp, season)
+    previous_roster = bridge._processed_roster(repo, comp, previous)
     teams = []
     missing = []
     ambiguous = []
@@ -104,13 +94,16 @@ def _domain(repo: Path, loaded: dict[str, Any], comp: str) -> dict[str, Any]:
     returning = [x for x in teams if x["participation_classification"] in bridge.RETURNING]
     legal = [x for x in returning if x["legal_xg_coverage_available"]]
     failures = [x for x in teams if x["state_status"] != "PASS"]
-    status = "PASS" if not missing and not ambiguous and not dup and not failures else "FAIL_CLOSED"
+    natural_year_clock_ok = comp not in bridge.NATURAL_YEAR_COMPETITIONS or (season == "2026" and previous == "2025")
+    status = "PASS" if not missing and not ambiguous and not dup and not failures and natural_year_clock_ok else "FAIL_CLOSED"
     return {
         "schema_version": "football3-cross-season-domain-audit-v1",
         "competition": comp,
         "current_season": season,
         "previous_season": previous,
+        "natural_year_clock_status": "PASS" if natural_year_clock_ok else "FAIL_CLOSED",
         "current_roster_team_count": len(roster),
+        "previous_roster_team_count": len(previous_roster),
         "continuing_clubs": [x["current_name"] for x in teams if x["participation_classification"] == "CONTINUING_CLUB"],
         "promoted_entering_clubs": [x["current_name"] for x in teams if x["participation_classification"] == "PROMOTED_OR_ENTERING_CLUB"],
         "renamed_rekeyed_clubs": [x["current_name"] for x in teams if x["participation_classification"] == "RENAMED_OR_REKEYED_CLUB"],
@@ -179,10 +172,12 @@ def main() -> int:
         "historical_cutoff": loaded["meta"]["historical_cutoff"],
         "formal_scope_gate": scope_gate,
         "focus_domains": list(FOCUS),
+        "natural_year_competitions": sorted(bridge.NATURAL_YEAR_COMPETITIONS),
         "domains": domains,
         "model_parameters_or_weights_changed": False,
         "current_or_formal_pointer_changed": False,
-        "result_or_xg_values_used_for_identity": False,
+        "participation_classification_uses_history_lookup_zero": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
         "fuzzy_matching_used": False,
     }
     (out / "cross_season_team_state_audit.json").write_bytes(rt._canon_bytes(report))
