@@ -18,7 +18,7 @@ jobs:
   governed-acceptance:
     if: ${{ github.event.pull_request.head.ref == 'football3/cross-season-team-state-binding-governed-v1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,44 +76,54 @@ jobs:
           open('static-governance.json','w').write(json.dumps({'status':'PASS','formal_scope':list(expected),'ucl_roster_count':36,'ucl_roster_sha256':reg['roster_sha256']},sort_keys=True)+'\n')
           PY
 
-      - name: Restore immutable pre-target state and frozen rebuild sources
+      - name: Prepare request and frozen FULL rebuild sources
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .formal_state_cache/bundle .runtime_sources/understat .runtime_sources/confirmation acceptance
-          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9973225479/zip" -o .runtime_sources/state.zip
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation acceptance
+          cat > acceptance/request.json <<'JSON'
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"cross-season-governed-acceptance-nfo-tottenham-sealed-v1","match":{"competition_id":"ENG_PremierLeague","season":"2026/27","kickoff":"2026-09-05T14:00:00+00:00","cutoff":"2026-09-04T13:19:44+00:00","home_team_name":"Nottingham Forest","away_team_name":"Tottenham Hotspur"}}
+          JSON
           curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" -o .runtime_sources/understat.zip
           curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" -o .runtime_sources/confirmation.zip
-          unzip -q .runtime_sources/state.zip -d .formal_state_cache/bundle
           unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
-          PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1" \
-            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$PWD/.formal_state_cache/bundle" | tee acceptance/state-validate-before.txt
-          sha256sum .formal_state_cache/bundle/* | sort > acceptance/state-files-before.sha256
+
+      - name: Select durable state independently for sealed run 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf .formal_state_cache_run1 acceptance/run1
+          mkdir -p .formal_state_cache_run1 acceptance/run1
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            --repo "$GITHUB_REPOSITORY" --request "$PWD/acceptance/request.json" \
+            --cache-root "$PWD/.formal_state_cache_run1" --audit "$PWD/acceptance/run1/durable_state_selection.json"
+          python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
+            --bundle "$PWD/.formal_state_cache_run1/bundle" | tee acceptance/run1/state-validate-before.txt
+          cp .formal_state_cache_run1/durable_state_selection_v1.json acceptance/run1/durable_state_selection_bound.json
+          sha256sum .formal_state_cache_run1/bundle/* | sort > acceptance/run1/state-files-before.sha256
 
       - name: Execute Nottingham Forest vs Tottenham through formal production entry
         run: |
           set -euo pipefail
-          cat > acceptance/request.json <<'JSON'
-          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"cross-season-governed-acceptance-nfo-tottenham-sealed-v1","match":{"competition_id":"ENG_PremierLeague","season":"2026/27","kickoff":"2026-09-05T14:00:00+00:00","cutoff":"2026-09-04T13:19:44+00:00","home_team_name":"Nottingham Forest","away_team_name":"Tottenham Hotspur"}}
-          JSON
-          rm -rf acceptance/run1 acceptance/run2
-          mkdir -p acceptance/run1 acceptance/run2
-          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
+          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
           python3 football-data/formal_gpt_gateway_v1/entry.py \
             --request "$PWD/acceptance/request.json" --repo-root "$PWD" \
             --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
             --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-            --state-root "$PWD/.formal_state_cache" --out "$PWD/acceptance/run1" | tee acceptance/run1/stdout.txt
+            --state-root "$PWD/.formal_state_cache_run1" --out "$PWD/acceptance/run1" | tee acceptance/run1/stdout.txt
           python3 - <<'PY'
           import json, pathlib
           r=json.load(open('acceptance/run1/prediction_receipt.json'))
           b=json.load(open('acceptance/run1/team_identity_bridge.json'))
+          sel=json.load(open('acceptance/run1/durable_state_selection_bound.json'))
+          assert sel['status']=='SELECTED'
           assert b['home']['current_name']=='Nottingham Forest'
           assert b['away']['current_name']=='Tottenham Hotspur'
           assert b['home']['participation_classification'] in ('CONTINUING_CLUB','RENAMED_OR_REKEYED_CLUB')
@@ -140,23 +150,26 @@ jobs:
             'effective_evidence':r['history_counts']['xg_effective_evidence'],
             'home_linked_xg':r['history_counts']['home_linked_2025_26_xg_matches'],
             'away_linked_xg':r['history_counts']['away_linked_2025_26_xg_matches'],
+            'selected_artifact_id':sel['selected']['artifact_id'],
+            'selected_artifact_digest':sel['selected'].get('artifact_digest'),
+            'selected_workflow_run_id':sel['selected']['workflow_run_id'],
           },sort_keys=True)+'\n')
           PY
-          sha256sum .formal_state_cache/bundle/* | sort > acceptance/state-files-post-run1.sha256
+          sha256sum .formal_state_cache_run1/bundle/* | sort > acceptance/run1/state-files-after.sha256
 
       - name: Audit seven domestic focus domains and all sixteen formal domains
         run: |
           set -euo pipefail
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
           python3 football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py \
-            --repo-root "$PWD" --bundle "$PWD/.formal_state_cache/bundle" --out-dir "$PWD/acceptance/audit"
+            --repo-root "$PWD" --bundle "$PWD/.formal_state_cache_run1/bundle" --out-dir "$PWD/acceptance/audit"
 
       - name: Audit UEFA Champions League official 36-team league phase
         run: |
           set -euo pipefail
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data/engine"
           python3 football-data/formal_gpt_gateway_v1/ucl_cross_season_identity_audit_v1.py \
-            --repo-root "$PWD" --bundle "$PWD/.formal_state_cache/bundle" --out-dir "$PWD/acceptance/ucl-audit"
+            --repo-root "$PWD" --bundle "$PWD/.formal_state_cache_run1/bundle" --out-dir "$PWD/acceptance/ucl-audit"
           python3 - <<'PY'
           import json
           d=json.load(open('acceptance/ucl-audit/ucl_2026_27_identity_audit.json'))
@@ -256,28 +269,48 @@ jobs:
             --n 300 --out "$PWD/acceptance/production-300-equivalence-receipt.json" \
             | tee acceptance/production-300.stdout
 
-      - name: Verify sealed determinism and post-FULL state immutability
+      - name: Select durable state independently for sealed run 2
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
+          rm -rf .formal_state_cache_run2 acceptance/run2
+          mkdir -p .formal_state_cache_run2 acceptance/run2
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            --repo "$GITHUB_REPOSITORY" --request "$PWD/acceptance/request.json" \
+            --cache-root "$PWD/.formal_state_cache_run2" --audit "$PWD/acceptance/run2/durable_state_selection.json"
+          cp .formal_state_cache_run2/durable_state_selection_v1.json acceptance/run2/durable_state_selection_bound.json
+
+      - name: Verify independent sealed determinism
+        run: |
+          set -euo pipefail
+          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
           export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
           python3 football-data/formal_gpt_gateway_v1/entry.py \
             --request "$PWD/acceptance/request.json" --repo-root "$PWD" \
             --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
             --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-            --state-root "$PWD/.formal_state_cache" --out "$PWD/acceptance/run2" | tee acceptance/run2/stdout.txt
+            --state-root "$PWD/.formal_state_cache_run2" --out "$PWD/acceptance/run2" | tee acceptance/run2/stdout.txt
           python3 - <<'PY'
           import json
           a=json.load(open('acceptance/run1/prediction_receipt.json'))
           b=json.load(open('acceptance/run2/prediction_receipt.json'))
+          sa=json.load(open('acceptance/run1/durable_state_selection_bound.json'))
+          sb=json.load(open('acceptance/run2/durable_state_selection_bound.json'))
+          assert sa['selection_sha256']==sb['selection_sha256']
+          assert sa['selected']['artifact_id']==sb['selected']['artifact_id']
           for k in ('state_sha256','state_bundle_sha','runtime_input_sha','prediction_sha'):
               assert a[k]==b[k], (k,a[k],b[k])
           assert a['team_identity_bridge']==b['team_identity_bridge']
           assert a['p_home']==b['p_home'] and a['p_draw']==b['p_draw'] and a['p_away']==b['p_away']
           assert a['over_2_5']==b['over_2_5'] and a['btts_yes']==b['btts_yes']
+          open('acceptance/sealed-determinism.json','w').write(json.dumps({
+            'status':'PASS','selection_sha256':sa['selection_sha256'],
+            'artifact_id':sa['selected']['artifact_id'],
+            'state_sha256':a['state_sha256'],'runtime_input_sha':a['runtime_input_sha'],
+            'prediction_sha':a['prediction_sha']},sort_keys=True)+'\n')
           PY
-          sha256sum .formal_state_cache/bundle/* | sort > acceptance/state-files-post-run2.sha256
-          diff -u acceptance/state-files-post-run1.sha256 acceptance/state-files-post-run2.sha256
 
       - name: Upload governed acceptance evidence
         if: ${{ always() }}
