@@ -258,6 +258,15 @@ def _legacy_name_parts(value: str) -> tuple[str, str | None]:
     return m.group(1).strip(), m.group(2)
 
 
+def _previous_ucl_season() -> str:
+    season = str(_registry().get("season") or "")
+    m = re.fullmatch(r"(\d{4})/(\d{2})", season)
+    if not m:
+        raise PlatformError(f"UCL season format unsupported for historical identity: {season!r}")
+    start = int(m.group(1))
+    return f"{start - 1}/{str(start)[-2:]}"
+
+
 def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dict[str, Any], dict[str, Any]]:
     row = resolve_current(requested)
     accepted = {_exact_key(x) for x in row["accepted_exact_names"]}
@@ -270,6 +279,22 @@ def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dic
             continue
         if _exact_key(base) in accepted:
             hits.append(team)
+    initial_hit_count = len(hits)
+    mapping_method = "UEFA_OFFICIAL_EXACT_ALIAS_PLUS_ASSOCIATION_CODE"
+    participation_season = None
+    if len(hits) > 1:
+        participation_season = _previous_ucl_season()
+        active = [
+            team for team in hits
+            if participation_season in {str(x) for x in (team.get("seasons_observed") or [])}
+        ]
+        if len(active) != 1:
+            raise PlatformError(
+                f"UCL league-phase -> historical strength identity not unique after previous-season participation: "
+                f"{requested!r}; exact_hits={len(hits)}; participation_hits={len(active)}; season={participation_season}"
+            )
+        hits = active
+        mapping_method = "UEFA_OFFICIAL_EXACT_ALIAS_PLUS_ASSOCIATION_CODE_PLUS_PREVIOUS_SEASON_PARTICIPATION"
     if len(hits) != 1:
         raise PlatformError(f"UCL league-phase -> historical strength identity not unique: {requested!r}; hits={len(hits)}")
     global_identity = canonical_global_identity(row)
@@ -288,9 +313,12 @@ def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dic
         "historical_strength_team_id": hits[0].get("team_id"),
         "historical_strength_team_name": hits[0].get("team_name"),
         "historical_strength_matches": int(((hits[0].get("overall") or {}).get("matches") or 0)),
+        "historical_strength_initial_exact_hit_count": initial_hit_count,
+        "historical_strength_previous_season_participation_filter": participation_season,
         "registry_sha256": sha256_file(REGISTRY_PATH),
         "roster_sha256": _registry()["roster_sha256"],
-        "mapping_method": "UEFA_OFFICIAL_EXACT_ALIAS_PLUS_ASSOCIATION_CODE",
+        "mapping_method": mapping_method,
+        "identity_selection_fields": ["accepted_exact_names", "association_code", "seasons_observed_if_exact_alias_is_rekeyed"],
         "qualification_roster_used": False,
         "fuzzy_matching_used": False,
         "result_or_score_or_xg_values_used_for_identity": False,
@@ -347,6 +375,7 @@ def install(match_pipeline_module) -> dict[str, Any]:
         "scope": "UEFA_ChampionsLeague_2026_27_league_phase_identity_only",
         "registry_sha256": sha256_file(REGISTRY_PATH),
         "team_count": 36,
+        "historical_rekey_disambiguation": "EXACT_ALIAS_ASSOCIATION_THEN_UNIQUE_PREVIOUS_SEASON_PARTICIPATION",
         "qualification_roster_used": False,
         "fuzzy_matching_used": False,
         "result_or_score_or_xg_values_used_for_identity": False,
