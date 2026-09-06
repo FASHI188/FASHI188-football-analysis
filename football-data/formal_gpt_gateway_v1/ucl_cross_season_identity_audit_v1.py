@@ -25,15 +25,7 @@ FORMAL16 = (
 
 
 def _current_domestic_season(repo: Path, comp: str) -> str:
-    registry = load_json(repo / domestic_bridge.CURRENT_REGISTRY)
-    c = (registry.get("competitions") or {}).get(comp)
-    if not isinstance(c, dict):
-        raise rt.RuntimeGateError(f"domestic current registry missing: {comp}")
-    hint = str(c.get("processed_latest_season_hint") or "")
-    current = domestic_bridge._current_from_hint(hint)
-    if not current:
-        raise rt.RuntimeGateError(f"domestic current season unresolved: {comp} hint={hint}")
-    return current
+    return domestic_bridge.current_season(repo, comp)
 
 
 def _historical_name_parts(value: str) -> tuple[str, str | None]:
@@ -46,8 +38,8 @@ def _matches_ucl_row(value: str, row: dict[str, Any]) -> bool:
     base, assoc = _historical_name_parts(value)
     if assoc is not None and assoc != row["association_code"]:
         return False
-    accepted = {normalize_team_token(x) for x in row["accepted_exact_names"]}
-    return normalize_team_token(base) in accepted
+    accepted = {ucl_bridge._exact_key(x) for x in row["accepted_exact_names"]}
+    return ucl_bridge._exact_key(base) in accepted
 
 
 def _ucl_history_profile(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
@@ -138,11 +130,11 @@ def _team(repo: Path, loaded: dict[str, Any], snapshot: dict[str, Any], row: dic
     previous_ucl = bool(profile["previous_season_participation"])
     legacy_team = None
     ucl_identity = None
+    strength_error = None
     try:
         legacy_team, ucl_identity = ucl_bridge.resolve_snapshot_team(snapshot, row["uefa_name"])
-    except Exception:
-        legacy_team = None
-        ucl_identity = None
+    except Exception as exc:
+        strength_error = str(exc)
 
     if previous_ucl and legacy_team is None:
         ucl_strength_status = "IDENTITY_STATE_LINKAGE_FAILURE"
@@ -153,7 +145,7 @@ def _team(repo: Path, loaded: dict[str, Any], snapshot: dict[str, Any], row: dic
 
     historical_names = profile["historical_names"]
     rekeyed = previous_ucl and any(
-        normalize_team_token(_historical_name_parts(name)[0]) != normalize_team_token(row["uefa_name"])
+        ucl_bridge._exact_key(_historical_name_parts(name)[0]) != ucl_bridge._exact_key(row["uefa_name"])
         for name in historical_names
     )
     if previous_ucl and rekeyed:
@@ -198,6 +190,7 @@ def _team(repo: Path, loaded: dict[str, Any], snapshot: dict[str, Any], row: dic
         "ucl_strength_state_team_id": legacy_team.get("team_id") if legacy_team else None,
         "ucl_strength_state_team_name": legacy_team.get("team_name") if legacy_team else None,
         "ucl_strength_state_status": ucl_strength_status,
+        "ucl_strength_resolution_error": strength_error,
         "domestic_historical_match_count": domestic.get("historical_match_count"),
         "linked_xg_count": domestic.get("linked_xg_count"),
         "state_status": state_status,
@@ -292,12 +285,12 @@ def main() -> int:
         "ambiguous": ambiguous,
         "duplicate_canonical_identity": dup,
         "zero_history_anomalies": [x["current_name"] for x in anomalies if "RETURNING_CLUB_HISTORICAL_STATE_MISSING" in x["anomaly_reasons"]],
-        "state_anomalies": [{"team": x["current_name"], "reasons": x["anomaly_reasons"]} for x in anomalies],
+        "state_anomalies": [{"team": x["current_name"], "reasons": x["anomaly_reasons"], "strength_error": x.get("ucl_strength_resolution_error")} for x in anomalies],
         "data_coverage_limitations": coverage,
         "data_coverage_limitation_count": len(coverage),
         "final_guard_status": guard_status,
         "fuzzy_matching_used": False,
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
         "model_current_or_weights_changed": False,
     }
     (out / "ucl_2026_27_identity_audit.json").write_bytes(rt._canon_bytes(report))
