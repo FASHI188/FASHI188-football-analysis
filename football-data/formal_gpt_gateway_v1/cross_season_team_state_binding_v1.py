@@ -15,6 +15,12 @@ CURRENT_REGISTRY = "football-data/config/v6_full17_capture_identity_v6484.json"
 CURRENT_ALIASES = "football-data/config/v6_full17_provider_aliases_v6483.json"
 ALLOWED_MANIFEST_METHODS = {"exact_normalized_unique", "mutual_schedule_fingerprint"}
 RETURNING = {"CONTINUING_CLUB", "RENAMED_OR_REKEYED_CLUB"}
+NATURAL_YEAR_COMPETITIONS = {
+    "ARG_Primera", "BRA_SerieA", "JPN_J1", "KOR_KLeague1",
+    "NOR_Eliteserien", "SWE_Allsvenskan", "USA_MLS",
+}
+MIN_SCHEDULE_FINGERPRINT_F1 = 0.99
+MIN_SCHEDULE_FINGERPRINT_MARGIN = 0.75
 _INSTALLED = False
 _GUARD_PATCHED = False
 
@@ -31,13 +37,41 @@ def _previous_season(season: str) -> str | None:
     return legacy._previous_season(season)
 
 
-def _current_from_hint(hint: str) -> str | None:
+def _current_from_hint(hint: str, comp: str | None = None) -> str | None:
+    """Resolve the current season without assuming every registry hint is previous-season data.
+
+    Formal runtime training seasons are the stable season clock. The full17 registry's
+    processed_latest_season_hint is heterogeneous (for natural-year leagues some rows
+    already equal the current season), so it is provenance only, never `hint + 1` truth.
+    """
+    if comp:
+        formal = legacy._formal_current_season(comp)
+        if formal:
+            return formal
     a, b = rt._season_years(hint)
     if a is None:
         return None
     if a == b:
-        return str(a + 1)
+        return str(a)
     return f"{a + 1}/{str((b or a) + 1)[-2:]}"
+
+
+def current_season(repo_root: Path, comp: str) -> str:
+    formal = legacy._formal_current_season(comp)
+    if formal:
+        return formal
+    path = repo_root / CURRENT_REGISTRY
+    if not path.is_file():
+        raise rt.RuntimeGateError(f"current-season identity registry missing: {comp}")
+    obj = _load_json(path)
+    c = (obj.get("competitions") or {}).get(comp)
+    if type(c) is not dict:
+        raise rt.RuntimeGateError(f"current-season competition registry missing: {comp}")
+    hint = str(c.get("processed_latest_season_hint") or "")
+    resolved = _current_from_hint(hint, comp)
+    if not resolved:
+        raise rt.RuntimeGateError(f"current season unresolved: {comp} hint={hint}")
+    return resolved
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -50,43 +84,48 @@ def _load_json(path: Path) -> dict[str, Any]:
     return obj
 
 
-def _registry_rows(repo_root: Path, comp: str, season: str) -> tuple[list[dict[str, Any]], list[str]]:
+def _full17_meta(repo_root: Path, comp: str) -> dict[str, Any]:
     path = repo_root / CURRENT_REGISTRY
     if not path.is_file():
-        return [], []
+        return {}
     obj = _load_json(path)
     c = (obj.get("competitions") or {}).get(comp)
-    if type(c) is not dict or c.get("status") != "PASS" or type(c.get("teams")) is not list:
-        return [], []
-    hint = str(c.get("processed_latest_season_hint") or "")
-    current = _current_from_hint(hint)
-    if season not in {current, hint}:
-        return [], []
-    aliases_path = repo_root / CURRENT_ALIASES
-    amap: dict[str, str] = {}
-    if aliases_path.is_file():
-        raw = (_load_json(aliases_path).get("aliases") or {}).get(comp)
-        if type(raw) is dict:
-            amap = {str(k): str(v) for k, v in raw.items()}
+    if type(c) is not dict:
+        return {}
+    return {
+        "registry_path": CURRENT_REGISTRY,
+        "registry_sha256": rt._sha_file(path),
+        "processed_latest_season_hint": str(c.get("processed_latest_season_hint") or ""),
+        "registry_generated_at_utc": obj.get("generated_at_utc"),
+    }
+
+
+def _registry_rows(repo_root: Path, comp: str, season: str) -> tuple[list[dict[str, Any]], list[str]]:
+    # Reuse the permanent bridge's authority order: exact current-season registry,
+    # full17 registry + exact provider aliases, active registry, then exact processed roster.
+    raw_rows, sources = legacy._registry_rows(repo_root, comp, season)
+    if not raw_rows:
+        return [], sources
+    meta = _full17_meta(repo_root, comp)
     rows: list[dict[str, Any]] = []
-    for raw in c["teams"]:
-        if type(raw) is not dict:
-            continue
+    for raw in raw_rows:
         canonical = str(raw.get("canonical_name") or "").strip()
         if not canonical:
             continue
         names = [canonical]
-        names += [str(x).strip() for x in (raw.get("provider_alias_tokens") or []) if str(x or "").strip()]
-        names += [a for a, target in amap.items() if rt._normalize_team(target) == rt._normalize_team(canonical)]
+        names += [str(x).strip() for x in (raw.get("provider_names") or []) if str(x or "").strip()]
+        names += [str(x).strip() for x in (raw.get("aliases") or []) if str(x or "").strip()]
         rows.append({
             "canonical_name": canonical,
             "accepted_names": list(dict.fromkeys(names)),
-            "source_path": str(raw.get("source_path") or CURRENT_REGISTRY),
-            "registry_path": CURRENT_REGISTRY,
-            "registry_sha256": rt._sha_file(path),
-            "processed_latest_season_hint": hint,
+            "source_path": (raw.get("sources") or sources or [meta.get("registry_path") or CURRENT_REGISTRY])[0],
+            "registry_sources": list(dict.fromkeys([*(raw.get("sources") or []), *sources])),
+            "registry_path": meta.get("registry_path") or (sources[0] if sources else CURRENT_REGISTRY),
+            "registry_sha256": meta.get("registry_sha256"),
+            "processed_latest_season_hint": meta.get("processed_latest_season_hint"),
+            "registry_generated_at_utc": meta.get("registry_generated_at_utc"),
         })
-    return rows, [CURRENT_REGISTRY] + ([CURRENT_ALIASES] if amap else [])
+    return rows, sources
 
 
 def _current_row(repo_root: Path, comp: str, season: str, requested: str) -> tuple[dict[str, Any] | None, list[str]]:
@@ -115,12 +154,25 @@ def _manifest_crosswalk(repo_root: Path, comp: str) -> tuple[dict[str, Any], str
     obj = _load_json(path)
     if obj.get("status") != "IDENTITY_BRIDGE_PASS":
         raise rt.RuntimeGateError(f"authoritative identity manifest not PASS: {comp}")
-    if obj.get("ambiguous_fixture_count") != 0 or obj.get("score_conflict_count") != 0:
-        raise rt.RuntimeGateError(f"authoritative identity manifest conflict: {comp}")
+    if int(obj.get("ambiguous_fixture_count") or 0) != 0:
+        raise rt.RuntimeGateError(f"authoritative identity manifest ambiguous: {comp}")
     cross = obj.get("crosswalk")
     if type(cross) is not dict:
         raise rt.RuntimeGateError(f"authoritative identity crosswalk missing: {comp}")
     return cross, rt._sha_file(path)
+
+
+def _manifest_row_eligible(raw: dict[str, Any]) -> bool:
+    method = str(raw.get("method") or "")
+    if method == "exact_normalized_unique":
+        return float(raw.get("confidence") or 0.0) == 1.0
+    if method == "mutual_schedule_fingerprint":
+        return (
+            bool(raw.get("mutual_best"))
+            and float(raw.get("fingerprint_f1") or 0.0) >= MIN_SCHEDULE_FINGERPRINT_F1
+            and float(raw.get("best_margin") or 0.0) >= MIN_SCHEDULE_FINGERPRINT_MARGIN
+        )
+    return False
 
 
 def _manifest_resolution(repo_root: Path, comp: str, names: list[str]) -> dict[str, Any] | None:
@@ -130,10 +182,7 @@ def _manifest_resolution(repo_root: Path, comp: str, names: list[str]) -> dict[s
     tokens = {rt._normalize_team(x) for x in names if str(x or "").strip()}
     hits: list[tuple[str, dict[str, Any]]] = []
     for provider_id, raw in cross.items():
-        if type(raw) is not dict:
-            continue
-        method = str(raw.get("method") or "")
-        if method not in ALLOWED_MANIFEST_METHODS or float(raw.get("confidence") or 0) != 1.0:
+        if type(raw) is not dict or not _manifest_row_eligible(raw):
             continue
         accepted = [str(raw.get("processed_team") or "").strip()]
         accepted += [str(x).strip() for x in (raw.get("source_names") or []) if str(x or "").strip()]
@@ -151,12 +200,15 @@ def _manifest_resolution(repo_root: Path, comp: str, names: list[str]) -> dict[s
         "source": f"{MANIFEST_DIR}/{comp}.json",
         "source_sha256": manifest_sha,
         "method": str(raw.get("method")),
-        "confidence": float(raw.get("confidence")),
+        "confidence": float(raw.get("confidence") or 0.0),
         "provider_identity": provider_id,
         "source_names": list(raw.get("source_names") or []),
         "processed_team": processed,
+        "mutual_best": raw.get("mutual_best"),
+        "fingerprint_f1": raw.get("fingerprint_f1"),
+        "best_margin": raw.get("best_margin"),
         "selection_fields": ["provider_identity", "source_names", "processed_team", "schedule_fingerprint_if_declared"],
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
         "fuzzy_matching_used": False,
     }
     return {"provider_identity": provider_id, "historical_name": processed, "provenance": provenance}
@@ -178,14 +230,49 @@ def _exact_previous_resolution(repo_root: Path, comp: str, previous: str | None,
         "season": previous,
         "processed_team": historical,
         "selection_fields": ["competition", "season", "home_team_name", "away_team_name"],
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
         "fuzzy_matching_used": False,
     }
     return {"provider_identity": None, "historical_name": historical, "provenance": provenance}
 
 
-def _stable_global_id(comp: str, canonical: str, provider_identity: str | None) -> str:
-    key = f"provider:{provider_identity}" if provider_identity else f"canonical:{comp}:{rt._normalize_team(canonical)}"
+def _explicit_alias_state_resolution(state: Any, comp: str, names: list[str]) -> dict[str, Any] | None:
+    # Positive frozen-state lookup is only a state-key bridge among already-authorized exact
+    # aliases. It is never used to classify participation and zero lookup never means promoted.
+    hits: dict[str, list[str]] = {}
+    for name in names:
+        name = str(name or "").strip()
+        if not name:
+            continue
+        tid = rt._global_team_id(name)
+        local, global_ = _state_hit(state, comp, tid)
+        if local or global_:
+            hits.setdefault(tid, []).append(name)
+    if len(hits) > 1:
+        raise rt.RuntimeGateError(f"explicit current aliases map to multiple frozen state ids: {comp} {names[0]}")
+    if not hits:
+        return None
+    tid, aliases = next(iter(hits.items()))
+    return {
+        "historical_name": aliases[0],
+        "historical_state_team_id": tid,
+        "provenance": {
+            "source": "current-authority-exact-aliases + frozen-state-key-presence",
+            "method": "UNIQUE_POSITIVE_STATE_KEY_FROM_EXPLICIT_ALIAS_SET",
+            "accepted_aliases": aliases,
+            "result_or_score_or_xg_values_used_for_identity": False,
+            "fuzzy_matching_used": False,
+        },
+    }
+
+
+def _stable_global_id(comp: str, canonical: str, provider_identity: str | None, historical_name: str | None) -> str:
+    if provider_identity:
+        key = f"provider:{provider_identity}"
+    elif historical_name:
+        key = f"historical:{comp}:{rt._normalize_team(historical_name)}"
+    else:
+        key = f"canonical:{comp}:{rt._normalize_team(canonical)}"
     return "club_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
 
 
@@ -198,6 +285,9 @@ def resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested:
     requested = str(requested or "").strip()
     if not requested:
         raise rt.RuntimeGateError("empty requested team identity")
+    expected_current = current_season(repo_root, comp)
+    if season != expected_current:
+        return _ORIGINAL_RESOLVE_TEAM(repo_root, state, comp, season, requested)
     row, registry_sources = _current_row(repo_root, comp, season, requested)
     if row is None:
         return _ORIGINAL_RESOLVE_TEAM(repo_root, state, comp, season, requested)
@@ -206,55 +296,76 @@ def resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested:
     names = list(dict.fromkeys([requested, canonical, *row["accepted_names"]]))
     previous = _previous_season(season)
     prev_roster = _processed_roster(repo_root, comp, previous)
+
     mapped = _manifest_resolution(repo_root, comp, names)
     if mapped is None:
         mapped = _exact_previous_resolution(repo_root, comp, previous, names)
 
+    alias_state = _explicit_alias_state_resolution(state, comp, names)
+    provider_identity: str | None = None
     if mapped is not None:
         historical_name = mapped["historical_name"]
-        provider_identity = mapped["provider_identity"]
+        provider_identity = mapped.get("provider_identity")
         mapping_provenance = mapped["provenance"]
+    elif alias_state is not None:
+        historical_name = alias_state["historical_name"]
+        mapping_provenance = alias_state["provenance"]
     else:
         historical_name = canonical
-        provider_identity = None
         mapping_provenance = {
             "source": row["registry_path"],
-            "source_sha256": row["registry_sha256"],
-            "method": "EXACT_CURRENT_CANONICAL_NO_PREVIOUS_IDENTITY_MATCH",
+            "source_sha256": row.get("registry_sha256"),
+            "method": "CURRENT_IDENTITY_ONLY_NO_PREVIOUS_PARTICIPATION_MAPPING",
             "season": season,
             "processed_team": canonical,
-            "result_or_xg_values_used_for_identity": False,
+            "result_or_score_or_xg_values_used_for_identity": False,
             "fuzzy_matching_used": False,
         }
 
+    # Participation is decided only from the authoritative previous-season roster.
+    # State/history lookup may validate the linkage but may never imply promotion.
     prev_tokens = {rt._normalize_team(x) for x in prev_roster}
-    returning = rt._normalize_team(historical_name) in prev_tokens
+    current_authority_tokens = {rt._normalize_team(x) for x in names}
+    previous_identity_tokens = {rt._normalize_team(historical_name)} | current_authority_tokens
+    previous_matches = sorted(x for x in prev_roster if rt._normalize_team(x) in previous_identity_tokens)
+    if len(previous_matches) > 1:
+        raise rt.RuntimeGateError(f"previous-season participation maps current club to multiple identities: {comp} {canonical}")
+    returning = len(previous_matches) == 1
+    if returning:
+        previous_identity = previous_matches[0]
+        # Prefer the actual previous-season name as immutable historical state key unless
+        # an audited provider mapping supplies the processed historical name explicitly.
+        if mapped is None or rt._normalize_team(historical_name) not in prev_tokens:
+            historical_name = previous_identity
+    else:
+        previous_identity = None
+
     historical_id = rt._global_team_id(historical_name)
     local_hit, global_hit = _state_hit(state, comp, historical_id)
     historical_seasons, historical_match_count, historical_by_season = _history_profile(repo_root, comp, historical_name)
 
     if returning:
-        classification = "CONTINUING_CLUB" if rt._normalize_team(canonical) == rt._normalize_team(historical_name) else "RENAMED_OR_REKEYED_CLUB"
+        classification = "CONTINUING_CLUB" if rt._normalize_team(canonical) == rt._normalize_team(previous_identity or "") else "RENAMED_OR_REKEYED_CLUB"
         relation = "CONTINUING_TOP_FLIGHT"
-    elif historical_match_count > 0 or local_hit or global_hit:
-        classification = "PROMOTED_OR_ENTERING_CLUB"
-        relation = "PROMOTED_OR_RETURNING_WITH_FROZEN_HISTORY"
-    elif row is not None:
-        classification = "PROMOTED_OR_ENTERING_CLUB"
-        relation = "PROMOTED_OR_NEW_TO_FORMAL_HISTORY"
     else:
-        classification = "TRUE_NEW_OR_UNAVAILABLE_HISTORY"
-        relation = "PROMOTED_OR_NEW_TO_FORMAL_HISTORY"
+        classification = "PROMOTED_OR_ENTERING_CLUB"
+        relation = "PROMOTED_OR_RETURNING_WITH_FROZEN_HISTORY" if (historical_match_count > 0 or local_hit or global_hit) else "PROMOTED_OR_NEW_TO_FORMAL_HISTORY"
 
-    canonical_global_id = _stable_global_id(comp, canonical, provider_identity)
+    canonical_global_id = _stable_global_id(comp, canonical, provider_identity, historical_name if returning else None)
     provenance = {
         "schema_version": SCHEMA,
         "competition": comp,
         "current_season": season,
         "previous_season": previous,
+        "previous_season_roster_count": len(prev_roster),
+        "previous_season_participation_matches": previous_matches,
+        "participation_classification_source": f"football-data/processed/{comp}/*.csv team-name roster only",
+        "participation_classification_uses_history_lookup_zero": False,
         "registry_sources": registry_sources,
         "registry_source_path": row["source_path"],
-        "current_registry_sha256": row["registry_sha256"],
+        "current_registry_sha256": row.get("registry_sha256"),
+        "current_registry_generated_at_utc": row.get("registry_generated_at_utc"),
+        "processed_latest_season_hint": row.get("processed_latest_season_hint"),
         "identity_mapping": mapping_provenance,
         "canonical_global_id": canonical_global_id,
         "historical_state_team_id": historical_id,
@@ -273,9 +384,9 @@ def resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested:
         "canonical_global_id": canonical_global_id,
         "strength_team_id": historical_id,
         "historical_state_team_id": historical_id,
-        "previous_season_identity": historical_name if returning else None,
+        "previous_season_identity": previous_identity,
         "strength_alias": historical_name,
-        "aliases": list(dict.fromkeys([*names, historical_name])),
+        "aliases": list(dict.fromkeys([*names, historical_name, *(previous_matches or [])])),
         "registry_match": True,
         "registry_sources": registry_sources,
         "state_evidence": bool(local_hit or global_hit),
@@ -284,6 +395,7 @@ def resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested:
         "resolution": "CROSS_SEASON_CANONICAL_TO_HISTORICAL_STATE_ID",
         "season_relation": relation,
         "participation_classification": classification,
+        "participation_classification_uses_history_lookup_zero": False,
         "previous_season": previous,
         "historical_seasons": historical_seasons,
         "historical_match_count": historical_match_count,
@@ -388,8 +500,12 @@ def install() -> dict[str, Any]:
         "installed": True,
         "canonical_global_identity_separate_from_historical_state_key": True,
         "authoritative_manifest_methods": sorted(ALLOWED_MANIFEST_METHODS),
+        "schedule_fingerprint_min_f1": MIN_SCHEDULE_FINGERPRINT_F1,
+        "schedule_fingerprint_min_margin": MIN_SCHEDULE_FINGERPRINT_MARGIN,
         "previous_season_derived_from_request_season": True,
         "calendar_year_leagues_supported": True,
+        "natural_year_competitions": sorted(NATURAL_YEAR_COMPETITIONS),
+        "participation_classification_uses_history_lookup_zero": False,
         "fuzzy_matching": False,
         "result_or_xg_values_used_for_identity": False,
         "model_parameters_or_weights_changed": False,
