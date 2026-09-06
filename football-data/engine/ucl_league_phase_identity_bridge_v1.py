@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ FULL17_REGISTRY = ROOT / "config" / "v6_full17_capture_identity_v6484.json"
 FULL17_ALIASES = ROOT / "config" / "v6_full17_provider_aliases_v6483.json"
 LINEUP_MANIFEST_DIR = ROOT / "manifests" / "lineup_match_identity_v502"
 ALLOWED_MANIFEST_METHODS = {"exact_normalized_unique", "mutual_schedule_fingerprint"}
+MIN_SCHEDULE_FINGERPRINT_F1 = 0.99
+MIN_SCHEDULE_FINGERPRINT_MARGIN = 0.75
 _INSTALLED = False
 
 
@@ -37,6 +40,14 @@ def _sha_bytes(content: bytes) -> str:
 
 def _global_id_from_key(key: str) -> str:
     return "club_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
+
+
+def _exact_key(value: str) -> str:
+    """Exact-name comparison key; deliberately keeps club tokens such as FC/CF/SC."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    text = re.sub(r"[\u2010-\u2015'’`.]+", " ", text)
+    text = re.sub(r"[^\w\sáàâäãåæçéèêëíìîïñóòôöõøœúùûüýÿšžčćđğışł]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _registry() -> dict[str, Any]:
@@ -61,7 +72,7 @@ def _registry() -> dict[str, Any]:
         if not re.fullmatch(r"[A-Z]{3}", assoc) or not isinstance(aliases, list) or not aliases:
             raise PlatformError(f"UCL registry identity row invalid: {row.get('uefa_name')}")
         for alias in aliases:
-            token = normalize_team_token(str(alias))
+            token = _exact_key(str(alias))
             if not token:
                 raise PlatformError(f"UCL registry empty exact alias: {row.get('uefa_name')}")
             owner = alias_owner.setdefault(token, row["uefa_name"])
@@ -86,7 +97,7 @@ def registry_snapshot() -> dict[str, Any]:
         "authority": data["authority"],
         "qualification_roster_used": False,
         "fuzzy_matching_used": False,
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
     }
 
 
@@ -104,11 +115,11 @@ def resolve_current(name: str) -> dict[str, Any]:
     if not raw:
         raise PlatformError("empty UCL current team identity")
     data = _registry()
-    token = normalize_team_token(raw)
+    token = _exact_key(raw)
     matches = []
     for row in data["teams"]:
         aliases = [str(x).strip() for x in row["accepted_exact_names"]]
-        if token in {normalize_team_token(x) for x in aliases}:
+        if token in {_exact_key(x) for x in aliases}:
             matches.append(row)
     if len(matches) != 1:
         raise PlatformError(f"UCL current league-phase identity not unique: {raw!r}")
@@ -131,19 +142,41 @@ def _domestic_registry_row(row: dict[str, Any]) -> dict[str, Any] | None:
         raw_aliases = (load_json(FULL17_ALIASES).get("aliases") or {}).get(comp)
         if isinstance(raw_aliases, dict):
             amap = {str(k): str(v) for k, v in raw_aliases.items()}
-    requested_tokens = {normalize_team_token(x) for x in row["accepted_exact_names"]}
+    requested_keys = {_exact_key(x) for x in row["accepted_exact_names"]}
     matches = []
     for team in c["teams"]:
         if not isinstance(team, dict):
             continue
         canonical = str(team.get("canonical_name") or "").strip()
         names = [canonical] + [str(x) for x in (team.get("provider_alias_tokens") or [])]
-        names += [alias for alias, target in amap.items() if normalize_team_token(target) == normalize_team_token(canonical)]
-        if requested_tokens & {normalize_team_token(x) for x in names if x}:
-            matches.append({"canonical_name": canonical, "accepted_names": list(dict.fromkeys(names)), "source_path": team.get("source_path")})
+        names += [alias for alias, target in amap.items() if _exact_key(target) == _exact_key(canonical)]
+        if requested_keys & {_exact_key(x) for x in names if x}:
+            matches.append({
+                "canonical_name": canonical,
+                "accepted_names": list(dict.fromkeys(names)),
+                "source_path": team.get("source_path"),
+                "registry_path": str(FULL17_REGISTRY.relative_to(ROOT)),
+                "registry_sha256": sha256_file(FULL17_REGISTRY),
+                "alias_registry_path": str(FULL17_ALIASES.relative_to(ROOT)) if FULL17_ALIASES.is_file() else None,
+                "alias_registry_sha256": sha256_file(FULL17_ALIASES) if FULL17_ALIASES.is_file() else None,
+                "matching_method": "EXACT_REGISTERED_NAME_OR_ALIAS",
+            })
     if len(matches) != 1:
-        raise PlatformError(f"UCL -> domestic current identity not unique: {row['uefa_name']} -> {comp}")
+        raise PlatformError(f"UCL -> domestic current identity not unique: {row['uefa_name']} -> {comp}; hits={len(matches)}")
     return matches[0]
+
+
+def _manifest_row_eligible(mapped: dict[str, Any]) -> bool:
+    method = str(mapped.get("method") or "")
+    if method == "exact_normalized_unique":
+        return float(mapped.get("confidence") or 0.0) == 1.0
+    if method == "mutual_schedule_fingerprint":
+        return (
+            bool(mapped.get("mutual_best"))
+            and float(mapped.get("fingerprint_f1") or 0.0) >= MIN_SCHEDULE_FINGERPRINT_F1
+            and float(mapped.get("best_margin") or 0.0) >= MIN_SCHEDULE_FINGERPRINT_MARGIN
+        )
+    return False
 
 
 def _provider_identity(comp: str, names: list[str]) -> dict[str, Any] | None:
@@ -151,21 +184,18 @@ def _provider_identity(comp: str, names: list[str]) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     manifest = load_json(path)
-    if manifest.get("status") != "IDENTITY_BRIDGE_PASS" or manifest.get("ambiguous_fixture_count") != 0 or manifest.get("score_conflict_count") != 0:
+    if manifest.get("status") != "IDENTITY_BRIDGE_PASS" or int(manifest.get("ambiguous_fixture_count") or 0) != 0:
         raise PlatformError(f"UCL domestic provider identity manifest not authoritative: {comp}")
     crosswalk = manifest.get("crosswalk")
     if not isinstance(crosswalk, dict):
         raise PlatformError(f"UCL domestic provider crosswalk missing: {comp}")
-    tokens = {normalize_team_token(x) for x in names if str(x or "").strip()}
+    keys = {_exact_key(x) for x in names if str(x or "").strip()}
     hits = []
     for provider_id, mapped in crosswalk.items():
-        if not isinstance(mapped, dict):
-            continue
-        method = str(mapped.get("method") or "")
-        if method not in ALLOWED_MANIFEST_METHODS or float(mapped.get("confidence") or 0) != 1.0:
+        if not isinstance(mapped, dict) or not _manifest_row_eligible(mapped):
             continue
         accepted = [str(mapped.get("processed_team") or "")] + [str(x) for x in (mapped.get("source_names") or [])]
-        if tokens & {normalize_team_token(x) for x in accepted if x}:
+        if keys & {_exact_key(x) for x in accepted if x}:
             hits.append((str(provider_id), mapped))
     if len(hits) > 1:
         raise PlatformError(f"UCL domestic provider identity ambiguous: {comp} {names[0]}")
@@ -178,6 +208,10 @@ def _provider_identity(comp: str, names: list[str]) -> dict[str, Any] | None:
         "source": str(path.relative_to(ROOT)),
         "source_sha256": sha256_file(path),
         "processed_team": mapped.get("processed_team"),
+        "mutual_best": mapped.get("mutual_best"),
+        "fingerprint_f1": mapped.get("fingerprint_f1"),
+        "best_margin": mapped.get("best_margin"),
+        "selection_uses_result_or_score_or_xg": False,
     }
 
 
@@ -195,9 +229,10 @@ def canonical_global_identity(row: dict[str, Any]) -> dict[str, Any]:
             key = f"canonical:{comp}:{normalize_team_token(domestic['canonical_name'])}"
             method = "EXACT_DOMESTIC_CURRENT_CANONICAL"
             provenance = {
-                "source": str(FULL17_REGISTRY.relative_to(ROOT)),
-                "source_sha256": sha256_file(FULL17_REGISTRY),
+                "source": domestic["registry_path"],
+                "source_sha256": domestic["registry_sha256"],
                 "processed_team": domestic["canonical_name"],
+                "matching_method": domestic["matching_method"],
             }
     else:
         key = f"association:{row['association_code']}:{normalize_team_token(row['uefa_name'])}"
@@ -225,7 +260,7 @@ def _legacy_name_parts(value: str) -> tuple[str, str | None]:
 
 def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dict[str, Any], dict[str, Any]]:
     row = resolve_current(requested)
-    accepted = {normalize_team_token(x) for x in row["accepted_exact_names"]}
+    accepted = {_exact_key(x) for x in row["accepted_exact_names"]}
     hits = []
     for team in snapshot.get("teams", []):
         if not isinstance(team, dict):
@@ -233,7 +268,7 @@ def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dic
         base, assoc = _legacy_name_parts(str(team.get("team_name") or ""))
         if assoc != row["association_code"]:
             continue
-        if normalize_team_token(base) in accepted:
+        if _exact_key(base) in accepted:
             hits.append(team)
     if len(hits) != 1:
         raise PlatformError(f"UCL league-phase -> historical strength identity not unique: {requested!r}; hits={len(hits)}")
@@ -258,7 +293,7 @@ def resolve_snapshot_team(snapshot: dict[str, Any], requested: str) -> tuple[dic
         "mapping_method": "UEFA_OFFICIAL_EXACT_ALIAS_PLUS_ASSOCIATION_CODE",
         "qualification_roster_used": False,
         "fuzzy_matching_used": False,
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
     }
     return hits[0], audit
 
@@ -314,7 +349,7 @@ def install(match_pipeline_module) -> dict[str, Any]:
         "team_count": 36,
         "qualification_roster_used": False,
         "fuzzy_matching_used": False,
-        "result_or_xg_values_used_for_identity": False,
+        "result_or_score_or_xg_values_used_for_identity": False,
         "model_or_weight_changed": False,
         "fusion_v2_scope_changed": False,
     }
