@@ -8,26 +8,29 @@ import live_gateway_patch_v1 as live_gateway
 import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
 
+import cross_season_team_state_binding_v1 as cross_season_identity
+CROSS_SEASON_IDENTITY = cross_season_identity.install()
+
+import cross_season_authority_contract_v1 as cross_season_authority
+
+import formal_receipt_distribution_contract_v1 as receipt_distribution
+RECEIPT_DISTRIBUTION = receipt_distribution.install()
+
 SCHEMA = "football3-formal-future-fixture-identity-bridge-v1"
 
 
 def _resolve(repo_root: Path, state_root: Path, comp: str, season: str,
              home: str, away: str, kickoff):
     loaded = rt.validate_bundle(state_root / "bundle")
-    return identity_bridge.resolve_fixture(
+    fixture, audit = identity_bridge.resolve_fixture(
         repo_root, loaded["state"], comp, season, home, away, kickoff
     )
+    audit["authority_contract"] = cross_season_authority.validate_fixture(repo_root, audit)
+    return fixture, audit
 
 
 def install(gateway_module) -> dict[str, Any]:
-    """Canonicalize future/absent formal fixture team IDs from frozen state only.
-
-    The live gateway may create a provisional raw-name fixture before it has acquired
-    and sealed the requested state. We therefore leave that provisional identity alone
-    for source acquisition/exclusion, but replace the fixture in the sealed runtime input
-    after the state has been validated. No result, xG value, fuzzy score or post-target
-    information participates in identity selection.
-    """
+    """Canonicalize future/absent formal fixture team IDs from frozen state only."""
     original = gateway_module.normal_request
 
     def normal_request(req: dict[str, Any], state_root: Path, out: Path, repo_root: Path,
@@ -94,7 +97,10 @@ def install(gateway_module) -> dict[str, Any]:
         "sealed_runtime_input_uses_canonical_identity": True,
         "request_names_preserved": True,
         "fixture_time_preserved": True,
-        "identity_source": "validated_frozen_state_plus_permanent_team_identity_bridge",
+        "identity_source": "validated_frozen_state_plus_cross_season_permanent_identity_bridge",
+        "cross_season_identity_contract": CROSS_SEASON_IDENTITY,
+        "cross_season_authority_contract": cross_season_authority.SCHEMA,
+        "receipt_distribution_contract": RECEIPT_DISTRIBUTION,
         "result_or_xg_identity_selection": False,
         "fuzzy_cross_club_substitution": False,
         "model_parameters_or_weights_changed": False,
