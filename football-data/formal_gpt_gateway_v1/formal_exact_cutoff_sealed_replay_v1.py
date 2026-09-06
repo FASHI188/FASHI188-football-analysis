@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import permanent_team_identity_bridge_v1 as identity_bridge
+import cross_season_authority_contract_v1 as cross_season_authority
 import runtime as rt
 
 SCHEMA = "football3-formal-exact-cutoff-sealed-replay-v1"
@@ -98,6 +99,7 @@ def install(gateway_module) -> dict[str, Any]:
         fixture, identity = identity_bridge.resolve_fixture(
             repo_root, loaded["state"], comp, season, home, away, kickoff
         )
+        identity["authority_contract"] = cross_season_authority.validate_fixture(repo_root, identity)
         inp = _sealed_input(fixture, cutoff, loaded)
         input_path = out / "runtime_input.json"
         _write_json(input_path, inp)
@@ -143,6 +145,8 @@ def install(gateway_module) -> dict[str, Any]:
         "state_advance_allowed": False,
         "state_mutation_allowed": False,
         "unique_canonical_identity_required": True,
+        "authority_crosswalk_required_for_governed_continuity_targets": True,
+        "authority_crosswalk_contract": cross_season_authority.SCHEMA,
         "result_or_xg_identity_selection": False,
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,
