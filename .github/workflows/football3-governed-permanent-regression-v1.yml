@@ -1,0 +1,419 @@
+name: Football3 Governed Permanent Regression V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'football-data/config/cross_season_**'
+      - 'football-data/config/ucl_2026_27_league_phase_identity_v1.json'
+      - 'football-data/manifests/cross_season_authoritative_entity_crosswalk_v1.json'
+      - 'football-data/formal_fast_runtime_v1/**'
+      - 'football-data/formal_gpt_gateway_v1/**'
+      - 'football-data/engine/ucl_league_phase_identity_bridge_v1.py'
+      - 'football-data/engine/run_formal_prediction_ucl_governed_v1.py'
+      - '.github/workflows/football3-governed-permanent-regression-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-governed-permanent-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  CONFIRMATION_ARTIFACT_ID: '9827606506'
+  REGRESSION_CUTOFF: '2026-09-04T13:19:44+00:00'
+
+jobs:
+  governed-core-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind exact HEAD and compile permanent governed stack
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '5d92a2135f5a3658f7f9391d5d8b928865b1b16c' }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git cat-file -e "$BASE_SHA^{commit}"
+          git diff --name-only "$BASE_SHA"...HEAD | tee changed-files.txt
+          if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)' changed-files.txt; then
+            echo 'protected model/CURRENT/raw alias scope changed' >&2
+            exit 1
+          fi
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/cross_season_team_state_binding_v1.py \
+            football-data/formal_gpt_gateway_v1/cross_season_participation_authority_v1.py \
+            football-data/formal_gpt_gateway_v1/cross_season_authority_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py \
+            football-data/formal_gpt_gateway_v1/ucl_cross_season_identity_audit_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_receipt_distribution_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_future_fixture_identity_bridge_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_v1_release_order_replay_v1.py \
+            football-data/formal_fast_runtime_v1/production_300_reference_replay_v1.py \
+            football-data/formal_fast_runtime_v1/test_runtime.py \
+            football-data/formal_fast_runtime_v1/test_runtime_core_v1.py \
+            football-data/engine/ucl_league_phase_identity_bridge_v1.py \
+            football-data/engine/run_formal_prediction_ucl_governed_v1.py
+
+      - name: Run generic participation and returning-club fail-closed tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/test_cross_season_participation_authority_v1.py
+
+      - name: Acquire frozen FULL regression sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation regression/core
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          test -f .runtime_sources/understat/understat_frozen.db
+          test -f .runtime_sources/confirmation/confirmation_identity.jsonl
+          test -f .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl
+
+      - name: Build domain-independent sealed regression request
+        run: |
+          cat > regression/core/request.json <<JSON
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"governed-permanent-regression-eng-v1","match":{"competition_id":"ENG_PremierLeague","season":"2026/27","kickoff":"2026-09-05T14:00:00+00:00","cutoff":"${REGRESSION_CUTOFF}","home_team_name":"Nottingham Forest","away_team_name":"Tottenham Hotspur"}}
+          JSON
+
+      - name: Select durable state and execute sealed run 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          rm -rf .regression_state_1 regression/core/run1
+          mkdir -p .regression_state_1 regression/core/run1
+          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            --repo "$GITHUB_REPOSITORY" --request "$PWD/regression/core/request.json" \
+            --cache-root "$PWD/.regression_state_1" --audit "$PWD/regression/core/run1/durable_state_selection.json"
+          cp .regression_state_1/durable_state_selection_v1.json regression/core/run1/durable_state_selection_bound.json
+          python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$PWD/.regression_state_1/bundle"
+          sha256sum .regression_state_1/bundle/* | sort > regression/core/run1/state-files-before.sha256
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/regression/core/request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --state-root "$PWD/.regression_state_1" --out "$PWD/regression/core/run1" \
+            | tee regression/core/run1/stdout.txt
+          sha256sum .regression_state_1/bundle/* | sort > regression/core/run1/state-files-after.sha256
+          diff -u regression/core/run1/state-files-before.sha256 regression/core/run1/state-files-after.sha256
+          python3 - <<'PY'
+          import json
+          r=json.load(open('regression/core/run1/prediction_receipt.json'))
+          s=json.load(open('regression/core/run1/summary.json'))
+          b=json.load(open('regression/core/run1/team_identity_bridge.json'))
+          assert s['status']=='PASS'
+          assert s['gateway_route']=='SEALED_EXACT_CUTOFF_REPLAY'
+          assert s['state_mutated'] is False and s['source_refetch_used'] is False
+          assert r['state_integrity_guard']['status']=='PASS'
+          assert r['fallback_class']!='DATA_STATE_ANOMALY'
+          assert r['manual_or_auxiliary_fallback_used'] is False
+          assert r['distribution_contract_schema']=='football3-formal-receipt-distribution-contract-v1'
+          assert r['prediction_sha_before_distribution_contract']==r['prediction_sha']
+          assert r['mu_home'] is None and r['mu_away'] is None
+          assert b['home']['historical_match_count']>0 and b['away']['historical_match_count']>0
+          PY
+
+      - name: Run seven-domain and full formal-scope cross-season audit
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py \
+            --repo-root "$PWD" --bundle "$PWD/.regression_state_1/bundle" --out-dir "$PWD/regression/core/cross-season-audit"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('regression/core/cross-season-audit/cross_season_team_state_audit.json'))
+          focus=('ENG_PremierLeague','ESP_LaLiga','GER_Bundesliga','ITA_SerieA','FRA_Ligue1','JPN_J1','KOR_KLeague1')
+          for comp in focus:
+              x=d['domains'][comp]
+              assert x['resolved_team_count']==x['current_roster_team_count'], (comp,x)
+              assert x['returning_history_linked_count']==x['returning_expected_count'], (comp,x)
+              assert x['zero_history_anomaly_count']==0, (comp,x)
+              assert not x['missing'] and not x['extra'] and not x['ambiguous'] and not x['duplicate_canonical_identity'], (comp,x)
+              assert x['final_guard_status']=='PASS', (comp,x)
+          assert d['status']=='PASS'
+          PY
+
+      - name: Run UCL 36-team identity and state audit
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/football-data/engine
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/ucl_cross_season_identity_audit_v1.py \
+            --repo-root "$PWD" --bundle "$PWD/.regression_state_1/bundle" --out-dir "$PWD/regression/core/ucl-audit"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('regression/core/ucl-audit/ucl_2026_27_identity_audit.json'))
+          assert d['authoritative_roster_count']==36 and d['resolved_team_count']==36
+          assert d['qualification_roster_used'] is False
+          assert not d['missing'] and not d['extra'] and not d['ambiguous'] and not d['duplicate_canonical_identity']
+          assert not d['state_anomalies'] and not d['zero_history_anomalies']
+          assert d['final_guard_status'] in ('PASS','PASS_WITH_DATA_COVERAGE_LIMITATIONS')
+          PY
+
+      - name: Exercise governed UCL legacy scientific guard
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/engine
+        run: |
+          set -euo pipefail
+          cat > regression/core/ucl-request.json <<'JSON'
+          {"competition_id":"UEFA_ChampionsLeague","season":"2026/27","home_team":"Real Madrid","away_team":"Inter","kickoff_utc":"2026-09-08T20:00:00+00:00","freeze_time_utc":"2026-09-06T03:59:00+00:00","settlement":"90_minutes_including_stoppage","competition_round":"League phase Matchday 1","two_legged":false,"market_snapshot":null,"lineup_evidence":null,"data_freshness_evidence":{"source_name":"UEFA official 2026/27 Champions League fixtures","source_url":"https://www.uefa.com/uefachampionsleague/","observed_at_utc":"2026-09-03T12:00:00+00:00","expected_history_matches":0,"latest_history_match_date":null}}
+          JSON
+          python3 - <<'PY'
+          import json,match_pipeline,ucl_league_phase_identity_bridge_v1 as ucl
+          ucl.install(match_pipeline)
+          ctx=match_pipeline.prepare_match_context(json.load(open('regression/core/ucl-request.json')))
+          tf=ctx['team_features']
+          assert tf['status']=='通过'
+          assert tf['identity_bridge']['status']=='PASS'
+          assert tf['identity_bridge']['registry']['team_count']==36
+          PY
+          set +e
+          python3 football-data/engine/run_formal_prediction_ucl_governed_v1.py \
+            --input regression/core/ucl-request.json \
+            --context-output regression/core/ucl-context.json \
+            --calculation-output regression/core/ucl-calculation.json \
+            --validation-output regression/core/ucl-validation.json \
+            --print-summary > regression/core/ucl-legacy.stdout 2>&1
+          rc=$?
+          set -e
+          cat regression/core/ucl-legacy.stdout
+          if [ "$rc" -eq 0 ]; then
+            echo 'governed legacy output generated with valid PIT parameters'
+          elif [ "$rc" -eq 2 ] && grep -Eq 'no point-in-time validated parameter set for target season 2026/27|current-season history has 0 matches' regression/core/ucl-legacy.stdout; then
+            echo 'identity PASS; scientific guard fail-closed as expected'
+          else
+            exit "$rc"
+          fi
+          if grep -Eq 'D01|identity not unique|historical strength identity not unique' regression/core/ucl-legacy.stdout; then
+            echo 'identity failed before scientific guard' >&2
+            exit 1
+          fi
+
+      - name: Run production-300 FAST FULL cache and late-release equivalence
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_fast_runtime_v1/test_runtime.py \
+            --mode production --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --n 300 --out "$PWD/regression/core/production-300-equivalence-receipt.json" \
+            | tee regression/core/production-300.stdout
+          python3 - <<'PY'
+          import json
+          d=json.load(open('regression/core/production-300-equivalence-receipt.json'))
+          assert d['passed'] is True
+          e=d['equivalence_300']
+          assert e['n']==300 and e['passed'] is True and e['cache_state_exact'] is True
+          assert e['max_abs_1x2']<=1e-12 and e['max_abs_score_matrix_cell']<=1e-12
+          a=d['automatic_routing']
+          assert a['no_cache_auto_full'] and a['complete_delta_fast'] and a['incomplete_delta_auto_full']
+          assert a['corrupt_cache_isolated_full'] and a['full_then_next_fast']
+          assert d['production_result_adjudication'] is not None
+          PY
+
+      - name: Select durable state and execute sealed run 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          rm -rf .regression_state_2 regression/core/run2
+          mkdir -p .regression_state_2 regression/core/run2
+          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            --repo "$GITHUB_REPOSITORY" --request "$PWD/regression/core/request.json" \
+            --cache-root "$PWD/.regression_state_2" --audit "$PWD/regression/core/run2/durable_state_selection.json"
+          cp .regression_state_2/durable_state_selection_v1.json regression/core/run2/durable_state_selection_bound.json
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request "$PWD/regression/core/request.json" --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --state-root "$PWD/.regression_state_2" --out "$PWD/regression/core/run2" \
+            | tee regression/core/run2/stdout.txt
+
+      - name: Verify independent sealed deterministic SHA and receipt contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,hashlib,pathlib
+          r1=json.load(open('regression/core/run1/prediction_receipt.json'))
+          r2=json.load(open('regression/core/run2/prediction_receipt.json'))
+          s1=json.load(open('regression/core/run1/durable_state_selection_bound.json'))
+          s2=json.load(open('regression/core/run2/durable_state_selection_bound.json'))
+          assert s1['selection_sha256']==s2['selection_sha256']
+          assert s1['selected']['state_sha256']==s2['selected']['state_sha256']
+          assert s1['selected']['state_bundle_sha256']==s2['selected']['state_bundle_sha256']
+          for k in ('state_sha256','state_bundle_sha','runtime_input_sha','prediction_sha','receipt_sha'):
+              assert r1[k]==r2[k], (k,r1[k],r2[k])
+          assert r1['team_identity_bridge']==r2['team_identity_bridge']
+          assert (r1['p_home'],r1['p_draw'],r1['p_away'])==(r2['p_home'],r2['p_draw'],r2['p_away'])
+          assert r1['distribution_contract_schema']=='football3-formal-receipt-distribution-contract-v1'
+          assert r1['prediction_sha_before_distribution_contract']==r1['prediction_sha']
+          out={'status':'PASS','selection_sha256':s1['selection_sha256'],'state_sha256':r1['state_sha256'],'runtime_input_sha':r1['runtime_input_sha'],'prediction_sha':r1['prediction_sha'],'receipt_sha':r1['receipt_sha']}
+          pathlib.Path('regression/core/sealed-determinism.json').write_text(json.dumps(out,sort_keys=True)+'\n')
+          PY
+
+      - name: Upload governed core regression evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: governed-permanent-core-regression-${{ github.run_id }}
+          path: regression/core/
+          if-no-files-found: error
+          retention-days: 90
+
+  formal-entry-domain-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind exact HEAD and acquire frozen sources
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p .probe_states .runtime_sources/understat .runtime_sources/confirmation regression/probes
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+
+      - name: Build one governed formal-entry probe per focus domain
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,os
+          root=pathlib.Path('regression/probes')
+          cutoff=os.environ['REGRESSION_CUTOFF']
+          fixtures={
+            'eng':('ENG_PremierLeague','2026/27','2026-09-05T14:00:00+00:00','Nottingham Forest','Tottenham Hotspur'),
+            'esp':('ESP_LaLiga','2026/27','2026-09-11T19:00:00+00:00','Sevilla','Valencia'),
+            'ger':('GER_Bundesliga','2026/27','2026-09-12T13:30:00+00:00','Mainz','Ein Frankfurt'),
+            'ita':('ITA_SerieA','2026/27','2026-09-19T16:00:00+00:00','AS Roma','Internazionale'),
+            'fra':('FRA_Ligue1','2026/27','2026-09-11T18:45:00+00:00','Rennes','Olympique de Marseille'),
+            'jpn':('JPN_J1','2026','2026-09-11T10:00:00+00:00','Kyoto Sanga','Kashiwa Reysol'),
+            'kor':('KOR_KLeague1','2026','2026-09-12T07:30:00+00:00','Jeonbuk Hyundai Motors','FC Seoul'),
+          }
+          for key,(comp,season,kickoff,home,away) in fixtures.items():
+              req={'schema_version':'football3-formal-gpt-gateway-v1','mode':'predict','request_id':f'governed-permanent-domain-probe-{key}-v1','match':{'competition_id':comp,'season':season,'kickoff':kickoff,'cutoff':cutoff,'home_team_name':home,'away_team_name':away}}
+              (root/f'{key}.request.json').write_text(json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n')
+          (root/'fixture-set.json').write_text(json.dumps(fixtures,ensure_ascii=False,sort_keys=True)+'\n')
+          PY
+
+      - name: Execute seven sealed formal-entry probes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          for request in regression/probes/*.request.json; do
+            key="$(basename "$request" .request.json)"
+            state="$PWD/.probe_states/$key"
+            out="$PWD/regression/probes/$key"
+            rm -rf "$state" "$out"
+            mkdir -p "$state" "$out"
+            python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+              --repo "$GITHUB_REPOSITORY" --request "$PWD/$request" \
+              --cache-root "$state" --audit "$out/durable_state_selection.json"
+            cp "$state/durable_state_selection_v1.json" "$out/durable_state_selection_bound.json"
+            python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$state/bundle"
+            sha256sum "$state"/bundle/* | sort > "$out/state-files-before.sha256"
+            python3 football-data/formal_gpt_gateway_v1/entry.py \
+              --request "$PWD/$request" --repo-root "$PWD" \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --state-root "$state" --out "$out" | tee "$out/stdout.txt"
+            sha256sum "$state"/bundle/* | sort > "$out/state-files-after.sha256"
+            diff -u "$out/state-files-before.sha256" "$out/state-files-after.sha256"
+          done
+
+      - name: Verify seven governed formal-entry receipts
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,hashlib
+          root=pathlib.Path('regression/probes')
+          expected={'eng','esp','ger','ita','fra','jpn','kor'}
+          rows=[]
+          for key in sorted(expected):
+              out=root/key
+              r=json.load(open(out/'prediction_receipt.json'))
+              s=json.load(open(out/'summary.json'))
+              b=json.load(open(out/'team_identity_bridge.json'))
+              sel=json.load(open(out/'durable_state_selection_bound.json'))
+              assert sel['status']=='SELECTED'
+              assert s['status']=='PASS'
+              assert s['gateway_route']=='SEALED_EXACT_CUTOFF_REPLAY'
+              assert s['state_mutated'] is False and s['source_refetch_used'] is False
+              assert r['state_integrity_guard']['status']=='PASS'
+              assert r['fallback_class']!='DATA_STATE_ANOMALY'
+              assert r['manual_or_auxiliary_fallback_used'] is False
+              assert r['distribution_contract_schema']=='football3-formal-receipt-distribution-contract-v1'
+              assert r['prediction_sha_before_distribution_contract']==r['prediction_sha']
+              assert b['home']['historical_match_count']>0 and b['away']['historical_match_count']>0
+              assert b['home']['state_local_evidence'] and b['home']['state_global_evidence']
+              assert b['away']['state_local_evidence'] and b['away']['state_global_evidence']
+              rows.append({'key':key,'competition_id':b['competition_id'],'model_route':r['model_route'],'fallback_class':r['fallback_class'],'guard':r['state_integrity_guard']['status'],'prediction_sha':r['prediction_sha'],'receipt_sha':r['receipt_sha'],'state_sha256':r['state_sha256'],'selection_sha256':sel['selection_sha256']})
+          assert len(rows)==7
+          raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
+          report={'schema_version':'football3-governed-permanent-domain-probes-v1','status':'PASS','probe_count':7,'probe_set_sha256':hashlib.sha256(raw).hexdigest(),'probes':rows}
+          (root/'formal-entry-domain-probes.json').write_text(json.dumps(report,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Upload governed domain probe evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: governed-permanent-domain-probes-${{ github.run_id }}
+          path: regression/probes/
+          if-no-files-found: error
+          retention-days: 90
