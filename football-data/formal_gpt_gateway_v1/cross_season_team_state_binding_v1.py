@@ -11,6 +11,7 @@ import runtime as rt
 
 SCHEMA = "football3-cross-season-team-state-binding-v1"
 MANIFEST_DIR = "football-data/manifests/lineup_match_identity_v502"
+CONTINUITY_REGISTRY = "football-data/config/cross_season_identity_continuity_v1.json"
 EXACT_CURRENT_REGISTRY = legacy.CURRENT_REGISTRY
 FULL17_REGISTRY = legacy.FULL17_REGISTRY
 FULL17_ALIASES = legacy.FULL17_ALIASES
@@ -292,6 +293,51 @@ def _exact_previous_resolution(repo_root: Path, comp: str, previous: str | None,
     }}
 
 
+def _continuity_resolution(repo_root: Path, comp: str, season: str, previous: str | None,
+                           names: list[str], previous_roster: set[str]) -> dict[str, Any] | None:
+    path = repo_root / CONTINUITY_REGISTRY
+    if not path.is_file():
+        return None
+    obj = _load_json(path)
+    if obj.get("schema_version") != "football3-cross-season-identity-continuity-v1":
+        raise rt.RuntimeGateError("cross-season continuity registry schema mismatch")
+    rows = obj.get("rows")
+    if type(rows) is not list:
+        raise rt.RuntimeGateError("cross-season continuity registry rows missing")
+    requested_tokens = {rt._normalize_team(x) for x in names if str(x or "").strip()}
+    hits: list[dict[str, Any]] = []
+    for raw in rows:
+        if type(raw) is not dict:
+            continue
+        if str(raw.get("competition_id") or "") != comp or str(raw.get("current_season") or "") != season or str(raw.get("previous_season") or "") != str(previous or ""):
+            continue
+        accepted = [str(raw.get("current_canonical_name") or ""), *[str(x) for x in (raw.get("current_exact_names") or [])]]
+        if requested_tokens & {rt._normalize_team(x) for x in accepted if x}:
+            hits.append(raw)
+    if len(hits) > 1:
+        raise rt.RuntimeGateError(f"cross-season continuity identity ambiguous: {comp} {season} {names[0]}")
+    if not hits:
+        return None
+    raw = hits[0]
+    historical = str(raw.get("previous_processed_name") or "").strip()
+    roster_hits = [x for x in previous_roster if rt._normalize_team(x) == rt._normalize_team(historical)]
+    if len(roster_hits) != 1:
+        raise rt.RuntimeGateError(f"cross-season continuity previous roster identity not unique: {comp} {previous} {historical}; hits={len(roster_hits)}")
+    historical = roster_hits[0]
+    return {"provider_identity": None, "historical_name": historical, "provenance": {
+        "source": CONTINUITY_REGISTRY,
+        "source_sha256": rt._sha_file(path),
+        "method": "AUDITED_EXACT_CROSS_SEASON_CONTINUITY_REGISTRY",
+        "season": season,
+        "previous_season": previous,
+        "processed_team": historical,
+        "evidence": list(raw.get("evidence") or []),
+        "selection_fields": ["competition_id", "current_season", "current_exact_names", "previous_season", "previous_processed_name"],
+        "result_or_score_or_xg_values_used_for_identity": False,
+        "fuzzy_matching_used": False,
+    }}
+
+
 def _state_hit(state: Any, comp: str, team_id: str) -> tuple[bool, bool]:
     base = getattr(state, "base", None)
     return ((comp, team_id) in getattr(base, "teams_local", {}), team_id in getattr(base, "teams_global", {}))
@@ -346,6 +392,8 @@ def resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested:
     mapped = _manifest_resolution(repo_root, comp, names)
     if mapped is None:
         mapped = _exact_previous_resolution(repo_root, comp, previous, names)
+    if mapped is None:
+        mapped = _continuity_resolution(repo_root, comp, season, previous, names, prev_roster)
     alias_state = _explicit_alias_state_resolution(state, comp, names)
     provider_identity: str | None = None
     if mapped is not None:
@@ -438,7 +486,7 @@ def install() -> dict[str, Any]:
     legacy.resolve_team = resolve_team; legacy.resolve_fixture = resolve_fixture
     import formal_state_integrity_guard_v1 as guard_module
     guard_contract = patch_guard(guard_module); _INSTALLED = True
-    return {"schema_version": SCHEMA, "installed": True, "canonical_global_identity_separate_from_historical_state_key": True, "authoritative_manifest_methods": sorted(ALLOWED_MANIFEST_METHODS), "schedule_fingerprint_min_f1": MIN_SCHEDULE_FINGERPRINT_F1, "schedule_fingerprint_min_margin": MIN_SCHEDULE_FINGERPRINT_MARGIN, "season_clock": "CURRENT_ROSTER_AUTHORITY_OBSERVED_AT_NOT_MODEL_TRAINING_SEASONS", "calendar_year_leagues_supported": True, "natural_year_competitions": sorted(NATURAL_YEAR_COMPETITIONS), "participation_classification_uses_history_lookup_zero": False, "fuzzy_matching": False, "result_or_xg_values_used_for_identity": False, "model_parameters_or_weights_changed": False, "formal_current_or_production_pointer_changed": False, "returning_club_guard": guard_contract}
+    return {"schema_version": SCHEMA, "installed": True, "canonical_global_identity_separate_from_historical_state_key": True, "authoritative_manifest_methods": sorted(ALLOWED_MANIFEST_METHODS), "schedule_fingerprint_min_f1": MIN_SCHEDULE_FINGERPRINT_F1, "schedule_fingerprint_min_margin": MIN_SCHEDULE_FINGERPRINT_MARGIN, "season_clock": "CURRENT_ROSTER_AUTHORITY_OBSERVED_AT_NOT_MODEL_TRAINING_SEASONS", "calendar_year_leagues_supported": True, "natural_year_competitions": sorted(NATURAL_YEAR_COMPETITIONS), "continuity_registry": CONTINUITY_REGISTRY, "participation_classification_uses_history_lookup_zero": False, "fuzzy_matching": False, "result_or_xg_values_used_for_identity": False, "model_parameters_or_weights_changed": False, "formal_current_or_production_pointer_changed": False, "returning_club_guard": guard_contract}
 
 
 _ORIGINAL_RESOLVE_TEAM = legacy.resolve_team
