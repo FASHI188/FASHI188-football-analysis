@@ -26,6 +26,9 @@ def _distribution_fields(receipt: dict[str, Any]) -> dict[str, Any]:
     probs = [("HOME", float(receipt["p_home"])), ("DRAW", float(receipt["p_draw"])), ("AWAY", float(receipt["p_away"]))]
     top1 = max(probs, key=lambda x: (x[1], {"HOME": 2, "DRAW": 1, "AWAY": 0}[x[0]]))
     return {
+        # Fusion V2's active score distribution is a global mixture of two score
+        # distributions and explicitly does not claim a single-Poisson centre. Do
+        # not back-solve or infer a fake scalar mu from intervals or marginals.
         "mu_home": None,
         "mu_away": None,
         "mu_semantics": "NOT_DEFINED_FOR_GLOBAL_MIXTURE_SINGLE_POISSON_MU_NOT_CLAIMED",
@@ -33,7 +36,9 @@ def _distribution_fields(receipt: dict[str, Any]) -> dict[str, Any]:
         "btts_yes": float(btts["yes"]),
         "top_3_exact_scores": top[:3],
         "one_x_two_top1": {"selection": top1[0], "probability": top1[1]},
+        "manual_or_auxiliary_fallback_used": False,
         "distribution_contract_schema": SCHEMA,
+        "receipt_extension_schema": SCHEMA,
         "distribution_fields_derived_from_existing_formal_distribution_only": True,
     }
 
@@ -49,7 +54,12 @@ def install() -> dict[str, Any]:
         if type(receipt) is not dict:
             raise rt.RuntimeGateError("formal predict_match receipt object required")
         prediction_sha_before = receipt.get("prediction_sha")
+        probability_core_before = tuple(receipt.get(k) for k in ("p_home", "p_draw", "p_away"))
         receipt.update(_distribution_fields(receipt))
+        if receipt.get("prediction_sha") != prediction_sha_before:
+            raise rt.RuntimeGateError("receipt extension changed formal prediction SHA")
+        if tuple(receipt.get(k) for k in ("p_home", "p_draw", "p_away")) != probability_core_before:
+            raise rt.RuntimeGateError("receipt extension changed formal 1X2 probabilities")
         receipt["prediction_sha_before_distribution_contract"] = prediction_sha_before
         receipt["receipt_sha"] = rt._sha_bytes(rt._canon_bytes({k: v for k, v in receipt.items() if k != "receipt_sha"}))
         return receipt
@@ -60,7 +70,10 @@ def install() -> dict[str, Any]:
         "schema_version": SCHEMA,
         "installed": True,
         "additive_receipt_contract_only": True,
+        "legacy_receipt_schema_preserved": True,
+        "prediction_sha_preserved": True,
         "prediction_probability_object_changed": False,
+        "manual_or_auxiliary_fallback_used": False,
         "single_poisson_mu_invented": False,
         "over_2_5_from_formal_total_goals_distribution": True,
         "btts_yes_from_formal_btts_distribution": True,
