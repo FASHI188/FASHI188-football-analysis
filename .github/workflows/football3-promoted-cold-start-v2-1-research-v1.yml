@@ -4,157 +4,224 @@ on:
   pull_request:
     branches:
       - football3/formal-gpt-runner-integration-v1
-    types: [opened, reopened, synchronize]
+    types: [reopened]
     paths:
       - 'football-data/research/promoted_cold_start_v2_1/**'
       - '.github/workflows/football3-promoted-cold-start-v2-1-research-v1.yml'
-  workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: football3-v21-evaluator-pr350-rd482ff53313d9e34df07e87a4bdfaa158841ff61
+  cancel-in-progress: false
+
 env:
+  PR_NUMBER: '350'
+  RESEARCH_BRANCH: 'football3/promoted-cold-start-v2-1-research-clean-v1'
   EXACT_BASE: '0bfcd824d855161595226f3a67b33c4cfa9ab8a3'
+  PRELABEL_FREEZE_COMMIT: 'f238837e6b9635caaf009755d49fb64b46cf5622'
+  WRAPPER_COMMIT: '3df1ce60568826ed19f81df177d947b47c748408'
   PREREG_BLOB: '30c45da908540ad99aab51024729d554a7047c7a'
+  EVALUATOR_BLOB: '849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1'
+  PRELABEL_RECEIPT_BLOB: 'd482ff53313d9e34df07e87a4bdfaa158841ff61'
+  RUNTIME_BLOB: '8994226369094908beb410ce454d19fd7272c3df'
+  TEAM_ALIASES_BLOB: '6248028352308ceda6800794c0ee3f5ceca223a9'
+  OUTPUT_INTERFACE_BLOB: '7a57f49b510b8b099726b4be3d47bf3c2b091c42'
+  WRAPPER_BLOB: 'a47141391eb328b24bef269f3328167527aa3fb4'
   SOURCE_TRANSITION_BLOB: '3139b147614d6e34403f9c807fd90c17a890f2e1'
   TRANSPORT_MIRROR_BLOB: '8980a42025683304c0221090f9341eef150e0cc6'
   NONSTANDARD_FIXTURE_BLOB: 'ea4d21139815c625e82b148e79abd18501f06d89'
   NONSTANDARD_FIXTURE_APPEND_BLOB: 'dcdc712186d7707d26f308980483f76549c29978'
+  V6188_CLOSURE_BLOB: '87b43c4a45890828312a8a93b3868b7b2f471df3'
+  V6187_DATE_RULE_BLOB: 'f0d2546bce183a92076bcca05b139be41106894d'
+  RESULT_MANIFEST_BLOB: 'a9d8c1ce964008ef6caefb169b444075f587e64f'
+  RESULT_ADJ_V1_BLOB: '86a1b745c698744818e4f936aea694743bae16db'
+  FROZEN_XG_ADJ_V1_BLOB: '4959d165c6bcced39da0b11a1a0eb0d990b52130'
+  FROZEN_XG_ADJ_V2_BLOB: '568cd28170b60430d57274ca8615b7a84132c3a8'
+  RESULT_ADJ_V2_BLOB: '356c882b54592bb61e35c3b5db5eab3a1f2f98a3'
+  RELEASE_ORDER_BLOB: '3ce4ce4e10b4944cb2268f1bd6355672d65bfeb0'
   UNDERSTAT_ARTIFACT_ID: '9798682425'
   CONFIRMATION_ARTIFACT_ID: '9827606506'
-  REGRESSION_CUTOFF: '2026-09-04T13:19:44+00:00'
+  CORE_AUDIT_ARTIFACT_ID: '9992599594'
+  CORE_AUDIT_ARTIFACT_DIGEST: '76cdf78233e84f1f57edfe8b6879d2a02e74a4ea74b86e1fe70d65154e970053'
+  CORE_AUDIT_FILE_SHA256: '56a5ba1c6b3412f9c1c6496b25a8e1bfa296475ca1b8a305165d192a232b9deb'
+  ATTEMPT_ARTIFACT_NAME: 'football3-v21-evaluator-attempt-pr350-p30c45da908540ad99aab51024729d554a7047c7a-e849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1-rd482ff53313d9e34df07e87a4bdfaa158841ff61'
+  RESULT_ARTIFACT_NAME: 'football3-v21-evaluator-result-pr350-p30c45da908540ad99aab51024729d554a7047c7a-e849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1-rd482ff53313d9e34df07e87a4bdfaa158841ff61'
 
 jobs:
-  promoted-cold-start-research:
+  unique-frozen-evaluator:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Bind exact base and enforce research-only protected scope
+      - name: Bind exact PR head, frozen science, and pre-label hard gates
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
+          test "$EVENT_PR_NUMBER" = "$PR_NUMBER"
+          test "$EVENT_ACTION" = 'reopened'
+          test "$EVENT_HEAD_REF" = "$RESEARCH_BRANCH"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git merge-base --is-ancestor "$EXACT_BASE" HEAD
+          git merge-base --is-ancestor "$PRELABEL_FREEZE_COMMIT" HEAD
+          git merge-base --is-ancestor "$WRAPPER_COMMIT" HEAD
+
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/evaluate.py)" = "$EVALUATOR_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json)" = "$PRELABEL_RECEIPT_BLOB"
+          test "$(git hash-object football-data/formal_fast_runtime_v1/runtime.py)" = "$RUNTIME_BLOB"
+          test "$(git hash-object football-data/config/team_aliases.json)" = "$TEAM_ALIASES_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/CANDIDATE_OUTPUT_INTERFACE_V1.json)" = "$OUTPUT_INTERFACE_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/run_frozen_evaluator_after_prelabel_v1.py)" = "$WRAPPER_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json)" = "$SOURCE_TRANSITION_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json)" = "$TRANSPORT_MIRROR_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json)" = "$NONSTANDARD_FIXTURE_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json)" = "$NONSTANDARD_FIXTURE_APPEND_BLOB"
+          test "$(git hash-object football-data/manifests/v6_understat_alias_closure_v6188_status.json)" = "$V6188_CLOSURE_BLOB"
+          test "$(git hash-object football-data/validation/v6_understat_alias_qualification_v6187.py)" = "$V6187_DATE_RULE_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/result_adjudications_v1.json)" = "$RESULT_MANIFEST_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_result_adjudication_v1.py)" = "$RESULT_ADJ_V1_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_frozen_xg_identity_adjudication_v1.py)" = "$FROZEN_XG_ADJ_V1_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_frozen_xg_identity_adjudication_v2.py)" = "$FROZEN_XG_ADJ_V2_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_result_adjudication_v2.py)" = "$RESULT_ADJ_V2_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_v1_release_order_replay_v1.py)" = "$RELEASE_ORDER_BLOB"
+
           git diff --name-only "$EXACT_BASE"...HEAD | tee research-changed-files.txt
           if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)|formal_fast_runtime_v1/runtime.py$|formal_gpt_gateway_v1/(entry|gateway).py$' research-changed-files.txt; then
-            echo 'formal model/CURRENT/weight/runtime/production gateway drift detected' >&2
+            echo 'protected science/runtime drift detected' >&2
             exit 1
           fi
-          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/evaluate.py
-          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/prepare_openfootball_sources.py
-          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/prepare_footballdata_mirror_sources.py
-          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/prepare_footballdata_mirror_sources_v2.py
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/SOURCE_CONTRACT.json >/dev/null
-          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/CURRENT_PROBE_FIXTURES.json >/dev/null
-          mkdir -p research-output/sources research-output/current-probes
-          sha256sum football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json > research-output/preregistration.sha256
-          sha256sum football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json > research-output/pre-label-source-transition.sha256
-          sha256sum football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json > research-output/pre-metric-transport-mirror-transition.sha256
-          sha256sum football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json > research-output/pre-metric-nonstandard-fixture-adjudication.sha256
-          sha256sum football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json > research-output/pre-metric-nonstandard-fixture-adjudication-2.sha256
-          cp football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json research-output/pre-label-source-transition.json
-          cp football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json research-output/pre-metric-transport-mirror-transition.json
-          cp football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json research-output/pre-metric-nonstandard-fixture-adjudication.json
-          cp football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json research-output/pre-metric-nonstandard-fixture-adjudication-2.json
-          cp football-data/research/promoted_cold_start_v2_1/SOURCE_CONTRACT.json research-output/source-contract.json
 
-      - name: Acquire frozen formal sources
+          python3 - <<'PY'
+          import json
+          p='football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['status']=='PASS_PRE_LABEL_HARD_GATES'
+          assert d['hard_gates']=={'joined':5330,'expected_joined':5330,'missing':0,'extra':0,'ambiguous':0,'duplicate':0,'time_leakage':0,'pass':True}
+          assert d['candidate_metrics_computed'] is False
+          assert d['candidate_evaluator_invoked'] is False
+          assert d['candidate_parameters_or_gates_modified'] is False
+          assert d['candidate_sample_or_cohort_modified'] is False
+          assert d['preregistration_modified'] is False
+          assert d['evaluator_modified'] is False
+          assert d['production_runtime_modified'] is False
+          assert d['team_aliases_modified'] is False
+          o=json.load(open('football-data/research/promoted_cold_start_v2_1/CANDIDATE_OUTPUT_INTERFACE_V1.json',encoding='utf-8'))
+          assert o['status']=='FROZEN_BEFORE_UNIQUE_EVALUATOR_ATTEMPT'
+          assert o['source_of_truth']['preregistration_git_blob_sha']=='30c45da908540ad99aab51024729d554a7047c7a'
+          assert o['source_of_truth']['evaluator_git_blob_sha']=='849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1'
+          assert o['source_of_truth']['pre_label_receipt_git_blob_sha']=='d482ff53313d9e34df07e87a4bdfaa158841ff61'
+          PY
+
+          test ! -e football-data/research/promoted_cold_start_v2_1/EVALUATOR_ATTEMPT_RECEIPT.json
+          test ! -e football-data/research/promoted_cold_start_v2_1/EVALUATOR_RESULT_RECEIPT.json
+          mkdir -p research-output .runtime_sources/understat .runtime_sources/confirmation .runtime_sources/core .footballdata_mirror_raw .research_sources
+
+      - name: Refuse any prior evaluator attempt or result artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
-            -o .runtime_sources/understat.zip
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
-            -o .runtime_sources/confirmation.zip
+          python3 - <<'PY'
+          import json,os,urllib.parse,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          for name in (os.environ['ATTEMPT_ARTIFACT_NAME'],os.environ['RESULT_ARTIFACT_NAME']):
+              url=f"https://api.github.com/repos/{repo}/actions/artifacts?name={urllib.parse.quote(name)}&per_page=100"
+              req=urllib.request.Request(url,headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req) as r: d=json.load(r)
+              exact=[a for a in d.get('artifacts',[]) if a.get('name')==name]
+              if exact:
+                  raise SystemExit(f'evaluator already consumed by artifact {name}: {[a.get("id") for a in exact]}')
+          PY
+
+      - name: Acquire frozen formal sources and governed current-audit evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for spec in \
+            "$UNDERSTAT_ARTIFACT_ID:.runtime_sources/understat.zip" \
+            "$CONFIRMATION_ARTIFACT_ID:.runtime_sources/confirmation.zip" \
+            "$CORE_AUDIT_ARTIFACT_ID:.runtime_sources/core.zip"; do
+            id="${spec%%:*}"; dst="${spec#*:}"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$dst"
+          done
+          test "$(sha256sum .runtime_sources/core.zip | awk '{print $1}')" = "$CORE_AUDIT_ARTIFACT_DIGEST"
           unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          unzip -q .runtime_sources/core.zip -d .runtime_sources/core
           test -f .runtime_sources/understat/understat_frozen.db
           test -f .runtime_sources/confirmation/confirmation_identity.jsonl
           test -f .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl
-          sha256sum .runtime_sources/understat/understat_frozen.db .runtime_sources/confirmation/confirmation_identity.jsonl .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl > research-output/formal-source-sha256.txt
+          test -f .runtime_sources/core/cross-season-audit/cross_season_team_state_audit.json
+          test "$(sha256sum .runtime_sources/core/cross-season-audit/cross_season_team_state_audit.json | awk '{print $1}')" = "$CORE_AUDIT_FILE_SHA256"
+          python3 - <<'PY'
+          import json
+          p='.runtime_sources/core/cross-season-audit/cross_season_team_state_audit.json'
+          d=json.load(open(p,encoding='utf-8'))
+          big5=('ENG_PremierLeague','ESP_LaLiga','GER_Bundesliga','ITA_SerieA','FRA_Ligue1')
+          n=0
+          for c in big5:
+              x=d['domains'][c]
+              assert x['final_guard_status']=='PASS',(c,x['final_guard_status'])
+              assert not x['missing'] and not x['extra'] and not x['ambiguous'] and not x['duplicate_canonical_identity']
+              n+=len(x['promoted_entering_clubs'])
+          assert n==14,n
+          PY
+          sha256sum \
+            .runtime_sources/understat/understat_frozen.db \
+            .runtime_sources/confirmation/confirmation_identity.jsonl \
+            .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl \
+            .runtime_sources/core/cross-season-audit/cross_season_team_state_audit.json \
+            > research-output/frozen-input-files.sha256
 
-      - name: Acquire frozen Football-Data lower-tier sources through immutable transport mirror
+      - name: Acquire frozen Football-Data lower-tier result history
         run: |
           set -euo pipefail
-          rm -rf .footballdata_mirror_raw .research_sources
-          mkdir -p .footballdata_mirror_raw .research_sources
           python3 - <<'PY' > .footballdata-mirror-plan.tsv
           import json
           d=json.load(open('football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json'))
           assert d['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
           assert d['candidate_metric_observations_before_transition']==0
           assert d['candidate_evaluator_completed_before_transition'] is False
-          x=json.load(open('football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json'))
-          assert x['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
-          assert x['candidate_metric_observations_before_transition']==0
-          assert x['candidate_evaluator_completed_before_transition'] is False
-          assert len(x['exceptions'])==1
-          ex=x['exceptions'][0]
-          assert (ex['competition_id'],ex['season'],ex['division_code'],ex['home_team_name_in_source'],ex['away_team_name_in_source'])==('FRA_Ligue1','2023/24','F2','Troyes','Valenciennes')
-          assert ex['include_as_model_result_row'] is False and ex['synthetic_score_allowed'] is False
-          y=json.load(open('football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json'))
-          assert y['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
-          assert y['candidate_metric_observations_before_transition']==0
-          assert y['candidate_evaluator_completed_before_transition'] is False
-          assert len(y['exceptions'])==1
-          ex2=y['exceptions'][0]
-          assert (ex2['competition_id'],ex2['season'],ex2['division_code'],ex2['home_team_name_in_source'],ex2['away_team_name_in_source'])==('FRA_Ligue1','2025/26','F2','Bastia','Red Star')
-          assert ex2['include_as_model_result_row'] is False and ex2['synthetic_score_allowed'] is False
-          assert ex2['administrative_score_as_real_goal_result_allowed'] is False
           m=d['mirror']
           assert m['repository']=='IBalazs433/football-analytics-dashboard'
           assert m['commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
           sc={'2021/22':'2122','2022/23':'2223','2023/24':'2324','2024/25':'2425','2025/26':'2526'}
           dc={'ENG_PremierLeague':'E1','ESP_LaLiga':'SP2','GER_Bundesliga':'D2','ITA_SerieA':'I2','FRA_Ligue1':'F2'}
-          n=0
+          rows=[]
           for f in m['files']:
-              comp=f['competition_id']; season=f['season']
-              print('\t'.join([comp,sc[season],dc[comp],m['repository'],m['commit'],f['path'],f['git_blob_sha'],str(f['bytes'])]))
-              n+=1
-          assert n==25,n
+              rows.append((f['competition_id'],sc[f['season']],dc[f['competition_id']],m['repository'],m['commit'],f['path'],f['git_blob_sha'],str(f['bytes'])))
+          assert len(rows)==25
+          for r in rows: print('\t'.join(r))
           PY
           while IFS=$'\t' read -r comp season_code div repo commit source_path expected_blob expected_bytes; do
             dst=".footballdata_mirror_raw/${comp}/${season_code}-${div}.csv"
             mkdir -p "$(dirname "$dst")"
-            url="https://raw.githubusercontent.com/${repo}/${commit}/${source_path}"
-            echo "acquiring pinned Football-Data mirror ${repo}@${commit}:${source_path}"
             curl --fail --location --silent --show-error --http1.1 \
-              --user-agent 'football3-research-source-audit/1.0' \
+              --user-agent 'football3-v21-frozen-evaluator/1.0' \
               --connect-timeout 8 --max-time 30 \
               --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
-              "$url" -o "$dst"
+              "https://raw.githubusercontent.com/${repo}/${commit}/${source_path}" -o "$dst"
             test -s "$dst"
-            actual_bytes="$(wc -c < "$dst" | tr -d ' ')"
-            actual_blob="$(git hash-object "$dst")"
-            test "$actual_bytes" = "$expected_bytes"
-            test "$actual_blob" = "$expected_blob"
+            test "$(wc -c < "$dst" | tr -d ' ')" = "$expected_bytes"
+            test "$(git hash-object "$dst")" = "$expected_blob"
           done < .footballdata-mirror-plan.tsv
           python3 football-data/research/promoted_cold_start_v2_1/prepare_footballdata_mirror_sources_v2.py \
             --receipt "$PWD/football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json" \
@@ -163,210 +230,211 @@ jobs:
             --raw-root "$PWD/.footballdata_mirror_raw" \
             --out-root "$PWD/.research_sources" \
             --manifest "$PWD/research-output/lower-tier-source-manifest.json" \
-            | tee research-output/footballdata-mirror-source-prepare.stdout
+            | tee research-output/lower-tier-source-prepare.stdout
           python3 - <<'PY'
           import json
           d=json.load(open('research-output/lower-tier-source-manifest.json'))
           assert d['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v3'
           assert d['mirror_repository']=='IBalazs433/football-analytics-dashboard'
           assert d['mirror_commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
-          assert d['file_count']==25,d['file_count']
-          assert d['competition_count']==5,d['competition_count']
-          assert d['season_count']==5,d['season_count']
-          assert d['total_documented_nonstandard_omissions']==2,d['total_documented_nonstandard_omissions']
-          assert len(d['nonstandard_fixture_receipts'])==2
+          assert d['file_count']==25 and d['competition_count']==5 and d['season_count']==5
+          assert d['total_documented_nonstandard_omissions']==2
           assert all(x['parsed_matches']==x['expected_scored_matches'] for x in d['files'])
-          exceptional={(x['competition_id'],x['season']):x for x in d['files'] if x['documented_nonstandard_omission_count']}
-          assert set(exceptional)=={('FRA_Ligue1','2023/24'),('FRA_Ligue1','2025/26')},exceptional
-          x=exceptional[('FRA_Ligue1','2023/24')]
-          assert (x['parsed_matches'],x['expected_scheduled_directed_matches'],x['expected_scored_matches'])==(379,380,379)
-          assert x['documented_nonstandard_omissions']==[{'home_team_name_in_source':'Troyes','away_team_name_in_source':'Valenciennes','scheduled_date':'03/05/2024','classification':'ABANDONED_AND_RESOLVED_BY_DISCIPLINARY_PENALTY_NO_SYNTHETIC_FT_SCORE','include_as_model_result_row':False,'synthetic_score_allowed':False,'source_unscored_row_observed':False,'receipt_schema':'football3-promoted-cold-start-pre-metric-nonstandard-fixture-adjudication-v1'}]
-          y=exceptional[('FRA_Ligue1','2025/26')]
-          assert (y['parsed_matches'],y['expected_scheduled_directed_matches'],y['expected_scored_matches'])==(305,306,305)
-          assert y['documented_nonstandard_omissions']==[{'home_team_name_in_source':'Bastia','away_team_name_in_source':'Red Star','scheduled_date':'05/12/2025','classification':'ABANDONED_AND_RESOLVED_BY_DISCIPLINARY_PENALTY_NO_SYNTHETIC_FT_SCORE','include_as_model_result_row':False,'synthetic_score_allowed':False,'source_unscored_row_observed':True,'receipt_schema':'football3-promoted-cold-start-pre-metric-nonstandard-fixture-adjudication-append-v1'}]
           assert all(x['converted_fields']==['Date','HomeTeam','AwayTeam','FTHG','FTAG'] for x in d['files'])
           assert all(not x['odds_fields_used'] and not x['postmatch_stats_used'] and not x['xg_fields_used'] for x in d['files'])
           PY
 
-      - name: Select durable current state and audit all current Big-5 identities
+      - name: Create irreversible EVALUATOR_ATTEMPT receipt
         env:
           GH_TOKEN: ${{ github.token }}
-          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
         run: |
           set -euo pipefail
-          cat > research-output/state-selection-request.json <<JSON
-          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"promoted-cold-start-state-anchor-v1","match":{"competition_id":"ENG_PremierLeague","season":"2026/27","kickoff":"2026-09-05T14:00:00+00:00","cutoff":"${REGRESSION_CUTOFF}","home_team_name":"Nottingham Forest","away_team_name":"Tottenham Hotspur"}}
-          JSON
-          rm -rf .research_state
-          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
-            --repo "$GITHUB_REPOSITORY" --request "$PWD/research-output/state-selection-request.json" \
-            --cache-root "$PWD/.research_state" --audit "$PWD/research-output/durable-state-selection.json"
-          python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle --bundle "$PWD/.research_state/bundle"
-          python3 football-data/formal_gpt_gateway_v1/cross_season_identity_audit_v1.py \
-            --repo-root "$PWD" --bundle "$PWD/.research_state/bundle" --out-dir "$PWD/research-output/current-cross-season-audit"
           python3 - <<'PY'
-          import json
-          d=json.load(open('research-output/current-cross-season-audit/cross_season_team_state_audit.json'))
-          big5=('ENG_PremierLeague','ESP_LaLiga','GER_Bundesliga','ITA_SerieA','FRA_Ligue1')
-          n=0
-          for c in big5:
-              x=d['domains'][c]
-              assert x['final_guard_status']=='PASS', (c,x['final_guard_status'])
-              assert not x['missing'] and not x['extra'] and not x['ambiguous'] and not x['duplicate_canonical_identity']
-              n+=len(x['promoted_entering_clubs'])
-          assert n==14,n
+          import json,os,urllib.parse,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          for name in (os.environ['ATTEMPT_ARTIFACT_NAME'],os.environ['RESULT_ARTIFACT_NAME']):
+              url=f"https://api.github.com/repos/{repo}/actions/artifacts?name={urllib.parse.quote(name)}&per_page=100"
+              req=urllib.request.Request(url,headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req) as r: d=json.load(r)
+              if any(a.get('name')==name for a in d.get('artifacts',[])):
+                  raise SystemExit(f'evaluator already consumed before attempt receipt: {name}')
           PY
+          python3 - <<'PY'
+          import json,os,subprocess
+          from datetime import datetime,timezone
+          payload={
+            'schema_version':'football3-promoted-cold-start-v2-1-evaluator-attempt-v1',
+            'status':'EVALUATOR_ATTEMPT_IRREVERSIBLY_CONSUMED',
+            'created_at_utc':datetime.now(timezone.utc).isoformat(),
+            'pr_number':350,
+            'run_id':os.environ['GITHUB_RUN_ID'],
+            'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+            'exact_head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'pre_label_receipt_git_blob_sha':os.environ['PRELABEL_RECEIPT_BLOB'],
+            'preregistration_git_blob_sha':os.environ['PREREG_BLOB'],
+            'evaluator_git_blob_sha':os.environ['EVALUATOR_BLOB'],
+            'production_runtime_git_blob_sha':os.environ['RUNTIME_BLOB'],
+            'team_aliases_git_blob_sha':os.environ['TEAM_ALIASES_BLOB'],
+            'candidate_output_interface_git_blob_sha':os.environ['OUTPUT_INTERFACE_BLOB'],
+            'wrapper_git_blob_sha':os.environ['WRAPPER_BLOB'],
+            'attempt_artifact_name':os.environ['ATTEMPT_ARTIFACT_NAME'],
+            'result_artifact_name':os.environ['RESULT_ARTIFACT_NAME'],
+            'candidate_metric_observations_before_attempt':0,
+            'evaluator_invocations_before_attempt':0,
+            'rerun_allowed_after_this_receipt':False,
+            'rescue_tuning_allowed':False,
+            'parameters_or_thresholds_may_change_after_attempt':False,
+            'sample_or_cohort_may_change_after_attempt':False
+          }
+          open('research-output/EVALUATOR_ATTEMPT_RECEIPT.json','w',encoding='utf-8').write(json.dumps(payload,sort_keys=True,indent=2))
+          PY
+          cp football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json research-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json
+          cp football-data/research/promoted_cold_start_v2_1/CANDIDATE_OUTPUT_INTERFACE_V1.json research-output/CANDIDATE_OUTPUT_INTERFACE_V1.json
+          sha256sum research-output/EVALUATOR_ATTEMPT_RECEIPT.json > research-output/EVALUATOR_ATTEMPT_RECEIPT.sha256
 
-      - name: Run preregistered historical candidate evaluation
+      - name: Seal evaluator attempt artifact before label observation
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ATTEMPT_ARTIFACT_NAME }}
+          path: |
+            research-output/EVALUATOR_ATTEMPT_RECEIPT.json
+            research-output/EVALUATOR_ATTEMPT_RECEIPT.sha256
+            research-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json
+            research-output/CANDIDATE_OUTPUT_INTERFACE_V1.json
+            research-output/frozen-input-files.sha256
+            research-output/lower-tier-source-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Invoke frozen evaluator exactly once through runpy wrapper
+        id: evaluator
         env:
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/football-data/validation
         run: |
           set -euo pipefail
-          python3 football-data/research/promoted_cold_start_v2_1/evaluate.py \
+          test -f research-output/EVALUATOR_ATTEMPT_RECEIPT.json
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > research-output/evaluator-started-at.txt
+          set +e
+          python3 football-data/research/promoted_cold_start_v2_1/run_frozen_evaluator_after_prelabel_v1.py \
             --repo-root "$PWD" \
             --sources "$PWD/.research_sources" \
             --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
             --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-            --current-audit "$PWD/research-output/current-cross-season-audit/cross_season_team_state_audit.json" \
+            --current-audit "$PWD/.runtime_sources/core/cross-season-audit/cross_season_team_state_audit.json" \
             --probe-manifest "$PWD/football-data/research/promoted_cold_start_v2_1/CURRENT_PROBE_FIXTURES.json" \
             --out "$PWD/research-output/historical-candidate-evaluation.json" \
-            | tee research-output/historical-candidate-evaluation.stdout
+            > research-output/historical-candidate-evaluation.stdout \
+            2> research-output/historical-candidate-evaluation.stderr
+          rc=$?
+          set -e
+          echo "$rc" > research-output/evaluator-exit-code.txt
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
 
-      - name: Execute one real future formal-entry probe for every current promoted club
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+      - name: Freeze historical scientific verdict and V3 binding receipt
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,hashlib
-          from datetime import datetime,timedelta
+          import hashlib,json,os,subprocess
+          from datetime import datetime,timezone
           from pathlib import Path
-          m=json.load(open('football-data/research/promoted_cold_start_v2_1/CURRENT_PROBE_FIXTURES.json'))
-          seen=[]
-          for i,fx in enumerate(m['fixtures']):
-              ko=datetime.fromisoformat(fx['kickoff']); cutoff=ko-timedelta(minutes=60)
-              req={'schema_version':'football3-formal-gpt-gateway-v1','mode':'predict','request_id':f'promoted-current-probe-{i:02d}','match':{'competition_id':fx['competition_id'],'season':'2026/27','kickoff':fx['kickoff'],'cutoff':cutoff.isoformat(),'home_team_name':fx['home'],'away_team_name':fx['away']}}
-              p=Path(f'research-output/current-probes/probe-{i:02d}'); p.mkdir(parents=True,exist_ok=True)
-              (p/'request.json').write_text(json.dumps(req,sort_keys=True,separators=(',',':')),encoding='utf-8')
-              seen.extend(fx['promoted_clubs'])
-          if len(seen)!=14 or len(set(seen))!=14: raise SystemExit(f'probe promoted coverage invalid: {seen}')
-          PY
-          for req in research-output/current-probes/probe-*/request.json; do
-            d="$(dirname "$req")"
-            rm -rf "$d/state"
-            mkdir -p "$d/state"
-            cp -a .research_state/bundle "$d/state/bundle"
-            cp .research_state/durable_state_selection_v1.json "$d/state/durable_state_selection_v1.json" || true
-            set +e
-            python3 football-data/formal_gpt_gateway_v1/entry.py \
-              --request "$PWD/$req" --repo-root "$PWD" \
-              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
-              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-              --state-root "$PWD/$d/state" --out "$PWD/$d/out" > "$d/stdout.txt" 2> "$d/stderr.txt"
-            rc=$?
-            set -e
-            echo "$rc" > "$d/exit_code.txt"
-          done
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          manifest=json.load(open('football-data/research/promoted_cold_start_v2_1/CURRENT_PROBE_FIXTURES.json'))
-          rows=[]; successful_clubs=set()
-          def find_keys(x,needle,out):
-              if isinstance(x,dict):
-                  for k,v in x.items():
-                      if needle in str(k).casefold(): out.append((k,v))
-                      find_keys(v,needle,out)
-              elif isinstance(x,list):
-                  for v in x: find_keys(v,needle,out)
-          for i,fx in enumerate(manifest['fixtures']):
-              d=Path(f'research-output/current-probes/probe-{i:02d}'); rc=int((d/'exit_code.txt').read_text())
-              out=d/'out'; summary=json.load((out/'summary.json').open()) if (out/'summary.json').is_file() else {}
-              receipt=json.load((out/'prediction_receipt.json').open()) if (out/'prediction_receipt.json').is_file() else {}
-              bridge=json.load((out/'team_identity_bridge.json').open()) if (out/'team_identity_bridge.json').is_file() else {}
-              ev=[]; find_keys(receipt,'effective_evidence',ev)
-              route=receipt.get('model_route') or receipt.get('route') or (receipt.get('model_audit') or {}).get('route')
-              fallback=receipt.get('fallback_class')
-              ok=(rc==0 and summary.get('status')=='PASS' and bool(receipt))
-              if ok: successful_clubs.update(fx['promoted_clubs'])
-              rows.append({'index':i,'fixture':fx,'exit_code':rc,'success':ok,'summary':summary,'route':route,'fallback_class':fallback,'effective_evidence_fields':ev,'prediction_sha':receipt.get('prediction_sha'),'input_sha':receipt.get('runtime_input_sha') or receipt.get('input_sha'),'state_sha':receipt.get('state_sha256'),'identity_bridge':bridge})
-          payload={'schema_version':'football3-promoted-current-formal-probe-summary-v1','fixture_count':len(rows),'promoted_club_count':14,'successful_promoted_clubs':sorted(successful_clubs),'all_probes_pass':len(successful_clubs)==14 and all(r['success'] for r in rows),'rows':rows}
-          Path('research-output/current-formal-probe-summary.json').write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,indent=2),encoding='utf-8')
-          print(json.dumps({'all_probes_pass':payload['all_probes_pass'],'successful_promoted_clubs':len(successful_clubs)}))
+          out=Path('research-output/historical-candidate-evaluation.json')
+          rc=int(Path('research-output/evaluator-exit-code.txt').read_text().strip())
+          result={
+            'schema_version':'football3-promoted-cold-start-v2-1-evaluator-result-v1',
+            'created_at_utc':datetime.now(timezone.utc).isoformat(),
+            'pr_number':350,
+            'run_id':os.environ['GITHUB_RUN_ID'],
+            'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),
+            'exact_head':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'evaluator_exit_code':rc,
+            'evaluator_invocations':1,
+            'candidate_metric_observations':0,
+            'pre_label_receipt_git_blob_sha':os.environ['PRELABEL_RECEIPT_BLOB'],
+            'candidate_code_git_blob_sha':os.environ['EVALUATOR_BLOB'],
+            'candidate_config_git_blob_sha':os.environ['PREREG_BLOB'],
+            'candidate_output_interface_git_blob_sha':os.environ['OUTPUT_INTERFACE_BLOB'],
+            'production_runtime_git_blob_sha':os.environ['RUNTIME_BLOB'],
+            'team_aliases_git_blob_sha':os.environ['TEAM_ALIASES_BLOB'],
+            'attempt_artifact_name':os.environ['ATTEMPT_ARTIFACT_NAME'],
+            'result_artifact_name':os.environ['RESULT_ARTIFACT_NAME'],
+            'duplicate_execution_detected':False,
+            'rescue_tuning_detected':False,
+            'label_leakage_detected':False,
+            'formal_activation':False,
+            'formal_model_or_current_modified':False,
+            'formal_weights_modified':False
+          }
+          if rc==0 and out.is_file():
+              d=json.load(out.open(encoding='utf-8'))
+              assert d['schema_version']=='football3-promoted-cold-start-v2-1-evaluation-v1'
+              assert d['status'] in ('PASS','STOP_NO_CANDIDATE')
+              assert isinstance(d['scientific_pass'],bool)
+              assert d['formal_or_current_modified'] is False
+              assert d['club_specific_patch_count']==0
+              expected_metrics={'Top1','LogLoss','Brier','RPS','score_logloss','exact_score_top1_accuracy','total_goals_mae','over_under_2_5_brier'}
+              for block in ('development','selection'):
+                  assert d[block]['n']>0
+                  assert set(d[block]['metrics'])=={'frozen_v1','formal_baseline','strength_only','tier_gap_only','candidate'}
+                  for m in d[block]['metrics'].values(): assert set(m)==expected_metrics
+              result.update({
+                'status':'EVALUATOR_RESULT_FROZEN',
+                'candidate_metric_observations':1,
+                'scientific_verdict':d['status'],
+                'scientific_pass':d['scientific_pass'],
+                'failed_scientific_gates':d['failed_gates'],
+                'gamma':d['gamma'],
+                'gamma_solver':d['gamma_solver'],
+                'development_n':d['development']['n'],
+                'selection_n':d['selection']['n'],
+                'development_metrics':d['development']['metrics'],
+                'selection_metrics':d['selection']['metrics'],
+                'selection_per_league_metrics':d['selection']['per_league'],
+                'evaluation_output_sha256':hashlib.sha256(out.read_bytes()).hexdigest(),
+                'v3_binding_status':'V3_CAN_START_WITH_FROZEN_V2_1_RESEARCH_EXPERT' if d['status']=='PASS' else 'V3_CAN_START_WITH_V2_1_WEIGHT_ZERO'
+              })
+          else:
+              result.update({
+                'status':'EVALUATOR_FAILED_AFTER_IRREVERSIBLE_ATTEMPT',
+                'scientific_verdict':'FAIL_RESEARCH_ONLY',
+                'scientific_pass':False,
+                'failed_scientific_gates':['EVALUATOR_EXECUTION_FAILURE'],
+                'v3_binding_status':'V3_CAN_START_WITH_V2_1_WEIGHT_ZERO'
+              })
+          Path('research-output/EVALUATOR_RESULT_RECEIPT.json').write_text(json.dumps(result,sort_keys=True,indent=2),encoding='utf-8')
+          print(json.dumps({k:result.get(k) for k in ('status','scientific_verdict','candidate_metric_observations','v3_binding_status','exact_head')},sort_keys=True))
           PY
 
-      - name: Run unchanged production-300 FAST FULL equivalence gate
-        env:
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
-        run: |
-          set -euo pipefail
-          python3 football-data/formal_fast_runtime_v1/test_runtime.py \
-            --mode production --repo-root "$PWD" \
-            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
-            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-            --n 300 --out "$PWD/research-output/production-300-equivalence-receipt.json" \
-            | tee research-output/production-300.stdout
-          python3 - <<'PY'
-          import json
-          d=json.load(open('research-output/production-300-equivalence-receipt.json'))
-          assert d['passed'] is True
-          e=d['equivalence_300']; assert e['n']==300 and e['passed'] and e['cache_state_exact']
-          assert e['max_abs_1x2']<=1e-12 and e['max_abs_score_matrix_cell']<=1e-12
-          PY
-
-      - name: Final research-only adjudication and protected drift closure
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          e=json.load(open('research-output/historical-candidate-evaluation.json'))
-          p=json.load(open('research-output/current-formal-probe-summary.json'))
-          prod=json.load(open('research-output/production-300-equivalence-receipt.json'))
-          src=json.load(open('research-output/source-contract.json'))
-          sm=json.load(open('research-output/lower-tier-source-manifest.json'))
-          h=src['lower_tier_result_history']
-          assert src['schema_version']=='football3-promoted-source-contract-v5'
-          assert h['provider']=='Football-Data.co.uk'
-          assert h['scientific_source_family_unchanged'] is True
-          assert h['source_sha256_manifest']=='lower-tier-source-manifest.json'
-          assert h['transport_policy']['mode']=='github_raw_immutable_transport_mirror'
-          assert h['transport_policy']['mirror_repository']=='IBalazs433/football-analytics-dashboard'
-          assert h['transport_policy']['mirror_commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
-          assert h['pre_metric_transport_mirror_receipt']=='football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json'
-          assert h['pre_metric_nonstandard_fixture_receipts']==['football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json','football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json']
-          assert h['odds_fields_used'] is False and h['postmatch_stats_used'] is False and h['xg_claimed'] is False
-          assert sm['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v3'
-          assert sm['file_count']==25 and sm['competition_count']==5 and sm['season_count']==5
-          assert sm['total_documented_nonstandard_omissions']==2
-          assert all(x['parsed_matches']==x['expected_scored_matches'] for x in sm['files'])
-          failures=[]
-          if e['current_promoted_audit']['team_count']!=14: failures.append('CURRENT_PROMOTED_AUDIT_NOT_14')
-          if not p['all_probes_pass']: failures.append('CURRENT_FORMAL_PROBE_COVERAGE')
-          if not prod.get('passed'): failures.append('PRODUCTION_300')
-          if e['status']=='STOP_NO_CANDIDATE': verdict='STOP_NO_CANDIDATE'
-          elif failures: verdict='PARTIAL_DATA_COVERAGE'
-          elif e.get('scientific_pass'): verdict='PROMOTED_COLD_START_V2_1_CANDIDATE_PASS'
-          else: verdict='FAIL_RESEARCH_ONLY'
-          payload={'schema_version':'football3-promoted-cold-start-final-research-adjudication-v1','verdict':verdict,'historical_candidate_status':e['status'],'scientific_pass':e.get('scientific_pass'),'failed_scientific_gates':e.get('failed_gates',[]),'engineering_or_coverage_failures':failures,'all_current_promoted_formal_probes_pass':p['all_probes_pass'],'production_300_pass':prod.get('passed'),'lower_tier_source_provider':h['provider'],'lower_tier_transport_mode':h['transport_policy']['mode'],'documented_nonstandard_result_omissions':sm['total_documented_nonstandard_omissions'],'formal_activation':False,'current_modified':False,'formal_model_modified':False,'formal_weights_modified':False,'production_runner_modified':False,'fresh_prospective_confirmation_required':True}
-          Path('research-output/final-adjudication.json').write_text(json.dumps(payload,sort_keys=True,indent=2),encoding='utf-8')
-          print(json.dumps(payload,sort_keys=True))
-          PY
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
-          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json)" = "$SOURCE_TRANSITION_BLOB"
-          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json)" = "$TRANSPORT_MIRROR_BLOB"
-          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json)" = "$NONSTANDARD_FIXTURE_BLOB"
-          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION_2.json)" = "$NONSTANDARD_FIXTURE_APPEND_BLOB"
-          if git diff --name-only "$EXACT_BASE"...HEAD | grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)|formal_fast_runtime_v1/runtime.py$|formal_gpt_gateway_v1/(entry|gateway).py$'; then
-            echo 'protected drift at final closure' >&2; exit 1
-          fi
-          find research-output -type f -print0 | sort -z | xargs -0 sha256sum > research-output/artifact-files.sha256
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/evaluate.py)" = "$EVALUATOR_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json)" = "$PRELABEL_RECEIPT_BLOB"
+          test "$(git hash-object football-data/formal_fast_runtime_v1/runtime.py)" = "$RUNTIME_BLOB"
+          test "$(git hash-object football-data/config/team_aliases.json)" = "$TEAM_ALIASES_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/CANDIDATE_OUTPUT_INTERFACE_V1.json)" = "$OUTPUT_INTERFACE_BLOB"
+          sha256sum research-output/EVALUATOR_RESULT_RECEIPT.json > research-output/EVALUATOR_RESULT_RECEIPT.sha256
+          find research-output -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > research-output/artifact-files.sha256
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload frozen evaluator result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: football3-promoted-cold-start-v2-1-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ${{ env.RESULT_ARTIFACT_NAME }}
           path: research-output
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+      - name: Final historical-verdict gate only
+        if: always()
+        run: |
+          set -euo pipefail
+          test -f research-output/EVALUATOR_RESULT_RECEIPT.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('research-output/EVALUATOR_RESULT_RECEIPT.json'))
+          assert d['candidate_metric_observations'] in (0,1)
+          if d['status']!='EVALUATOR_RESULT_FROZEN':
+              raise SystemExit('unique evaluator attempt failed; rerun prohibited')
+          assert d['candidate_metric_observations']==1
+          assert d['scientific_verdict'] in ('PASS','STOP_NO_CANDIDATE')
+          print(json.dumps({'scientific_verdict':d['scientific_verdict'],'candidate_metric_observations':1,'v3_binding_status':d['v3_binding_status']},sort_keys=True))
+          PY
