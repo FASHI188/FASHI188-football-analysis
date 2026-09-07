@@ -185,9 +185,9 @@ class DurableSelectorGithubApiResilienceTests(unittest.TestCase):
         ]
 
         def fake_get(url, token):
-            if "page=1" in url:
+            if "&page=1" in url:
                 return {"artifacts": page1}
-            if "page=2" in url:
+            if "&page=2" in url:
                 return {"artifacts": page2}
             self.fail(url)
 
