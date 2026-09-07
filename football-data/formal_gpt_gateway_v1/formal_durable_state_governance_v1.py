@@ -12,7 +12,6 @@ import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
 
 SCHEMA = "football3-formal-durable-state-governance-v1"
-MIN_XG_EVIDENCE = 3.0
 
 
 def _write(path: Path, obj: Any) -> None:
@@ -135,15 +134,17 @@ def _delta_from_output(out: Path, base_cutoff, target_cutoff):
 
 
 def _fallback_gate(receipt: dict[str, Any]) -> None:
-    if not bool(receipt.get("fallback_exact_v1")):
-        return
-    counts = receipt.get("history_counts") or {}
-    evidence = counts.get("xg_effective_evidence")
-    if type(evidence) is not list or not evidence:
-        raise rt.RuntimeGateError("FALLBACK_WITHOUT_FORMAL_EFFECTIVE_EVIDENCE")
-    values = [float(x) for x in evidence]
-    if min(values) >= MIN_XG_EVIDENCE:
-        raise rt.RuntimeGateError("FALLBACK_DESPITE_SUFFICIENT_EFFECTIVE_EVIDENCE")
+    verdict = receipt.get("formal_fallback_verdict")
+    if type(verdict) is not dict:
+        raise rt.RuntimeGateError("FORMAL_FALLBACK_VERDICT_MISSING")
+    if verdict.get("source") != "historical_xg_challenger_v1.dynamic.fallback_exact_v1":
+        raise rt.RuntimeGateError("FORMAL_FALLBACK_VERDICT_SOURCE_MISMATCH")
+    if verdict.get("verdict_available") is not True:
+        raise rt.RuntimeGateError("FORMAL_FALLBACK_VERDICT_UNAVAILABLE")
+    if verdict.get("receipt_verdict_consistent") is not True:
+        raise rt.RuntimeGateError("FORMAL_FALLBACK_VERDICT_RECEIPT_MISMATCH")
+    if bool(receipt.get("fallback_exact_v1")) != bool(verdict.get("fallback_exact_v1")):
+        raise rt.RuntimeGateError("FORMAL_FALLBACK_VERDICT_FINAL_RECEIPT_MISMATCH")
 
 
 def install(gateway_module) -> dict[str, Any]:
@@ -248,7 +249,8 @@ def install(gateway_module) -> dict[str, Any]:
                 "transition_receipt_sha256": transition["transition_receipt_sha256"],
                 "cache_key_sha256": cache["cache_key_sha256"],
                 "no_op_delta_full_rebuild_forbidden": True,
-                "fallback_requires_effective_evidence_below_threshold": True,
+                "fallback_verdict_source": "historical_xg_challenger_v1.dynamic.fallback_exact_v1",
+                "fallback_independent_threshold_reimplementation_used": False,
                 "model_parameters_or_weights_changed": False,
                 "formal_current_or_production_pointer_changed": False,
             })
@@ -265,13 +267,14 @@ def install(gateway_module) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "installed": True,
-        "selector": "cutoff-aware eligibility then max state_cutoff; created_at tie-break only",
+        "selector": "cutoff-aware state/PIT eligibility plus prematch artifact availability ceiling",
         "separate_clocks": ["artifact_created_at", "base_state_cutoff", "target_cutoff", "max_source_observed_at"],
         "transition_receipt_schema": contract.TRANSITION_SCHEMA,
         "zero_delta_status": contract.NO_OP_DELTA,
         "cache_key_schema": contract.CACHE_KEY_SCHEMA,
-        "fail_closed_anomalies": ["selector", "cache", "identity", "PIT", "manifest", "delta_continuity"],
-        "fallback_only_on_effective_evidence_insufficiency": True,
+        "fail_closed_anomalies": ["selector", "cache", "identity", "PIT", "manifest", "delta_continuity", "formal_fallback_verdict"],
+        "fallback_verdict_source": "historical_xg_challenger_v1.dynamic.fallback_exact_v1",
+        "fallback_independent_threshold_reimplementation_used": False,
         "target_specific_logic": False,
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import formal_effective_evidence_guard_governed_v1 as effective_guard
 import formal_state_integrity_guard_v1 as guard
 
 SCHEMA = "football3-formal-state-integrity-coverage-patch-v1"
-_ORIGINAL = guard.classify_state
+_ORIGINAL = None
 
 
 def classify_state(
@@ -16,6 +17,8 @@ def classify_state(
     trigger: dict[str, Any],
     receipt: dict[str, Any],
 ) -> dict[str, Any]:
+    if _ORIGINAL is None:
+        raise RuntimeError("effective evidence guard must be installed before coverage patch")
     audit = _ORIGINAL(loaded, fixture, identity_audit, trigger, receipt)
     coverage = guard._coverage_audit(loaded)
     spec = None
@@ -48,6 +51,9 @@ def classify_state(
 
 
 def install() -> dict[str, Any]:
+    global _ORIGINAL
+    effective_adapter = effective_guard.install()
+    _ORIGINAL = guard.classify_state
     guard.classify_state = classify_state
     return {
         "schema_version": SCHEMA,
@@ -55,6 +61,7 @@ def install() -> dict[str, Any]:
         "target_competition_incomplete_cross_season_xg": "DATA_STATE_ANOMALY",
         "partial_cross_season_ingest": False,
         "normal_fallback_allowed_for_incomplete_known_cross_season_source": False,
+        "effective_evidence_guard": effective_adapter,
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,
     }
