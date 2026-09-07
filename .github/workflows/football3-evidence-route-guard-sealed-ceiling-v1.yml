@@ -1,0 +1,348 @@
+name: Football3 Evidence Route Guard Sealed Ceiling V1
+
+on:
+  push:
+    branches:
+      - football3/evidence-route-guard-sealed-ceiling-v1
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: football3-evidence-route-guard-sealed-ceiling-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: 0bfcd824d855161595226f3a67b33c4cfa9ab8a3
+  TARGET_STATE_ARTIFACT_ID: '9973225479'
+  TARGET_STATE_ARTIFACT_DIGEST: 'sha256:eebc0465bdd5def617a20b50bcd2e2ce662f4eb2e3803d9ac5b4b00e102e3dd4'
+  TARGET_STATE_RUN_ID: '33979095886'
+  REPLAY_CUTOFF: '2026-09-04T13:19:44+00:00'
+  HAMBURG_MAINZ_KICKOFF: '2026-09-06T13:30:00+00:00'
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  CONFIRMATION_ARTIFACT_ID: '9827606506'
+
+jobs:
+  governed-patch:
+    if: ${{ github.event.head_commit.message == 'Bootstrap evidence route and sealed ceiling repair' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply exact governed repair
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p=Path(path)
+              s=p.read_text(encoding='utf-8')
+              n=s.count(old)
+              if n != 1:
+                  raise SystemExit(f'{path}: expected one replacement, found {n}')
+              p.write_text(s.replace(old,new,1), encoding='utf-8')
+
+          contract='football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py'
+          replace_once(contract,
+          'def eligibility_reasons(candidate: dict[str, Any], target_cutoff: datetime, competition_id: str) -> list[str]:\n',
+          'def eligibility_reasons(candidate: dict[str, Any], target_cutoff: datetime, competition_id: str,\n                        artifact_available_by: datetime | None = None) -> list[str]:\n')
+          replace_once(contract,
+          '    if candidate.get("competition_id") not in (None, competition_id):\n        reasons.append("WRONG_COMPETITION")\n',
+          '    if artifact_available_by is not None:\n        try:\n            artifact_created = parse_dt(str(candidate.get("artifact_created_at")), "artifact created at")\n            if artifact_created >= artifact_available_by:\n                reasons.append("ARTIFACT_NOT_AVAILABLE_PREMATCH")\n        except rt.RuntimeGateError:\n            reasons.append("ARTIFACT_CREATED_AT")\n    if candidate.get("competition_id") not in (None, competition_id):\n        reasons.append("WRONG_COMPETITION")\n')
+          replace_once(contract,
+          'def choose_candidate(candidates: list[dict[str, Any]], target_cutoff: datetime, competition_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:\n',
+          'def choose_candidate(candidates: list[dict[str, Any]], target_cutoff: datetime, competition_id: str,\n                     artifact_available_by: datetime | None = None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:\n')
+          replace_once(contract,
+          '        row["rejection_reasons"] = eligibility_reasons(row, target_cutoff, competition_id)\n',
+          '        row["rejection_reasons"] = eligibility_reasons(row, target_cutoff, competition_id, artifact_available_by)\n')
+
+          selector='football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py'
+          replace_once(selector,
+          '    target_cutoff = rt._parse_dt(str(match.get("cutoff") or ""), "target cutoff")\n    if competition_id not in rt.FORMAL_SCOPE:\n',
+          '    target_cutoff = rt._parse_dt(str(match.get("cutoff") or ""), "target cutoff")\n    prematch_availability_ceiling = rt._parse_dt(str(match.get("kickoff") or ""), "prematch availability ceiling")\n    if target_cutoff >= prematch_availability_ceiling:\n        raise rt.RuntimeGateError("prediction cutoff must be before kickoff")\n    if competition_id not in rt.FORMAL_SCOPE:\n')
+          replace_once(selector,
+          '        selected, evaluated = contract.choose_candidate(candidates, target_cutoff, competition_id)\n',
+          '        selected, evaluated = contract.choose_candidate(\n            candidates, target_cutoff, competition_id, prematch_availability_ceiling\n        )\n')
+          replace_once(selector,
+          '                "target_cutoff": target_cutoff.isoformat(),\n                "competition_id": competition_id,\n',
+          '                "target_cutoff": target_cutoff.isoformat(),\n                "artifact_availability_ceiling": prematch_availability_ceiling.isoformat(),\n                "competition_id": competition_id,\n')
+          replace_once(selector,
+          '            "selection_rule": "eligible_then_max_state_cutoff_created_at_tiebreak",\n            "target_cutoff": target_cutoff.isoformat(),\n',
+          '            "selection_rule": "eligible_state_cutoff_then_prematch_artifact_availability_then_created_at_tiebreak",\n            "target_cutoff": target_cutoff.isoformat(),\n            "artifact_availability_ceiling": prematch_availability_ceiling.isoformat(),\n')
+
+          governance='football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py'
+          replace_once(governance,
+          '        if selected.get("runtime_contract_sha256") != contract.runtime_contract_payload()["runtime_contract_sha256"]:\n            raise rt.RuntimeGateError("DURABLE_SELECTOR_RUNTIME_CONTRACT_MISMATCH")\n',
+          '        if selected.get("runtime_contract_sha256") != contract.runtime_contract_payload()["runtime_contract_sha256"]:\n            raise rt.RuntimeGateError("DURABLE_SELECTOR_RUNTIME_CONTRACT_MISMATCH")\n        ceiling = rt._parse_dt(str(selection.get("artifact_availability_ceiling") or ""), "selector artifact availability ceiling")\n        if ceiling != kickoff:\n            raise rt.RuntimeGateError("DURABLE_SELECTOR_PREMATCH_CEILING_MISMATCH")\n        created = rt._parse_dt(str(selected.get("artifact_created_at") or ""), "selected artifact created at")\n        if created >= kickoff:\n            raise rt.RuntimeGateError("DURABLE_SELECTOR_ARTIFACT_NOT_AVAILABLE_PREMATCH")\n')
+
+          guard='football-data/formal_gpt_gateway_v1/formal_state_integrity_guard_v1.py'
+          replace_once(guard,
+          'MIN_XG_EVIDENCE = 3.0\nMIN_EXPECTED_LINKED_XG_MATCHES = 3\n',
+          'def _formal_min_xg_evidence() -> float:\n    try:\n        identity = json.loads(rt.formal_v2.FUSION_IDENTITY_PATH.read_text(encoding="utf-8"))\n        return float(identity["frozen_xg_parameters"]["min_effective_evidence"])\n    except (AttributeError, OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:\n        raise rt.RuntimeGateError("formal XG minimum evidence threshold unavailable") from exc\n\n')
+          replace_once(guard,
+          '        "frozen_min_effective_evidence": MIN_XG_EVIDENCE,\n',
+          '        "frozen_min_effective_evidence": _formal_min_xg_evidence(),\n')
+          replace_once(guard,
+          '    aux = _v1_aux(loaded["state"], fixture)\n    evidence = [float(x) for x in ((trigger.get("dynamic") or {}).get("evidence") or [])]\n    home_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["home_team_id"])\n    away_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["away_team_id"])\n    reasons: list[str] = []\n',
+          '    aux = _v1_aux(loaded["state"], fixture)\n    dynamic = trigger.get("dynamic") or {}\n    raw_evidence = dynamic.get("evidence")\n    try:\n        evidence = [float(x) for x in raw_evidence] if type(raw_evidence) is list else []\n    except (TypeError, ValueError):\n        evidence = []\n    model_fallback = dynamic.get("fallback_exact_v1")\n    formal_threshold = float(trigger.get("frozen_min_effective_evidence"))\n    home_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["home_team_id"])\n    away_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["away_team_id"])\n    reasons: list[str] = []\n    if len(evidence) != 4:\n        reasons.append(f"XG_EFFECTIVE_EVIDENCE_VECTOR_INVALID:n={len(evidence)}")\n    if type(model_fallback) is not bool:\n        reasons.append("XG_CHALLENGER_FALLBACK_METADATA_INVALID")\n')
+          replace_once(guard,
+          '    fallback = bool(receipt.get("fallback_exact_v1"))\n    expected_legal_xg = (\n        home_xg_n >= MIN_EXPECTED_LINKED_XG_MATCHES\n        and away_xg_n >= MIN_EXPECTED_LINKED_XG_MATCHES\n    )\n    if fallback and evidence and min(evidence) >= MIN_XG_EVIDENCE:\n        reasons.append(\n            "FALLBACK_DESPITE_EFFECTIVE_EVIDENCE_THRESHOLD:"\n            + ",".join(f"{x:.12g}" for x in evidence)\n        )\n    elif fallback and expected_legal_xg:\n        reasons.append(\n            "XG_EXPECTED_BUT_EFFECTIVE_EVIDENCE_INSUFFICIENT:"\n            + ",".join(f"{x:.12g}" for x in evidence)\n        )\n\n    anomaly = bool(reasons)\n',
+          '    fallback = bool(receipt.get("fallback_exact_v1"))\n    expected_fallback = model_fallback if type(model_fallback) is bool else None\n    expected_route = None if expected_fallback is None else (\n        "FROZEN_V1_EXACT_FALLBACK" if expected_fallback else "FUSION_V2_ACTIVE"\n    )\n    receipt_route = str(receipt.get("model_route") or "")\n    if expected_fallback is not None and fallback != expected_fallback:\n        reasons.append(\n            "MODEL_FALLBACK_MISMATCH_WITH_CHALLENGER_PROJECTION:"\n            f"challenger={expected_fallback},receipt={fallback}"\n        )\n    if expected_route is not None and receipt_route and receipt_route != expected_route:\n        reasons.append(f"MODEL_ROUTE_MISMATCH_WITH_CHALLENGER_PROJECTION:{receipt_route}!={expected_route}")\n\n    anomaly = bool(reasons)\n')
+          replace_once(guard,
+          '        fallback_reason = (\n            "LEGAL_XG_NOT_SUFFICIENT_FOR_BOTH_TEAMS:"\n            f"home_linked_2025_26={home_xg_n},away_linked_2025_26={away_xg_n},"\n            f"effective_evidence={evidence},threshold={MIN_XG_EVIDENCE}"\n        )\n',
+          '        fallback_reason = (\n            "LEGAL_CHALLENGER_PROJECTED_XG_FALLBACK:"\n            f"effective_evidence={evidence},threshold={formal_threshold},"\n            "authority=dynamic.fallback_exact_v1"\n        )\n')
+          replace_once(guard,
+          '            "frozen_threshold": MIN_XG_EVIDENCE,\n            "home_linked_2025_26_matches": home_xg_n,\n            "away_linked_2025_26_matches": away_xg_n,\n            "expected_legal_xg_for_both_teams": expected_legal_xg,\n            "dynamic": trigger.get("dynamic"),\n',
+          '            "frozen_threshold": formal_threshold,\n            "home_linked_2025_26_matches": home_xg_n,\n            "away_linked_2025_26_matches": away_xg_n,\n            "linked_match_counts_diagnostic_only": True,\n            "challenger_fallback_exact_v1": expected_fallback,\n            "formal_expected_route": expected_route,\n            "route_authority": "HISTORICAL_XG_CHALLENGER_DYNAMIC_FALLBACK_EXACT_V1",\n            "expected_legal_xg_for_both_teams": (None if expected_fallback is None else not expected_fallback),\n            "dynamic": dynamic,\n')
+          replace_once(guard,
+          '        "fallback_class": audit["fallback_class"],\n        "model_parameters_or_weights_changed": False,\n',
+          '        "fallback_class": audit["fallback_class"],\n        "challenger_fallback_exact_v1": audit["historical_xg"]["challenger_fallback_exact_v1"],\n        "formal_expected_route": audit["historical_xg"]["formal_expected_route"],\n        "formal_min_effective_evidence": audit["historical_xg"]["frozen_threshold"],\n        "model_parameters_or_weights_changed": False,\n')
+          replace_once(guard,
+          '        loaded, fixture, ident, trigger, receipt, audit = inspect_current()\n        rebuilt_after_anomaly = False\n        if audit["status"] == "DATA_STATE_ANOMALY" and full_reason is None:\n            rebuilt_after_anomaly = True\n            full_reason = "DATA_STATE_ANOMALY:" + ";".join(audit["anomaly_reasons"])\n            _clear_cache(state_root)\n            full_rebuild.build_integrity_base(\n                state_root / "bundle", repo_root, understat_db, confirmation_dir, cutoff\n            )\n            result = original(req, state_root, out, repo_root, understat_db, confirmation_dir)\n            if result.get("status") != "PASS":\n                return result\n            loaded, fixture, ident, trigger, receipt, audit = inspect_current()\n',
+          '        loaded, fixture, ident, trigger, receipt, audit = inspect_current()\n        rebuilt_after_anomaly = False\n        sealed_exact = str(result.get("gateway_route") or "") == "SEALED_EXACT_CUTOFF_REPLAY"\n        first_authoritative_error_reason = None\n        if audit["status"] == "DATA_STATE_ANOMALY":\n            first_authoritative_error_reason = "DATA_STATE_ANOMALY:" + ";".join(audit["anomaly_reasons"])\n        if audit["status"] == "DATA_STATE_ANOMALY" and full_reason is None and not sealed_exact:\n            rebuilt_after_anomaly = True\n            full_reason = first_authoritative_error_reason\n            _clear_cache(state_root)\n            full_rebuild.build_integrity_base(\n                state_root / "bundle", repo_root, understat_db, confirmation_dir, cutoff\n            )\n            result = original(req, state_root, out, repo_root, understat_db, confirmation_dir)\n            if result.get("status") != "PASS":\n                return result\n            loaded, fixture, ident, trigger, receipt, audit = inspect_current()\n')
+          replace_once(guard,
+          '                "anomaly_reasons": audit["anomaly_reasons"],\n                "fallback_class": "DATA_STATE_ANOMALY",\n',
+          '                "anomaly_reasons": audit["anomaly_reasons"],\n                "first_authoritative_error_reason": first_authoritative_error_reason,\n                "sealed_exact_rebuild_blocked": sealed_exact,\n                "fallback_class": "DATA_STATE_ANOMALY",\n')
+          replace_once(guard,
+          '        audit["rebuilt_after_anomaly"] = rebuilt_after_anomaly\n',
+          '        audit["rebuilt_after_anomaly"] = rebuilt_after_anomaly\n        audit["sealed_exact_rebuild_blocked"] = sealed_exact and audit["status"] == "DATA_STATE_ANOMALY"\n        audit["first_authoritative_error_reason"] = first_authoritative_error_reason\n')
+          replace_once(guard,
+          '        "data_state_anomaly_forces_full_rebuild": True,\n',
+          '        "data_state_anomaly_forces_full_rebuild": False,\n        "nonsealed_data_state_anomaly_may_retry_full": True,\n        "sealed_exact_data_state_anomaly_fail_closed_without_rebuild": True,\n')
+          PY
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_guard_v1.py
+          git diff --check
+          git diff --name-only "$BASE_SHA"...HEAD
+          git diff --name-only | tee patch-files.txt
+          if grep -E '(^|/)(CURRENT|historical_xg_challenger\.py|formal_fusion_v2\.py|pure_engine\.py|formal_pointer\.json|model_lock\.json)$' patch-files.txt; then
+            echo 'protected model/CURRENT surface changed' >&2
+            exit 1
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
+                  football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+                  football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py \
+                  football-data/formal_gpt_gateway_v1/formal_state_integrity_guard_v1.py
+          git commit -m 'Fix challenger route guard and prematch sealed state ceiling'
+          git push origin HEAD:football3/evidence-route-guard-sealed-ceiling-v1
+
+  exact-head-acceptance:
+    if: ${{ github.event.head_commit.message == 'Fix challenger route guard and prematch sealed state ceiling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Freeze exact HEAD and protected surfaces
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          git diff --name-only "$BASE_SHA"...HEAD | tee changed-files.txt
+          if grep -E '(^|/)(CURRENT|historical_xg_challenger\.py|formal_fusion_v2\.py|pure_engine\.py|formal_pointer\.json|model_lock\.json)$' changed-files.txt; then
+            echo 'protected model/CURRENT surface changed' >&2; exit 1
+          fi
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/durable_state_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_guard_v1.py
+      - name: Run focused selector and sealed-anomaly regressions
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance
+          python3 - <<'PY' | tee acceptance/focused-regression.txt
+          import json,tempfile
+          from pathlib import Path
+          from datetime import datetime,timezone
+          import durable_state_contract_v1 as c
+          import formal_state_integrity_guard_v1 as g
+          import runtime as rt
+          UTC=timezone.utc
+          dt=lambda s: datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(UTC)
+          def row(i,created):
+              return {'artifact_id':i,'artifact_name':f'formal-gpt-runner-state-{i}','artifact_created_at':created,
+                      'artifact_role_ok':True,'verified':True,'schema_ok':True,'runtime_ok':True,'model_current_ok':True,
+                      'competition_scope_ok':True,'pit_ok':True,'competition_id':'GER_Bundesliga',
+                      'state_cutoff':'2026-09-04T13:19:44Z'}
+          selected,evaluated=c.choose_candidate([row(9973225479,'2026-09-05T16:52:14Z'),row(9999999999,'2026-09-06T13:30:00Z')],
+              dt('2026-09-04T13:19:44Z'),'GER_Bundesliga',dt('2026-09-06T13:30:00Z'))
+          assert selected['artifact_id']==9973225479
+          assert 'ARTIFACT_NOT_AVAILABLE_PREMATCH' in evaluated[1]['rejection_reasons']
+
+          clear_calls=[]; original_calls=[]
+          class FakeGateway: pass
+          gw=FakeGateway()
+          with tempfile.TemporaryDirectory() as td:
+              root=Path(td); state=root/'state'; out=root/'out'; state.mkdir(); out.mkdir()
+              def upstream(req,*args):
+                  original_calls.append(1)
+                  (out/'prediction_receipt.json').write_text(json.dumps({'cutoff':'2026-09-04T13:19:44+00:00','fallback_exact_v1':True,'model_route':'FROZEN_V1_EXACT_FALLBACK'}))
+                  return {'status':'PASS','gateway_route':'SEALED_EXACT_CUTOFF_REPLAY','cutoff':'2026-09-04T13:19:44+00:00'}
+              gw.normal_request=upstream
+              saved=(g._cache_preflight,g.rt.validate_bundle,g.identity_bridge.resolve_fixture,g._xg_trigger_audit,g.classify_state,g._clear_cache)
+              fake_loaded={'state':object(),'meta':{'historical_cutoff':'2026-09-04T13:19:44+00:00'}}
+              fixture={'fixture_id':'x','competition_id':'GER_Bundesliga','season':'2026/27','kickoff':'2026-09-06T13:30:00+00:00','home_team_id':'h','away_team_id':'a','home_team_name':'Hamburg','away_team_name':'Mainz'}
+              ident={'home':{},'away':{}}
+              try:
+                  g._cache_preflight=lambda *a,**k:{'fast_eligible':True,'reason':None,'loaded':fake_loaded,'fixture':fixture,'identity':ident,'expected_binding':{},'actual_binding':{}}
+                  g.rt.validate_bundle=lambda *a,**k:fake_loaded
+                  g.identity_bridge.resolve_fixture=lambda *a,**k:(fixture,ident)
+                  g._xg_trigger_audit=lambda *a,**k:{'dynamic':{'evidence':[1.,2.,3.,4.],'fallback_exact_v1':True},'frozen_min_effective_evidence':3.0}
+                  g.classify_state=lambda *a,**k:{'status':'DATA_STATE_ANOMALY','anomaly_reasons':['FIRST_AUTHORITATIVE','SECONDARY']}
+                  g._clear_cache=lambda *a,**k:clear_calls.append(1)
+                  g.install(gw)
+                  req={'match':{'competition_id':'GER_Bundesliga','season':'2026/27','home_team_name':'Hamburg','away_team_name':'Mainz','kickoff':'2026-09-06T13:30:00+00:00','cutoff':'2026-09-04T13:19:44+00:00'}}
+                  result=gw.normal_request(req,state,out,root,root/'u.db',root/'confirmation')
+                  assert result['status']=='DATA_STATE_ANOMALY'
+                  assert result['sealed_exact_rebuild_blocked'] is True
+                  assert result['first_authoritative_error_reason']=='DATA_STATE_ANOMALY:FIRST_AUTHORITATIVE;SECONDARY'
+                  assert clear_calls==[] and len(original_calls)==1
+              finally:
+                  (g._cache_preflight,g.rt.validate_bundle,g.identity_bridge.resolve_fixture,g._xg_trigger_audit,g.classify_state,g._clear_cache)=saved
+          print('FOCUSED_REGRESSION_PASS')
+          PY
+      - name: Download frozen production sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+      - name: Run production 300 and cross-league regressions
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/test_production_300_adjudicated_v1.py \
+            --mode production --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" --n 300 \
+            --out "$PWD/acceptance/production_300_equivalence_receipt.json"
+          python3 football-data/formal_gpt_gateway_v1/test_durable_state_cross_league_v1.py \
+            --repo-root "$PWD" --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --out "$PWD/acceptance/durable_state_cross_league_matrix.json"
+          python3 - <<'PY'
+          import json
+          p=json.load(open('acceptance/production_300_equivalence_receipt.json'))
+          c=json.load(open('acceptance/durable_state_cross_league_matrix.json'))
+          assert p['passed'] is True and p['equivalence_300']['passed'] is True
+          assert c['passed'] is True
+          print('PRODUCTION_300_AND_CROSS_LEAGUE_PASS')
+          PY
+      - name: Select exact prematch artifact and replay Hamburg Mainz
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance/hamburg-mainz
+          cat > acceptance/hamburg-mainz/request.json <<JSON
+          {"schema_version":"football3-formal-gpt-gateway-v1","mode":"predict","request_id":"hamburg-mainz-evidence-route-sealed-ceiling-v1","match":{"competition_id":"GER_Bundesliga","season":"2026/27","kickoff":"${HAMBURG_MAINZ_KICKOFF}","cutoff":"${REPLAY_CUTOFF}","home_team_name":"Hamburg","away_team_name":"Mainz"}}
+          JSON
+          rm -rf .acceptance_state
+          python3 football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            --repo "$GITHUB_REPOSITORY" --request acceptance/hamburg-mainz/request.json \
+            --cache-root "$PWD/.acceptance_state" --audit acceptance/hamburg-mainz/durable_state_selection.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('acceptance/hamburg-mainz/durable_state_selection.json'))
+          assert d['status']=='SELECTED', d
+          assert d['selected']['artifact_id']==int(os.environ['TARGET_STATE_ARTIFACT_ID']), d['selected']
+          assert d['selected']['artifact_digest']==os.environ['TARGET_STATE_ARTIFACT_DIGEST']
+          assert d['selected']['workflow_run_id']==int(os.environ['TARGET_STATE_RUN_ID'])
+          assert d['artifact_availability_ceiling']=='2026-09-06T13:30:00+00:00'
+          PY
+          sha256sum .acceptance_state/bundle/* | sort > acceptance/hamburg-mainz/state-before.sha256
+          python3 football-data/formal_gpt_gateway_v1/entry.py \
+            --request acceptance/hamburg-mainz/request.json --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --state-root "$PWD/.acceptance_state" --out "$PWD/acceptance/hamburg-mainz" \
+            | tee acceptance/hamburg-mainz/stdout.txt
+          sha256sum .acceptance_state/bundle/* | sort > acceptance/hamburg-mainz/state-after.sha256
+          diff -u acceptance/hamburg-mainz/state-before.sha256 acceptance/hamburg-mainz/state-after.sha256
+          python3 - <<'PY'
+          import hashlib,json,math,pathlib
+          root=pathlib.Path('acceptance/hamburg-mainz')
+          s=json.load(open(root/'summary.json'))
+          r=json.load(open(root/'prediction_receipt.json'))
+          x=json.load(open(root/'xg_trigger_audit.json'))
+          a=json.load(open(root/'state_integrity_audit.json'))
+          d=x['dynamic']; ev=[float(v) for v in d['evidence']]
+          assert len(ev)==4, ev
+          projected_fallback=d['fallback_exact_v1']; assert type(projected_fallback) is bool
+          expected_route='FROZEN_V1_EXACT_FALLBACK' if projected_fallback else 'FUSION_V2_ACTIVE'
+          assert a['historical_xg']['formal_expected_route']==expected_route
+          assert r['model_route']==expected_route
+          assert bool(r['fallback_exact_v1'])==projected_fallback
+          assert r['state_integrity_guard']['status']=='PASS'
+          assert r['fallback_class']==('NORMAL_FALLBACK' if projected_fallback else 'NONE')
+          assert s['gateway_route']=='SEALED_EXACT_CUTOFF_REPLAY'
+          assert s['source_refetch_used'] is False and s['state_mutated'] is False
+          assert isinstance(r['prediction_sha'],str) and len(r['prediction_sha'])==64
+          probs=[float(r[k]) for k in ('p_home','p_draw','p_away')]
+          assert all(math.isfinite(v) and 0<=v<=1 for v in probs) and abs(sum(probs)-1)<1e-10
+          core={
+            'schema_version':'football3-hamburg-mainz-evidence-route-acceptance-v1',
+            'head':s.get('runtime_head') or None,
+            'selected_artifact_id':9973225479,
+            'selected_artifact_digest':'sha256:eebc0465bdd5def617a20b50bcd2e2ce662f4eb2e3803d9ac5b4b00e102e3dd4',
+            'selected_artifact_run_id':33979095886,
+            'gateway_route':s['gateway_route'],'source_refetch_used':s['source_refetch_used'],'state_mutated':s['state_mutated'],
+            'effective_evidence':ev,'formal_threshold':x['frozen_min_effective_evidence'],
+            'challenger_fallback_exact_v1':projected_fallback,'formal_expected_route':expected_route,'actual_model_route':r['model_route'],
+            'fallback_class':r['fallback_class'],'prediction_sha':r['prediction_sha'],
+            'p_home':probs[0],'p_draw':probs[1],'p_away':probs[2],
+            'dynamic_projection':d,
+          }
+          core['acceptance_sha256']=hashlib.sha256(json.dumps(core,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          (root/'hamburg_mainz_evidence_route_acceptance.json').write_text(json.dumps(core,sort_keys=True,separators=(',',':')))
+          print(json.dumps(core,sort_keys=True))
+          PY
+      - name: Build exact-head acceptance digest
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance
+          sha256sum acceptance/production_300_equivalence_receipt.json acceptance/durable_state_cross_league_matrix.json acceptance/hamburg-mainz/hamburg_mainz_evidence_route_acceptance.json \
+            | tee acceptance/exact-head-digests.sha256
+          printf '%s\n' "$GITHUB_SHA" > acceptance/exact-head.txt
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: football3-evidence-route-guard-sealed-ceiling-${{ github.run_id }}
+          path: acceptance/
+          if-no-files-found: error
