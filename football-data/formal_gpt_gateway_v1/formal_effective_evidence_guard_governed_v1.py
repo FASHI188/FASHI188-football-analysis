@@ -76,9 +76,19 @@ def _build_integrity_base(bundle_dir: Path, *args, **kwargs):
 def _formal_fallback_verdict(trigger: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
     dynamic = trigger.get("dynamic") if type(trigger.get("dynamic")) is dict else {}
     evidence = [float(x) for x in (dynamic.get("evidence") or [])]
+    dynamic_flag = dynamic.get("fallback_exact_v1")
+    receipt_flag = receipt.get("fallback_exact_v1")
+    verdict_available = type(dynamic_flag) is bool
+    receipt_flag_valid = type(receipt_flag) is bool
+    fallback = dynamic_flag if verdict_available else bool(receipt_flag)
     return {
-        "source": "formal_prediction_receipt.fallback_exact_v1",
-        "fallback_exact_v1": bool(receipt.get("fallback_exact_v1")),
+        "source": "historical_xg_challenger_v1.dynamic.fallback_exact_v1",
+        "fallback_exact_v1": bool(fallback),
+        "receipt_fallback_exact_v1": receipt_flag if receipt_flag_valid else None,
+        "verdict_available": verdict_available,
+        "receipt_verdict_consistent": (
+            verdict_available and receipt_flag_valid and dynamic_flag == receipt_flag
+        ),
         "effective_evidence": evidence,
         "effective_evidence_dimension_count": len(evidence),
         "projection_source": "historical_xg_challenger_v1_metadata_bearing_state_clone",
@@ -97,16 +107,25 @@ def classify_state(
     audit = _ORIGINAL_CLASSIFY(loaded, fixture, identity_audit, trigger, receipt)
     verdict = _formal_fallback_verdict(trigger, receipt)
 
-    # Fallback legality is owned by the formal model's own verdict.  The integrity
-    # guard must not infer a conflicting verdict from raw linked-match counts or a
-    # separately copied evidence threshold.  Independent identity/PIT/coverage
-    # anomalies remain authoritative and are preserved.
+    # Fallback legality is owned by the same metadata-bearing challenger verdict
+    # consumed by the formal fusion model. The integrity guard must not infer a
+    # competing decision from raw linked-match counts or a copied threshold.
+    # Independent identity/PIT/coverage anomalies remain authoritative.
     reasons = [
         str(reason)
         for reason in (audit.get("anomaly_reasons") or [])
         if not str(reason).startswith("FALLBACK_DESPITE_EFFECTIVE_EVIDENCE_THRESHOLD:")
         and not str(reason).startswith("XG_EXPECTED_BUT_EFFECTIVE_EVIDENCE_INSUFFICIENT:")
     ]
+    if not verdict["verdict_available"]:
+        reasons.append("FORMAL_XG_FALLBACK_VERDICT_UNAVAILABLE")
+    elif not verdict["receipt_verdict_consistent"]:
+        reasons.append(
+            "FORMAL_XG_FALLBACK_VERDICT_MISMATCH:"
+            f"dynamic={verdict['fallback_exact_v1']},"
+            f"receipt={verdict['receipt_fallback_exact_v1']}"
+        )
+
     fallback = verdict["fallback_exact_v1"]
     audit["anomaly_reasons"] = reasons
     audit["formal_fallback_verdict"] = verdict
@@ -152,19 +171,20 @@ def _enrich_receipt(out: Path, result: dict[str, Any], audit: dict[str, Any],
     before = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     first_reason = _first_authoritative_reason(before, result)
     enriched = _ORIGINAL_ENRICH(out, result, audit, execution_mode, binding)
-    if first_reason is None:
-        return enriched
 
     guard_reason = enriched.get("fallback_reason")
     enriched.pop("receipt_sha", None)
-    enriched["first_authoritative_failure_reason"] = first_reason
-    if guard_reason and guard_reason != first_reason:
-        enriched["integrity_guard_fallback_reason"] = guard_reason
-    enriched["fallback_reason"] = first_reason
+    enriched["formal_fallback_verdict"] = audit.get("formal_fallback_verdict")
+    if first_reason is not None:
+        enriched["first_authoritative_failure_reason"] = first_reason
+        if guard_reason and guard_reason != first_reason:
+            enriched["integrity_guard_fallback_reason"] = guard_reason
+        enriched["fallback_reason"] = first_reason
     enriched["receipt_sha"] = guard.rt._sha_bytes(guard.rt._canon_bytes(enriched))
     guard._write_json(path, enriched)
     result["receipt_sha"] = enriched["receipt_sha"]
-    result["fallback_reason"] = first_reason
+    if first_reason is not None:
+        result["fallback_reason"] = first_reason
     return enriched
 
 
@@ -182,8 +202,10 @@ def install() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "installed": True,
-        "prematch_fallback_verdict_source": "formal_prediction_receipt.fallback_exact_v1",
+        "prematch_fallback_verdict_source": "historical_xg_challenger_v1.dynamic.fallback_exact_v1",
+        "receipt_fallback_verdict_consistency_required": True,
         "linked_match_count_used_for_fallback_verdict": False,
+        "independent_guard_threshold_reimplementation_used": False,
         "sealed_exact_cutoff_replay_cache_clear_allowed": False,
         "sealed_exact_cutoff_replay_live_full_allowed": False,
         "first_authoritative_failure_reason_preserved": True,
