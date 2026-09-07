@@ -19,6 +19,7 @@ env:
   PREREG_BLOB: '30c45da908540ad99aab51024729d554a7047c7a'
   SOURCE_TRANSITION_BLOB: '3139b147614d6e34403f9c807fd90c17a890f2e1'
   TRANSPORT_MIRROR_BLOB: '8980a42025683304c0221090f9341eef150e0cc6'
+  NONSTANDARD_FIXTURE_BLOB: 'ea4d21139815c625e82b148e79abd18501f06d89'
   UNDERSTAT_ARTIFACT_ID: '9798682425'
   CONFIRMATION_ARTIFACT_ID: '9827606506'
   REGRESSION_CUTOFF: '2026-09-04T13:19:44+00:00'
@@ -47,6 +48,7 @@ jobs:
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json)" = "$SOURCE_TRANSITION_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json)" = "$TRANSPORT_MIRROR_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json)" = "$NONSTANDARD_FIXTURE_BLOB"
           git diff --name-only "$EXACT_BASE"...HEAD | tee research-changed-files.txt
           if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)|formal_fast_runtime_v1/runtime.py$|formal_gpt_gateway_v1/(entry|gateway).py$' research-changed-files.txt; then
             echo 'formal model/CURRENT/weight/runtime/production gateway drift detected' >&2
@@ -58,14 +60,17 @@ jobs:
           python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json >/dev/null
           python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json >/dev/null
           python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json >/dev/null
+          python3 -m json.tool football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json >/dev/null
           python3 -m json.tool football-data/research/promoted_cold_start_v2_1/SOURCE_CONTRACT.json >/dev/null
           python3 -m json.tool football-data/research/promoted_cold_start_v2_1/CURRENT_PROBE_FIXTURES.json >/dev/null
           mkdir -p research-output/sources research-output/current-probes
           sha256sum football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json > research-output/preregistration.sha256
           sha256sum football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json > research-output/pre-label-source-transition.sha256
           sha256sum football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json > research-output/pre-metric-transport-mirror-transition.sha256
+          sha256sum football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json > research-output/pre-metric-nonstandard-fixture-adjudication.sha256
           cp football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json research-output/pre-label-source-transition.json
           cp football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json research-output/pre-metric-transport-mirror-transition.json
+          cp football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json research-output/pre-metric-nonstandard-fixture-adjudication.json
           cp football-data/research/promoted_cold_start_v2_1/SOURCE_CONTRACT.json research-output/source-contract.json
 
       - name: Acquire frozen formal sources
@@ -100,6 +105,14 @@ jobs:
           assert d['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
           assert d['candidate_metric_observations_before_transition']==0
           assert d['candidate_evaluator_completed_before_transition'] is False
+          x=json.load(open('football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json'))
+          assert x['status']=='FROZEN_BEFORE_CANDIDATE_EVALUATION'
+          assert x['candidate_metric_observations_before_transition']==0
+          assert x['candidate_evaluator_completed_before_transition'] is False
+          assert len(x['exceptions'])==1
+          ex=x['exceptions'][0]
+          assert (ex['competition_id'],ex['season'],ex['division_code'],ex['home_team_name_in_source'],ex['away_team_name_in_source'])==('FRA_Ligue1','2023/24','F2','Troyes','Valenciennes')
+          assert ex['include_as_model_result_row'] is False and ex['synthetic_score_allowed'] is False
           m=d['mirror']
           assert m['repository']=='IBalazs433/football-analytics-dashboard'
           assert m['commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
@@ -130,6 +143,7 @@ jobs:
           done < .footballdata-mirror-plan.tsv
           python3 football-data/research/promoted_cold_start_v2_1/prepare_footballdata_mirror_sources.py \
             --receipt "$PWD/football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json" \
+            --nonstandard-fixture-receipt "$PWD/football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json" \
             --raw-root "$PWD/.footballdata_mirror_raw" \
             --out-root "$PWD/.research_sources" \
             --manifest "$PWD/research-output/lower-tier-source-manifest.json" \
@@ -137,13 +151,19 @@ jobs:
           python3 - <<'PY'
           import json
           d=json.load(open('research-output/lower-tier-source-manifest.json'))
-          assert d['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v1'
+          assert d['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v2'
           assert d['mirror_repository']=='IBalazs433/football-analytics-dashboard'
           assert d['mirror_commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
           assert d['file_count']==25,d['file_count']
           assert d['competition_count']==5,d['competition_count']
           assert d['season_count']==5,d['season_count']
-          assert all(x['parsed_matches']==x['expected_double_round_robin_matches'] for x in d['files'])
+          assert d['total_documented_nonstandard_omissions']==1,d['total_documented_nonstandard_omissions']
+          assert all(x['parsed_matches']==x['expected_scored_matches'] for x in d['files'])
+          exceptional=[x for x in d['files'] if x['documented_nonstandard_omission_count']]
+          assert len(exceptional)==1,exceptional
+          x=exceptional[0]
+          assert (x['competition_id'],x['season'],x['parsed_matches'],x['expected_scheduled_directed_matches'],x['expected_scored_matches'])==('FRA_Ligue1','2023/24',379,380,379)
+          assert x['documented_nonstandard_omissions']==[{'home_team_name_in_source':'Troyes','away_team_name_in_source':'Valenciennes','scheduled_date':'03/05/2024','classification':'ABANDONED_AND_RESOLVED_BY_DISCIPLINARY_PENALTY_NO_SYNTHETIC_FT_SCORE','include_as_model_result_row':False,'synthetic_score_allowed':False}]
           assert all(x['converted_fields']==['Date','HomeTeam','AwayTeam','FTHG','FTAG'] for x in d['files'])
           assert all(not x['odds_fields_used'] and not x['postmatch_stats_used'] and not x['xg_fields_used'] for x in d['files'])
           PY
@@ -288,7 +308,7 @@ jobs:
           src=json.load(open('research-output/source-contract.json'))
           sm=json.load(open('research-output/lower-tier-source-manifest.json'))
           h=src['lower_tier_result_history']
-          assert src['schema_version']=='football3-promoted-source-contract-v3'
+          assert src['schema_version']=='football3-promoted-source-contract-v4'
           assert h['provider']=='Football-Data.co.uk'
           assert h['scientific_source_family_unchanged'] is True
           assert h['source_sha256_manifest']=='lower-tier-source-manifest.json'
@@ -296,10 +316,12 @@ jobs:
           assert h['transport_policy']['mirror_repository']=='IBalazs433/football-analytics-dashboard'
           assert h['transport_policy']['mirror_commit']=='232db0e8ef58b2d94272ff6c206356bc10bdc36d'
           assert h['pre_metric_transport_mirror_receipt']=='football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json'
+          assert h['pre_metric_nonstandard_fixture_receipt']=='football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json'
           assert h['odds_fields_used'] is False and h['postmatch_stats_used'] is False and h['xg_claimed'] is False
-          assert sm['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v1'
+          assert sm['schema_version']=='football3-footballdata-transport-mirror-source-manifest-v2'
           assert sm['file_count']==25 and sm['competition_count']==5 and sm['season_count']==5
-          assert all(x['parsed_matches']==x['expected_double_round_robin_matches'] for x in sm['files'])
+          assert sm['total_documented_nonstandard_omissions']==1
+          assert all(x['parsed_matches']==x['expected_scored_matches'] for x in sm['files'])
           failures=[]
           if e['current_promoted_audit']['team_count']!=14: failures.append('CURRENT_PROMOTED_AUDIT_NOT_14')
           if not p['all_probes_pass']: failures.append('CURRENT_FORMAL_PROBE_COVERAGE')
@@ -308,13 +330,14 @@ jobs:
           elif failures: verdict='PARTIAL_DATA_COVERAGE'
           elif e.get('scientific_pass'): verdict='PROMOTED_COLD_START_V2_1_CANDIDATE_PASS'
           else: verdict='FAIL_RESEARCH_ONLY'
-          payload={'schema_version':'football3-promoted-cold-start-final-research-adjudication-v1','verdict':verdict,'historical_candidate_status':e['status'],'scientific_pass':e.get('scientific_pass'),'failed_scientific_gates':e.get('failed_gates',[]),'engineering_or_coverage_failures':failures,'all_current_promoted_formal_probes_pass':p['all_probes_pass'],'production_300_pass':prod.get('passed'),'lower_tier_source_provider':h['provider'],'lower_tier_transport_mode':h['transport_policy']['mode'],'formal_activation':False,'current_modified':False,'formal_model_modified':False,'formal_weights_modified':False,'production_runner_modified':False,'fresh_prospective_confirmation_required':True}
+          payload={'schema_version':'football3-promoted-cold-start-final-research-adjudication-v1','verdict':verdict,'historical_candidate_status':e['status'],'scientific_pass':e.get('scientific_pass'),'failed_scientific_gates':e.get('failed_gates',[]),'engineering_or_coverage_failures':failures,'all_current_promoted_formal_probes_pass':p['all_probes_pass'],'production_300_pass':prod.get('passed'),'lower_tier_source_provider':h['provider'],'lower_tier_transport_mode':h['transport_policy']['mode'],'documented_nonstandard_result_omissions':sm['total_documented_nonstandard_omissions'],'formal_activation':False,'current_modified':False,'formal_model_modified':False,'formal_weights_modified':False,'production_runner_modified':False,'fresh_prospective_confirmation_required':True}
           Path('research-output/final-adjudication.json').write_text(json.dumps(payload,sort_keys=True,indent=2),encoding='utf-8')
           print(json.dumps(payload,sort_keys=True))
           PY
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_LABEL_SOURCE_TRANSITION.json)" = "$SOURCE_TRANSITION_BLOB"
           test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_TRANSPORT_MIRROR_TRANSITION.json)" = "$TRANSPORT_MIRROR_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PRE_METRIC_NONSTANDARD_FIXTURE_ADJUDICATION.json)" = "$NONSTANDARD_FIXTURE_BLOB"
           if git diff --name-only "$EXACT_BASE"...HEAD | grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)|formal_fast_runtime_v1/runtime.py$|formal_gpt_gateway_v1/(entry|gateway).py$'; then
             echo 'protected drift at final closure' >&2; exit 1
           fi
