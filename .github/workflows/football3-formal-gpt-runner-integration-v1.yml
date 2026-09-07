@@ -29,14 +29,82 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Resolve immutable live canonical integration HEAD
+        id: base_target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          REQUEST_CARRIER_REF: ${{ github.event.pull_request.head.ref || '' }}
+          REQUEST_CARRIER_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          set -euo pipefail
+          CANONICAL_BASE_REF='football3/formal-gpt-runner-integration-v1'
+          RESOLUTION_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
+            if [ "$EVENT_BASE_REF" != "$CANONICAL_BASE_REF" ]; then
+              echo "PRODUCTION_UNAUTHORIZED_BASE_REF:event=$EVENT_BASE_REF:required=$CANONICAL_BASE_REF" >&2
+              exit 21
+            fi
+            if [ "$REQUEST_CARRIER_REF" != 'football3/formal-gpt-runner-request-carrier-v1' ]; then
+              echo "PRODUCTION_UNAUTHORIZED_REQUEST_CARRIER:$REQUEST_CARRIER_REF" >&2
+              exit 22
+            fi
+            BODY="$(mktemp)"
+            LIVE_REF_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/heads/${CANONICAL_BASE_REF}"
+            if ! curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              "$LIVE_REF_URL" -o "$BODY"; then
+              echo 'PRODUCTION_LIVE_BASE_REF_RESOLUTION_FAILED' >&2
+              exit 23
+            fi
+            if ! jq -e --arg expected "refs/heads/${CANONICAL_BASE_REF}" \
+              'type=="object" and .ref==$expected and .object.type=="commit" and (.object.sha|type)=="string" and (.object.sha|test("^[0-9a-f]{40}$"))' \
+              "$BODY" >/dev/null; then
+              echo 'PRODUCTION_LIVE_BASE_REF_INVALID_RESPONSE' >&2
+              exit 24
+            fi
+            RESOLVED_LIVE_BASE_SHA="$(jq -r '.object.sha' "$BODY")"
+          else
+            CANONICAL_BASE_REF="$GITHUB_REF_NAME"
+            EVENT_BASE_SHA=''
+            REQUEST_CARRIER_REF=''
+            REQUEST_CARRIER_HEAD=''
+            RESOLVED_LIVE_BASE_SHA="$GITHUB_SHA"
+          fi
+          {
+            echo "canonical_base_ref=$CANONICAL_BASE_REF"
+            echo "event_base_sha=$EVENT_BASE_SHA"
+            echo "resolved_live_base_sha=$RESOLVED_LIVE_BASE_SHA"
+            echo "resolution_timestamp=$RESOLUTION_TIMESTAMP"
+            echo "request_carrier_ref=$REQUEST_CARRIER_REF"
+            echo "request_carrier_head=$REQUEST_CARRIER_HEAD"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ steps.base_target.outputs.resolved_live_base_sha }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Verify immutable checkout and record base binding evidence
+        id: checkout_binding
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          python3 football-data/formal_gpt_gateway_v1/production_base_binding_v1.py record-checkout \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --event-base-sha "${{ steps.base_target.outputs.event_base_sha }}" \
+            --canonical-base-ref "${{ steps.base_target.outputs.canonical_base_ref }}" \
+            --resolved-live-base-sha "${{ steps.base_target.outputs.resolved_live_base_sha }}" \
+            --resolution-timestamp "${{ steps.base_target.outputs.resolution_timestamp }}" \
+            --request-carrier-ref "${{ steps.base_target.outputs.request_carrier_ref }}" \
+            --request-carrier-head "${{ steps.base_target.outputs.request_carrier_head }}" \
+            --out .runtime_sources/production_base_binding.json
 
       - name: Build audited invocation request
         id: transport
@@ -86,10 +154,19 @@ jobs:
           PY
           echo 'accepted=true' >> "$GITHUB_OUTPUT"
 
+      - name: Bind request transport to production base evidence
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/production_base_binding_v1.py bind-request \
+            --binding .runtime_sources/production_base_binding.json \
+            --request .runtime_sources/invocation_request.json \
+            --transport .runtime_sources/request_transport.json
+
       - name: Restore cutoff-aware eligible durable formal state Artifact
         id: durable_selector
         env:
           GH_TOKEN: ${{ github.token }}
+          FOOTBALL3_GITHUB_API_STATS_PATH: ${{ github.workspace }}/.runtime_sources/github_api_stats.json
         run: |
           set -euo pipefail
           rm -rf .formal_state_cache
@@ -237,6 +314,9 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
+          mkdir -p football-data/formal_gpt_gateway_v1/output
+          cp .runtime_sources/production_base_binding.json football-data/formal_gpt_gateway_v1/output/production_base_binding.json
+          test ! -f .runtime_sources/github_api_stats.json || cp .runtime_sources/github_api_stats.json football-data/formal_gpt_gateway_v1/output/github_api_stats.json
           python3 - <<'PY'
           import json, os, pathlib
           p=pathlib.Path('football-data/formal_gpt_gateway_v1/output/summary.json')
@@ -267,6 +347,20 @@ jobs:
             python3 football-data/formal_fast_runtime_v1/runtime.py validate_bundle \
               --bundle "$PWD/.formal_state_cache/bundle" \
             | tee football-data/formal_gpt_gateway_v1/output/state_validate.txt
+
+      - name: Final canonical integration HEAD drift guard and execution binding receipt
+        if: ${{ always() && steps.checkout_binding.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/production_base_binding_v1.py finalize \
+            --binding .runtime_sources/production_base_binding.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --token "$GH_TOKEN" \
+            --out-dir football-data/formal_gpt_gateway_v1/output \
+            --stats .runtime_sources/github_api_stats.json \
+            --prediction-required "${{ steps.durable_selector.outputs.prediction_required }}"
 
       - name: Upload prediction or gap receipt
         if: ${{ always() }}
