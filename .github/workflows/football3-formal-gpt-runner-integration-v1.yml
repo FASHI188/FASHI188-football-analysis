@@ -3,7 +3,7 @@ name: Football3 Formal GPT Runner Integration V1
 on:
   push:
     branches:
-      - football3/formal-gpt-runner-integration-v1
+      - 'football3/formal-*'
     paths:
       - 'football-data/formal_gpt_gateway_v1/**'
       - 'football-data/formal_source_contract_v1.py'
@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: football3-formal-gpt-runner-integration-v1
+  group: football3-formal-gpt-runner-integration-v1-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -39,6 +39,7 @@ jobs:
           python-version: '3.11'
 
       - name: Build audited invocation request
+        id: transport
         env:
           PR_BODY: ${{ github.event.pull_request.body || '' }}
           PR_NUMBER: ${{ github.event.pull_request.number || '' }}
@@ -83,6 +84,7 @@ jobs:
               json.dumps(audit,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
           print(json.dumps(audit,sort_keys=True))
           PY
+          echo 'accepted=true' >> "$GITHUB_OUTPUT"
 
       - name: Restore cutoff-aware eligible durable formal state Artifact
         id: durable_selector
@@ -139,6 +141,39 @@ jobs:
           fi
           cat .runtime_sources/state_artifact_candidate.json
 
+      - name: Record explicit non-prediction selftest PASS SKIP
+        if: ${{ steps.durable_selector.outputs.prediction_required != 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p football-data/formal_gpt_gateway_v1/output
+          cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
+          cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
+          python3 - <<'PY'
+          import json,pathlib
+          req=json.load(open('.runtime_sources/invocation_request.json'))
+          transport=json.load(open('.runtime_sources/request_transport.json'))
+          selector=json.load(open('.runtime_sources/state_artifact_candidate.json'))
+          assert type(req.get('match')) is not dict
+          assert selector.get('status')=='SKIPPED_NON_PREDICTION_MODE'
+          receipt={
+              'schema_version':'football3-formal-runner-non-prediction-selftest-v1',
+              'status':'PASS',
+              'result':'SKIPPED_BUNDLE_DEPENDENT_GATEWAY',
+              'reason':'NON_PREDICTION_MODE_DOES_NOT_REQUIRE_DURABLE_BUNDLE',
+              'mode':req.get('mode'),
+              'transport':transport.get('transport'),
+              'selector_status':selector.get('status'),
+              'prediction_required':False,
+              'bundle_required':False,
+              'gateway_prediction_executed':False,
+              'prediction_sha':None,
+              'fail_closed_relaxed':False,
+          }
+          pathlib.Path('football-data/formal_gpt_gateway_v1/output/non_prediction_selftest_receipt.json').write_text(
+              json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n')
+          print(json.dumps(receipt,sort_keys=True))
+          PY
+
       - name: Download byte-bound frozen FULL rebuild sources
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,7 +195,7 @@ jobs:
 
       - name: Execute frozen original formal runner through gateway
         id: execute
-        if: ${{ steps.durable_selector.outputs.prediction_required != 'true' || steps.durable_selector.outputs.selected == 'true' }}
+        if: ${{ steps.durable_selector.outputs.prediction_required == 'true' && steps.durable_selector.outputs.selected == 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -168,11 +203,7 @@ jobs:
           mkdir -p football-data/formal_gpt_gateway_v1/output .formal_state_cache
           cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
           cp .runtime_sources/state_artifact_candidate.json football-data/formal_gpt_gateway_v1/output/state_recovery.json
-          if [ "${{ steps.durable_selector.outputs.prediction_required }}" = 'true' ]; then
-            export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
-          else
-            export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=0
-          fi
+          export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/entry.py \
               --request "$PWD/.runtime_sources/invocation_request.json" \
@@ -182,6 +213,24 @@ jobs:
               --state-root "$PWD/.formal_state_cache" \
               --out "$PWD/football-data/formal_gpt_gateway_v1/output" \
             | tee football-data/formal_gpt_gateway_v1/output/stdout.txt
+
+      - name: Validate real prediction contract
+        if: ${{ steps.durable_selector.outputs.prediction_required == 'true' && steps.durable_selector.outputs.selected == 'true' && steps.execute.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          test -f .formal_state_cache/bundle/manifest.json
+          test -f football-data/formal_gpt_gateway_v1/output/summary.json
+          test -f football-data/formal_gpt_gateway_v1/output/prediction_receipt.json
+          python3 - <<'PY'
+          import json
+          s=json.load(open('football-data/formal_gpt_gateway_v1/output/summary.json'))
+          r=json.load(open('football-data/formal_gpt_gateway_v1/output/prediction_receipt.json'))
+          assert s.get('status')=='PASS',s
+          assert isinstance(s.get('prediction_sha'),str) and s['prediction_sha'],s
+          assert r.get('prediction_sha')==s['prediction_sha'],(r.get('prediction_sha'),s.get('prediction_sha'))
+          assert r.get('state_integrity_guard',{}).get('status')=='PASS',r.get('state_integrity_guard')
+          print('REAL_PREDICTION_CONTRACT_PASS',s['prediction_sha'])
+          PY
 
       - name: Record gateway outputs when summary exists
         id: gateway_summary
