@@ -80,16 +80,27 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .research_sources
+          probe_url='https://www.football-data.co.uk/mmz4281/2122/E1.csv'
+          echo "reachability probe ${probe_url}"
+          curl --fail --location --silent --show-error --http1.1 \
+            --user-agent 'Mozilla/5.0 football-research-audit' \
+            --referer 'https://www.football-data.co.uk/data.php' \
+            --connect-timeout 8 --max-time 15 \
+            --retry 1 --retry-all-errors --retry-delay 2 --retry-max-time 20 \
+            "$probe_url" -o .research_sources/reachability.csv
+          test -s .research_sources/reachability.csv
+          rm .research_sources/reachability.csv
           for season in 2122 2223 2324 2425 2526; do
             mkdir -p ".research_sources/${season}"
             for code in E1 SP2 D2 I2 F2; do
               url="https://www.football-data.co.uk/mmz4281/${season}/${code}.csv"
               dst=".research_sources/${season}/${code}.csv"
               echo "acquiring ${url}"
-              curl --fail --location --silent --show-error \
+              curl --fail --location --silent --show-error --http1.1 \
                 --user-agent 'Mozilla/5.0 football-research-audit' \
-                --connect-timeout 10 --max-time 45 \
-                --retry 5 --retry-all-errors --retry-delay 3 \
+                --referer 'https://www.football-data.co.uk/data.php' \
+                --connect-timeout 8 --max-time 20 \
+                --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
                 "$url" -o "$dst"
               test -s "$dst"
               sleep 1
@@ -242,7 +253,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib,json,subprocess
+          import json
           from pathlib import Path
           e=json.load(open('research-output/historical-candidate-evaluation.json'))
           p=json.load(open('research-output/current-formal-probe-summary.json'))
