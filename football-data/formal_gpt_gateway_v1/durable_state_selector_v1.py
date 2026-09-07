@@ -60,10 +60,12 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
 
 def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle_dir: Path,
                            target_cutoff, competition_id: str) -> dict[str, Any]:
+    artifact_created_at = str(artifact.get("created_at") or "")
     base = {
         "artifact_id": int(artifact.get("id") or 0),
         "artifact_name": str(artifact.get("name") or ""),
-        "artifact_created_at": str(artifact.get("created_at") or ""),
+        "artifact_created_at": artifact_created_at,
+        "artifact_available_by_target_cutoff": False,
         "artifact_digest": artifact.get("digest"),
         "artifact_role_ok": contract.artifact_role_ok(str(artifact.get("name") or "")),
         "verified": run.get("status") == "completed" and run.get("conclusion") == "success",
@@ -80,6 +82,7 @@ def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle
         loaded = rt.validate_bundle(bundle_dir)
         meta = loaded["meta"]
         state_cutoff = rt._parse_dt(str(meta.get("historical_cutoff")), "state cutoff")
+        artifact_created = rt._parse_dt(artifact_created_at, "artifact created at")
         max_source = contract.max_source_observed_at(loaded)
         base.update({
             "schema_ok": True,
@@ -92,8 +95,10 @@ def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle
                 and meta.get("current_sha256") == rt.CURRENT_SHA256
             ),
             "competition_scope_ok": competition_id in rt.FORMAL_SCOPE and competition_id in meta.get("formal_scope", []),
+            "artifact_available_by_target_cutoff": artifact_created <= target_cutoff,
             "pit_ok": (
                 state_cutoff <= target_cutoff
+                and artifact_created <= target_cutoff
                 and rt._parse_dt(max_source, "max source observed at") <= state_cutoff
             ),
             "state_cutoff": state_cutoff.isoformat(),
@@ -157,6 +162,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
                     "artifact_id": artifact_id,
                     "artifact_name": name,
                     "artifact_created_at": str(artifact.get("created_at") or ""),
+                    "artifact_available_by_target_cutoff": False,
                     "artifact_role_ok": True,
                     "verified": run.get("status") == "completed" and run.get("conclusion") == "success",
                     "schema_ok": False,
@@ -181,6 +187,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
                 "status": "DATA_STATE_ANOMALY",
                 "reason": "NO_ELIGIBLE_DURABLE_STATE",
                 "target_cutoff": target_cutoff.isoformat(),
+                "prematch_artifact_availability_ceiling": target_cutoff.isoformat(),
                 "competition_id": competition_id,
                 "runtime_contract": contract.runtime_contract_payload(),
                 "candidates": public_evaluated,
@@ -198,8 +205,9 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
         audit_core = {
             "schema_version": SCHEMA,
             "status": "SELECTED",
-            "selection_rule": "eligible_then_max_state_cutoff_created_at_tiebreak",
+            "selection_rule": "eligible_prematch_artifact_available_then_max_state_cutoff_created_at_tiebreak",
             "target_cutoff": target_cutoff.isoformat(),
+            "prematch_artifact_availability_ceiling": target_cutoff.isoformat(),
             "competition_id": competition_id,
             "selected": selected_public,
             "runtime_contract": contract.runtime_contract_payload(),
