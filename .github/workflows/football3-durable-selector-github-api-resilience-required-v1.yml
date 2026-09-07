@@ -7,15 +7,27 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - 'football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/github_api_budget_transport_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/sitecustomize.py'
+      - 'football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py'
       - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
+      - '.github/workflows/football3-governed-permanent-regression-v1.yml'
   push:
     branches:
       - football3/formal-gpt-runner-integration-v1
     paths:
       - 'football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/github_api_budget_transport_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/sitecustomize.py'
+      - 'football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py'
       - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
+      - '.github/workflows/football3-governed-permanent-regression-v1.yml'
   workflow_dispatch:
 
 permissions:
@@ -43,7 +55,7 @@ jobs:
       - name: Bind exact HEAD and protected scope
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '66bd94d08665bcb0a65bb415a1a19ee9b6ca8218' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '7dbb5700c007e40809bb8807f10cf6973e7e9ddd' }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
@@ -53,44 +65,63 @@ jobs:
             echo 'protected model/CURRENT/raw alias scope changed' >&2
             exit 1
           fi
+          if git diff --name-only "$BASE_SHA"...HEAD | grep -E '^football-data/(historical_xg_fusion_v2|engine)/(.*(model|weight|parameter)|formal_fusion_v2.py|historical_xg_challenger.py)$'; then
+            echo 'protected 75/25 or scientific surface changed' >&2
+            exit 1
+          fi
           python3 -m py_compile \
             football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
-            football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py
+            football-data/formal_gpt_gateway_v1/github_api_budget_transport_v1.py \
+            football-data/formal_gpt_gateway_v1/sitecustomize.py \
+            football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py \
+            football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py \
+            football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py \
+            football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py
 
-      - name: Run transient permanent duplicate concurrent deterministic API regressions
+      - name: Run API budget inventory and resilience permanent regressions
         env:
           PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
         run: |
           set -euo pipefail
           mkdir -p regression/durable-selector-api
-          python3 football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py \
-            2>&1 | tee regression/durable-selector-api/test.stdout
+          python3 football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py 2>&1 | tee regression/durable-selector-api/legacy-resilience.stdout
+          python3 football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py 2>&1 | tee regression/durable-selector-api/api-budget.stdout
+          python3 football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py 2>&1 | tee regression/durable-selector-api/api-budget-edge.stdout
+          ! grep -R '/actions/runs?per_page=100&page=' football-data/formal_gpt_gateway_v1/github_api_budget_transport_v1.py football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py
 
-      - name: Build exact HEAD regression receipt
+      - name: Build exact HEAD required receipt
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import hashlib,json,os,pathlib
           root=pathlib.Path('regression/durable-selector-api')
-          stdout=(root/'test.stdout').read_bytes()
+          files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.glob('*.stdout')}
           receipt={
-              'schema_version':'football3-durable-selector-github-api-resilience-required-v1',
+              'schema_version':'football3-durable-selector-github-api-resilience-required-v2',
               'status':'PASS',
               'exact_head':os.environ['GITHUB_SHA'],
-              'base_head':'${{ github.event.pull_request.base.sha || github.event.before || '66bd94d08665bcb0a65bb415a1a19ee9b6ca8218' }}',
-              'transient_403_recovery':True,
-              'primary_rate_limit_403_recovery':True,
-              'retryable_429_recovery':True,
-              'permanent_permission_403_fail_closed':True,
-              'duplicate_concurrent_get_dedup':True,
-              'process_local_cache_only':True,
-              'paginated_artifact_dedup':True,
-              'batch_run_metadata':True,
-              'deterministic_candidate_order':True,
+              'base_head':'${{ github.event.pull_request.base.sha || github.event.before || '7dbb5700c007e40809bb8807f10cf6973e7e9ddd' }}',
+              'repository_run_list_scan_forbidden':True,
+              'artifact_first_finite_candidates':True,
+              'artifact_embedded_workflow_metadata_preferred':True,
+              'targeted_candidate_run_get_only':True,
+              'candidate_93_linear_resolution':True,
+              'unrelated_run_population_invariant':True,
+              'concurrent_request_coalescing':True,
+              'shared_seven_domain_inventory':True,
+              'primary_exhausted_fail_closed':True,
+              'primary_short_reset_single_wait':True,
+              'secondary_403_bounded_recovery':True,
+              'retryable_429_bounded_recovery':True,
+              'permission_403_immediate_fail_closed':True,
+              'hard_api_request_budget':True,
+              'deterministic_inventory_sha':True,
+              'deterministic_candidate_selection':True,
+              'non_actions_urllib_transparent':True,
               'model_parameters_or_weights_changed':False,
               'formal_current_or_production_pointer_changed':False,
               'fusion_weights_changed':False,
-              'test_stdout_sha256':hashlib.sha256(stdout).hexdigest(),
+              'stdout_sha256':files,
           }
           raw=json.dumps(receipt,sort_keys=True,separators=(',',':')).encode()
           (root/'receipt.json').write_bytes(raw)
