@@ -12,7 +12,8 @@ from typing import Any
 
 SEASON_HEADER_RE = re.compile(r'^\s*=.*?(\d{4})/(\d{2})\s*$')
 DATE_RE = re.compile(r'^\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?\s*$')
-MATCH_RE = re.compile(r'^\s*(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s+\([^)]*\))?\s*$')
+MODERN_MATCH_RE = re.compile(r'^\s*(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s+\([^)]*\))?\s*$')
+LEGACY_MATCH_RE = re.compile(r'^\s*(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+(\d+)-(\d+)(?:\s+\([^)]*\))?\s+(.+?)\s*$')
 MATCH_COUNT_RE = re.compile(r'^\s*#\s*Matches\s+(\d+)\s*$')
 MONTHS = {m: i for i, m in enumerate(('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'), 1)}
 SEASON_CODE = {'2021/22':'2122','2022/23':'2223','2023/24':'2324','2024/25':'2425','2025/26':'2526'}
@@ -35,6 +36,16 @@ def git_blob_sha(data: bytes) -> str:
     h.update(f'blob {len(data)}\0'.encode('ascii'))
     h.update(data)
     return h.hexdigest()
+
+
+def parse_match_line(line: str) -> tuple[str, str, int, int] | None:
+    modern = MODERN_MATCH_RE.match(line)
+    if modern:
+        return modern.group(2).strip(), modern.group(3).strip(), int(modern.group(4)), int(modern.group(5))
+    legacy = LEGACY_MATCH_RE.match(line)
+    if legacy:
+        return legacy.group(2).strip(), legacy.group(5).strip(), int(legacy.group(3)), int(legacy.group(4))
+    return None
 
 
 def parse_football_txt(text: str, source_name: str) -> tuple[list[dict[str, Any]], int]:
@@ -85,24 +96,26 @@ def parse_football_txt(text: str, source_name: str) -> tuple[list[dict[str, Any]
             current_date = date(year, month, day)
             continue
 
-        mm = MATCH_RE.match(line)
-        if mm:
+        parsed = parse_match_line(line)
+        if parsed:
             if current_date is None:
                 raise RuntimeError(f'{source_name}:{lineno}: match before date header: {line!r}')
-            home = mm.group(2).strip()
-            away = mm.group(3).strip()
+            home, away, home_goals, away_goals = parsed
             if not home or not away:
                 raise RuntimeError(f'{source_name}:{lineno}: empty team name: {line!r}')
             rows.append({
                 'Date': current_date.strftime('%d/%m/%Y'),
                 'HomeTeam': home,
                 'AwayTeam': away,
-                'FTHG': int(mm.group(4)),
-                'FTAG': int(mm.group(5)),
+                'FTHG': home_goals,
+                'FTAG': away_goals,
             })
             continue
 
-        if ' v ' in line and line.strip() and not line.lstrip().startswith('#'):
+        # Both known OpenFootball layouts contain either a literal " v " or a
+        # score token. Preserve any fixture-like line that escaped the generic
+        # parsers so count validation cannot silently mask a syntax variant.
+        if line.strip() and not line.lstrip().startswith('#') and (' v ' in line or re.search(r'\s\d+-\d+(?:\s|$)', line)):
             suspicious.append((lineno, line))
 
     if season_start_year is None or season_end_year is None:
@@ -220,7 +233,7 @@ def main() -> None:
         'competition_count': len(OUTPUT_CODE),
         'season_count': len(SEASON_CODE),
         'total_parsed_matches': total_rows,
-        'parser_contract': 'format-only season-header/date/home-v-away/final-score parser; no team aliases, fuzzy identity, odds or xG inference',
+        'parser_contract': 'format-only season-header/date/modern-v-or-legacy-score-between-teams/final-score parser; no team aliases, fuzzy identity, odds or xG inference',
         'files': sorted(files_out, key=lambda x: (x['competition_id'], x['season'])),
     }
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2), encoding='utf-8')
