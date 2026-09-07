@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+SEASON_HEADER_RE = re.compile(r'^\s*=.*?(\d{4})/(\d{2})\s*$')
 DATE_RE = re.compile(r'^\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?\s*$')
 MATCH_RE = re.compile(r'^\s*(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s+\([^)]*\))?\s*$')
 MATCH_COUNT_RE = re.compile(r'^\s*#\s*Matches\s+(\d+)\s*$')
@@ -39,13 +40,26 @@ def git_blob_sha(data: bytes) -> str:
 def parse_football_txt(text: str, source_name: str) -> tuple[list[dict[str, Any]], int]:
     rows: list[dict[str, Any]] = []
     current_date: date | None = None
-    current_year: int | None = None
-    current_month: int | None = None
+    season_start_year: int | None = None
+    season_end_year: int | None = None
     declared_matches: int | None = None
     suspicious: list[tuple[int, str]] = []
 
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip('\n')
+
+        sh = SEASON_HEADER_RE.match(line)
+        if sh:
+            season_start_year = int(sh.group(1))
+            yy = int(sh.group(2))
+            century = (season_start_year // 100) * 100
+            season_end_year = century + yy
+            if season_end_year <= season_start_year:
+                season_end_year += 100
+            if season_end_year != season_start_year + 1:
+                raise RuntimeError(f'{source_name}:{lineno}: non-adjacent season header: {line!r}')
+            continue
+
         mc = MATCH_COUNT_RE.match(line)
         if mc:
             declared_matches = int(mc.group(1))
@@ -57,13 +71,18 @@ def parse_football_txt(text: str, source_name: str) -> tuple[list[dict[str, Any]
             day = int(dm.group(3))
             explicit_year = dm.group(4)
             if explicit_year:
-                current_year = int(explicit_year)
-            elif current_year is None:
-                raise RuntimeError(f'{source_name}:{lineno}: date lacks initial year: {line!r}')
-            elif current_month is not None and month < current_month:
-                current_year += 1
-            current_month = month
-            current_date = date(current_year, month, day)
+                year = int(explicit_year)
+            else:
+                if season_start_year is None or season_end_year is None:
+                    raise RuntimeError(f'{source_name}:{lineno}: date lacks year before season header: {line!r}')
+                # Big-5 domestic seasons in this frozen 2021/22-2025/26 corpus cross
+                # one New Year. Infer year from calendar half, not row order, because
+                # postponed fixtures may be listed inside an earlier round after a
+                # later calendar date (for example Sep then Aug).
+                year = season_start_year if month >= 7 else season_end_year
+            if season_start_year is not None and season_end_year is not None and year not in (season_start_year, season_end_year):
+                raise RuntimeError(f'{source_name}:{lineno}: date year {year} outside season {season_start_year}/{season_end_year % 100:02d}')
+            current_date = date(year, month, day)
             continue
 
         mm = MATCH_RE.match(line)
@@ -86,6 +105,8 @@ def parse_football_txt(text: str, source_name: str) -> tuple[list[dict[str, Any]
         if ' v ' in line and line.strip() and not line.lstrip().startswith('#'):
             suspicious.append((lineno, line))
 
+    if season_start_year is None or season_end_year is None:
+        raise RuntimeError(f'{source_name}: missing season header')
     if suspicious:
         sample = suspicious[:5]
         raise RuntimeError(f'{source_name}: unparsed fixture-like lines: {sample}')
@@ -199,7 +220,7 @@ def main() -> None:
         'competition_count': len(OUTPUT_CODE),
         'season_count': len(SEASON_CODE),
         'total_parsed_matches': total_rows,
-        'parser_contract': 'format-only date/header/home-v-away/final-score parser; no team aliases, fuzzy identity, odds or xG inference',
+        'parser_contract': 'format-only season-header/date/home-v-away/final-score parser; no team aliases, fuzzy identity, odds or xG inference',
         'files': sorted(files_out, key=lambda x: (x['competition_id'], x['season'])),
     }
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2), encoding='utf-8')
