@@ -13,6 +13,7 @@ on:
       - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py'
       - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
       - '.github/workflows/football3-governed-permanent-regression-v1.yml'
   push:
@@ -26,6 +27,7 @@ on:
       - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py'
       - 'football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py'
       - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
       - '.github/workflows/football3-governed-permanent-regression-v1.yml'
   workflow_dispatch:
@@ -54,12 +56,33 @@ jobs:
 
       - name: Bind exact HEAD and protected scope
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '7dbb5700c007e40809bb8807f10cf6973e7e9ddd' }}
+          PR_CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_HEAD: ${{ github.sha }}
+          BASE_SHA_INPUT: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          VALIDATED_HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            EXPECTED_HEAD="$PR_CANDIDATE_HEAD"
+            EVENT_MERGE_SHA="$GITHUB_SHA"
+          else
+            EXPECTED_HEAD="$PUSH_HEAD"
+            EVENT_MERGE_SHA=""
+          fi
+          test -n "$EXPECTED_HEAD"
+          test "$VALIDATED_HEAD_SHA" = "$EXPECTED_HEAD"
+          if [ -n "$BASE_SHA_INPUT" ] && ! printf '%s' "$BASE_SHA_INPUT" | grep -Eq '^0+$'; then
+            BASE_SHA="$BASE_SHA_INPUT"
+          else
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
           git cat-file -e "$BASE_SHA^{commit}"
+          {
+            echo "VALIDATED_HEAD_SHA=$VALIDATED_HEAD_SHA"
+            echo "EXPECTED_CANDIDATE_HEAD=$EXPECTED_HEAD"
+            echo "EVENT_MERGE_SHA=$EVENT_MERGE_SHA"
+            echo "VALIDATED_BASE_SHA=$BASE_SHA"
+          } >> "$GITHUB_ENV"
           git diff --name-only "$BASE_SHA"...HEAD | tee changed-files.txt
           if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)' changed-files.txt; then
             echo 'protected model/CURRENT/raw alias scope changed' >&2
@@ -76,7 +99,8 @@ jobs:
             football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py \
             football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py \
             football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py \
-            football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py
+            football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py \
+            football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py
 
       - name: Run API budget inventory and resilience permanent regressions
         env:
@@ -87,6 +111,7 @@ jobs:
           python3 football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py 2>&1 | tee regression/durable-selector-api/legacy-resilience.stdout
           python3 football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_v1.py 2>&1 | tee regression/durable-selector-api/api-budget.stdout
           python3 football-data/formal_gpt_gateway_v1/test_github_api_budget_transport_edge_v1.py 2>&1 | tee regression/durable-selector-api/api-budget-edge.stdout
+          python3 football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py 2>&1 | tee regression/durable-selector-api/head-binding.stdout
           ! grep -R '/actions/runs?per_page=100&page=' football-data/formal_gpt_gateway_v1/github_api_budget_transport_v1.py football-data/formal_gpt_gateway_v1/build_durable_candidate_inventory_v1.py
 
       - name: Build exact HEAD required receipt
@@ -96,11 +121,23 @@ jobs:
           import hashlib,json,os,pathlib
           root=pathlib.Path('regression/durable-selector-api')
           files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.glob('*.stdout')}
+          validated_head_sha=os.environ['VALIDATED_HEAD_SHA']
+          candidate_head=os.environ['EXPECTED_CANDIDATE_HEAD']
+          event_name=os.environ['GITHUB_EVENT_NAME']
+          event_merge_sha=os.environ.get('EVENT_MERGE_SHA') or None
+          base_sha=os.environ['VALIDATED_BASE_SHA']
+          assert validated_head_sha == candidate_head
+          if event_name == 'pull_request':
+              assert event_merge_sha == os.environ['GITHUB_SHA']
           receipt={
-              'schema_version':'football3-durable-selector-github-api-resilience-required-v2',
+              'schema_version':'football3-durable-selector-github-api-resilience-required-v3',
               'status':'PASS',
-              'exact_head':os.environ['GITHUB_SHA'],
-              'base_head':'${{ github.event.pull_request.base.sha || github.event.before || '7dbb5700c007e40809bb8807f10cf6973e7e9ddd' }}',
+              'exact_head':validated_head_sha,
+              'candidate_head':candidate_head,
+              'base_sha':base_sha,
+              'base_head':base_sha,
+              'event_name':event_name,
+              'event_merge_sha':event_merge_sha,
               'repository_run_list_scan_forbidden':True,
               'artifact_first_finite_candidates':True,
               'artifact_embedded_workflow_metadata_preferred':True,
