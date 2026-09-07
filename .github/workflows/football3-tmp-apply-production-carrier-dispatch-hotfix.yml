@@ -1,0 +1,59 @@
+name: Football3 Temporary Apply Production Carrier Dispatch Hotfix
+
+on:
+  push:
+    branches:
+      - football3/production-carrier-dispatch-livebase-hotfix-v1
+    paths:
+      - football-data/formal_gpt_gateway_v1/.tmp_livebase_dispatch_hotfix.patch
+      - .github/workflows/football3-tmp-apply-production-carrier-dispatch-hotfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: football3/production-carrier-dispatch-livebase-hotfix-v1
+      - name: Apply exact tested patch and verify blobs
+        run: |
+          set -euo pipefail
+          WF='.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+          HP='football-data/formal_gpt_gateway_v1/production_base_binding_v1.py'
+          PATCH='football-data/formal_gpt_gateway_v1/.tmp_livebase_dispatch_hotfix.patch'
+          test "$(git hash-object "$WF")" = '9ec89cc4567cfa500dd5351e297b0c5bcac1407d'
+          test "$(git hash-object "$HP")" = '1a20cfcfddba38229df7e66bd819c098603cdf64'
+          git apply --check "$PATCH"
+          git apply "$PATCH"
+          test "$(git hash-object "$WF")" = 'f3e4814e706f0e9383dce8207743b48d5e42db14'
+          test "$(git hash-object "$HP")" = 'e5d1db5b5883dabc5cfa4ffff1b222fc06bd69e9'
+          python3 -m py_compile "$HP"
+          python3 - <<'PY'
+          import pathlib
+          w=pathlib.Path('.github/workflows/football3-formal-gpt-runner-integration-v1.yml').read_text()
+          h=pathlib.Path('football-data/formal_gpt_gateway_v1/production_base_binding_v1.py').read_text()
+          assert 'request_pr_number:' in w
+          assert 'DRAFT_PR_BODY_DISPATCH' in w
+          assert '/pulls/${REQUEST_PR_NUMBER}' in w
+          assert '/git/ref/heads/${CANONICAL_BASE_REF}' in w
+          assert 'ref: ${{ steps.base_target.outputs.resolved_live_base_sha }}' in w
+          assert '/actions/runs?' not in w and '/actions/runs?' not in h
+          assert "event_base_source': 'PULL_REQUEST_EVENT'" in h
+          assert "if binding.get('request_carrier_ref'):" in h
+          print('DISPATCH_CARRIER_STATIC_CONTRACT_PASS')
+          PY
+      - name: Remove temporary transport files and commit candidate
+        run: |
+          set -euo pipefail
+          rm -f football-data/formal_gpt_gateway_v1/.tmp_livebase_dispatch_hotfix.patch
+          rm -f .github/workflows/football3-tmp-apply-production-carrier-dispatch-hotfix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'football3: dispatch permanent carrier on live integration workflow'
+          git push origin HEAD:football3/production-carrier-dispatch-livebase-hotfix-v1
