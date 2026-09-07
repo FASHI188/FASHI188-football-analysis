@@ -77,6 +77,12 @@ def _selection_preflight(state_root: Path, out: Path, repo_root: Path, m: dict[s
             raise rt.RuntimeGateError("DURABLE_SELECTOR_MODEL_CURRENT_MISMATCH")
         if selected.get("runtime_contract_sha256") != contract.runtime_contract_payload()["runtime_contract_sha256"]:
             raise rt.RuntimeGateError("DURABLE_SELECTOR_RUNTIME_CONTRACT_MISMATCH")
+        ceiling = rt._parse_dt(str(selection.get("artifact_availability_ceiling") or ""), "selector artifact availability ceiling")
+        if ceiling != kickoff:
+            raise rt.RuntimeGateError("DURABLE_SELECTOR_PREMATCH_CEILING_MISMATCH")
+        created = rt._parse_dt(str(selected.get("artifact_created_at") or ""), "selected artifact created at")
+        if created >= kickoff:
+            raise rt.RuntimeGateError("DURABLE_SELECTOR_ARTIFACT_NOT_AVAILABLE_PREMATCH")
 
     base_cutoff = rt._parse_dt(str(loaded["meta"]["historical_cutoff"]), "base state cutoff")
     max_source = contract.max_source_observed_at(loaded)

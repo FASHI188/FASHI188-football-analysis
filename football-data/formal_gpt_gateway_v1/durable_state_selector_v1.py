@@ -128,6 +128,9 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
         raise rt.RuntimeGateError("cutoff-aware durable selector requires prediction match")
     competition_id = str(match.get("competition_id") or "")
     target_cutoff = rt._parse_dt(str(match.get("cutoff") or ""), "target cutoff")
+    prematch_availability_ceiling = rt._parse_dt(str(match.get("kickoff") or ""), "prematch availability ceiling")
+    if target_cutoff >= prematch_availability_ceiling:
+        raise rt.RuntimeGateError("prediction cutoff must be before kickoff")
     if competition_id not in rt.FORMAL_SCOPE:
         raise rt.RuntimeGateError("competition outside Formal Fusion V2 scope")
 
@@ -170,7 +173,9 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
             candidate["_bundle_dir"] = str(bundle_dir)
             candidates.append(candidate)
 
-        selected, evaluated = contract.choose_candidate(candidates, target_cutoff, competition_id)
+        selected, evaluated = contract.choose_candidate(
+            candidates, target_cutoff, competition_id, prematch_availability_ceiling
+        )
         public_evaluated = []
         for row in evaluated:
             clean = {k: v for k, v in row.items() if not k.startswith("_")}
@@ -181,6 +186,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
                 "status": "DATA_STATE_ANOMALY",
                 "reason": "NO_ELIGIBLE_DURABLE_STATE",
                 "target_cutoff": target_cutoff.isoformat(),
+                "artifact_availability_ceiling": prematch_availability_ceiling.isoformat(),
                 "competition_id": competition_id,
                 "runtime_contract": contract.runtime_contract_payload(),
                 "candidates": public_evaluated,
@@ -198,8 +204,9 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
         audit_core = {
             "schema_version": SCHEMA,
             "status": "SELECTED",
-            "selection_rule": "eligible_then_max_state_cutoff_created_at_tiebreak",
+            "selection_rule": "eligible_state_cutoff_then_prematch_artifact_availability_then_created_at_tiebreak",
             "target_cutoff": target_cutoff.isoformat(),
+            "artifact_availability_ceiling": prematch_availability_ceiling.isoformat(),
             "competition_id": competition_id,
             "selected": selected_public,
             "runtime_contract": contract.runtime_contract_payload(),

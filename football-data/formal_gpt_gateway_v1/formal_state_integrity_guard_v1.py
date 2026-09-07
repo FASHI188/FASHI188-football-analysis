@@ -13,8 +13,13 @@ from historical_xg_challenger_v1 import historical_xg_challenger as hxg
 
 SCHEMA = "football3-formal-state-integrity-guard-v1"
 BINDING_SCHEMA = "football3-fast-cache-binding-v1"
-MIN_XG_EVIDENCE = 3.0
-MIN_EXPECTED_LINKED_XG_MATCHES = 3
+def _formal_min_xg_evidence() -> float:
+    try:
+        identity = json.loads(rt.formal_v2.FUSION_IDENTITY_PATH.read_text(encoding="utf-8"))
+        return float(identity["frozen_xg_parameters"]["min_effective_evidence"])
+    except (AttributeError, OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise rt.RuntimeGateError("formal XG minimum evidence threshold unavailable") from exc
+
 
 
 def _write_json(path: Path, obj: Any) -> None:
@@ -208,7 +213,7 @@ def _xg_trigger_audit(state: Any, fixture: dict[str, Any]) -> dict[str, Any]:
         "schema_version": "football3-xg-trigger-audit-v2",
         "fixture_id": fixture["fixture_id"],
         "dynamic": dynamic,
-        "frozen_min_effective_evidence": MIN_XG_EVIDENCE,
+        "frozen_min_effective_evidence": _formal_min_xg_evidence(),
         "diagnostic_prediction_keys": sorted(str(k) for k in row.keys()),
         "diagnostic_state_clone_only": True,
         "score_matrix_requested": False,
@@ -227,10 +232,21 @@ def classify_state(
     receipt: dict[str, Any],
 ) -> dict[str, Any]:
     aux = _v1_aux(loaded["state"], fixture)
-    evidence = [float(x) for x in ((trigger.get("dynamic") or {}).get("evidence") or [])]
+    dynamic = trigger.get("dynamic") or {}
+    raw_evidence = dynamic.get("evidence")
+    try:
+        evidence = [float(x) for x in raw_evidence] if type(raw_evidence) is list else []
+    except (TypeError, ValueError):
+        evidence = []
+    model_fallback = dynamic.get("fallback_exact_v1")
+    formal_threshold = float(trigger.get("frozen_min_effective_evidence"))
     home_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["home_team_id"])
     away_xg_n = _linked_count(loaded, fixture["competition_id"], fixture["away_team_id"])
     reasons: list[str] = []
+    if len(evidence) != 4:
+        reasons.append(f"XG_EFFECTIVE_EVIDENCE_VECTOR_INVALID:n={len(evidence)}")
+    if type(model_fallback) is not bool:
+        reasons.append("XG_CHALLENGER_FALLBACK_METADATA_INVALID")
 
     for side, key in (("home", "effective_home_history"), ("away", "effective_away_history")):
         relation = str(identity_audit[side].get("season_relation") or "")
@@ -266,20 +282,18 @@ def classify_state(
             reasons.append("CURRENT_SEASON_RELEASE_AUDIT_NOT_VERIFIED_COMPLETE")
 
     fallback = bool(receipt.get("fallback_exact_v1"))
-    expected_legal_xg = (
-        home_xg_n >= MIN_EXPECTED_LINKED_XG_MATCHES
-        and away_xg_n >= MIN_EXPECTED_LINKED_XG_MATCHES
+    expected_fallback = model_fallback if type(model_fallback) is bool else None
+    expected_route = None if expected_fallback is None else (
+        "FROZEN_V1_EXACT_FALLBACK" if expected_fallback else "FUSION_V2_ACTIVE"
     )
-    if fallback and evidence and min(evidence) >= MIN_XG_EVIDENCE:
+    receipt_route = str(receipt.get("model_route") or "")
+    if expected_fallback is not None and fallback != expected_fallback:
         reasons.append(
-            "FALLBACK_DESPITE_EFFECTIVE_EVIDENCE_THRESHOLD:"
-            + ",".join(f"{x:.12g}" for x in evidence)
+            "MODEL_FALLBACK_MISMATCH_WITH_CHALLENGER_PROJECTION:"
+            f"challenger={expected_fallback},receipt={fallback}"
         )
-    elif fallback and expected_legal_xg:
-        reasons.append(
-            "XG_EXPECTED_BUT_EFFECTIVE_EVIDENCE_INSUFFICIENT:"
-            + ",".join(f"{x:.12g}" for x in evidence)
-        )
+    if expected_route is not None and receipt_route and receipt_route != expected_route:
+        reasons.append(f"MODEL_ROUTE_MISMATCH_WITH_CHALLENGER_PROJECTION:{receipt_route}!={expected_route}")
 
     anomaly = bool(reasons)
     if anomaly:
@@ -288,9 +302,9 @@ def classify_state(
     elif fallback:
         fallback_class = "NORMAL_FALLBACK"
         fallback_reason = (
-            "LEGAL_XG_NOT_SUFFICIENT_FOR_BOTH_TEAMS:"
-            f"home_linked_2025_26={home_xg_n},away_linked_2025_26={away_xg_n},"
-            f"effective_evidence={evidence},threshold={MIN_XG_EVIDENCE}"
+            "LEGAL_CHALLENGER_PROJECTED_XG_FALLBACK:"
+            f"effective_evidence={evidence},threshold={formal_threshold},"
+            "authority=dynamic.fallback_exact_v1"
         )
     else:
         fallback_class = "NONE"
@@ -318,11 +332,15 @@ def classify_state(
             "state_pending_fixtures": len(loaded["state"].pending),
             "effective_evidence": evidence,
             "min_effective_evidence": min(evidence) if evidence else None,
-            "frozen_threshold": MIN_XG_EVIDENCE,
+            "frozen_threshold": formal_threshold,
             "home_linked_2025_26_matches": home_xg_n,
             "away_linked_2025_26_matches": away_xg_n,
-            "expected_legal_xg_for_both_teams": expected_legal_xg,
-            "dynamic": trigger.get("dynamic"),
+            "linked_match_counts_diagnostic_only": True,
+            "challenger_fallback_exact_v1": expected_fallback,
+            "formal_expected_route": expected_route,
+            "route_authority": "HISTORICAL_XG_CHALLENGER_DYNAMIC_FALLBACK_EXACT_V1",
+            "expected_legal_xg_for_both_teams": (None if expected_fallback is None else not expected_fallback),
+            "dynamic": dynamic,
         },
         "current_season_release_audit": release_audit,
         "latest_data_available_at": _latest_available_at(loaded),
@@ -380,6 +398,9 @@ def _enrich_receipt(
         "schema_version": SCHEMA,
         "status": audit["status"],
         "fallback_class": audit["fallback_class"],
+        "challenger_fallback_exact_v1": audit["historical_xg"]["challenger_fallback_exact_v1"],
+        "formal_expected_route": audit["historical_xg"]["formal_expected_route"],
+        "formal_min_effective_evidence": audit["historical_xg"]["frozen_threshold"],
         "model_parameters_or_weights_changed": False,
         "formal_current_or_production_pointer_changed": False,
     }
@@ -455,9 +476,13 @@ def install(gateway_module) -> dict[str, Any]:
 
         loaded, fixture, ident, trigger, receipt, audit = inspect_current()
         rebuilt_after_anomaly = False
-        if audit["status"] == "DATA_STATE_ANOMALY" and full_reason is None:
+        sealed_exact = str(result.get("gateway_route") or "") == "SEALED_EXACT_CUTOFF_REPLAY"
+        first_authoritative_error_reason = None
+        if audit["status"] == "DATA_STATE_ANOMALY":
+            first_authoritative_error_reason = "DATA_STATE_ANOMALY:" + ";".join(audit["anomaly_reasons"])
+        if audit["status"] == "DATA_STATE_ANOMALY" and full_reason is None and not sealed_exact:
             rebuilt_after_anomaly = True
-            full_reason = "DATA_STATE_ANOMALY:" + ";".join(audit["anomaly_reasons"])
+            full_reason = first_authoritative_error_reason
             _clear_cache(state_root)
             full_rebuild.build_integrity_base(
                 state_root / "bundle", repo_root, understat_db, confirmation_dir, cutoff
@@ -477,6 +502,8 @@ def install(gateway_module) -> dict[str, Any]:
                 "fixture": fixture,
                 "cutoff": result.get("cutoff"),
                 "anomaly_reasons": audit["anomaly_reasons"],
+                "first_authoritative_error_reason": first_authoritative_error_reason,
+                "sealed_exact_rebuild_blocked": sealed_exact,
                 "fallback_class": "DATA_STATE_ANOMALY",
                 "prediction_sha": None,
                 "receipt_sha": None,
@@ -496,6 +523,8 @@ def install(gateway_module) -> dict[str, Any]:
         audit["execution_mode"] = execution_mode
         audit["full_rebuild_reason"] = full_reason
         audit["rebuilt_after_anomaly"] = rebuilt_after_anomaly
+        audit["sealed_exact_rebuild_blocked"] = sealed_exact and audit["status"] == "DATA_STATE_ANOMALY"
+        audit["first_authoritative_error_reason"] = first_authoritative_error_reason
         audit["cache_preflight"] = {
             "fast_eligible": pre["fast_eligible"],
             "reason": pre["reason"],
@@ -525,7 +554,9 @@ def install(gateway_module) -> dict[str, Any]:
             "competition_id", "season", "cutoff", "home_canonical_id", "away_canonical_id",
             "data_waterline", "latest_data_available_at", "state_sha256", "state_bundle_sha256",
         ],
-        "data_state_anomaly_forces_full_rebuild": True,
+        "data_state_anomaly_forces_full_rebuild": False,
+        "nonsealed_data_state_anomaly_may_retry_full": True,
+        "sealed_exact_data_state_anomaly_fail_closed_without_rebuild": True,
         "identity_fail_closed": True,
         "generic_xg_trigger_metadata_from_state_clone": True,
         "target_specific_replay_dependency": False,

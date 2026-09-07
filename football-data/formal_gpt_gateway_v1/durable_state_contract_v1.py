@@ -102,7 +102,8 @@ def artifact_role_ok(name: str) -> bool:
     return str(name).startswith("formal-gpt-runner-state-")
 
 
-def eligibility_reasons(candidate: dict[str, Any], target_cutoff: datetime, competition_id: str) -> list[str]:
+def eligibility_reasons(candidate: dict[str, Any], target_cutoff: datetime, competition_id: str,
+                        artifact_available_by: datetime | None = None) -> list[str]:
     reasons: list[str] = []
     if not candidate.get("artifact_role_ok"):
         reasons.append("ARTIFACT_ROLE")
@@ -124,17 +125,25 @@ def eligibility_reasons(candidate: dict[str, Any], target_cutoff: datetime, comp
             reasons.append("FUTURE_STATE")
     except rt.RuntimeGateError:
         reasons.append("STATE_CUTOFF")
+    if artifact_available_by is not None:
+        try:
+            artifact_created = parse_dt(str(candidate.get("artifact_created_at")), "artifact created at")
+            if artifact_created >= artifact_available_by:
+                reasons.append("ARTIFACT_NOT_AVAILABLE_PREMATCH")
+        except rt.RuntimeGateError:
+            reasons.append("ARTIFACT_CREATED_AT")
     if candidate.get("competition_id") not in (None, competition_id):
         reasons.append("WRONG_COMPETITION")
     return sorted(set(reasons))
 
 
-def choose_candidate(candidates: list[dict[str, Any]], target_cutoff: datetime, competition_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+def choose_candidate(candidates: list[dict[str, Any]], target_cutoff: datetime, competition_id: str,
+                     artifact_available_by: datetime | None = None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     evaluated: list[dict[str, Any]] = []
     eligible: list[dict[str, Any]] = []
     for raw in candidates:
         row = dict(raw)
-        row["rejection_reasons"] = eligibility_reasons(row, target_cutoff, competition_id)
+        row["rejection_reasons"] = eligibility_reasons(row, target_cutoff, competition_id, artifact_available_by)
         row["eligible"] = not row["rejection_reasons"]
         evaluated.append(row)
         if row["eligible"]:
