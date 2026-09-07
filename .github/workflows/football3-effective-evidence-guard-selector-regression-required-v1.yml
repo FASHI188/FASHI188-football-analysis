@@ -1,0 +1,240 @@
+name: Football3 Effective Evidence Guard Selector Regression Required V1
+
+on:
+  push:
+    branches:
+      - football3/effective-evidence-guard-selector-governed-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-effective-evidence-guard-selector-regression-required-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGRESSION_BASE: '0bfcd824d855161595226f3a67b33c4cfa9ab8a3'
+  SOURCE_RUN_ID: '33979095886'
+  SOURCE_ARTIFACT_ID: '9973225479'
+  HAMBURG_KICKOFF: '2026-09-06T13:30:00+00:00'
+  HAMBURG_CUTOFF: '2026-09-04T13:19:44+00:00'
+
+jobs:
+  regression-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prove ancestry and protected scientific surfaces unchanged
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$REGRESSION_BASE" HEAD
+          git diff --name-only "$REGRESSION_BASE"...HEAD | tee regression_changed_files.txt
+          if grep -E '(^|/)(formal_fusion_v2\.py|pure_engine\.py|historical_xg_challenger\.py|CURRENT|formal_pointer\.json|model_lock\.json)$' regression_changed_files.txt; then
+            echo 'protected model/CURRENT surface changed' >&2
+            exit 1
+          fi
+          printf 'draft_only=true\nready=false\nmerge=false\nproduction_activation=false\nairtable_write=false\n' > regression_authority.txt
+          git rev-parse HEAD | tee regression_exact_head.txt
+
+      - name: Compile governed modules and permanent regression helper
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_effective_evidence_guard_governed_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_state_integrity_coverage_patch_v1.py \
+            football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py \
+            football-data/formal_gpt_gateway_v1/test_effective_evidence_guard_selector_sealed_regression_v1.py \
+            football-data/formal_gpt_gateway_v1/test_production_300_adjudicated_v1.py \
+            football-data/formal_gpt_gateway_v1/entry.py
+
+      - name: Restore frozen regression sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .regress/understat .regress/confirmation .regress/hamburg/state/bundle .regress/meta .regress/results
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" \
+            -o .regress/meta/source_run.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}" \
+            -o .regress/meta/source_artifact.json
+          fetch_artifact () {
+            local id="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$out"
+          }
+          fetch_artifact 9798682425 .regress/understat.zip
+          fetch_artifact 9827606506 .regress/confirmation.zip
+          fetch_artifact "$SOURCE_ARTIFACT_ID" .regress/hamburg_source.zip
+          unzip -q .regress/understat.zip -d .regress/understat
+          unzip -q .regress/confirmation.zip -d .regress/confirmation
+          unzip -q .regress/hamburg_source.zip -d .regress/hamburg/state/bundle
+          sha256sum .regress/understat.zip .regress/confirmation.zip .regress/hamburg_source.zip | tee .regress/source_zip_sha256.txt
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime
+          run=json.load(open('.regress/meta/source_run.json'))
+          art=json.load(open('.regress/meta/source_artifact.json'))
+          created=datetime.fromisoformat(str(art['created_at']).replace('Z','+00:00'))
+          kickoff=datetime.fromisoformat(os.environ['HAMBURG_KICKOFF'])
+          assert run['id']==int(os.environ['SOURCE_RUN_ID']) and run['status']=='completed' and run['conclusion']=='success'
+          assert art['id']==int(os.environ['SOURCE_ARTIFACT_ID']) and art['expired'] is False
+          assert created < kickoff
+          print('FROZEN_SOURCE_PASS', art['id'], art.get('digest'), art['created_at'])
+          PY
+
+      - name: Run selector guard sealed replay permanent regression
+        env:
+          FOOTBALL3_DURABLE_SELECTOR_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/test_effective_evidence_guard_selector_sealed_regression_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.regress/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.regress/confirmation" \
+            --state-root "$PWD/.regress/hamburg/state" \
+            --source-run-json "$PWD/.regress/meta/source_run.json" \
+            --source-artifact-json "$PWD/.regress/meta/source_artifact.json" \
+            --source-artifact-id "$SOURCE_ARTIFACT_ID" \
+            --kickoff "$HAMBURG_KICKOFF" \
+            --cutoff "$HAMBURG_CUTOFF" \
+            --out "$PWD/.regress/results" \
+            | tee .regress/selector_guard_sealed_stdout.txt
+
+      - name: Run cross-league permanent regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          mkdir -p .regress/cross_league
+          python3 football-data/formal_gpt_gateway_v1/formal_state_integrity_regression_v2.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.regress/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.regress/confirmation" \
+            --out "$PWD/.regress/cross_league" \
+            | tee .regress/cross_league_stdout.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('.regress/cross_league/formal_state_integrity_regression.json'))
+          assert d['status']=='PASS' and d['non_stuttgart_case_n']>=4
+          assert d['target_specific_replay_used'] is False
+          assert d['all_fast_full_probability_byte_equal'] and d['all_fast_full_matrix_byte_equal']
+          assert d['legal_fallback_frozen_v1_exact'] is True
+          print('CROSS_LEAGUE_REGRESSION_PASS')
+          PY
+
+      - name: Run real FUSION V2 active regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/test_fusion_v2_active_exact_head_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.regress/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.regress/confirmation" \
+            --expected-runtime-head "$GITHUB_SHA" \
+            --out "$PWD/.regress/fusion_v2_active_receipt.json" \
+            | tee .regress/fusion_v2_active_stdout.txt
+
+      - name: Run production 300 required equivalence regression
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1"
+          python3 football-data/formal_gpt_gateway_v1/test_production_300_adjudicated_v1.py \
+            --mode production \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.regress/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.regress/confirmation" \
+            --n 300 \
+            --out "$PWD/.regress/production_300_equivalence_receipt.json" \
+            | tee .regress/production_300_stdout.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('.regress/production_300_equivalence_receipt.json'))
+          assert d['passed'] is True and d['mode']=='production'
+          eq=d['equivalence_300']
+          assert eq['n']==300 and eq['passed'] is True
+          assert eq['max_abs_1x2']<=1e-12 and eq['max_abs_score_matrix_cell']<=1e-12 and eq['cache_state_exact'] is True
+          print('PRODUCTION_300_PASS', d['receipt_sha256'])
+          PY
+
+      - name: Build regression manifest and digests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root=pathlib.Path('.regress')
+          s=json.load(open(root/'results/selector_guard_sealed_regression.json'))
+          h=json.load(open(root/'results/hamburg_sealed_replay.json'))
+          c=json.load(open(root/'cross_league/formal_state_integrity_regression.json'))
+          f=json.load(open(root/'fusion_v2_active_receipt.json'))
+          p=json.load(open(root/'production_300_equivalence_receipt.json'))
+          manifest={
+            'schema_version':'football3-effective-evidence-guard-selector-regression-required-v1',
+            'status':'PASS','exact_head':os.environ['GITHUB_SHA'],'regression_base':os.environ['REGRESSION_BASE'],
+            'source_run_id':int(os.environ['SOURCE_RUN_ID']),'source_artifact_id':int(os.environ['SOURCE_ARTIFACT_ID']),
+            'selector_guard_sealed_status':s['status'],'hamburg_mainz':h,
+            'cross_league_status':c['status'],'cross_league_case_n':c['non_stuttgart_case_n'],
+            'fusion_v2_active_receipt_sha256':f['receipt_sha256'],
+            'production_300_receipt_sha256':p['receipt_sha256'],
+            'model_parameters_or_weights_changed':False,'formal_current_or_production_pointer_changed':False,
+            'fusion_weights_changed':False,'ready':False,'merge':False,'production_activation':False,'airtable_write':False,
+          }
+          payload=json.dumps(manifest,sort_keys=True,separators=(',',':'))+'\n'
+          (root/'final_regression_manifest.json').write_text(payload)
+          print('FINAL_REGRESSION_PASS',hashlib.sha256(payload.encode()).hexdigest())
+          PY
+          find .regress -type f -not -path '*/state/bundle/*' -print0 | sort -z | xargs -0 sha256sum > .regress/final_file_sha256.txt
+          sha256sum .regress/final_regression_manifest.json | tee .regress/final_regression_manifest_sha256.txt
+
+      - name: Upload permanent regression Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-effective-evidence-guard-selector-regression-${{ github.run_id }}
+          path: |
+            regression_authority.txt
+            regression_changed_files.txt
+            regression_exact_head.txt
+            .regress/final_regression_manifest.json
+            .regress/final_regression_manifest_sha256.txt
+            .regress/final_file_sha256.txt
+            .regress/source_zip_sha256.txt
+            .regress/meta/source_run.json
+            .regress/meta/source_artifact.json
+            .regress/results/selector_guard_sealed_regression.json
+            .regress/results/hamburg_bound_selection.json
+            .regress/results/hamburg_sealed_replay.json
+            .regress/results/hamburg_stdout.txt
+            .regress/results/hamburg_out/summary.json
+            .regress/results/hamburg_out/prediction_receipt.json
+            .regress/results/hamburg_out/state_integrity_audit.json
+            .regress/results/hamburg_out/xg_trigger_audit.json
+            .regress/results/hamburg_out/durable_state_governance.json
+            .regress/results/hamburg_out/state_transition_receipt.json
+            .regress/results/sealed_true_anomaly.json
+            .regress/selector_guard_sealed_stdout.txt
+            .regress/cross_league/formal_state_integrity_regression.json
+            .regress/cross_league_stdout.txt
+            .regress/fusion_v2_active_receipt.json
+            .regress/fusion_v2_active_stdout.txt
+            .regress/production_300_equivalence_receipt.json
+            .regress/production_300_stdout.txt
+          if-no-files-found: error
+          retention-days: 90
