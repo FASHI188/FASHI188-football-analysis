@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import email.utils
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -22,6 +26,16 @@ ALLOWED_HEAD_BRANCHES = {
     "football3/formal-gpt-runner-request-carrier-v1",
     "football3/durable-state-cutoff-selector-governed-v1",
 }
+_MAX_API_PAGES = 10
+_MAX_HTTP_ATTEMPTS = 4
+_MAX_RETRY_SLEEP_SECONDS = 60.0
+_JSON_CACHE: dict[str, dict[str, Any]] = {}
+_JSON_CACHE_LOCK = threading.RLock()
+
+
+def _clear_process_cache_for_tests() -> None:
+    with _JSON_CACHE_LOCK:
+        _JSON_CACHE.clear()
 
 
 def _http_error_details(exc: urllib.error.HTTPError, url: str) -> dict[str, Any]:
@@ -52,42 +66,122 @@ def _http_error_details(exc: urllib.error.HTTPError, url: str) -> dict[str, Any]
     }
 
 
-def _emit_http_error(exc: urllib.error.HTTPError, url: str) -> None:
-    print(json.dumps(_http_error_details(exc, url), sort_keys=True), file=sys.stderr, flush=True)
+def _emit_http_error_details(details: dict[str, Any]) -> None:
+    print(json.dumps(details, sort_keys=True), file=sys.stderr, flush=True)
+
+
+def _permission_style_403(details: dict[str, Any]) -> bool:
+    if int(details.get("status") or 0) != 403:
+        return False
+    message = str(details.get("message") or "").lower()
+    return any(marker in message for marker in (
+        "resource not accessible by integration",
+        "must have admin rights",
+        "requires authentication",
+        "insufficient permission",
+    ))
+
+
+def _retryable_http_error(details: dict[str, Any]) -> bool:
+    status = int(details.get("status") or 0)
+    if status == 429:
+        return True
+    if status != 403 or _permission_style_403(details):
+        return False
+    message = str(details.get("message") or "").lower()
+    documentation_url = str(details.get("documentation_url") or "").lower()
+    remaining = str(details.get("x-ratelimit-remaining") or "")
+    return bool(
+        details.get("retry-after")
+        or remaining == "0"
+        or "rate limit" in message
+        or "secondary rate" in message
+        or "abuse detection" in message
+        or "rate-limit" in documentation_url
+        or "rate_limits" in documentation_url
+    )
+
+
+def _retry_delay_seconds(details: dict[str, Any], attempt_index: int) -> float:
+    retry_after = details.get("retry-after")
+    if retry_after is not None:
+        value = str(retry_after).strip()
+        try:
+            return min(max(float(value), 0.0), _MAX_RETRY_SLEEP_SECONDS)
+        except ValueError:
+            try:
+                target = email.utils.parsedate_to_datetime(value).timestamp()
+                return min(max(target - time.time(), 0.0), _MAX_RETRY_SLEEP_SECONDS)
+            except Exception:
+                pass
+    if str(details.get("x-ratelimit-remaining") or "") == "0":
+        try:
+            reset = float(str(details.get("x-ratelimit-reset") or ""))
+            return min(max(reset - time.time(), 1.0), _MAX_RETRY_SLEEP_SECONDS)
+        except ValueError:
+            pass
+    return min(float(2 ** attempt_index), _MAX_RETRY_SLEEP_SECONDS)
+
+
+def _raise_http_gate(details: dict[str, Any]) -> None:
+    raise rt.RuntimeGateError(
+        "GITHUB_API_HTTP_ERROR:" + json.dumps(details, sort_keys=True, separators=(",", ":"))
+    )
 
 
 def _get_json(url: str, token: str) -> dict[str, Any]:
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    })
-    try:
-        with urllib.request.urlopen(req) as response:
-            obj = json.load(response)
-    except urllib.error.HTTPError as exc:
-        _emit_http_error(exc, url)
-        raise
-    if type(obj) is not dict:
-        raise rt.RuntimeGateError("GitHub JSON object required")
-    return obj
+    # Deliberately hold the process-local lock through the network request. This
+    # makes duplicate concurrent lookups collapse to one request instead of
+    # racing the same GitHub endpoint and amplifying secondary-rate pressure.
+    with _JSON_CACHE_LOCK:
+        cached = _JSON_CACHE.get(url)
+        if cached is not None:
+            return copy.deepcopy(cached)
+        for attempt in range(_MAX_HTTP_ATTEMPTS):
+            req = urllib.request.Request(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
+            try:
+                with urllib.request.urlopen(req) as response:
+                    obj = json.load(response)
+            except urllib.error.HTTPError as exc:
+                details = _http_error_details(exc, url)
+                _emit_http_error_details(details)
+                if _retryable_http_error(details) and attempt + 1 < _MAX_HTTP_ATTEMPTS:
+                    time.sleep(_retry_delay_seconds(details, attempt))
+                    continue
+                _raise_http_gate(details)
+            if type(obj) is not dict:
+                raise rt.RuntimeGateError("GitHub JSON object required")
+            _JSON_CACHE[url] = copy.deepcopy(obj)
+            return copy.deepcopy(obj)
+    raise rt.RuntimeGateError("GitHub JSON request exhausted without response")
 
 
 def _download(url: str, token: str, path: Path) -> None:
-    req = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    })
-    # GitHub's artifact endpoint redirects to signed object storage. Keep the
-    # repository token on the GitHub request only; forwarding it to the storage
-    # host overrides the signed URL's authentication and yields HTTP 401.
-    req.add_unredirected_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req) as response, path.open("wb") as out:
-            shutil.copyfileobj(response, out)
-    except urllib.error.HTTPError as exc:
-        _emit_http_error(exc, url)
-        raise
+    for attempt in range(_MAX_HTTP_ATTEMPTS):
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        # GitHub's artifact endpoint redirects to signed object storage. Keep the
+        # repository token on the GitHub request only; forwarding it to the storage
+        # host overrides the signed URL's authentication and yields HTTP 401.
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req) as response, path.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            return
+        except urllib.error.HTTPError as exc:
+            details = _http_error_details(exc, url)
+            _emit_http_error_details(details)
+            if _retryable_http_error(details) and attempt + 1 < _MAX_HTTP_ATTEMPTS:
+                time.sleep(_retry_delay_seconds(details, attempt))
+                continue
+            _raise_http_gate(details)
+    raise rt.RuntimeGateError("GitHub artifact download exhausted without response")
 
 
 def _safe_extract(zip_path: Path, dest: Path) -> None:
@@ -139,11 +233,6 @@ def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle
                 and meta.get("current_sha256") == rt.CURRENT_SHA256
             ),
             "competition_scope_ok": competition_id in rt.FORMAL_SCOPE and competition_id in meta.get("formal_scope", []),
-            # Artifact creation and source/state PIT are separate clocks. For a
-            # retrospective replay, a state sealed at target_cutoff may be packaged
-            # later, but the package itself must have existed before kickoff. This
-            # rejects post-match duplicate artifacts without falsely rejecting a
-            # pre-match package whose historical waterline is earlier than creation.
             "artifact_available_by_target_cutoff": artifact_created <= target_cutoff,
             "artifact_available_before_kickoff": artifact_created <= availability_ceiling,
             "pit_ok": (
@@ -165,16 +254,60 @@ def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle
 
 
 def _artifact_pages(repo: str, token: str) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for page in range(1, 11):
+    dedup: dict[int, dict[str, Any]] = {}
+    for page in range(1, _MAX_API_PAGES + 1):
         data = _get_json(f"https://api.github.com/repos/{repo}/actions/artifacts?per_page=100&page={page}", token)
         rows = data.get("artifacts") or []
         if type(rows) is not list:
             raise rt.RuntimeGateError("artifact list schema mismatch")
-        out.extend(x for x in rows if type(x) is dict)
+        for row in rows:
+            if type(row) is not dict:
+                continue
+            artifact_id = int(row.get("id") or 0)
+            if artifact_id:
+                dedup.setdefault(artifact_id, row)
         if len(rows) < 100:
             break
-    return out
+    return sorted(
+        dedup.values(),
+        key=lambda row: (str(row.get("created_at") or ""), int(row.get("id") or 0)),
+        reverse=True,
+    )
+
+
+def _run_records(repo: str, token: str, run_ids: set[int]) -> dict[int, dict[str, Any]]:
+    wanted = {int(x) for x in run_ids if int(x) > 0}
+    found: dict[int, dict[str, Any]] = {}
+    if not wanted:
+        return found
+    # Batch-read repository workflow runs first. This replaces the previous N+1
+    # /actions/runs/{id} loop. Individual GETs are a fail-closed fallback only
+    # for IDs that do not appear in the bounded paginated batch window.
+    for page in range(1, _MAX_API_PAGES + 1):
+        data = _get_json(f"https://api.github.com/repos/{repo}/actions/runs?per_page=100&page={page}", token)
+        rows = data.get("workflow_runs") or []
+        if type(rows) is not list:
+            raise rt.RuntimeGateError("workflow run list schema mismatch")
+        for row in rows:
+            if type(row) is not dict:
+                continue
+            run_id = int(row.get("id") or 0)
+            if run_id in wanted and run_id not in found:
+                found[run_id] = row
+        if wanted.issubset(found) or len(rows) < 100:
+            break
+    for run_id in sorted(wanted.difference(found)):
+        found[run_id] = _get_json(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", token)
+    return found
+
+
+def _stable_public_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    public_rows = [{k: v for k, v in row.items() if not k.startswith("_")} for row in rows]
+    return sorted(
+        public_rows,
+        key=lambda row: (str(row.get("artifact_created_at") or ""), int(row.get("artifact_id") or 0)),
+        reverse=True,
+    )
 
 
 def select_from_github(repo: str, token: str, request: dict[str, Any], cache_root: Path, audit_path: Path) -> dict[str, Any]:
@@ -187,21 +320,35 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
     if competition_id not in rt.FORMAL_SCOPE:
         raise rt.RuntimeGateError("competition outside Formal Fusion V2 scope")
 
+    artifacts = []
+    run_ids: set[int] = set()
+    for artifact in _artifact_pages(repo, token):
+        name = str(artifact.get("name") or "")
+        workflow_run = artifact.get("workflow_run") or {}
+        if artifact.get("expired") or not contract.artifact_role_ok(name):
+            continue
+        if workflow_run.get("head_branch") not in ALLOWED_HEAD_BRANCHES:
+            continue
+        run_id = int(workflow_run.get("id") or 0)
+        if not run_id:
+            continue
+        artifacts.append(artifact)
+        run_ids.add(run_id)
+    runs = _run_records(repo, token, run_ids)
+
     candidates: list[dict[str, Any]] = []
     work = Path(tempfile.mkdtemp(prefix="football3-durable-selector-"))
     try:
-        for artifact in _artifact_pages(repo, token):
+        for artifact in artifacts:
             name = str(artifact.get("name") or "")
             workflow_run = artifact.get("workflow_run") or {}
-            if artifact.get("expired") or not contract.artifact_role_ok(name):
-                continue
-            if workflow_run.get("head_branch") not in ALLOWED_HEAD_BRANCHES:
-                continue
             artifact_id = int(artifact.get("id") or 0)
             run_id = int(workflow_run.get("id") or 0)
+            run = runs.get(run_id)
+            if type(run) is not dict:
+                raise rt.RuntimeGateError(f"workflow run metadata unavailable for {run_id}")
             row_dir = work / str(artifact_id)
             row_dir.mkdir(parents=True, exist_ok=True)
-            run = _get_json(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", token)
             zip_path = row_dir / "state.zip"
             bundle_dir = row_dir / "bundle"
             try:
@@ -231,10 +378,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
             candidates.append(candidate)
 
         selected, evaluated = contract.choose_candidate(candidates, target_cutoff, competition_id)
-        public_evaluated = []
-        for row in evaluated:
-            clean = {k: v for k, v in row.items() if not k.startswith("_")}
-            public_evaluated.append(clean)
+        public_evaluated = _stable_public_candidates(evaluated)
         if selected is None:
             audit = {
                 "schema_version": SCHEMA,
@@ -272,7 +416,6 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         audit_path.write_bytes(contract.canon(audit))
         (cache_root / "durable_state_selection_v1.json").write_bytes(contract.canon(audit))
-        # Revalidate after copy; no altered bundle can pass through selection.
         if loaded["manifest"]["state_sha256"] != selected_public["state_sha256"]:
             raise rt.RuntimeGateError("selected durable state SHA changed after copy")
         return audit
