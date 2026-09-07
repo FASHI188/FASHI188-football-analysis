@@ -1,0 +1,107 @@
+name: Football3 Durable Selector GitHub API Resilience Required V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
+      - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
+  push:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - 'football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py'
+      - '.github/workflows/football3-durable-selector-github-api-resilience-required-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-durable-selector-api-resilience-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  durable-selector-api-resilience:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind exact HEAD and protected scope
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '66bd94d08665bcb0a65bb415a1a19ee9b6ca8218' }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git cat-file -e "$BASE_SHA^{commit}"
+          git diff --name-only "$BASE_SHA"...HEAD | tee changed-files.txt
+          if grep -E '(^|/)(CURRENT|formal_fusion_v2.py|historical_xg_challenger.py|pure_engine.py|team_aliases.json)$|historical_xg_fusion_v2/.*/(model|parameter|weight)' changed-files.txt; then
+            echo 'protected model/CURRENT/raw alias scope changed' >&2
+            exit 1
+          fi
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/durable_state_selector_v1.py \
+            football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py
+
+      - name: Run transient permanent duplicate concurrent deterministic API regressions
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          mkdir -p regression/durable-selector-api
+          python3 football-data/formal_gpt_gateway_v1/test_durable_state_selector_github_api_resilience_v1.py \
+            2>&1 | tee regression/durable-selector-api/test.stdout
+
+      - name: Build exact HEAD regression receipt
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('regression/durable-selector-api')
+          stdout=(root/'test.stdout').read_bytes()
+          receipt={
+              'schema_version':'football3-durable-selector-github-api-resilience-required-v1',
+              'status':'PASS',
+              'exact_head':os.environ['GITHUB_SHA'],
+              'base_head':'${{ github.event.pull_request.base.sha || github.event.before || '66bd94d08665bcb0a65bb415a1a19ee9b6ca8218' }}',
+              'transient_403_recovery':True,
+              'primary_rate_limit_403_recovery':True,
+              'retryable_429_recovery':True,
+              'permanent_permission_403_fail_closed':True,
+              'duplicate_concurrent_get_dedup':True,
+              'process_local_cache_only':True,
+              'paginated_artifact_dedup':True,
+              'batch_run_metadata':True,
+              'deterministic_candidate_order':True,
+              'model_parameters_or_weights_changed':False,
+              'formal_current_or_production_pointer_changed':False,
+              'fusion_weights_changed':False,
+              'test_stdout_sha256':hashlib.sha256(stdout).hexdigest(),
+          }
+          raw=json.dumps(receipt,sort_keys=True,separators=(',',':')).encode()
+          (root/'receipt.json').write_bytes(raw)
+          (root/'receipt.sha256').write_text(hashlib.sha256(raw).hexdigest()+'\n')
+          PY
+          sha256sum regression/durable-selector-api/* | sort | tee regression/durable-selector-api/files.sha256
+
+      - name: Upload durable selector API resilience evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-durable-selector-api-resilience-${{ github.run_id }}
+          path: regression/durable-selector-api/
+          if-no-files-found: error
+          retention-days: 90
