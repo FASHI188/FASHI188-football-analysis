@@ -200,6 +200,9 @@ def benchmark_paths_adjudicated(history, labels, source, identity, sample, tmp: 
     candidate is rejected for that exact reason, measure the same production
     FAST cache resolver at an identical cutoff with an empty validated delta and
     label that timing scenario explicitly as zero-delta rather than two-day advance.
+    The captured production benchmark wrapper is called with one target at a time;
+    its exact terminal no-window error therefore also denotes that singleton's
+    late-settlement exclusion and is not generalized to any other assertion.
     """
     mid = len(sample) // 2
     order = sorted(range(len(sample)), key=lambda i: (abs(i - mid), i))
@@ -211,7 +214,11 @@ def benchmark_paths_adjudicated(history, labels, source, identity, sample, tmp: 
         try:
             result = _ORIGINAL_BENCHMARK_PATHS(history, labels, source, identity, [target], candidate_tmp)
         except AssertionError as exc:
-            if str(exc).startswith("FAST benchmark route mismatch: V1_LATE_RELEASE_REQUIRES_FULL_REBUILD"):
+            msg = str(exc)
+            if (
+                msg.startswith("FAST benchmark route mismatch: V1_LATE_RELEASE_REQUIRES_FULL_REBUILD")
+                or msg == "no FAST-eligible benchmark window after delayed-settlement exclusions"
+            ):
                 skipped += 1
                 continue
             raise
