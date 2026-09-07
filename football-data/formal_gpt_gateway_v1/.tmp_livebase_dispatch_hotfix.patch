@@ -1,0 +1,185 @@
+diff -ruN a/.github/workflows/football3-formal-gpt-runner-integration-v1.yml b/.github/workflows/football3-formal-gpt-runner-integration-v1.yml
+--- a/.github/workflows/football3-formal-gpt-runner-integration-v1.yml	2026-09-07 16:31:43.765577840 +0000
++++ b/.github/workflows/football3-formal-gpt-runner-integration-v1.yml	2026-09-07 16:31:43.767593477 +0000
+@@ -10,6 +10,11 @@
+       - 'football-data/formal_runtime_missing_input_probe_v1.py'
+       - '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+   workflow_dispatch:
++    inputs:
++      request_pr_number:
++        description: 'Optional permanent request-carrier PR number; when set, load the audited request from that Draft PR body'
++        required: false
++        type: string
+   pull_request:
+     branches:
+       - football3/formal-gpt-runner-integration-v1
+@@ -37,11 +42,45 @@
+           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+           REQUEST_CARRIER_REF: ${{ github.event.pull_request.head.ref || '' }}
+           REQUEST_CARRIER_HEAD: ${{ github.event.pull_request.head.sha || '' }}
++          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
++          DISPATCH_REQUEST_PR: ${{ inputs.request_pr_number || '' }}
+         run: |
+           set -euo pipefail
+           CANONICAL_BASE_REF='football3/formal-gpt-runner-integration-v1'
+           RESOLUTION_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
++          REQUEST_PR_NUMBER="$EVENT_PR_NUMBER"
++          CARRIER_BOUND=false
++
+           if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
++            CARRIER_BOUND=true
++          elif [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ] && [ -n "$DISPATCH_REQUEST_PR" ]; then
++            if [ "$GITHUB_REF_NAME" != "$CANONICAL_BASE_REF" ]; then
++              echo "PRODUCTION_UNAUTHORIZED_DISPATCH_REF:event=$GITHUB_REF_NAME:required=$CANONICAL_BASE_REF" >&2
++              exit 20
++            fi
++            REQUEST_PR_NUMBER="$DISPATCH_REQUEST_PR"
++            PR_META="$(mktemp)"
++            if ! curl --fail --silent --show-error --location \
++              -H "Authorization: Bearer ${GH_TOKEN}" \
++              -H 'Accept: application/vnd.github+json' \
++              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${REQUEST_PR_NUMBER}" -o "$PR_META"; then
++              echo 'PRODUCTION_REQUEST_CARRIER_RESOLUTION_FAILED' >&2
++              exit 25
++            fi
++            if ! jq -e --arg base "$CANONICAL_BASE_REF" --arg carrier 'football3/formal-gpt-runner-request-carrier-v1' \
++              'type=="object" and .state=="open" and .draft==true and .base.ref==$base and .head.ref==$carrier and (.base.sha|type)=="string" and (.base.sha|test("^[0-9a-f]{40}$")) and (.head.sha|type)=="string" and (.head.sha|test("^[0-9a-f]{40}$"))' \
++              "$PR_META" >/dev/null; then
++              echo 'PRODUCTION_REQUEST_CARRIER_INVALID_RESPONSE' >&2
++              exit 26
++            fi
++            EVENT_BASE_REF="$(jq -r '.base.ref' "$PR_META")"
++            EVENT_BASE_SHA="$(jq -r '.base.sha' "$PR_META")"
++            REQUEST_CARRIER_REF="$(jq -r '.head.ref' "$PR_META")"
++            REQUEST_CARRIER_HEAD="$(jq -r '.head.sha' "$PR_META")"
++            CARRIER_BOUND=true
++          fi
++
++          if [ "$CARRIER_BOUND" = true ]; then
+             if [ "$EVENT_BASE_REF" != "$CANONICAL_BASE_REF" ]; then
+               echo "PRODUCTION_UNAUTHORIZED_BASE_REF:event=$EVENT_BASE_REF:required=$CANONICAL_BASE_REF" >&2
+               exit 21
+@@ -71,6 +110,7 @@
+             EVENT_BASE_SHA=''
+             REQUEST_CARRIER_REF=''
+             REQUEST_CARRIER_HEAD=''
++            REQUEST_PR_NUMBER=''
+             RESOLVED_LIVE_BASE_SHA="$GITHUB_SHA"
+           fi
+           {
+@@ -80,6 +120,7 @@
+             echo "resolution_timestamp=$RESOLUTION_TIMESTAMP"
+             echo "request_carrier_ref=$REQUEST_CARRIER_REF"
+             echo "request_carrier_head=$REQUEST_CARRIER_HEAD"
++            echo "request_pr_number=$REQUEST_PR_NUMBER"
+           } >> "$GITHUB_OUTPUT"
+ 
+       - uses: actions/checkout@v4
+@@ -109,31 +150,54 @@
+       - name: Build audited invocation request
+         id: transport
+         env:
++          GH_TOKEN: ${{ github.token }}
+           PR_BODY: ${{ github.event.pull_request.body || '' }}
+-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || '' }}
+-          PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
++          PR_NUMBER: ${{ steps.base_target.outputs.request_pr_number }}
++          PR_HEAD_REF: ${{ steps.base_target.outputs.request_carrier_ref }}
++          PR_HEAD_SHA: ${{ steps.base_target.outputs.request_carrier_head }}
++          PR_BASE_REF: ${{ steps.base_target.outputs.canonical_base_ref }}
++          DISPATCH_REQUEST_PR: ${{ inputs.request_pr_number || '' }}
+         run: |
+           set -euo pipefail
+           mkdir -p .runtime_sources
++          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ] && [ -n "$DISPATCH_REQUEST_PR" ]; then
++            curl --fail --silent --show-error --location \
++              -H "Authorization: Bearer ${GH_TOKEN}" \
++              -H 'Accept: application/vnd.github+json' \
++              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${DISPATCH_REQUEST_PR}" \
++              -o .runtime_sources/dispatch_carrier_pr.json
++          fi
+           python3 - <<'PY'
+           import hashlib, json, os, pathlib
+           event=os.environ['GITHUB_EVENT_NAME']
+           out=pathlib.Path('.runtime_sources/invocation_request.json')
+           if event=='pull_request':
++              body=os.environ.get('PR_BODY','')
++              transport='DRAFT_PR_BODY_EDIT'
++          elif event=='workflow_dispatch' and os.environ.get('DISPATCH_REQUEST_PR'):
++              meta=json.loads(pathlib.Path('.runtime_sources/dispatch_carrier_pr.json').read_text(encoding='utf-8'))
++              if type(meta) is not dict or meta.get('state')!='open' or meta.get('draft') is not True:
++                  raise SystemExit('dispatch request carrier must remain open Draft PR')
++              base=meta.get('base') or {}; head=meta.get('head') or {}
++              if base.get('ref')!='football3/formal-gpt-runner-integration-v1' or head.get('ref')!='football3/formal-gpt-runner-request-carrier-v1':
++                  raise SystemExit('dispatch request carrier authority mismatch')
++              if head.get('sha')!=os.environ.get('PR_HEAD_SHA'):
++                  raise SystemExit('dispatch request carrier head moved during request acquisition')
++              body=meta.get('body') or ''
++              transport='DRAFT_PR_BODY_DISPATCH'
++          else:
++              req=json.loads(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json').read_text(encoding='utf-8'))
++              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
++              body=None
++          if body is not None:
+               if os.environ.get('PR_HEAD_REF')!='football3/formal-gpt-runner-request-carrier-v1':
+                   raise SystemExit('unauthorized request carrier branch')
+-              body=os.environ.get('PR_BODY','')
+               begin='<!-- football3-request-json -->'
+               end='<!-- /football3-request-json -->'
+               if begin not in body or end not in body:
+                   raise SystemExit('request carrier markers missing')
+               raw=body.split(begin,1)[1].split(end,1)[0].strip()
+               req=json.loads(raw)
+-              transport='DRAFT_PR_BODY_EDIT'
+-          else:
+-              req=json.loads(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json').read_text(encoding='utf-8'))
+-              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
+           if type(req) is not dict or req.get('schema_version')!='football3-formal-gpt-gateway-v1':
+               raise SystemExit('gateway request schema mismatch at transport')
+           canonical=json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
+diff -ruN a/football-data/formal_gpt_gateway_v1/production_base_binding_v1.py b/football-data/formal_gpt_gateway_v1/production_base_binding_v1.py
+--- a/football-data/formal_gpt_gateway_v1/production_base_binding_v1.py	2026-09-07 16:31:43.766622898 +0000
++++ b/football-data/formal_gpt_gateway_v1/production_base_binding_v1.py	2026-09-07 16:31:43.768594170 +0000
+@@ -65,11 +65,12 @@
+         raise ProductionBaseBindingError('PRODUCTION_LIVE_BASE_REF_INVALID_RESPONSE')
+     if checkout_head_sha != resolved_live_base_sha:
+         raise ProductionBaseBindingError(f'PRODUCTION_CHECKOUT_HEAD_MISMATCH:checkout={checkout_head_sha}:resolved={resolved_live_base_sha}')
+-    if event_name == 'pull_request':
++    carrier_bound = bool(carrier_ref or carrier_head or event_base_sha)
++    if carrier_bound:
+         validate_pr_authority(canonical_base_ref, carrier_ref or '')
+         if not carrier_head or not _SHA_RE.fullmatch(carrier_head):
+             raise ProductionBaseBindingError('PRODUCTION_INVALID_REQUEST_CARRIER_HEAD')
+-    return {'schema_version': SCHEMA, 'status': 'CHECKOUT_BOUND', 'event_name': event_name, 'event_base_sha': event_base_sha or None, 'stale_event_metadata': bool(event_name == 'pull_request' and event_base_sha != resolved_live_base_sha), 'canonical_base_ref': canonical_base_ref, 'resolved_live_base_sha': resolved_live_base_sha, 'checkout_head_sha': checkout_head_sha, 'resolution_timestamp': resolution_timestamp, 'request_carrier_ref': carrier_ref or None, 'request_carrier_head': carrier_head or None, 'request_id': None, 'request_sha256': None, 'workflow_contract_version': WORKFLOW_CONTRACT_VERSION, 'runner_code_source': 'CANONICAL_INTEGRATION_EXACT_SHA', 'request_transport_source': 'AUTHORIZED_DRAFT_PR_BODY_ONLY' if event_name == 'pull_request' else 'COMMITTED_OR_DISPATCH_REQUEST', 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'initial_live_ref_query_count': 1 if event_name == 'pull_request' else 0, 'final_live_ref_query_count': 0, 'total_live_ref_query_count': 1 if event_name == 'pull_request' else 0, 'final_live_base_sha': None, 'final_resolution_timestamp': None, 'integration_moved_during_run': None}
++    return {'schema_version': SCHEMA, 'status': 'CHECKOUT_BOUND', 'event_name': event_name, 'event_base_sha': event_base_sha or None, 'event_base_source': 'PULL_REQUEST_EVENT' if event_name == 'pull_request' else ('CARRIER_PR_METADATA' if carrier_bound else None), 'stale_event_metadata': bool(carrier_bound and event_base_sha and event_base_sha != resolved_live_base_sha), 'canonical_base_ref': canonical_base_ref, 'resolved_live_base_sha': resolved_live_base_sha, 'checkout_head_sha': checkout_head_sha, 'resolution_timestamp': resolution_timestamp, 'request_carrier_ref': carrier_ref or None, 'request_carrier_head': carrier_head or None, 'request_id': None, 'request_sha256': None, 'workflow_contract_version': WORKFLOW_CONTRACT_VERSION, 'runner_code_source': 'CANONICAL_INTEGRATION_EXACT_SHA', 'request_transport_source': 'AUTHORIZED_DRAFT_PR_BODY_ONLY' if carrier_bound else 'COMMITTED_OR_DISPATCH_REQUEST', 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'initial_live_ref_query_count': 1 if carrier_bound else 0, 'final_live_ref_query_count': 0, 'total_live_ref_query_count': 1 if carrier_bound else 0, 'final_live_base_sha': None, 'final_resolution_timestamp': None, 'integration_moved_during_run': None}
+ 
+ def _git(*args: str) -> str:
+     return subprocess.check_output(['git', *args], text=True).strip()
+@@ -91,7 +92,7 @@
+     request = json.loads(request_path.read_text(encoding='utf-8'))
+     transport = json.loads(transport_path.read_text(encoding='utf-8'))
+     request_id = request.get('request_id')
+-    if binding.get('event_name') == 'pull_request' and (not isinstance(request_id, str) or not request_id.strip()):
++    if binding.get('request_carrier_ref') and (not isinstance(request_id, str) or not request_id.strip()):
+         raise ProductionBaseBindingError('PRODUCTION_REQUEST_ID_MISSING')
+     request_sha = hashlib.sha256(canonical_bytes(request)).hexdigest()
+     binding['request_id'] = request_id
+@@ -109,7 +110,7 @@
+     result = dict(binding)
+     result['final_live_base_sha'] = final_live_base_sha
+     result['final_resolution_timestamp'] = final_timestamp
+-    result['final_live_ref_query_count'] = 1 if result.get('event_name') == 'pull_request' else 0
++    result['final_live_ref_query_count'] = 1 if result.get('request_carrier_ref') else 0
+     result['total_live_ref_query_count'] = int(result.get('initial_live_ref_query_count') or 0) + int(result['final_live_ref_query_count'])
+     moved = final_live_base_sha != result.get('resolved_live_base_sha')
+     result['integration_moved_during_run'] = moved
+@@ -119,7 +120,7 @@
+ def finalize(args: argparse.Namespace) -> None:
+     binding_path = Path(args.binding)
+     binding = json.loads(binding_path.read_text(encoding='utf-8'))
+-    if binding.get('event_name') == 'pull_request':
++    if binding.get('request_carrier_ref'):
+         final_sha = resolve_live_ref(args.repo, args.token, str(binding['canonical_base_ref']))
+     else:
+         final_sha = str(binding['resolved_live_base_sha'])
