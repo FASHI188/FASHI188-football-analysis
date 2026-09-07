@@ -1,0 +1,71 @@
+name: Football3 JP-KR XG Source Audit V1
+
+on:
+  push:
+    branches:
+      - football3/jpkr-xg-source-audit-research-v1
+    paths:
+      - 'football-data/research/jpkr_xg_v2/**'
+      - '.github/workflows/football3-jpkr-xg-source-audit-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact research HEAD
+        uses: actions/checkout@v4
+
+      - name: Record execution identity
+        run: |
+          mkdir -p artifacts/jpkr-xg-source-audit
+          printf '%s\n' "${GITHUB_SHA}" > artifacts/jpkr-xg-source-audit/research_head.txt
+          printf '%s\n' "${GITHUB_REF_NAME}" > artifacts/jpkr-xg-source-audit/research_branch.txt
+          printf '%s\n' "${GITHUB_RUN_ID}" > artifacts/jpkr-xg-source-audit/run_id.txt
+
+      - name: Execute zero-label source and coverage audit
+        id: source_audit
+        run: |
+          set +e
+          set -o pipefail
+          python football-data/research/jpkr_xg_v2/source_audit_v1.py \
+            --out artifacts/jpkr-xg-source-audit \
+            2>&1 | tee artifacts/jpkr-xg-source-audit/source_audit_execution.log
+          rc=${PIPESTATUS[0]}
+          printf '%s\n' "${rc}" > artifacts/jpkr-xg-source-audit/source_audit_exit_code.txt
+          echo "audit_exit_code=${rc}"
+          exit 0
+
+      - name: Seal artifact file digests
+        if: always()
+        run: |
+          set -euo pipefail
+          cd artifacts/jpkr-xg-source-audit
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
+            | sort \
+            | while read -r f; do sha256sum "$f"; done \
+            > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload research audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-jpkr-xg-source-audit-${{ github.run_id }}
+          path: artifacts/jpkr-xg-source-audit/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve fail-closed audit result after artifact upload
+        if: always()
+        run: |
+          set -euo pipefail
+          rc=$(cat artifacts/jpkr-xg-source-audit/source_audit_exit_code.txt 2>/dev/null || printf '99')
+          if [ "$rc" -ne 0 ]; then
+            echo "zero-label source audit failed with exit code $rc; diagnostics were uploaded"
+            exit "$rc"
+          fi

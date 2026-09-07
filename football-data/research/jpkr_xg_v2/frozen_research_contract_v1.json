@@ -1,0 +1,155 @@
+{
+  "schema_version": "football3-jpkr-xg-research-contract-v1",
+  "status": "FROZEN_BEFORE_LABEL_EVALUATION",
+  "research_only": true,
+  "base_integration": {
+    "branch": "football3/formal-gpt-runner-integration-v1",
+    "head": "a1a8f8aab170d10a57e1c107dac5524cc31a6a9a"
+  },
+  "formal_model": {
+    "branch": "football3/historical-xg-fusion-v2-formal-activation-v1",
+    "head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "current_sha256": "ecf5fb99aaf2eb551c2c06bc5d37d3c656a2a1fcc280fd52045986f5894874f8",
+    "v1_engine_sha256": "cc2c2c3eca421ad6d277107b8f1212656b2e943cc179e7f394ac53e916c3f318",
+    "fusion_formula": "normalize(0.25*p_V1 + 0.75*p_XG)",
+    "xg_weight": 0.75,
+    "v1_weight": 0.25,
+    "fallback_route": "FROZEN_V1_EXACT_FALLBACK",
+    "active_route": "FUSION_V2_ACTIVE",
+    "frozen_xg_parameters": {
+      "dynamic_half_life_days": 90.0,
+      "dynamic_prior_matches": 4.0,
+      "dynamic_beta": 0.15,
+      "dynamic_cross_season_shrink": 0.4,
+      "xg_pseudocount": 0.25,
+      "residual_clip": 0.75,
+      "min_effective_evidence": 3.0,
+      "pooled_prior_weight": 0.5
+    }
+  },
+  "scope_assertion": {
+    "competitions_already_in_formal_scope": ["JPN_J1", "KOR_KLeague1"],
+    "scope_change_allowed": false,
+    "understat_big5_channel_change_allowed": false
+  },
+  "source_gate": {
+    "required_fields": [
+      "source_fixture_id",
+      "competition_id",
+      "season",
+      "source_kickoff",
+      "home_team",
+      "away_team",
+      "home_xg",
+      "away_xg",
+      "observed_at_or_available_at"
+    ],
+    "requires_real_match_level_xg": true,
+    "minimum_xg_completeness": 0.98,
+    "requires_no_key": true,
+    "requires_no_login": true,
+    "requires_acceptable_automation_and_research_use": true,
+    "requires_stable_provenance_and_content_identity": true,
+    "required_historical_seasons": ["2022", "2023", "2024", "2025"],
+    "partial_single_season_source_is_sufficient": false,
+    "goals_as_xg_substitute_allowed": false
+  },
+  "frozen_public_source_identities": {
+    "worldfootballR_data": {
+      "repository": "JaseZiv/worldfootballR_data",
+      "commit": "2df143967509ff45584e261a2a033687346d654b",
+      "fotmob_league_registry_path": "raw-data/fotmob-leagues/all_leagues.csv",
+      "fotmob_league_registry_git_blob": "a5bc54b6d7e4e2fc9c4a11dacd5e5e9fc0f4b4c2",
+      "fotmob_match_details_release_id": 79989708,
+      "fotmob_match_details_release_tag": "fotmob_match_details",
+      "j1_fotmob_league_id": 223,
+      "k1_fotmob_league_id": 9080
+    },
+    "hudl_statsbomb_open_data": {
+      "repository": "hudl/open-data",
+      "commit": "b0bc9f22dd77c206ddedc1d742893b3bbe64baec",
+      "competitions_path": "data/competitions.json",
+      "competitions_git_blob": "bd6defcc115c97094e12d07fea152da42e999151"
+    }
+  },
+  "identity_rules": {
+    "fixture_join": "competition+season+canonical_kickoff+canonical_home+canonical_away",
+    "team_mapping": "source team identity to frozen V1 canonical identity; multilingual alias evidence must be identity-only",
+    "result_or_xg_may_resolve_identity": false,
+    "duplicate_policy": "fail closed",
+    "reschedule_policy": "canonical actual kickoff identity; preserve original source kickoff and observed_at provenance",
+    "cancelled_policy": "exclude before label materialization; never synthesize xG"
+  },
+  "pit_rules": {
+    "prediction_cutoff": "fixture kickoff before label release",
+    "same_kickoff_rule": "predict every fixture in the identical-kickoff batch before releasing any result/xG label from that batch",
+    "result_release_rule": "only released completed matches may update state",
+    "target_or_contemporaneous_label_leakage_allowed": false
+  },
+  "competition_semantics": {
+    "JPN_J1_2026_special": {
+      "competition": "J1 100 YEAR VISION LEAGUE",
+      "regional_round_matchweeks": "1-18",
+      "playoff_round_separate_stage": true,
+      "ninety_minute_result_is_model_label": true,
+      "penalty_shootout_winner_must_not_replace_90m_draw": true,
+      "stage_identity_required": true
+    },
+    "KOR_KLeague1": {
+      "regular_rounds": "1-33",
+      "regular_match_count": 198,
+      "final_groups": ["Final A", "Final B"],
+      "final_rounds": "34-38",
+      "full_season_match_count": 228,
+      "stage_identity_required": true
+    }
+  },
+  "oos_plan_if_source_gate_passes": {
+    "warmup_season": "2022",
+    "scored_seasons": ["2023", "2024", "2025"],
+    "walk_forward": true,
+    "state_updates": "chronological, identical-kickoff batch isolated",
+    "models": ["FROZEN_V1_FALLBACK", "JP_KR_XG_CHALLENGER", "FIXED_75_25_FUSION_V2"],
+    "metrics": [
+      "HDA_TOP1",
+      "HDA_LOGLOSS",
+      "HDA_BRIER",
+      "HDA_RPS",
+      "SCORE_LOGSCORE",
+      "TOTAL_GOALS_RPS",
+      "FALLBACK_RATE"
+    ],
+    "season_breakdown": true,
+    "bootstrap": {
+      "replicates": 2000,
+      "confidence": 0.95,
+      "resampling_unit": "calendar_date_kickoff_batch"
+    }
+  },
+  "acceptance_and_stop": {
+    "top1_alone_can_accept": false,
+    "fixed_75_25_weight_may_be_retuned": false,
+    "proper_score_material_regression_tolerance_absolute": 0.002,
+    "primary_proper_scores": ["HDA_LOGLOSS", "HDA_BRIER", "HDA_RPS"],
+    "require_no_material_primary_proper_score_regression": true,
+    "require_at_least_one_primary_proper_score_point_improvement": true,
+    "if_fixed_75_25_fails": "REPORT_RESEARCH_FAILURE_OR_NEW_CANDIDATE_NEEDED",
+    "if_no_qualified_xg_source": "STOP_DATA_COVERAGE",
+    "on_source_gate_failure": "DO_NOT_MATERIALIZE_LABELS_OR_RUN_OOS"
+  },
+  "forbidden": [
+    "Airtable writes",
+    "CURRENT changes",
+    "formal model changes",
+    "production runner changes",
+    "production pointer changes",
+    "formal 75/25 weight changes",
+    "Ready for review",
+    "merge",
+    "production activation",
+    "paid API",
+    "secret or credential use",
+    "protected-sample use",
+    "goals substituted for xG"
+  ]
+}
