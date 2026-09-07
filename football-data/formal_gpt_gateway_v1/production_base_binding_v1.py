@@ -65,11 +65,12 @@ def evaluate_start_binding(*, event_name: str, event_base_sha: str | None, canon
         raise ProductionBaseBindingError('PRODUCTION_LIVE_BASE_REF_INVALID_RESPONSE')
     if checkout_head_sha != resolved_live_base_sha:
         raise ProductionBaseBindingError(f'PRODUCTION_CHECKOUT_HEAD_MISMATCH:checkout={checkout_head_sha}:resolved={resolved_live_base_sha}')
-    if event_name == 'pull_request':
+    carrier_bound = bool(carrier_ref or carrier_head or event_base_sha)
+    if carrier_bound:
         validate_pr_authority(canonical_base_ref, carrier_ref or '')
         if not carrier_head or not _SHA_RE.fullmatch(carrier_head):
             raise ProductionBaseBindingError('PRODUCTION_INVALID_REQUEST_CARRIER_HEAD')
-    return {'schema_version': SCHEMA, 'status': 'CHECKOUT_BOUND', 'event_name': event_name, 'event_base_sha': event_base_sha or None, 'stale_event_metadata': bool(event_name == 'pull_request' and event_base_sha != resolved_live_base_sha), 'canonical_base_ref': canonical_base_ref, 'resolved_live_base_sha': resolved_live_base_sha, 'checkout_head_sha': checkout_head_sha, 'resolution_timestamp': resolution_timestamp, 'request_carrier_ref': carrier_ref or None, 'request_carrier_head': carrier_head or None, 'request_id': None, 'request_sha256': None, 'workflow_contract_version': WORKFLOW_CONTRACT_VERSION, 'runner_code_source': 'CANONICAL_INTEGRATION_EXACT_SHA', 'request_transport_source': 'AUTHORIZED_DRAFT_PR_BODY_ONLY' if event_name == 'pull_request' else 'COMMITTED_OR_DISPATCH_REQUEST', 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'initial_live_ref_query_count': 1 if event_name == 'pull_request' else 0, 'final_live_ref_query_count': 0, 'total_live_ref_query_count': 1 if event_name == 'pull_request' else 0, 'final_live_base_sha': None, 'final_resolution_timestamp': None, 'integration_moved_during_run': None}
+    return {'schema_version': SCHEMA, 'status': 'CHECKOUT_BOUND', 'event_name': event_name, 'event_base_sha': event_base_sha or None, 'event_base_source': 'PULL_REQUEST_EVENT' if event_name == 'pull_request' else ('CARRIER_PR_METADATA' if carrier_bound else None), 'stale_event_metadata': bool(carrier_bound and event_base_sha and event_base_sha != resolved_live_base_sha), 'canonical_base_ref': canonical_base_ref, 'resolved_live_base_sha': resolved_live_base_sha, 'checkout_head_sha': checkout_head_sha, 'resolution_timestamp': resolution_timestamp, 'request_carrier_ref': carrier_ref or None, 'request_carrier_head': carrier_head or None, 'request_id': None, 'request_sha256': None, 'workflow_contract_version': WORKFLOW_CONTRACT_VERSION, 'runner_code_source': 'CANONICAL_INTEGRATION_EXACT_SHA', 'request_transport_source': 'AUTHORIZED_DRAFT_PR_BODY_ONLY' if carrier_bound else 'COMMITTED_OR_DISPATCH_REQUEST', 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'initial_live_ref_query_count': 1 if carrier_bound else 0, 'final_live_ref_query_count': 0, 'total_live_ref_query_count': 1 if carrier_bound else 0, 'final_live_base_sha': None, 'final_resolution_timestamp': None, 'integration_moved_during_run': None}
 
 def _git(*args: str) -> str:
     return subprocess.check_output(['git', *args], text=True).strip()
@@ -91,7 +92,7 @@ def bind_request(args: argparse.Namespace) -> None:
     request = json.loads(request_path.read_text(encoding='utf-8'))
     transport = json.loads(transport_path.read_text(encoding='utf-8'))
     request_id = request.get('request_id')
-    if binding.get('event_name') == 'pull_request' and (not isinstance(request_id, str) or not request_id.strip()):
+    if binding.get('request_carrier_ref') and (not isinstance(request_id, str) or not request_id.strip()):
         raise ProductionBaseBindingError('PRODUCTION_REQUEST_ID_MISSING')
     request_sha = hashlib.sha256(canonical_bytes(request)).hexdigest()
     binding['request_id'] = request_id
@@ -109,7 +110,7 @@ def finalize_evidence(binding: dict[str, Any], final_live_base_sha: str, final_t
     result = dict(binding)
     result['final_live_base_sha'] = final_live_base_sha
     result['final_resolution_timestamp'] = final_timestamp
-    result['final_live_ref_query_count'] = 1 if result.get('event_name') == 'pull_request' else 0
+    result['final_live_ref_query_count'] = 1 if result.get('request_carrier_ref') else 0
     result['total_live_ref_query_count'] = int(result.get('initial_live_ref_query_count') or 0) + int(result['final_live_ref_query_count'])
     moved = final_live_base_sha != result.get('resolved_live_base_sha')
     result['integration_moved_during_run'] = moved
@@ -119,7 +120,7 @@ def finalize_evidence(binding: dict[str, Any], final_live_base_sha: str, final_t
 def finalize(args: argparse.Namespace) -> None:
     binding_path = Path(args.binding)
     binding = json.loads(binding_path.read_text(encoding='utf-8'))
-    if binding.get('event_name') == 'pull_request':
+    if binding.get('request_carrier_ref'):
         final_sha = resolve_live_ref(args.repo, args.token, str(binding['canonical_base_ref']))
     else:
         final_sha = str(binding['resolved_live_base_sha'])
