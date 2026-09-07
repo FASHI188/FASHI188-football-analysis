@@ -5,7 +5,9 @@ import argparse
 import json
 import os
 import shutil
+import sys
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -22,14 +24,50 @@ ALLOWED_HEAD_BRANCHES = {
 }
 
 
+def _http_error_details(exc: urllib.error.HTTPError, url: str) -> dict[str, Any]:
+    try:
+        raw = exc.read()
+    except Exception:
+        raw = b""
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(text) if text else {}
+    except Exception:
+        payload = {}
+    if type(payload) is not dict:
+        payload = {}
+    headers = exc.headers
+    return {
+        "schema_version": "football3-github-api-http-error-v1",
+        "status": int(exc.code),
+        "url": url,
+        "x-ratelimit-limit": headers.get("x-ratelimit-limit") if headers else None,
+        "x-ratelimit-remaining": headers.get("x-ratelimit-remaining") if headers else None,
+        "x-ratelimit-reset": headers.get("x-ratelimit-reset") if headers else None,
+        "x-ratelimit-resource": headers.get("x-ratelimit-resource") if headers else None,
+        "retry-after": headers.get("retry-after") if headers else None,
+        "message": payload.get("message"),
+        "documentation_url": payload.get("documentation_url"),
+        "response_body": text,
+    }
+
+
+def _emit_http_error(exc: urllib.error.HTTPError, url: str) -> None:
+    print(json.dumps(_http_error_details(exc, url), sort_keys=True), file=sys.stderr, flush=True)
+
+
 def _get_json(url: str, token: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
-    with urllib.request.urlopen(req) as response:
-        obj = json.load(response)
+    try:
+        with urllib.request.urlopen(req) as response:
+            obj = json.load(response)
+    except urllib.error.HTTPError as exc:
+        _emit_http_error(exc, url)
+        raise
     if type(obj) is not dict:
         raise rt.RuntimeGateError("GitHub JSON object required")
     return obj
@@ -44,8 +82,12 @@ def _download(url: str, token: str, path: Path) -> None:
     # repository token on the GitHub request only; forwarding it to the storage
     # host overrides the signed URL's authentication and yields HTTP 401.
     req.add_unredirected_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req) as response, path.open("wb") as out:
-        shutil.copyfileobj(response, out)
+    try:
+        with urllib.request.urlopen(req) as response, path.open("wb") as out:
+            shutil.copyfileobj(response, out)
+    except urllib.error.HTTPError as exc:
+        _emit_http_error(exc, url)
+        raise
 
 
 def _safe_extract(zip_path: Path, dest: Path) -> None:
