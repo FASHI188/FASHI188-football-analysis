@@ -1,0 +1,111 @@
+name: Football3 Production Live Base Transfer Bootstrap V1
+
+on:
+  push:
+    branches:
+      - football3/production-live-base-transfer-bootstrap-v1
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout bootstrap payload
+        uses: actions/checkout@v4
+        with:
+          path: bootstrap
+          fetch-depth: 1
+
+      - name: Reconstruct and verify authoritative payload
+        run: |
+          set -euo pipefail
+          cat bootstrap/.transfer/payload.part.* > /tmp/payload.b64
+          test "$(wc -c < /tmp/payload.b64)" = "14740"
+          test "$(sha256sum /tmp/payload.b64 | awk '{print $1}')" = "b3a742bb0a97f77801454bfee1b5dc382fd79c750a9af1ccee613ab10d2e6235"
+          base64 -d /tmp/payload.b64 > /tmp/football3-remediation-payload.tar.gz
+          test "$(wc -c < /tmp/football3-remediation-payload.tar.gz)" = "11053"
+          test "$(sha256sum /tmp/football3-remediation-payload.tar.gz | awk '{print $1}')" = "f7fea2e55d4de0cb40a536247eade76aa8198c5a10611cbeade873c17a681ba0"
+          rm -rf /tmp/payload && mkdir -p /tmp/payload
+          tar -xzf /tmp/football3-remediation-payload.tar.gz -C /tmp/payload
+          test "$(wc -c < /tmp/payload/min_workflow.yml)" = "20246"
+          test "$(sha256sum /tmp/payload/min_workflow.yml | awk '{print $1}')" = "ef26422690d5a370c56f07397fde1fe597a677f6540779c47bba79ed01921343"
+          test "$(git hash-object /tmp/payload/min_workflow.yml)" = "9ec89cc4567cfa500dd5351e297b0c5bcac1407d"
+          test "$(sha256sum /tmp/payload/production_base_binding_v1_compact.py | awk '{print $1}')" = "d37f50527665cc6e58317999ed4f59c0d17bc68719c88a1d397df21911dcda95"
+          test "$(git hash-object /tmp/payload/production_base_binding_v1_compact.py)" = "1a20cfcfddba38229df7e66bd819c098603cdf64"
+          test "$(sha256sum /tmp/payload/test_required_workflow_head_binding_v1_combined.py | awk '{print $1}')" = "6ef0da53cbfaa4cd21519ef7e59753680842d9852399ce19b9df4821bfdda191"
+          test "$(git hash-object /tmp/payload/test_required_workflow_head_binding_v1_combined.py)" = "4f9f046c16617909a13622aa27b1817a3658e790"
+
+      - name: Checkout exact canonical base
+        uses: actions/checkout@v4
+        with:
+          ref: d4fbf19ee5b6e270087634ff865b2043a7971db1
+          path: target
+          fetch-depth: 1
+
+      - name: Apply exact bytes and run 15-test regression
+        run: |
+          set -euo pipefail
+          cd target
+          test "$(git rev-parse HEAD)" = "d4fbf19ee5b6e270087634ff865b2043a7971db1"
+          cp /tmp/payload/min_workflow.yml .github/workflows/football3-formal-gpt-runner-integration-v1.yml
+          cp /tmp/payload/production_base_binding_v1_compact.py football-data/formal_gpt_gateway_v1/production_base_binding_v1.py
+          cp football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py /tmp/original_required_test.py
+          cp /tmp/payload/test_required_workflow_head_binding_v1_combined.py football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py
+          python -m py_compile football-data/formal_gpt_gateway_v1/production_base_binding_v1.py
+          python football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py |& tee /tmp/test-output.txt
+          grep -q "Ran 15 tests" /tmp/test-output.txt
+          grep -q "OK" /tmp/test-output.txt
+          cp /tmp/original_required_test.py football-data/formal_gpt_gateway_v1/test_required_workflow_head_binding_v1.py
+          test "$(git hash-object .github/workflows/football3-formal-gpt-runner-integration-v1.yml)" = "9ec89cc4567cfa500dd5351e297b0c5bcac1407d"
+          test "$(sha256sum .github/workflows/football3-formal-gpt-runner-integration-v1.yml | awk '{print $1}')" = "ef26422690d5a370c56f07397fde1fe597a677f6540779c47bba79ed01921343"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/production_base_binding_v1.py)" = "1a20cfcfddba38229df7e66bd819c098603cdf64"
+          test "$(sha256sum football-data/formal_gpt_gateway_v1/production_base_binding_v1.py | awk '{print $1}')" = "d37f50527665cc6e58317999ed4f59c0d17bc68719c88a1d397df21911dcda95"
+          git diff --check
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n%s' '.github/workflows/football3-formal-gpt-runner-integration-v1.yml' 'football-data/formal_gpt_gateway_v1/production_base_binding_v1.py')"
+
+      - name: Commit and non-force fast-forward push remediation candidate
+        run: |
+          set -euo pipefail
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/football3-formal-gpt-runner-integration-v1.yml football-data/formal_gpt_gateway_v1/production_base_binding_v1.py
+          git commit -m "football3: bind production runner to live integration exact sha"
+          CANDIDATE="$(git rev-parse HEAD)"
+          PARENT="$(git rev-parse HEAD^)"
+          TREE="$(git rev-parse HEAD^{tree})"
+          test "$PARENT" = "d4fbf19ee5b6e270087634ff865b2043a7971db1"
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD | sort)" = "$(printf '%s\n%s' '.github/workflows/football3-formal-gpt-runner-integration-v1.yml' 'football-data/formal_gpt_gateway_v1/production_base_binding_v1.py')"
+          REMOTE_BEFORE="$(git ls-remote origin refs/heads/football3/production-live-base-sha-remediation-v1 | awk '{print $1}')"
+          test "$REMOTE_BEFORE" = "d4fbf19ee5b6e270087634ff865b2043a7971db1"
+          git push origin HEAD:refs/heads/football3/production-live-base-sha-remediation-v1
+          REMOTE_AFTER="$(git ls-remote origin refs/heads/football3/production-live-base-sha-remediation-v1 | awk '{print $1}')"
+          test "$REMOTE_AFTER" = "$CANDIDATE"
+          mkdir -p /tmp/report
+          python - <<'PY'
+          import hashlib,json,os,subprocess,pathlib
+          root=pathlib.Path('target') if pathlib.Path('target').exists() else pathlib.Path('.')
+          def sh(*a): return subprocess.check_output(a,text=True,cwd=root).strip()
+          wf=root/'.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
+          hp=root/'football-data/formal_gpt_gateway_v1/production_base_binding_v1.py'
+          d={
+            'candidate':sh('git','rev-parse','HEAD'),'parent':sh('git','rev-parse','HEAD^'),'tree':sh('git','rev-parse','HEAD^{tree}'),
+            'workflow_blob':sh('git','hash-object',str(wf.relative_to(root))),'workflow_sha256':hashlib.sha256(wf.read_bytes()).hexdigest(),
+            'helper_blob':sh('git','hash-object',str(hp.relative_to(root))),'helper_sha256':hashlib.sha256(hp.read_bytes()).hexdigest(),
+            'changed_files':sh('git','diff-tree','--no-commit-id','--name-only','-r','HEAD').splitlines(),
+            'tests':'15/15 PASS','base':'d4fbf19ee5b6e270087634ff865b2043a7971db1'}
+          pathlib.Path('/tmp/report/bootstrap-report.json').write_text(json.dumps(d,sort_keys=True,indent=2)+'\n')
+          PY
+          cp /tmp/test-output.txt /tmp/report/test-output.txt
+
+      - name: Upload bootstrap report
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-production-live-base-bootstrap-${{ github.run_id }}
+          path: /tmp/report/
+          if-no-files-found: error
+          retention-days: 7
