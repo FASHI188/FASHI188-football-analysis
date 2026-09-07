@@ -59,13 +59,15 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
 
 
 def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle_dir: Path,
-                           target_cutoff, competition_id: str) -> dict[str, Any]:
+                           target_cutoff, competition_id: str, artifact_availability_ceiling=None) -> dict[str, Any]:
     artifact_created_at = str(artifact.get("created_at") or "")
+    availability_ceiling = artifact_availability_ceiling or target_cutoff
     base = {
         "artifact_id": int(artifact.get("id") or 0),
         "artifact_name": str(artifact.get("name") or ""),
         "artifact_created_at": artifact_created_at,
         "artifact_available_by_target_cutoff": False,
+        "artifact_available_before_kickoff": False,
         "artifact_digest": artifact.get("digest"),
         "artifact_role_ok": contract.artifact_role_ok(str(artifact.get("name") or "")),
         "verified": run.get("status") == "completed" and run.get("conclusion") == "success",
@@ -95,10 +97,16 @@ def _candidate_from_bundle(artifact: dict[str, Any], run: dict[str, Any], bundle
                 and meta.get("current_sha256") == rt.CURRENT_SHA256
             ),
             "competition_scope_ok": competition_id in rt.FORMAL_SCOPE and competition_id in meta.get("formal_scope", []),
+            # Artifact creation and source/state PIT are separate clocks. For a
+            # retrospective replay, a state sealed at target_cutoff may be packaged
+            # later, but the package itself must have existed before kickoff. This
+            # rejects post-match duplicate artifacts without falsely rejecting a
+            # pre-match package whose historical waterline is earlier than creation.
             "artifact_available_by_target_cutoff": artifact_created <= target_cutoff,
+            "artifact_available_before_kickoff": artifact_created <= availability_ceiling,
             "pit_ok": (
                 state_cutoff <= target_cutoff
-                and artifact_created <= target_cutoff
+                and artifact_created <= availability_ceiling
                 and rt._parse_dt(max_source, "max source observed at") <= state_cutoff
             ),
             "state_cutoff": state_cutoff.isoformat(),
@@ -133,6 +141,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
         raise rt.RuntimeGateError("cutoff-aware durable selector requires prediction match")
     competition_id = str(match.get("competition_id") or "")
     target_cutoff = rt._parse_dt(str(match.get("cutoff") or ""), "target cutoff")
+    kickoff = rt._parse_dt(str(match.get("kickoff") or ""), "kickoff")
     if competition_id not in rt.FORMAL_SCOPE:
         raise rt.RuntimeGateError("competition outside Formal Fusion V2 scope")
 
@@ -156,13 +165,16 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
             try:
                 _download(f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip", token, zip_path)
                 _safe_extract(zip_path, bundle_dir)
-                candidate = _candidate_from_bundle(artifact, run, bundle_dir, target_cutoff, competition_id)
+                candidate = _candidate_from_bundle(
+                    artifact, run, bundle_dir, target_cutoff, competition_id, kickoff
+                )
             except Exception as exc:
                 candidate = {
                     "artifact_id": artifact_id,
                     "artifact_name": name,
                     "artifact_created_at": str(artifact.get("created_at") or ""),
                     "artifact_available_by_target_cutoff": False,
+                    "artifact_available_before_kickoff": False,
                     "artifact_role_ok": True,
                     "verified": run.get("status") == "completed" and run.get("conclusion") == "success",
                     "schema_ok": False,
@@ -187,7 +199,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
                 "status": "DATA_STATE_ANOMALY",
                 "reason": "NO_ELIGIBLE_DURABLE_STATE",
                 "target_cutoff": target_cutoff.isoformat(),
-                "prematch_artifact_availability_ceiling": target_cutoff.isoformat(),
+                "prematch_artifact_availability_ceiling": kickoff.isoformat(),
                 "competition_id": competition_id,
                 "runtime_contract": contract.runtime_contract_payload(),
                 "candidates": public_evaluated,
@@ -207,7 +219,7 @@ def select_from_github(repo: str, token: str, request: dict[str, Any], cache_roo
             "status": "SELECTED",
             "selection_rule": "eligible_prematch_artifact_available_then_max_state_cutoff_created_at_tiebreak",
             "target_cutoff": target_cutoff.isoformat(),
-            "prematch_artifact_availability_ceiling": target_cutoff.isoformat(),
+            "prematch_artifact_availability_ceiling": kickoff.isoformat(),
             "competition_id": competition_id,
             "selected": selected_public,
             "runtime_contract": contract.runtime_contract_payload(),
