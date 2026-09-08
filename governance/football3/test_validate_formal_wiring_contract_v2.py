@@ -27,8 +27,7 @@ def schema() -> dict:
 
 
 def rejects(mutator) -> None:
-    c = contract()
-    mutator(c)
+    c = contract(); mutator(c)
     with pytest.raises(mod.FormalWiringGovernanceError):
         mod.validate_contract(c, schema())
 
@@ -42,12 +41,8 @@ def test_market_semantics_are_not_weakened():
     rejects(lambda c: c["governance"].__setitem__("market_inputs", ["closing_odds"]))
     rejects(lambda c: c["governance"].__setitem__("market_baseline", True))
     rejects(lambda c: c["governance"].__setitem__("market_validator_semantics", "BYPASS"))
-    rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__(
-        "football-data/research/validate_football3_experiment.py", "0" * 40
-    ))
-    rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__(
-        "football-data/research/test_validate_football3_experiment.py", "0" * 40
-    ))
+    rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__("football-data/research/validate_football3_experiment.py", "0" * 40))
+    rejects(lambda c: c["governance"]["immutable_market_governance_git_blobs"].__setitem__("football-data/research/test_validate_football3_experiment.py", "0" * 40))
 
 
 def test_training_tuning_labels_and_enablement_fail_closed():
@@ -77,24 +72,15 @@ def test_cumulative_whitelist_is_exact_and_capped():
 def test_branch_research_and_formal_source_identities_are_frozen():
     rejects(lambda c: c.__setitem__("branch", "football3/other"))
     rejects(lambda c: c["research_acceptance"].__setitem__("head", "0" * 40))
-    rejects(lambda c: c["governance"]["immutable_formal_source_git_blobs"].__setitem__(
-        "football-data/new_engine_v1/formal_fusion_v2.py", "0" * 40
-    ))
+    rejects(lambda c: c["governance"]["immutable_formal_source_git_blobs"].__setitem__("football-data/new_engine_v1/formal_fusion_v2.py", "0" * 40))
 
 
 def test_scientific_code_binding_is_real_non_market_and_fail_closed():
-    c = contract()
-    b = c["governance"]["scientific_code_bindings"]
+    c = contract(); b = c["governance"]["scientific_code_bindings"]
     assert b == mod.EXPECTED_BINDINGS
-    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
-        "runner", "football-data/research/fake_market_runner.py"
-    ))
-    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
-        "contract_marker", "FOOTBALL3_EXPERIMENT_CONTRACT"
-    ))
-    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__(
-        "cumulative_audit_base_head", "3016f6c7a0b77e0db310ad926011dfaa50c56e02"
-    ))
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__("runner", "football-data/research/fake_market_runner.py"))
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__("contract_marker", "FOOTBALL3_EXPERIMENT_CONTRACT"))
+    rejects(lambda c: c["governance"]["scientific_code_bindings"].__setitem__("cumulative_audit_base_head", "3016f6c7a0b77e0db310ad926011dfaa50c56e02"))
 
 
 def test_unknown_top_level_contract_key_fails_closed():
@@ -102,21 +88,45 @@ def test_unknown_top_level_contract_key_fails_closed():
 
 
 def test_schema_constants_fail_closed():
-    s = schema()
-    s["properties"]["schema_version"]["const"] = 1
+    s = schema(); s["properties"]["schema_version"]["const"] = 1
     with pytest.raises(mod.FormalWiringGovernanceError):
         mod.validate_contract(contract(), s)
 
 
 def test_schema_scientific_binding_cannot_be_removed():
-    s = schema()
-    s["properties"]["governance"]["properties"].pop("scientific_code_bindings")
+    s = schema(); s["properties"]["governance"]["properties"].pop("scientific_code_bindings")
     with pytest.raises(mod.FormalWiringGovernanceError):
         mod.validate_contract(contract(), s)
 
 
 def test_git_blob_sha1_matches_git_object_formula(tmp_path: Path):
-    p = tmp_path / "x.txt"
-    p.write_bytes(b"abc\n")
+    p = tmp_path / "x.txt"; p.write_bytes(b"abc\n")
     expected = hashlib.sha1(b"blob 4\0abc\n").hexdigest()
     assert mod.git_blob_sha1(p) == expected
+
+
+def test_pull_request_candidate_authority_is_generic_not_branch_whitelist(tmp_path: Path, monkeypatch):
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"pull_request": {"base": {"sha": "1" * 40}}}), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_HEAD_REF", "arbitrary/integration-hotfix-candidate")
+    monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+    assert mod.validate_runtime_branch(contract()) == "PULL_REQUEST_CANDIDATE"
+    assert mod._pull_request_base_sha() == "1" * 40
+
+
+def test_candidate_authority_protects_scientific_model_and_current_surfaces():
+    c = contract(); protected = mod._candidate_protected_paths(c)
+    assert "football-data/new_engine_v1/formal_fusion_v2.py" in protected
+    assert mod._is_additionally_protected_scientific_path("football-data/new_engine_v1/other_model.py")
+    assert mod._is_additionally_protected_scientific_path("football-data/config/CURRENT")
+    assert mod._is_additionally_protected_scientific_path("football-data/config/formal_model_pointer_v9.json")
+    assert not mod._is_additionally_protected_scientific_path("football-data/formal_gpt_gateway_v1/request_contract_v1.py")
+
+
+def test_candidate_runtime_without_pull_request_event_fails_closed(monkeypatch):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "candidate/branch")
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime branch mismatch outside pull-request candidate"):
+        mod.validate_runtime_branch(contract())
