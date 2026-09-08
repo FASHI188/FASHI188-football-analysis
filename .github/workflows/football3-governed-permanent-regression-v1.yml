@@ -96,6 +96,25 @@ jobs:
           print('CANDIDATE_INVENTORY_PASS',d['inventory_sha'],d['candidate_artifact_count'],s)
           PY
           sha256sum regression/inventory/candidate-inventory.json regression/inventory/build-api-stats.json | sort > regression/inventory/manifest.sha256
+
+      - name: Stamp inventory Artifact with exact PR head
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          python3 - <<'PY'
+          import json, os, pathlib
+          head=os.environ['CANDIDATE_EXACT_HEAD']
+          p=pathlib.Path('regression/inventory/candidate-head-binding.json')
+          p.write_text(json.dumps({'candidate_exact_head':head},sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          assert json.loads(p.read_text(encoding='utf-8'))['candidate_exact_head']==head
+          print('CANDIDATE_EXACT_HEAD_BINDING_PASS',head)
+          PY
+          sha256sum regression/inventory/candidate-inventory.json regression/inventory/build-api-stats.json regression/inventory/candidate-head-binding.json | sort > regression/inventory/manifest.sha256
+
       - name: Upload canonical candidate inventory and ZIP cache
         uses: actions/upload-artifact@v4
         with:
@@ -341,6 +360,24 @@ jobs:
           pathlib.Path('regression/core/sealed-determinism.json').write_text(json.dumps(out,sort_keys=True)+'\n')
           PY
 
+      - name: Stamp core Artifact with exact PR head
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          mkdir -p regression/core
+          python3 - <<'PY'
+          import json, os, pathlib
+          head=os.environ['CANDIDATE_EXACT_HEAD']
+          p=pathlib.Path('regression/core/candidate-head-binding.json')
+          p.write_text(json.dumps({'candidate_exact_head':head},sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          assert json.loads(p.read_text(encoding='utf-8'))['candidate_exact_head']==head
+          print('CANDIDATE_EXACT_HEAD_BINDING_PASS',head)
+          PY
+
       - name: Upload governed core regression evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -443,6 +480,24 @@ jobs:
           raw=json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
           report={'schema_version':'football3-governed-permanent-domain-probes-v2','status':'PASS','probe_count':7,'shared_inventory_sha':inv['inventory_sha'],'repository_run_list_network_pages':0,'probe_set_sha256':hashlib.sha256(raw).hexdigest(),'probes':rows}
           (root/'formal-entry-domain-probes.json').write_text(json.dumps(report,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
+          PY
+
+      - name: Stamp domain-probes Artifact with exact PR head
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          mkdir -p regression/probes
+          python3 - <<'PY'
+          import json, os, pathlib
+          head=os.environ['CANDIDATE_EXACT_HEAD']
+          p=pathlib.Path('regression/probes/candidate-head-binding.json')
+          p.write_text(json.dumps({'candidate_exact_head':head},sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          assert json.loads(p.read_text(encoding='utf-8'))['candidate_exact_head']==head
+          print('CANDIDATE_EXACT_HEAD_BINDING_PASS',head)
           PY
 
       - name: Upload governed domain probe evidence
