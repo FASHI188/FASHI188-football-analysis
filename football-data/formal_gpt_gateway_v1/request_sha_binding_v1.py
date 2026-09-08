@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
 from typing import Any
+
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
 
 import request_contract_v1 as contract
 
@@ -61,6 +64,7 @@ def verify(request_path: str, transport_path: str, binding_path: str) -> dict[st
         "request_sha256": actual,
         "expected_request_sha256": expected,
         "request_sha_verified": True,
+        "carrier_pr_number": transport.get("pr_number"),
         "carrier_head_sha": carrier_head,
         "canonical_execution_sha": canonical_execution,
     }
@@ -94,10 +98,12 @@ def enrich(transport_path: str, binding_path: str, out_dir: str) -> dict[str, An
         "request_sha256": request_sha,
         "expected_request_sha256": expected or None,
         "request_sha_verified": bool(carrier_bound and request_sha == expected),
+        "carrier_pr_number": transport.get("pr_number"),
         "carrier_head_sha": carrier_head,
         "canonical_execution_sha": canonical_execution,
         "canonical_ref": binding.get("canonical_base_ref"),
         "runner_code_source": binding.get("runner_code_source"),
+        "production_run_id": str(os.environ.get("GITHUB_RUN_ID") or "") or None,
     }
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -110,8 +116,10 @@ def enrich(transport_path: str, binding_path: str, out_dir: str) -> dict[str, An
             {
                 "expected_request_sha256": expected or None,
                 "request_sha_verified": bool(carrier_bound and request_sha == expected),
+                "carrier_pr_number": transport.get("pr_number"),
                 "carrier_head_sha": carrier_head,
                 "canonical_execution_sha": canonical_execution,
+                "production_run_id": receipt["production_run_id"],
             }
         )
         execution_path.write_bytes(contract.canonical_bytes(execution) + b"\n")

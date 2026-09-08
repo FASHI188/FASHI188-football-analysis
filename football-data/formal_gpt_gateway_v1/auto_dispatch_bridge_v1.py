@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import os
 import pathlib
@@ -11,18 +13,22 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from typing import Any
 
 import request_contract_v1 as request_contract
 
-SCHEMA = "football3-gpt-auto-dispatch-bridge-v2"
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+SCHEMA = "football3-gpt-auto-dispatch-bridge-v3"
 CANONICAL_REF = "football3/formal-gpt-runner-integration-v1"
 CARRIER_REF = "football3/formal-gpt-runner-request-carrier-v1"
 CARRIER_PR_NUMBER = 341
 CARRIER_FILE = "FOOTBALL3_FORMAL_GPT_REQUEST_CARRIER.md"
 FORMAL_WORKFLOW = "football3-formal-gpt-runner-integration-v1.yml"
 FORMAL_RUN_PREFIX = "Football3 Formal GPT Runner Integration V1"
+RECEIVER_WORKFLOW_NAME = "Football3 GPT Auto Dispatch Receiver V3"
+TRUSTED_DISPATCHER_WORKFLOW_NAME = "Football3 GPT Auto Dispatch Trusted Dispatcher V1"
 BEGIN_MARKER = "<!-- football3-request-json -->"
 END_MARKER = "<!-- /football3-request-json -->"
 ALLOWED_PERMISSIONS = frozenset({"admin", "maintain", "write"})
@@ -39,7 +45,6 @@ def _fail(code: str) -> None:
 
 
 def request_id_hash(request_id: str) -> str:
-    import hashlib
     return hashlib.sha256(request_id.encode("utf-8")).hexdigest()
 
 
@@ -56,11 +61,9 @@ def parse_request_body(body: str) -> dict[str, Any]:
         _fail("AUTO_DISPATCH_REQUEST_BODY_INVALID")
     if body.count(BEGIN_MARKER) != 1 or body.count(END_MARKER) != 1:
         _fail("AUTO_DISPATCH_REQUEST_MARKERS_INVALID")
-    prefix, rest = body.split(BEGIN_MARKER, 1)
-    raw, suffix = rest.split(END_MARKER, 1)
-    del prefix, suffix
+    raw = body.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0].strip()
     try:
-        return request_contract.parse_json(raw.strip(), carrier_request=True)
+        return request_contract.parse_json(raw, carrier_request=True)
     except request_contract.FormalRequestContractError as exc:
         raise BridgeError(f"AUTO_DISPATCH_REQUEST_CONTRACT:{exc.code}") from exc
 
@@ -77,12 +80,10 @@ def validate_live_pr(pr: Any, repo: str) -> None:
         _fail("AUTO_DISPATCH_LIVE_BASE_REF_UNAUTHORIZED")
     if head.get("ref") != CARRIER_REF or head_repo.get("full_name") != repo:
         _fail("AUTO_DISPATCH_LIVE_HEAD_UNAUTHORIZED")
-    for value, code in (
-        (base.get("sha"), "AUTO_DISPATCH_LIVE_BASE_SHA_INVALID"),
-        (head.get("sha"), "AUTO_DISPATCH_LIVE_HEAD_SHA_INVALID"),
-    ):
-        if not isinstance(value, str) or not SHA_RE.fullmatch(value):
-            _fail(code)
+    if not isinstance(base.get("sha"), str) or not SHA_RE.fullmatch(base["sha"]):
+        _fail("AUTO_DISPATCH_LIVE_BASE_SHA_INVALID")
+    if not isinstance(head.get("sha"), str) or not SHA_RE.fullmatch(head["sha"]):
+        _fail("AUTO_DISPATCH_LIVE_HEAD_SHA_INVALID")
 
 
 def validate_carrier_files(files: Any) -> None:
@@ -101,15 +102,11 @@ def validate_permission(permission: Any) -> str:
 def classify_ledgers(request_id: str, request_sha: str, artifacts: list[dict[str, Any]]) -> tuple[str, list[int]]:
     reservation_name, completed_name = ledger_names(request_id, request_sha)
     token = request_id_hash(request_id)
-    reservation_prefix = f"football3-auto-dispatch-reservation-{token}"
-    completed_prefix = f"football3-auto-dispatch-completed-{token}"
-    related: list[dict[str, Any]] = []
-    for artifact in artifacts:
-        if type(artifact) is not dict or artifact.get("expired") is True:
-            continue
-        name = artifact.get("name")
-        if isinstance(name, str) and (name.startswith(reservation_prefix) or name.startswith(completed_prefix)):
-            related.append(artifact)
+    prefixes = (
+        f"football3-auto-dispatch-reservation-{token}-",
+        f"football3-auto-dispatch-completed-{token}-",
+    )
+    related = [a for a in artifacts if type(a) is dict and a.get("expired") is not True and isinstance(a.get("name"), str) and a["name"].startswith(prefixes)]
     allowed = {reservation_name, completed_name}
     if any(a.get("name") not in allowed for a in related):
         _fail("AUTO_DISPATCH_REQUEST_ID_CONTENT_MISMATCH")
@@ -140,18 +137,12 @@ def assert_canonical_unchanged(audit: dict[str, Any], live_sha: str) -> None:
 def build_dispatch_payload(request_sha: str) -> dict[str, Any]:
     if not isinstance(request_sha, str) or not SHA256_RE.fullmatch(request_sha):
         _fail("AUTO_DISPATCH_REQUEST_SHA_INVALID")
-    return {
-        "ref": CANONICAL_REF,
-        "inputs": {
-            "request_pr_number": str(CARRIER_PR_NUMBER),
-            "expected_request_sha256": request_sha,
-        },
-    }
+    return {"ref": CANONICAL_REF, "inputs": {"request_pr_number": "341", "expected_request_sha256": request_sha}}
 
 
 def select_new_formal_run(before_ids: set[int], runs: list[dict[str, Any]], request_sha: str, canonical_sha: str) -> dict[str, Any] | None:
     expected_title = f"{FORMAL_RUN_PREFIX} {request_sha}"
-    matches: list[dict[str, Any]] = []
+    matches = []
     for run in runs:
         if type(run) is not dict:
             continue
@@ -161,11 +152,7 @@ def select_new_formal_run(before_ids: set[int], runs: list[dict[str, Any]], requ
             continue
         if run_id in before_ids:
             continue
-        if run.get("event") != "workflow_dispatch":
-            continue
-        if run.get("head_branch") != CANONICAL_REF or run.get("head_sha") != canonical_sha:
-            continue
-        if run.get("display_title") != expected_title:
+        if run.get("event") != "workflow_dispatch" or run.get("head_branch") != CANONICAL_REF or run.get("head_sha") != canonical_sha or run.get("display_title") != expected_title:
             continue
         matches.append(run)
     if len(matches) > 1:
@@ -181,21 +168,14 @@ class GitHubAPI:
         self.token = token
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, bytes]:
-        url = f"https://api.github.com{path}"
-        data = request_contract.canonical_bytes(payload) if payload is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
+        req = urllib.request.Request(
+            f"https://api.github.com{path}",
+            data=request_contract.canonical_bytes(payload) if payload is not None else None,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "football3-gpt-auto-dispatch-bridge-v2",
-            },
+            headers={"Authorization": f"Bearer {self.token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "football3-gpt-auto-dispatch-bridge-v3"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 return int(response.status), response.read()
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")
@@ -233,31 +213,34 @@ class GitHubAPI:
         _fail("AUTO_DISPATCH_CARRIER_CHANGED_FILES_PAGINATION_LIMIT")
 
     def actor_permission(self, actor: str) -> str:
-        actor = urllib.parse.quote(actor, safe="")
-        value = self.json_value(f"/repos/{self.repo}/collaborators/{actor}/permission")
+        value = self.json_value(f"/repos/{self.repo}/collaborators/{urllib.parse.quote(actor, safe='')}/permission")
         if type(value) is not dict:
             _fail("AUTO_DISPATCH_ACTOR_PERMISSION_RESPONSE_INVALID")
         return validate_permission(value.get("permission"))
 
     def live_canonical_sha(self) -> str:
-        encoded = urllib.parse.quote(CANONICAL_REF, safe="")
-        value = self.json_value(f"/repos/{self.repo}/git/ref/heads/{encoded}")
-        if type(value) is not dict or value.get("ref") != f"refs/heads/{CANONICAL_REF}":
-            _fail("AUTO_DISPATCH_CANONICAL_REF_INVALID")
-        obj = value.get("object") or {}
-        sha = obj.get("sha")
-        if obj.get("type") != "commit" or not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+        value = self.json_value(f"/repos/{self.repo}/git/ref/heads/{urllib.parse.quote(CANONICAL_REF, safe='')}")
+        obj = value.get("object") if type(value) is dict else None
+        sha = obj.get("sha") if type(obj) is dict else None
+        if value.get("ref") != f"refs/heads/{CANONICAL_REF}" or obj.get("type") != "commit" or not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
             _fail("AUTO_DISPATCH_CANONICAL_SHA_INVALID")
         return sha
+
+    def default_branch(self) -> str:
+        value = self.json_value(f"/repos/{self.repo}")
+        branch = value.get("default_branch") if type(value) is dict else None
+        if not isinstance(branch, str) or not branch:
+            _fail("AUTO_DISPATCH_DEFAULT_BRANCH_INVALID")
+        return branch
 
     def all_artifacts(self) -> list[dict[str, Any]]:
         artifacts: list[dict[str, Any]] = []
         for page in range(1, 101):
             value = self.json_value(f"/repos/{self.repo}/actions/artifacts?per_page=100&page={page}")
-            if type(value) is not dict or not isinstance(value.get("artifacts"), list):
+            batch = value.get("artifacts") if type(value) is dict else None
+            if not isinstance(batch, list):
                 _fail("AUTO_DISPATCH_ARTIFACT_LIST_INVALID")
-            batch = [a for a in value["artifacts"] if type(a) is dict]
-            artifacts.extend(batch)
+            artifacts.extend(a for a in batch if type(a) is dict)
             total = value.get("total_count")
             if isinstance(total, int) and len(artifacts) >= total:
                 return artifacts
@@ -265,38 +248,77 @@ class GitHubAPI:
                 return artifacts
         _fail("AUTO_DISPATCH_ARTIFACT_LIST_PAGINATION_LIMIT")
 
+    def validate_ledger_artifact_sources(self, artifacts: list[dict[str, Any]], request_id: str) -> None:
+        token = request_id_hash(request_id)
+        prefixes = (f"football3-auto-dispatch-reservation-{token}-", f"football3-auto-dispatch-completed-{token}-")
+        default_branch = self.default_branch()
+        checked: dict[int, dict[str, Any]] = {}
+        for artifact in artifacts:
+            name = artifact.get("name") if type(artifact) is dict else None
+            if artifact.get("expired") is True or not isinstance(name, str) or not name.startswith(prefixes):
+                continue
+            run_meta = artifact.get("workflow_run") or {}
+            try:
+                run_id = int(run_meta.get("id"))
+            except (TypeError, ValueError):
+                _fail("AUTO_DISPATCH_LEDGER_AUTHORITY_INVALID")
+            if run_id not in checked:
+                value = self.json_value(f"/repos/{self.repo}/actions/runs/{run_id}")
+                if type(value) is not dict:
+                    _fail("AUTO_DISPATCH_LEDGER_AUTHORITY_INVALID")
+                checked[run_id] = value
+            run = checked[run_id]
+            if run.get("event") != "workflow_run" or run.get("name") != TRUSTED_DISPATCHER_WORKFLOW_NAME or run.get("head_branch") != default_branch:
+                _fail("AUTO_DISPATCH_LEDGER_AUTHORITY_INVALID")
+
     def formal_runs(self) -> list[dict[str, Any]]:
-        workflow = urllib.parse.quote(FORMAL_WORKFLOW, safe="")
-        branch = urllib.parse.quote(CANONICAL_REF, safe="")
-        value = self.json_value(f"/repos/{self.repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&branch={branch}&per_page=100")
-        if type(value) is not dict or not isinstance(value.get("workflow_runs"), list):
+        value = self.json_value(f"/repos/{self.repo}/actions/workflows/{urllib.parse.quote(FORMAL_WORKFLOW, safe='')}/runs?event=workflow_dispatch&branch={urllib.parse.quote(CANONICAL_REF, safe='')}&per_page=100")
+        runs = value.get("workflow_runs") if type(value) is dict else None
+        if not isinstance(runs, list):
             _fail("AUTO_DISPATCH_FORMAL_RUN_LIST_INVALID")
-        return [r for r in value["workflow_runs"] if type(r) is dict]
+        return [r for r in runs if type(r) is dict]
 
     def matching_formal_run_ids(self, request_sha: str, canonical_sha: str) -> set[int]:
-        expected_title = f"{FORMAL_RUN_PREFIX} {request_sha}"
-        result: set[int] = set()
+        title = f"{FORMAL_RUN_PREFIX} {request_sha}"
+        out: set[int] = set()
         for run in self.formal_runs():
-            if run.get("event") == "workflow_dispatch" and run.get("head_branch") == CANONICAL_REF and run.get("head_sha") == canonical_sha and run.get("display_title") == expected_title:
-                try:
-                    result.add(int(run["id"]))
-                except (KeyError, TypeError, ValueError):
-                    _fail("AUTO_DISPATCH_FORMAL_RUN_ID_INVALID")
-        return result
+            if run.get("event") == "workflow_dispatch" and run.get("head_branch") == CANONICAL_REF and run.get("head_sha") == canonical_sha and run.get("display_title") == title:
+                out.add(int(run["id"]))
+        return out
 
     def dispatch_formal(self, request_sha: str) -> None:
-        workflow = urllib.parse.quote(FORMAL_WORKFLOW, safe="")
-        status, _ = self.request("POST", f"/repos/{self.repo}/actions/workflows/{workflow}/dispatches", build_dispatch_payload(request_sha))
+        status, _ = self.request("POST", f"/repos/{self.repo}/actions/workflows/{urllib.parse.quote(FORMAL_WORKFLOW, safe='')}/dispatches", build_dispatch_payload(request_sha))
         if status != 204:
             _fail(f"AUTO_DISPATCH_WORKFLOW_DISPATCH_STATUS:{status}")
 
-    def locate_new_formal_run(self, before_ids: set[int], request_sha: str, canonical_sha: str, *, attempts: int = 30, sleep_seconds: float = 1.0) -> dict[str, Any]:
+    def locate_new_formal_run(self, before_ids: set[int], request_sha: str, canonical_sha: str, attempts: int = 30) -> dict[str, Any]:
         for _ in range(attempts):
             found = select_new_formal_run(before_ids, self.formal_runs(), request_sha, canonical_sha)
             if found is not None:
                 return found
-            time.sleep(sleep_seconds)
+            time.sleep(1)
         _fail("AUTO_DISPATCH_FORMAL_RUN_NOT_FOUND")
+
+    def wait_terminal(self, run_id: int, attempts: int = 180) -> dict[str, Any]:
+        for _ in range(attempts):
+            value = self.json_value(f"/repos/{self.repo}/actions/runs/{run_id}")
+            if value.get("status") == "completed":
+                return value
+            time.sleep(5)
+        _fail("AUTO_DISPATCH_FORMAL_RUN_TIMEOUT")
+
+    def run_artifacts(self, run_id: int) -> list[dict[str, Any]]:
+        value = self.json_value(f"/repos/{self.repo}/actions/runs/{run_id}/artifacts?per_page=100")
+        artifacts = value.get("artifacts") if type(value) is dict else None
+        if not isinstance(artifacts, list):
+            _fail("AUTO_DISPATCH_FORMAL_ARTIFACT_LIST_INVALID")
+        return [a for a in artifacts if type(a) is dict]
+
+    def download_artifact_zip(self, artifact_id: int) -> bytes:
+        status, raw = self.request("GET", f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip")
+        if status != 200:
+            _fail("AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED")
+        return raw
 
 
 def _write_json(path: str, value: dict[str, Any]) -> None:
@@ -306,94 +328,86 @@ def _write_json(path: str, value: dict[str, Any]) -> None:
 
 
 def _append_output(values: dict[str, str]) -> None:
-    output = os.environ.get("GITHUB_OUTPUT")
-    if not output:
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
         return
-    with open(output, "a", encoding="utf-8") as handle:
+    with open(path, "a", encoding="utf-8") as handle:
         for key, value in values.items():
             handle.write(f"{key}={value}\n")
 
 
-def _audit_live(api: GitHubAPI, *, actor: str | None) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
+def _audit_live(api: GitHubAPI, actor: str | None) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
     pr = api.live_pr()
     validate_live_pr(pr, api.repo)
-    files = api.carrier_files()
-    validate_carrier_files(files)
+    validate_carrier_files(api.carrier_files())
     permission = api.actor_permission(actor) if actor else None
     request = parse_request_body(pr.get("body") or "")
-    canonical_sha = api.live_canonical_sha()
-    return request, pr, canonical_sha, permission
+    return request, pr, api.live_canonical_sha(), permission
 
 
 def audit_live(args: argparse.Namespace) -> int:
     api = GitHubAPI(args.repo, args.token)
-    request, pr, canonical_sha, permission = _audit_live(api, actor=args.actor)
-    request_sha = request_contract.request_sha256(request)
+    request, pr, canonical_sha, permission = _audit_live(api, args.actor)
     audit = {
         "schema_version": SCHEMA,
         "phase": "AUDIT_ONLY",
         "status": "PASS",
         "request_id": request["request_id"],
-        "request_sha256": request_sha,
+        "request_sha256": request_contract.request_sha256(request),
         "carrier_pr_number": CARRIER_PR_NUMBER,
-        "carrier_file": CARRIER_FILE,
         "carrier_head_sha": (pr.get("head") or {}).get("sha"),
-        "carrier_base_sha_audit_only": (pr.get("base") or {}).get("sha"),
-        "canonical_ref": CANONICAL_REF,
         "canonical_execution_sha": canonical_sha,
-        "actor": args.actor or None,
         "actor_permission": permission,
         "dispatch_performed": False,
-        "trusted_auto_dispatch_trigger": "TRUSTED_AUTO_DISPATCH_TRIGGER_UNAVAILABLE",
+        "candidate_validation_only": True,
     }
     _write_json(args.audit_out, audit)
-    _append_output({"request_id": str(request["request_id"]), "request_sha256": request_sha, "canonical_execution_sha": canonical_sha, "carrier_head_sha": str(audit["carrier_head_sha"])})
     return 0
 
 
 def prepare(args: argparse.Namespace) -> int:
-    if not SHA_RE.fullmatch(args.trusted_checkout_sha or ""):
-        _fail("AUTO_DISPATCH_TRUSTED_CHECKOUT_SHA_INVALID")
+    for value, code in ((args.trusted_checkout_sha, "AUTO_DISPATCH_TRUSTED_CHECKOUT_SHA_INVALID"), (args.trusted_dispatcher_sha, "AUTO_DISPATCH_TRUSTED_DISPATCHER_SHA_INVALID")):
+        if not SHA_RE.fullmatch(value or ""):
+            _fail(code)
     api = GitHubAPI(args.repo, args.token)
-    request, pr, canonical_sha, permission = _audit_live(api, actor=args.actor)
+    request, pr, canonical_sha, permission = _audit_live(api, args.actor)
     if canonical_sha != args.trusted_checkout_sha:
         _fail("AUTO_DISPATCH_TRUSTED_SOURCE_MOVED")
     request_sha = request_contract.request_sha256(request)
-    ledger_status, ledger_ids = classify_ledgers(str(request["request_id"]), request_sha, api.all_artifacts())
+    artifacts = api.all_artifacts()
+    api.validate_ledger_artifact_sources(artifacts, str(request["request_id"]))
+    ledger_status, ledger_ids = classify_ledgers(str(request["request_id"]), request_sha, artifacts)
     reservation_name, completed_name = ledger_names(str(request["request_id"]), request_sha)
     audit = {
         "schema_version": SCHEMA,
         "phase": "PREPARED",
+        "status": "READY",
         "request_id": request["request_id"],
         "request_sha256": request_sha,
         "actor": args.actor,
         "actor_permission": permission,
         "carrier_pr_number": CARRIER_PR_NUMBER,
-        "carrier_file": CARRIER_FILE,
-        "carrier_ref": CARRIER_REF,
         "carrier_head_sha": (pr.get("head") or {}).get("sha"),
         "carrier_base_sha_audit_only": (pr.get("base") or {}).get("sha"),
-        "canonical_ref": CANONICAL_REF,
         "canonical_execution_sha": canonical_sha,
-        "formal_workflow": FORMAL_WORKFLOW,
+        "trusted_dispatcher_sha": args.trusted_dispatcher_sha,
+        "trusted_dispatcher_run_id": int(args.trusted_dispatcher_run_id),
+        "receiver_run_id": int(args.receiver_run_id),
         "dispatch_payload": build_dispatch_payload(request_sha),
         "request_carrier_code_executed": False,
-        "trusted_workflow_source_sha": args.trusted_checkout_sha,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
     }
     if ledger_status == "DUPLICATE_COMPLETED":
-        audit["phase"] = "DUPLICATE_SUPPRESSED"
-        audit["dedup_artifact_ids"] = ledger_ids
+        audit.update({"phase": "DUPLICATE_SUPPRESSED", "status": "PASS", "dedup_artifact_ids": ledger_ids})
         _write_json(args.audit_out, audit)
-        _append_output({"dispatch_required": "false", "result": "DUPLICATE_REQUEST_ID_SUPPRESSED", "request_id": str(request["request_id"]), "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name, "canonical_execution_sha": canonical_sha})
+        _append_output({"dispatch_required": "false", "result": "DUPLICATE_REQUEST_ID_SUPPRESSED", "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name})
         return 0
     if ledger_status == "RESERVATION_CONFLICT":
-        audit["phase"] = "RESERVATION_CONFLICT_FAIL_CLOSED"
-        audit["reservation_artifact_ids"] = ledger_ids
+        audit.update({"phase": "RESERVATION_CONFLICT_FAIL_CLOSED", "status": "FAIL_CLOSED", "reservation_artifact_ids": ledger_ids})
         _write_json(args.audit_out, audit)
         _fail("AUTO_DISPATCH_REQUEST_ID_RESERVATION_PRESENT")
     _write_json(args.audit_out, audit)
-    _append_output({"dispatch_required": "true", "result": "PREPARED", "request_id": str(request["request_id"]), "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name, "canonical_execution_sha": canonical_sha})
+    _append_output({"dispatch_required": "true", "result": "PREPARED", "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name})
     return 0
 
 
@@ -406,8 +420,7 @@ def dispatch(args: argparse.Namespace) -> int:
     if type(audit) is not dict or audit.get("schema_version") != SCHEMA or audit.get("phase") != "PREPARED":
         _fail("AUTO_DISPATCH_AUDIT_NOT_PREPARED")
     api = GitHubAPI(args.repo, args.token)
-    request, pr, live_sha, permission = _audit_live(api, actor=str(audit.get("actor") or ""))
-    del permission
+    request, pr, live_sha, _ = _audit_live(api, str(audit.get("actor") or ""))
     assert_request_unchanged(audit, request)
     if (pr.get("head") or {}).get("sha") != audit.get("carrier_head_sha"):
         _fail("AUTO_DISPATCH_CARRIER_HEAD_MOVED_AFTER_RESERVATION")
@@ -416,37 +429,101 @@ def dispatch(args: argparse.Namespace) -> int:
     before_ids = api.matching_formal_run_ids(request_sha, live_sha)
     api.dispatch_formal(request_sha)
     run = api.locate_new_formal_run(before_ids, request_sha, live_sha)
-    try:
-        run_id = int(run["id"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BridgeError("AUTO_DISPATCH_FORMAL_RUN_ID_INVALID") from exc
-    audit.update({"phase": "DISPATCHED", "dispatched_at": datetime.now(timezone.utc).isoformat(), "dispatch_ref": CANONICAL_REF, "dispatch_request_sha256": request_sha, "dispatch_live_canonical_sha": live_sha, "formal_run_id": run_id, "formal_run_url": run.get("html_url"), "formal_run_head_sha": run.get("head_sha"), "formal_run_event": run.get("event")})
+    run_id = int(run["id"])
+    audit.update({"phase": "DISPATCHED", "status": "IN_PROGRESS", "dispatch_performed": True, "formal_run_id": run_id, "formal_run_url": run.get("html_url"), "formal_run_head_sha": run.get("head_sha"), "dispatched_at": datetime.now(timezone.utc).isoformat()})
     _write_json(str(audit_path), audit)
-    _append_output({"result": "DISPATCHED", "request_sha256": request_sha, "canonical_execution_sha": live_sha, "formal_run_id": str(run_id)})
+    _append_output({"result": "DISPATCHED", "formal_run_id": str(run_id)})
+    return 0
+
+
+def _zip_json(zf: zipfile.ZipFile, basename: str) -> tuple[dict[str, Any], bytes]:
+    matches = [name for name in zf.namelist() if pathlib.PurePosixPath(name).name == basename]
+    if len(matches) != 1:
+        _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_FILE_MISSING:{basename}")
+    raw = zf.read(matches[0])
+    try:
+        value = json.loads(raw)
+    except Exception as exc:
+        raise BridgeError(f"AUTO_DISPATCH_FORMAL_RECEIPT_JSON_INVALID:{basename}") from exc
+    if type(value) is not dict:
+        _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_JSON_INVALID:{basename}")
+    return value, raw
+
+
+def finalize(args: argparse.Namespace) -> int:
+    audit_path = pathlib.Path(args.audit)
+    try:
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise BridgeError("AUTO_DISPATCH_AUDIT_INVALID") from exc
+    if type(audit) is not dict or audit.get("phase") != "DISPATCHED":
+        _fail("AUTO_DISPATCH_AUDIT_NOT_DISPATCHED")
+    api = GitHubAPI(args.repo, args.token)
+    run_id = int(audit.get("formal_run_id") or 0)
+    run = api.wait_terminal(run_id)
+    if run.get("conclusion") != "success":
+        _fail(f"AUTO_DISPATCH_FORMAL_RUN_FAILED:{run.get('conclusion')}")
+    if run.get("event") != "workflow_dispatch" or run.get("head_branch") != CANONICAL_REF or run.get("head_sha") != audit.get("canonical_execution_sha"):
+        _fail("AUTO_DISPATCH_FORMAL_RUN_HEAD_MISMATCH")
+    artifacts = [a for a in api.run_artifacts(run_id) if a.get("name") == f"formal-gpt-runner-receipt-{run_id}" and a.get("expired") is not True]
+    if len(artifacts) != 1:
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_ARTIFACT_MISSING")
+    artifact = artifacts[0]
+    artifact_id = int(artifact["id"])
+    digest = artifact.get("digest")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_ARTIFACT_DIGEST_MISSING")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(api.download_artifact_zip(artifact_id)))
+    except Exception as exc:
+        raise BridgeError("AUTO_DISPATCH_FORMAL_RECEIPT_ZIP_INVALID") from exc
+    binding, binding_raw = _zip_json(zf, "request_sha_binding_receipt.json")
+    summary, _ = _zip_json(zf, "summary.json")
+    prediction, prediction_raw = _zip_json(zf, "prediction_receipt.json")
+    if binding.get("status") != "PASS" or binding.get("request_id") != audit.get("request_id") or binding.get("request_sha256") != audit.get("request_sha256"):
+        _fail("AUTO_DISPATCH_FORMAL_REQUEST_BINDING_MISMATCH")
+    if binding.get("carrier_head_sha") != audit.get("carrier_head_sha") or binding.get("canonical_execution_sha") != audit.get("canonical_execution_sha"):
+        _fail("AUTO_DISPATCH_FORMAL_AUTHORITY_BINDING_MISMATCH")
+    if summary.get("status") != "PASS":
+        _fail("AUTO_DISPATCH_FORMAL_SUMMARY_NOT_PASS")
+    prediction_sha = summary.get("prediction_sha")
+    if not isinstance(prediction_sha, str) or not prediction_sha or prediction.get("prediction_sha") != prediction_sha:
+        _fail("AUTO_DISPATCH_FORMAL_PREDICTION_SHA_MISMATCH")
+    final_receipt = {
+        "schema_version": "football3-auto-dispatch-final-binding-receipt-v1",
+        "status": "PASS",
+        "request_id": audit.get("request_id"),
+        "request_sha256": audit.get("request_sha256"),
+        "carrier_pr_number": CARRIER_PR_NUMBER,
+        "carrier_head_sha": audit.get("carrier_head_sha"),
+        "trusted_dispatcher_sha": audit.get("trusted_dispatcher_sha"),
+        "trusted_dispatcher_run_id": audit.get("trusted_dispatcher_run_id"),
+        "receiver_run_id": audit.get("receiver_run_id"),
+        "canonical_integration_execution_sha": audit.get("canonical_execution_sha"),
+        "resulting_production_run_id": run_id,
+        "formal_receipt_artifact_id": artifact_id,
+        "formal_receipt_artifact_digest": digest,
+        "formal_request_binding_receipt_sha256": hashlib.sha256(binding_raw).hexdigest(),
+        "formal_prediction_receipt_sha256": hashlib.sha256(prediction_raw).hexdigest(),
+        "prediction_sha": prediction_sha,
+        "dispatch_performed": True,
+        "request_carrier_code_executed": False,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    audit.update({"phase": "COMPLETED", "status": "PASS", "prediction_sha": prediction_sha, "final_binding_receipt": final_receipt})
+    _write_json(str(audit_path), audit)
+    _write_json(args.final_receipt_out, final_receipt)
+    _append_output({"result": "COMPLETED", "formal_run_id": str(run_id), "formal_receipt_artifact_id": str(artifact_id), "prediction_sha": prediction_sha})
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    command = sub.add_parser("audit-live")
-    command.add_argument("--repo", required=True)
-    command.add_argument("--token", required=True)
-    command.add_argument("--actor")
-    command.add_argument("--audit-out", required=True)
-    command.set_defaults(func=audit_live)
-    command = sub.add_parser("prepare")
-    command.add_argument("--repo", required=True)
-    command.add_argument("--token", required=True)
-    command.add_argument("--actor", required=True)
-    command.add_argument("--trusted-checkout-sha", required=True)
-    command.add_argument("--audit-out", required=True)
-    command.set_defaults(func=prepare)
-    command = sub.add_parser("dispatch")
-    command.add_argument("--repo", required=True)
-    command.add_argument("--token", required=True)
-    command.add_argument("--audit", required=True)
-    command.set_defaults(func=dispatch)
+    p = sub.add_parser("audit-live"); p.add_argument("--repo", required=True); p.add_argument("--token", required=True); p.add_argument("--actor"); p.add_argument("--audit-out", required=True); p.set_defaults(func=audit_live)
+    p = sub.add_parser("prepare"); p.add_argument("--repo", required=True); p.add_argument("--token", required=True); p.add_argument("--actor", required=True); p.add_argument("--trusted-checkout-sha", required=True); p.add_argument("--trusted-dispatcher-sha", required=True); p.add_argument("--trusted-dispatcher-run-id", required=True); p.add_argument("--receiver-run-id", required=True); p.add_argument("--audit-out", required=True); p.set_defaults(func=prepare)
+    p = sub.add_parser("dispatch"); p.add_argument("--repo", required=True); p.add_argument("--token", required=True); p.add_argument("--audit", required=True); p.set_defaults(func=dispatch)
+    p = sub.add_parser("finalize"); p.add_argument("--repo", required=True); p.add_argument("--token", required=True); p.add_argument("--audit", required=True); p.add_argument("--final-receipt-out", required=True); p.set_defaults(func=finalize)
     return parser
 
 

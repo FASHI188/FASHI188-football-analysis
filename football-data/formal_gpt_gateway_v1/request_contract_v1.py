@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+
 HERE = Path(__file__).resolve().parent
 RUNTIME_DIR = HERE.parent / "formal_fast_runtime_v1"
 if str(RUNTIME_DIR) not in sys.path:

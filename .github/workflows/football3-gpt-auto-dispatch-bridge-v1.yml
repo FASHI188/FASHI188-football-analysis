@@ -1,4 +1,4 @@
-name: Football3 GPT Auto Dispatch Bridge V2 Candidate Security
+name: Football3 GPT Auto Dispatch Receiver V3
 
 on:
   pull_request:
@@ -12,10 +12,37 @@ permissions:
   actions: read
 
 concurrency:
-  group: football3-gpt-auto-dispatch-bridge-v2-${{ github.event.pull_request.number }}
+  group: football3-gpt-auto-dispatch-receiver-v3-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
+  carrier-edit-receiver:
+    if: ${{ github.event.pull_request.number == 341 && github.event.action == 'edited' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Emit unprivileged carrier edit signal without carrier checkout
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          test "$PR_NUMBER" = '341'
+          test "$PR_BASE_REF" = 'football3/formal-gpt-runner-integration-v1'
+          test "$PR_HEAD_REF" = 'football3/formal-gpt-runner-request-carrier-v1'
+          test "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY"
+          test -n "$ACTOR"
+          echo 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY'
+          echo 'AUTO_DISPATCH_RECEIVER_PRIVILEGED=false'
+          echo 'AUTO_DISPATCH_RECEIVER_CARRIER_CODE_EXECUTED=false'
+
   candidate-contract-security:
     if: ${{ github.event.pull_request.number != 341 }}
     permissions:
@@ -34,20 +61,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile permanent bridge and authoritative request contract
+      - name: Compile bridge request contract and authority router
         run: |
           set -euo pipefail
           python3 -m py_compile \
             football-data/formal_gpt_gateway_v1/request_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/request_sha_binding_v1.py \
             football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py \
-            football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py
+            football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py \
+            governance/football3/audit_football3_changed_authority_v1.py
 
       - name: Permanent bridge contract and security tests
         run: |
           set -euo pipefail
           python3 football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py
 
-      - name: Read-only live PR 341 contract and changed-file audit
+      - name: Read-only live PR 341 nested request and changed-file audit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -59,18 +88,18 @@ jobs:
               --token "$GH_TOKEN" \
               --audit-out .runtime_sources/auto_dispatch_bridge_candidate_audit.json
 
-      - name: Prove candidate workflow has no privileged carrier execution path
+      - name: Prove candidate receiver has no privileged carrier execution path
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml')
-          text=p.read_text(encoding='utf-8')
-          assert '\n  pull_request_target:' not in text
-          assert '\n      actions: write' not in text
-          assert 'github.event.pull_request.number != 341' in text
-          print('TRUSTED_AUTO_DISPATCH_TRIGGER_UNAVAILABLE')
-          print('CANDIDATE_CARRIER_CODE_EXECUTION_PATH_ABSENT')
+          text=Path('.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml').read_text(encoding='utf-8')
+          assert 'pull_request_target' not in text
+          assert 'actions: write' not in text
+          receiver=text.split('  carrier-edit-receiver:',1)[1].split('  candidate-contract-security:',1)[0]
+          assert 'actions/checkout' not in receiver
+          assert 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY' in receiver
+          print('AUTO_DISPATCH_RECEIVER_CANDIDATE_SECURITY_PASS')
           PY
 
       - name: Upload read-only bridge candidate evidence
