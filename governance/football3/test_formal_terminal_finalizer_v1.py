@@ -23,6 +23,14 @@ CARRIER_HEAD = "1dd083a37504a5c55dec3722e814b74820dd83b3"
 PREDICTION_SHA = "d8d519a9ef82343eec2965d4eca8f247ba7491c78180c10cc8896baec7de2693"
 INCIDENT_RECEIPT_ARTIFACT_ID = 10059193562
 INCIDENT_RECEIPT_DIGEST = "sha256:10e4cf982b8e6aa9f722108a5ede2bf0fae447baa0944b2aef5949320d3a70a3"
+LATEST_INCIDENT_DISPATCHER_RUN_ID = 34242275494
+LATEST_INCIDENT_FORMAL_RUN_ID = 34242361526
+LATEST_INCIDENT_REQUEST_SHA = "4dfa6d018eee352d4b1670f1e7c213273e21f79544589174ff2dc9bcce82b3de"
+LATEST_INCIDENT_RECEIPT_ARTIFACT_ID = 10062644030
+LATEST_INCIDENT_RECEIPT_DIGEST = "sha256:7491fbfcd3f24586949d24c1e63a93f41b3c49a84e734886dbae4d175e7a560d"
+EXACT_BASE = "a0f9a3419219b7fae7437c5a984a54d83f0fd9c4"
+SIGNED = "https://results-receiver.actions.githubusercontent.com/signed/path?sig=REDACTED"
+TOKEN = "github-token-must-never-cross-origin"
 
 
 def audit() -> dict:
@@ -171,7 +179,7 @@ class FakeTransport:
             return value, self._evidence(path, value, stale=False, kind="artifacts")
         raise AssertionError(path)
 
-    def download_artifact_zip(self, artifact_id: int):
+    def download_artifact_zip(self, artifact_id: int, diagnostics=None, persist=None):
         self.download_count += 1
         return self.zip_bytes
 
@@ -186,6 +194,28 @@ class SequenceTransport(mod.GitHubTransport):
         if self.http_request_count > self.max_http_requests:
             raise mod.FinalizerError("AUTO_DISPATCH_FINALIZER_HTTP_BUDGET_EXCEEDED")
         return self.sequence.pop(0)
+
+
+class HttpScriptTransport(mod.GitHubTransport):
+    def __init__(self, sequence, *, token=TOKEN, budget=30, max_get_attempts=4, max_redirects=5):
+        super().__init__(
+            REPO,
+            token,
+            sleep_fn=lambda _: None,
+            max_get_attempts=max_get_attempts,
+            max_http_requests=budget,
+            max_artifact_redirects=max_redirects,
+        )
+        self.sequence = list(sequence)
+        self.requests: list[dict] = []
+
+    def _perform_http(self, req):
+        headers = {k.lower(): v for k, v in req.header_items()}
+        self.requests.append({"url": req.full_url, "headers": headers, "method": req.get_method()})
+        if not self.sequence:
+            raise AssertionError("HTTP script exhausted")
+        status, response_headers, body = self.sequence.pop(0)
+        return status, response_headers, body
 
 
 class FormalTerminalFinalizerPermanentTest(unittest.TestCase):
@@ -355,6 +385,130 @@ class FormalTerminalFinalizerPermanentTest(unittest.TestCase):
         self.assertNotIn("post_dispatch", source)
         self.assertNotIn("workflow_dispatch(request_pr_number", source)
 
+    def test_302_303_307_308_https_redirects_supported(self):
+        raw = receipt_zip()
+        for code in (302, 303, 307, 308):
+            with self.subTest(code=code):
+                transport = HttpScriptTransport([(code, {"Location": SIGNED}, b"r"), (200, {}, raw)])
+                self.assertEqual(transport.download_artifact_zip(101), raw)
+                self.assertTrue(all(r["method"] == "GET" for r in transport.requests))
+
+    def test_artifact_api_initial_request_has_github_auth_and_cross_origin_drops_it(self):
+        raw = receipt_zip()
+        d = {}
+        transport = HttpScriptTransport([(302, {"Location": SIGNED}, b"redirect"), (200, {}, raw)])
+        self.assertEqual(transport.download_artifact_zip(100, d, lambda: None), raw)
+        first, second = transport.requests
+        self.assertIn("authorization", first["headers"])
+        self.assertIn("x-github-api-version", first["headers"])
+        self.assertNotIn("authorization", second["headers"])
+        self.assertNotIn("x-github-api-version", second["headers"])
+        self.assertEqual([x["authorization_sent"] for x in d["artifact_download_requests"]], [True, False])
+        self.assertNotIn(TOKEN, json.dumps(d, sort_keys=True))
+        self.assertNotIn("sig=", json.dumps(d, sort_keys=True))
+
+    def test_same_origin_api_github_redirect_keeps_auth_only_for_api_github_com(self):
+        raw = receipt_zip()
+        target = "https://api.github.com/repos/FASHI188/FASHI188-football-analysis/actions/artifacts/1/zip?next=1"
+        transport = HttpScriptTransport([(302, {"Location": target}, b"r"), (200, {}, raw)])
+        transport.download_artifact_zip(1)
+        self.assertIn("authorization", transport.requests[0]["headers"])
+        self.assertIn("authorization", transport.requests[1]["headers"])
+
+    def test_http_location_rejected(self):
+        transport = HttpScriptTransport([(302, {"Location": "http://signed.example/path"}, b"")])
+        with self.assertRaisesRegex(mod.FinalizerError, "REDIRECT_HTTPS_REQUIRED"):
+            transport.download_artifact_zip(1)
+
+    def test_malformed_location_rejected(self):
+        transport = HttpScriptTransport([(302, {"Location": "https://"}, b"")])
+        with self.assertRaisesRegex(mod.FinalizerError, "REDIRECT_LOCATION_INVALID"):
+            transport.download_artifact_zip(1)
+
+    def test_userinfo_location_rejected(self):
+        transport = HttpScriptTransport([(302, {"Location": "https://user:pass@signed.example/path"}, b"")])
+        with self.assertRaisesRegex(mod.FinalizerError, "REDIRECT_USERINFO_REJECTED"):
+            transport.download_artifact_zip(1)
+
+    def test_redirect_loop_rejected(self):
+        api = f"https://api.github.com/repos/{REPO}/actions/artifacts/1/zip"
+        transport = HttpScriptTransport([(302, {"Location": SIGNED}, b""), (302, {"Location": api}, b"")])
+        with self.assertRaisesRegex(mod.FinalizerError, "REDIRECT_LOOP"):
+            transport.download_artifact_zip(1)
+
+    def test_redirect_limit_rejected(self):
+        signed2 = "https://results-receiver.actions.githubusercontent.com/second/path?sig=REDACTED2"
+        transport = HttpScriptTransport(
+            [(302, {"Location": SIGNED}, b""), (302, {"Location": signed2}, b"")],
+            max_redirects=1,
+        )
+        with self.assertRaisesRegex(mod.FinalizerError, "REDIRECT_LIMIT_EXCEEDED"):
+            transport.download_artifact_zip(1)
+
+    def test_api_401_and_cross_origin_401_have_distinct_errors(self):
+        api_transport = HttpScriptTransport([(401, {}, b"bad")])
+        with self.assertRaisesRegex(mod.FinalizerError, "FORMAL_RECEIPT_API_DOWNLOAD_FAILED:401"):
+            api_transport.download_artifact_zip(1)
+        cross_transport = HttpScriptTransport([(302, {"Location": SIGNED}, b""), (401, {}, b"bad")])
+        with self.assertRaisesRegex(mod.FinalizerError, "FORMAL_RECEIPT_DOWNLOAD_FAILED:401"):
+            cross_transport.download_artifact_zip(1)
+
+    def test_download_429_and_5xx_bounded_recovery(self):
+        raw = receipt_zip()
+        transport = HttpScriptTransport([
+            (429, {"retry-after": "0"}, b"rate"),
+            (503, {}, b"server"),
+            (302, {"Location": SIGNED}, b"redirect"),
+            (200, {}, raw),
+        ])
+        self.assertEqual(transport.download_artifact_zip(1), raw)
+        self.assertEqual(transport.http_request_count, 4)
+
+    def test_download_success_then_digest_and_receipt_identity_still_enforced(self):
+        raw = receipt_zip()
+        transport = HttpScriptTransport([(302, {"Location": SIGNED}, b""), (200, {}, raw)])
+        downloaded = transport.download_artifact_zip(1)
+        art = artifact_for(downloaded)
+        receipt = self.make(FakeTransport([run_record()])).validate_receipt_zip(audit(), art, downloaded)
+        self.assertEqual(receipt["prediction_sha"], PREDICTION_SHA)
+        bad_art = artifact_for(downloaded, digest="sha256:" + "0" * 64)
+        with self.assertRaisesRegex(mod.FinalizerError, "ARTIFACT_DIGEST_MISMATCH"):
+            self.make(FakeTransport([run_record()])).validate_receipt_zip(audit(), bad_art, downloaded)
+
+    def test_diagnostics_never_store_signed_url_query_or_token(self):
+        raw = receipt_zip(); d = {}
+        transport = HttpScriptTransport([(302, {"Location": SIGNED}, b""), (200, {}, raw)])
+        transport.download_artifact_zip(1, d, lambda: None)
+        encoded = json.dumps(d, sort_keys=True)
+        self.assertNotIn(TOKEN, encoded)
+        self.assertNotIn("REDACTED", encoded)
+        self.assertNotIn("results-receiver.actions.githubusercontent.com/signed/path", encoded)
+        self.assertEqual(d["artifact_download_requests"][1]["host"], "results-receiver.actions.githubusercontent.com")
+        self.assertFalse(d["artifact_download_requests"][1]["authorization_sent"])
+
+    def test_latest_incident_10062644030_redacted_metadata_fixture(self):
+        fixture = {
+            "dispatcher_run_id": LATEST_INCIDENT_DISPATCHER_RUN_ID,
+            "formal_run_id": LATEST_INCIDENT_FORMAL_RUN_ID,
+            "request_sha": LATEST_INCIDENT_REQUEST_SHA,
+            "receipt_artifact_id": LATEST_INCIDENT_RECEIPT_ARTIFACT_ID,
+            "receipt_digest": LATEST_INCIDENT_RECEIPT_DIGEST,
+            "error": "AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:401",
+            "locator": "PASS",
+            "terminal_observation": "PASS",
+            "artifact_visibility": "PASS",
+        }
+        self.assertEqual(fixture["receipt_artifact_id"], 10062644030)
+        self.assertEqual(fixture["formal_run_id"], 34242361526)
+        self.assertTrue(fixture["receipt_digest"].startswith("sha256:"))
+        self.assertEqual(fixture["error"], "AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:401")
+
+    def test_finalizer_artifact_download_contract_never_posts_or_redispatches(self):
+        source = inspect.getsource(mod.GitHubTransport.download_artifact_zip)
+        self.assertNotIn('method="POST"', source)
+        self.assertNotIn("workflow_dispatch", source)
+        self.assertNotIn("/dispatches", source)
+
     def test_zz_materialize_candidate_evidence(self):
         exact = os.environ.get("CANDIDATE_EXACT_HEAD", "")
         if not exact:
@@ -364,17 +518,19 @@ class FormalTerminalFinalizerPermanentTest(unittest.TestCase):
         out = root / ".runtime_sources/formal-terminal-finalizer-candidate"
         out.mkdir(parents=True, exist_ok=True)
         evidence = {
-            "schema_version": "football3-formal-terminal-finalizer-candidate-v1",
+            "schema_version": "football3-formal-terminal-finalizer-candidate-v2",
             "status": "PASS",
             "candidate_exact_head": exact,
-            "base_exact_head": "aa4372f709be43612088d55a22dcfac18af9f5d7",
-            "incident_dispatcher_run_id": 34234202635,
-            "incident_formal_run_id": RUN_ID,
-            "incident_request_sha": REQUEST_SHA,
-            "incident_receipt_artifact_id": INCIDENT_RECEIPT_ARTIFACT_ID,
-            "incident_receipt_digest": INCIDENT_RECEIPT_DIGEST,
-            "incident_prediction_sha": PREDICTION_SHA,
-            "incident_redacted_identity_validation": "PASS",
+            "base_exact_head": EXACT_BASE,
+            "incident_dispatcher_run_id": LATEST_INCIDENT_DISPATCHER_RUN_ID,
+            "incident_formal_run_id": LATEST_INCIDENT_FORMAL_RUN_ID,
+            "incident_request_sha": LATEST_INCIDENT_REQUEST_SHA,
+            "incident_receipt_artifact_id": LATEST_INCIDENT_RECEIPT_ARTIFACT_ID,
+            "incident_receipt_digest": LATEST_INCIDENT_RECEIPT_DIGEST,
+            "incident_redacted_metadata_validation": "PASS",
+            "cross_origin_artifact_redirect_auth_handling_defect": "FIXED_BY_EXPLICIT_REDIRECT_CONTRACT",
+            "artifact_redirect_auth_contract": "PASS",
+            "github_token_cross_origin_forwarded": False,
             "run_terminal_freshness_headers": "PASS",
             "unique_cache_buster": "PASS",
             "stale_response_detection": "PASS",
