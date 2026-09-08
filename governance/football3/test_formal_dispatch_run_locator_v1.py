@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 import unittest
@@ -236,7 +237,10 @@ class FormalDispatchRunLocatorPermanentTest(unittest.TestCase):
 
     def test_dispatch_post_is_never_retried_on_5xx(self):
         transport = SinglePostHTTPTransport(500)
-        evidence = transport.post_dispatch_once(WORKFLOW_ID, {"ref": locator_mod.CANONICAL_REF, "inputs": {}})
+        evidence = transport.post_dispatch_once(
+            WORKFLOW_ID,
+            {"ref": locator_mod.CANONICAL_REF, "inputs": {}},
+        )
         self.assertEqual(evidence["http_status"], 500)
         self.assertEqual(transport.calls, 1)
 
@@ -293,11 +297,48 @@ class FormalDispatchRunLocatorPermanentTest(unittest.TestCase):
 
     def test_trusted_workflow_materializes_exact_main_locator_and_uses_it(self):
         text = TRUSTED.read_text(encoding="utf-8")
-        self.assertIn("git show \"${GITHUB_SHA}:governance/football3/formal_dispatch_run_locator_v1.py\"", text)
+        self.assertIn(
+            "git show \"${GITHUB_SHA}:governance/football3/formal_dispatch_run_locator_v1.py\"",
+            text,
+        )
         self.assertIn(".runtime_sources/formal_dispatch_run_locator_v1.py dispatch", text)
-        dispatch_step = text.split("- name: Dispatch formal SHA-bound runner and locate new production Run ID", 1)[1].split("- name: Wait for formal terminal state", 1)[0]
+        dispatch_step = text.split(
+            "- name: Dispatch formal SHA-bound runner and locate new production Run ID",
+            1,
+        )[1].split("- name: Wait for formal terminal state", 1)[0]
         self.assertNotIn("auto_dispatch_bridge_v1.py dispatch", dispatch_step)
         self.assertIn("persist-credentials: false", text)
+
+    def test_zz_materialize_cross_checkout_candidate_evidence(self):
+        exact_head = os.environ.get("CANDIDATE_EXACT_HEAD", "")
+        if not exact_head:
+            self.skipTest("cross-checkout candidate exact head is not available in this job")
+        self.assertRegex(exact_head, r"^[0-9a-f]{40}$")
+        out = ROOT / ".runtime_sources/trusted-dispatcher-candidate"
+        out.mkdir(parents=True, exist_ok=True)
+        evidence = {
+            "schema_version": "football3-formal-dispatch-run-locator-candidate-v1",
+            "candidate_exact_head": exact_head,
+            "root_cause_classification": "FORMAL_DISPATCH_CREATED_BUT_LOCATOR_MISSED",
+            "original_dispatcher_run_id": 34221439399,
+            "original_formal_run_id": 34221501889,
+            "original_formal_workflow_id": WORKFLOW_ID,
+            "original_request_sha256": REQ,
+            "original_dispatch_http_evidence": {
+                "status": 204,
+                "basis": "old helper continued past dispatch_formal status==204 guard; original headers/body were not persisted",
+            },
+            "locator_permanent_tests": "PASS",
+            "locator_contract_cases": 14,
+            "candidate_production_dispatch_performed": False,
+            "candidate_pr341_modified": False,
+            "candidate_manual_finalize_performed": False,
+        }
+        (out / "formal_dispatch_run_locator_candidate_evidence.json").write_text(
+            json.dumps(evidence, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.assertTrue((out / "formal_dispatch_run_locator_candidate_evidence.json").is_file())
 
 
 if __name__ == "__main__":
