@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import unittest
 
+from test_formal_dispatch_run_locator_v1 import FormalDispatchRunLocatorPermanentTest  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[2]
 RECEIVER = ROOT / ".github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml"
 TRUSTED = ROOT / ".github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml"
