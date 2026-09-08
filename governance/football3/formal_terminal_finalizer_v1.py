@@ -35,16 +35,23 @@ RATE_HEADER_KEYS = (
     "content-length",
 )
 RETRYABLE_SERVER_STATUSES = frozenset({500, 502, 503, 504})
+ARTIFACT_REDIRECT_STATUSES = frozenset({302, 303, 307, 308})
 DEFAULT_RUN_ATTEMPTS = 180
 DEFAULT_RUN_DELAY_SECONDS = 5.0
 DEFAULT_ARTIFACT_ATTEMPTS = 60
 DEFAULT_ARTIFACT_DELAY_SECONDS = 2.0
 DEFAULT_MAX_PAGES = 10
 DEFAULT_MAX_HTTP_REQUESTS = 320
+DEFAULT_MAX_ARTIFACT_REDIRECTS = 5
 
 
 class FinalizerError(RuntimeError):
     pass
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _fail(code: str) -> None:
@@ -75,6 +82,38 @@ def _selected_headers(headers: dict[str, str]) -> dict[str, str]:
     return {k: lower[k] for k in RATE_HEADER_KEYS if k in lower}
 
 
+def _url_parts(url: str) -> urllib.parse.SplitResult:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        _ = parts.port
+    except Exception as exc:
+        raise FinalizerError("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOCATION_INVALID") from exc
+    if not parts.scheme or not parts.netloc or not parts.hostname:
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOCATION_INVALID")
+    if parts.scheme.lower() != "https":
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_HTTPS_REQUIRED")
+    if parts.username is not None or parts.password is not None:
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_USERINFO_REJECTED")
+    if parts.fragment:
+        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOCATION_INVALID")
+    return parts
+
+
+def _is_github_api_url(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except Exception:
+        return False
+    return (
+        parts.scheme.lower() == "https"
+        and (parts.hostname or "").lower() == "api.github.com"
+        and port in (None, 443)
+        and parts.username is None
+        and parts.password is None
+    )
+
+
 class GitHubTransport:
     def __init__(
         self,
@@ -84,6 +123,7 @@ class GitHubTransport:
         sleep_fn: Callable[[float], None] = time.sleep,
         max_get_attempts: int = 4,
         max_http_requests: int = DEFAULT_MAX_HTTP_REQUESTS,
+        max_artifact_redirects: int = DEFAULT_MAX_ARTIFACT_REDIRECTS,
     ) -> None:
         if not repo or not token:
             _fail("AUTO_DISPATCH_GITHUB_CREDENTIALS_MISSING")
@@ -92,27 +132,42 @@ class GitHubTransport:
         self.sleep_fn = sleep_fn
         self.max_get_attempts = max(1, int(max_get_attempts))
         self.max_http_requests = max(1, int(max_http_requests))
+        self.max_artifact_redirects = max(0, int(max_artifact_redirects))
         self.http_request_count = 0
+        self._opener = urllib.request.build_opener(_NoRedirectHandler())
 
-    def _request_once(self, path: str) -> tuple[int, dict[str, str], bytes]:
-        self.http_request_count += 1
-        if self.http_request_count > self.max_http_requests:
-            _fail("AUTO_DISPATCH_FINALIZER_HTTP_BUDGET_EXCEEDED")
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "football3-formal-terminal-finalizer-v1",
-            **GET_FRESHNESS_HEADERS,
-        }
-        req = urllib.request.Request(f"https://api.github.com{path}", method="GET", headers=headers)
+    def _perform_http(self, req: urllib.request.Request) -> tuple[int, dict[str, str], bytes]:
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with self._opener.open(req, timeout=30) as response:
                 return int(response.status), {k.lower(): v for k, v in response.headers.items()}, response.read()
         except urllib.error.HTTPError as exc:
             return int(exc.code), {k.lower(): v for k, v in exc.headers.items()}, exc.read()
         except Exception as exc:
-            raise FinalizerError(f"AUTO_DISPATCH_GITHUB_API_UNAVAILABLE:GET:{path}") from exc
+            raise FinalizerError("AUTO_DISPATCH_GITHUB_API_UNAVAILABLE:GET") from exc
+
+    def _request_url_once(self, url: str) -> tuple[int, dict[str, str], bytes, bool]:
+        _url_parts(url)
+        self.http_request_count += 1
+        if self.http_request_count > self.max_http_requests:
+            _fail("AUTO_DISPATCH_FINALIZER_HTTP_BUDGET_EXCEEDED")
+        github_auth = _is_github_api_url(url)
+        headers = {
+            "User-Agent": "football3-formal-terminal-finalizer-v1",
+            "Accept": "application/vnd.github+json" if github_auth else "application/octet-stream",
+        }
+        if github_auth:
+            headers.update({
+                "Authorization": f"Bearer {self.token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+                **GET_FRESHNESS_HEADERS,
+            })
+        req = urllib.request.Request(url, method="GET", headers=headers)
+        status, response_headers, body = self._perform_http(req)
+        return int(status), {str(k).lower(): str(v) for k, v in response_headers.items()}, body, github_auth
+
+    def _request_once(self, path: str) -> tuple[int, dict[str, str], bytes]:
+        status, headers, body, _ = self._request_url_once(f"https://api.github.com{path}")
+        return status, headers, body
 
     @staticmethod
     def _explicit_rate_limit(status: int, headers: dict[str, str]) -> bool:
@@ -173,24 +228,103 @@ class GitHubTransport:
             _fail(f"AUTO_DISPATCH_GITHUB_RATE_LIMITED:GET:{path}:{last_status}:{snippet}")
         _fail(f"AUTO_DISPATCH_GITHUB_API_ERROR:GET:{path}:{last_status}:{snippet}")
 
-    def download_artifact_zip(self, artifact_id: int) -> bytes:
-        path = f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip"
-        last_status = 0
-        for attempt in range(self.max_get_attempts):
-            status, headers, body = self._request_once(path)
-            last_status = status
-            if status == 200:
-                return body
-            explicit_rate = self._explicit_rate_limit(status, headers)
-            if status == 403 and not explicit_rate:
-                _fail(f"AUTO_DISPATCH_GITHUB_PERMISSION_DENIED:GET:{path}:403")
-            if not (explicit_rate or status in RETRYABLE_SERVER_STATUSES):
-                _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{status}")
-            if attempt + 1 < self.max_get_attempts:
-                self.sleep_fn(self._retry_delay(headers, attempt))
-        if last_status in (403, 429):
-            _fail(f"AUTO_DISPATCH_GITHUB_RATE_LIMITED:GET:{path}:{last_status}")
-        _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{last_status}")
+    @staticmethod
+    def _download_record(
+        *,
+        redirect_number: int,
+        url: str,
+        status: int,
+        headers: dict[str, str],
+        body: bytes,
+        authorization_sent: bool,
+    ) -> dict[str, Any]:
+        parts = _url_parts(url)
+        location = headers.get("location")
+        return {
+            "redirect_number": redirect_number,
+            "scheme": parts.scheme.lower(),
+            "host": (parts.hostname or "").lower(),
+            "status": int(status),
+            "location_sha256": hashlib.sha256(location.encode("utf-8")).hexdigest() if location else None,
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "authorization_sent": bool(authorization_sent),
+        }
+
+    @staticmethod
+    def _validated_location(location: str) -> str:
+        if not isinstance(location, str) or not location:
+            _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOCATION_INVALID")
+        parts = _url_parts(location)
+        if not parts.hostname:
+            _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOCATION_INVALID")
+        return location
+
+    def download_artifact_zip(
+        self,
+        artifact_id: int,
+        diagnostics: dict[str, Any] | None = None,
+        persist: Callable[[], None] | None = None,
+    ) -> bytes:
+        current_url = f"https://api.github.com/repos/{self.repo}/actions/artifacts/{artifact_id}/zip"
+        visited = {current_url}
+        redirect_number = 0
+        records = diagnostics.setdefault("artifact_download_requests", []) if isinstance(diagnostics, dict) else None
+
+        while True:
+            last_status = 0
+            for attempt in range(self.max_get_attempts):
+                status, headers, body, auth_sent = self._request_url_once(current_url)
+                last_status = status
+                if records is not None:
+                    records.append(self._download_record(
+                        redirect_number=redirect_number,
+                        url=current_url,
+                        status=status,
+                        headers=headers,
+                        body=body,
+                        authorization_sent=auth_sent,
+                    ))
+                    if persist is not None:
+                        persist()
+
+                if status == 200:
+                    return body
+
+                if status in ARTIFACT_REDIRECT_STATUSES:
+                    location = self._validated_location(headers.get("location") or "")
+                    if redirect_number >= self.max_artifact_redirects:
+                        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LIMIT_EXCEEDED")
+                    if location in visited:
+                        _fail("AUTO_DISPATCH_FORMAL_RECEIPT_REDIRECT_LOOP")
+                    visited.add(location)
+                    current_url = location
+                    redirect_number += 1
+                    break
+
+                is_api = _is_github_api_url(current_url)
+                explicit_rate = self._explicit_rate_limit(status, headers)
+                if is_api and status == 401:
+                    _fail("AUTO_DISPATCH_FORMAL_RECEIPT_API_DOWNLOAD_FAILED:401")
+                if is_api and status == 403 and not explicit_rate:
+                    _fail("AUTO_DISPATCH_GITHUB_PERMISSION_DENIED:GET:ARTIFACT_ZIP:403")
+                if not is_api and status in (401, 403):
+                    _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{status}")
+                retryable = explicit_rate or status in RETRYABLE_SERVER_STATUSES
+                if not retryable:
+                    _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{status}")
+                if attempt + 1 < self.max_get_attempts:
+                    self.sleep_fn(self._retry_delay(headers, attempt))
+                    continue
+                if is_api and last_status in (403, 429):
+                    _fail(f"AUTO_DISPATCH_GITHUB_RATE_LIMITED:GET:ARTIFACT_ZIP:{last_status}")
+                if not is_api and last_status in (403, 429):
+                    _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_RATE_LIMITED:{last_status}")
+                _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{last_status}")
+            else:
+                _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{last_status}")
+
+            if last_status not in ARTIFACT_REDIRECT_STATUSES:
+                _fail(f"AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED:{last_status}")
 
 
 class FormalTerminalFinalizer:
@@ -421,7 +555,7 @@ class FormalTerminalFinalizer:
             _fail("AUTO_DISPATCH_FINALIZER_AUDIT_IDENTITY_INVALID")
         run = self.wait_terminal(audit, diagnostics, persist)
         artifact = self.wait_receipt_artifact(audit, diagnostics, persist)
-        zip_bytes = self.transport.download_artifact_zip(int(artifact["id"]))
+        zip_bytes = self.transport.download_artifact_zip(int(artifact["id"]), diagnostics, persist)
         receipt = self.validate_receipt_zip(audit, artifact, zip_bytes)
         diagnostics["receipt_validation"] = {"status": "PASS", **receipt}; persist()
         return {
@@ -467,9 +601,12 @@ def finalize_command(args: argparse.Namespace) -> int:
         "started_at": _now(),
         "run_polls": [],
         "artifact_polls": [],
+        "artifact_download_requests": [],
     }
+
     def persist() -> None:
         _atomic_json(diag_path, diagnostics)
+
     persist()
     transport = GitHubTransport(args.repo, args.token)
     finalizer = FormalTerminalFinalizer(transport)
