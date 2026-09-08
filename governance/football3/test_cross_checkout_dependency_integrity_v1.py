@@ -10,8 +10,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 TRUSTED = ROOT / ".github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml"
+CANDIDATE = ROOT / ".github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-candidate.yml"
 RUNTIME = ROOT / "football-data/validation/repository_integrity_runtime_v473.py"
 EXPECTED_CANONICAL_REF = "football3/formal-gpt-runner-integration-v1"
+EXPECTED_CANONICAL_CANDIDATE_SHA = "f2fdd57c6fe9104c7f031f6a2ac7468757947a12"
+EXPECTED_INTEGRATION_RECEIVER_SHA = "0e102ac3689185d3378bab3bc416ccec20d519de"
+EXPECTED_CANONICAL_OBJECT_REF = "refs/football3-validation/canonical-helper"
+EXPECTED_INTEGRATION_RECEIVER_OBJECT_REF = "refs/football3-validation/integration-receiver"
+RECEIVER_WORKFLOW_PATH = ".github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml"
+RECEIVER_NAME = "Football3 GPT Auto Dispatch Receiver V3"
 REQUIRED_HELPERS = (
     "football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py",
     "football-data/formal_gpt_gateway_v1/request_contract_v1.py",
@@ -24,9 +31,74 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+def _git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
+
+
+def assert_candidate_dual_object_binding_contract(text: str) -> None:
+    required = (
+        f"FOOTBALL3_CANONICAL_CANDIDATE_SHA: {EXPECTED_CANONICAL_CANDIDATE_SHA}",
+        f"FOOTBALL3_CANONICAL_OBJECT_REF: {EXPECTED_CANONICAL_OBJECT_REF}",
+        f"FOOTBALL3_INTEGRATION_RECEIVER_SHA: {EXPECTED_INTEGRATION_RECEIVER_SHA}",
+        f"FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF: {EXPECTED_INTEGRATION_RECEIVER_OBJECT_REF}",
+        'git fetch --no-tags --depth=1 origin "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        'test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        'git cat-file -e "${FOOTBALL3_CANONICAL_CANDIDATE_SHA}^{commit}"',
+        'git update-ref "$FOOTBALL3_CANONICAL_OBJECT_REF" "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        'test "$(git rev-parse "$FOOTBALL3_CANONICAL_OBJECT_REF")" = "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        'git fetch --no-tags --depth=1 origin "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        'test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        'git cat-file -e "${FOOTBALL3_INTEGRATION_RECEIVER_SHA}^{commit}"',
+        'git update-ref "$FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF" "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        'test "$(git rev-parse "$FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF")" = "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        'git show "$FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF:.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml"',
+        'test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"',
+        "subprocess.run(['git', 'cat-file', '-e', f'{canonical_ref}:{helper}']",
+        "['git', 'cat-file', '-e', f'{receiver_ref}:.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml']",
+        '"canonical_object_binding": "PASS"',
+        '"integration_receiver_object_binding": "PASS"',
+        '"independent_binding_survives_fetch_head_overwrite": "PASS"',
+    )
+    for token in required:
+        if token not in text:
+            raise AssertionError(f"dual-object binding contract missing: {token}")
+
+    canonical_fetch = text.index(
+        'git fetch --no-tags --depth=1 origin "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"'
+    )
+    canonical_fetch_head = text.index(
+        'test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        canonical_fetch,
+    )
+    canonical_bind = text.index(
+        'git update-ref "$FOOTBALL3_CANONICAL_OBJECT_REF" "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+        canonical_fetch_head,
+    )
+    receiver_fetch = text.index(
+        'git fetch --no-tags --depth=1 origin "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        canonical_bind,
+    )
+    receiver_fetch_head = text.index(
+        'test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        receiver_fetch,
+    )
+    receiver_bind = text.index(
+        'git update-ref "$FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF" "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+        receiver_fetch_head,
+    )
+    if not (canonical_fetch < canonical_fetch_head < canonical_bind < receiver_fetch < receiver_fetch_head < receiver_bind):
+        raise AssertionError("fetch verification and object binding order is invalid")
+
+    if text.count(f"FOOTBALL3_CANONICAL_CANDIDATE_SHA: {EXPECTED_CANONICAL_CANDIDATE_SHA}") != 1:
+        raise AssertionError("canonical helper SHA must be uniquely bound")
+    if text.count(f"FOOTBALL3_INTEGRATION_RECEIVER_SHA: {EXPECTED_INTEGRATION_RECEIVER_SHA}") < 2:
+        raise AssertionError("integration Receiver SHA must remain bound in both candidate jobs")
+
+
 class CrossCheckoutDependencyIntegrityTest(unittest.TestCase):
     def setUp(self) -> None:
         self.text = TRUSTED.read_text(encoding="utf-8")
+        self.candidate = CANDIDATE.read_text(encoding="utf-8")
 
     def test_current_trusted_workflow_has_complete_exact_checkout_contract(self) -> None:
         for path in REQUIRED_HELPERS:
@@ -74,25 +146,98 @@ class CrossCheckoutDependencyIntegrityTest(unittest.TestCase):
         )
         self.assertIsNone(MODULE._validate_cross_checkout_reference(broken, REQUIRED_HELPERS[0]))
 
-    def test_candidate_exact_sha_contains_all_external_helpers_when_required(self) -> None:
-        sha = os.environ.get("FOOTBALL3_CANONICAL_CANDIDATE_SHA")
-        if not sha:
-            self.skipTest("candidate exact SHA existence proof is required only in candidate acceptance")
-        self.assertRegex(sha, r"^[0-9a-f]{40}$")
+    def test_candidate_dual_object_binding_workflow_contract(self) -> None:
+        assert_candidate_dual_object_binding_contract(self.candidate)
+
+    def test_candidate_dual_object_binding_negative_mutations_fail_closed(self) -> None:
+        base = self.candidate
+        mutations = (
+            base.replace(EXPECTED_CANONICAL_CANDIDATE_SHA, EXPECTED_INTEGRATION_RECEIVER_SHA, 1),
+            base.replace(EXPECTED_INTEGRATION_RECEIVER_SHA, EXPECTED_CANONICAL_CANDIDATE_SHA),
+            base.replace(
+                f"FOOTBALL3_CANONICAL_CANDIDATE_SHA: {EXPECTED_CANONICAL_CANDIDATE_SHA}",
+                f"FOOTBALL3_CANONICAL_CANDIDATE_SHA: {EXPECTED_INTEGRATION_RECEIVER_SHA}",
+                1,
+            ).replace(
+                f"FOOTBALL3_INTEGRATION_RECEIVER_SHA: {EXPECTED_INTEGRATION_RECEIVER_SHA}",
+                f"FOOTBALL3_INTEGRATION_RECEIVER_SHA: {EXPECTED_CANONICAL_CANDIDATE_SHA}",
+            ),
+            base.replace(
+                'git update-ref "$FOOTBALL3_CANONICAL_OBJECT_REF" "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"',
+                'echo "canonical object binding removed"',
+                1,
+            ),
+            base.replace(
+                'git update-ref "$FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF" "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"',
+                'echo "receiver object binding removed"',
+                1,
+            ),
+            base.replace(
+                'git cat-file -e "${FOOTBALL3_CANONICAL_CANDIDATE_SHA}^{commit}"',
+                'echo "canonical object existence verification removed"',
+                1,
+            ),
+            base.replace(
+                'git cat-file -e "${FOOTBALL3_INTEGRATION_RECEIVER_SHA}^{commit}"',
+                'echo "receiver object existence verification removed"',
+                1,
+            ),
+            base.replace(
+                'test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"',
+                'echo "candidate HEAD equality verification removed"',
+            ),
+        )
+        for mutated in mutations:
+            with self.assertRaises((AssertionError, ValueError)):
+                assert_candidate_dual_object_binding_contract(mutated)
+
+    def test_candidate_exact_objects_are_independently_bound_when_required(self) -> None:
+        canonical_sha = os.environ.get("FOOTBALL3_CANONICAL_CANDIDATE_SHA")
+        if not canonical_sha:
+            self.skipTest("candidate exact object proof is required only in candidate acceptance")
+
+        receiver_sha = os.environ.get("FOOTBALL3_INTEGRATION_RECEIVER_SHA")
+        canonical_ref = os.environ.get("FOOTBALL3_CANONICAL_OBJECT_REF")
+        receiver_ref = os.environ.get("FOOTBALL3_INTEGRATION_RECEIVER_OBJECT_REF")
+        candidate_head = os.environ.get("CANDIDATE_EXACT_HEAD")
         expected_ref = os.environ.get("FOOTBALL3_CANONICAL_REF")
+
+        self.assertEqual(canonical_sha, EXPECTED_CANONICAL_CANDIDATE_SHA)
+        self.assertEqual(receiver_sha, EXPECTED_INTEGRATION_RECEIVER_SHA)
+        self.assertEqual(canonical_ref, EXPECTED_CANONICAL_OBJECT_REF)
+        self.assertEqual(receiver_ref, EXPECTED_INTEGRATION_RECEIVER_OBJECT_REF)
         self.assertEqual(expected_ref, EXPECTED_CANONICAL_REF)
-        fetch_head = subprocess.check_output(
-            ["git", "rev-parse", "FETCH_HEAD"],
-            cwd=ROOT,
-            text=True,
-        ).strip()
-        self.assertEqual(fetch_head, sha)
+        self.assertRegex(canonical_sha, r"^[0-9a-f]{40}$")
+        assert receiver_sha is not None
+        self.assertRegex(receiver_sha, r"^[0-9a-f]{40}$")
+        self.assertNotEqual(canonical_sha, receiver_sha)
+
+        assert canonical_ref is not None
+        assert receiver_ref is not None
+        self.assertEqual(_git("rev-parse", canonical_ref), canonical_sha)
+        self.assertEqual(_git("rev-parse", receiver_ref), receiver_sha)
+        self.assertEqual(_git("cat-file", "-t", canonical_sha), "commit")
+        self.assertEqual(_git("cat-file", "-t", receiver_sha), "commit")
+        self.assertEqual(_git("rev-parse", "FETCH_HEAD"), receiver_sha)
+        if candidate_head:
+            self.assertEqual(_git("rev-parse", "HEAD"), candidate_head)
+
         for path in REQUIRED_HELPERS:
             subprocess.run(
-                ["git", "cat-file", "-e", f"{sha}:{path}"],
+                ["git", "cat-file", "-e", f"{canonical_ref}:{path}"],
                 cwd=ROOT,
                 check=True,
             )
+
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{receiver_ref}:{RECEIVER_WORKFLOW_PATH}"],
+            cwd=ROOT,
+            check=True,
+        )
+        receiver_text = _git("show", f"{receiver_ref}:{RECEIVER_WORKFLOW_PATH}")
+        self.assertTrue(receiver_text.startswith(f"name: {RECEIVER_NAME}\n"))
+        self.assertIn("AUTO_DISPATCH_RECEIVER_SIGNAL=READY", receiver_text)
+        self.assertIn("auto_dispatch_bridge_v1.py", receiver_text)
 
 
 if __name__ == "__main__":
