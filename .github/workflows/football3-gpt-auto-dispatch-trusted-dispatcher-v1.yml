@@ -86,6 +86,19 @@ jobs:
             football-data/formal_gpt_gateway_v1/request_contract_v1.py \
             football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py
 
+      - name: Materialize exact trusted formal Run locator from dispatcher SHA
+        run: |
+          set -euo pipefail
+          printf '%s' "$GITHUB_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse --verify "${GITHUB_SHA}^{commit}")" = "$GITHUB_SHA"
+          git cat-file -e "${GITHUB_SHA}:governance/football3/formal_dispatch_run_locator_v1.py"
+          mkdir -p .runtime_sources
+          git show "${GITHUB_SHA}:governance/football3/formal_dispatch_run_locator_v1.py" > .runtime_sources/formal_dispatch_run_locator_v1.py
+          python3 -m py_compile .runtime_sources/formal_dispatch_run_locator_v1.py
+          test "$(git rev-parse HEAD)" = "${{ steps.trusted_source.outputs.canonical_sha }}"
+
       - name: Prepare exact request and idempotency reservation
         id: prepare
         env:
@@ -128,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
-            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py dispatch \
+            python3 .runtime_sources/formal_dispatch_run_locator_v1.py dispatch \
               --repo "$GITHUB_REPOSITORY" \
               --token "$GH_TOKEN" \
               --audit .runtime_sources/auto_dispatch_audit.json
