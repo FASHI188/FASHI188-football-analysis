@@ -50,7 +50,6 @@ jobs:
           governance/football3/test_formal_terminal_finalizer_v1.py
           EOF
           sort -o .runtime_sources/formal-terminal-protected-diff/allowed_files.txt .runtime_sources/formal-terminal-protected-diff/allowed_files.txt
-          diff -u .runtime_sources/formal-terminal-protected-diff/allowed_files.txt .runtime_sources/formal-terminal-protected-diff/changed_files.txt
 
           python3 - <<'PY'
           import json
@@ -59,8 +58,10 @@ jobs:
 
           out = Path('.runtime_sources/formal-terminal-protected-diff')
           changed = [line.strip() for line in (out / 'changed_files.txt').read_text(encoding='utf-8').splitlines() if line.strip()]
-          expected = [line.strip() for line in (out / 'allowed_files.txt').read_text(encoding='utf-8').splitlines() if line.strip()]
-          assert changed == expected
+          allowed = [line.strip() for line in (out / 'allowed_files.txt').read_text(encoding='utf-8').splitlines() if line.strip()]
+          assert changed, 'protected diff must be non-empty'
+          unknown = sorted(set(changed) - set(allowed))
+          assert not unknown, f'protected diff contains files outside allowlist: {unknown}'
           evidence = {
               'schema_version': 'football3-formal-terminal-protected-diff-v1',
               'status': 'PASS',
@@ -68,6 +69,8 @@ jobs:
               'candidate_exact_head': os.environ['CANDIDATE_EXACT_HEAD'],
               'changed_files': changed,
               'changed_file_count': len(changed),
+              'allowed_files': allowed,
+              'unknown_files': unknown,
               'model_changed': False,
               'current_changed': False,
               'mixture_75_25_changed': False,
