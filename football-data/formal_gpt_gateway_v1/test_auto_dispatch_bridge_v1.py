@@ -19,6 +19,7 @@ import request_sha_binding_v1 as binding
 
 RECEIVER_WORKFLOW = REPO / ".github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml"
 FORMAL_WORKFLOW = REPO / ".github/workflows/football3-formal-gpt-runner-integration-v1.yml"
+GOVERNED_WORKFLOW = REPO / ".github/workflows/football3-governed-permanent-regression-v1.yml"
 
 
 class BridgeContractSecurityTest(unittest.TestCase):
@@ -137,6 +138,18 @@ class BridgeContractSecurityTest(unittest.TestCase):
         self.assertIn("github.event.pull_request.number == 341", receiver)
         self.assertIn("github.event.action == 'edited'", receiver)
         self.assertIn("AUTO_DISPATCH_RECEIVER_SIGNAL=READY", receiver)
+
+    def test_candidate_artifacts_bind_internal_head_to_pr_head_checkout(self) -> None:
+        governed = GOVERNED_WORKFLOW.read_text(encoding="utf-8")
+        exact = "CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}"
+        self.assertEqual(governed.count(exact), 3)
+        self.assertGreaterEqual(governed.count("candidate_exact_head"), 3)
+        self.assertNotIn("CANDIDATE_EXACT_HEAD: ${{ github.sha }}", governed)
+        self.assertGreaterEqual(governed.count('test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"'), 3)
+        receiver = RECEIVER_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(exact, receiver)
+        self.assertIn("d['candidate_exact_head']=head", receiver)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"', receiver)
 
     def test_formal_runner_sha_contract_remains_fail_closed(self) -> None:
         text = FORMAL_WORKFLOW.read_text(encoding="utf-8")
