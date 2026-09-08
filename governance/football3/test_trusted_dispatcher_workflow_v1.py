@@ -5,8 +5,10 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+RECEIVER = ROOT / ".github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml"
 TRUSTED = ROOT / ".github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml"
 CANDIDATE = ROOT / ".github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-candidate.yml"
+RECEIVER_NAME = "Football3 GPT Auto Dispatch Receiver V3"
 
 
 class TrustedDispatcherWorkflowContractTest(unittest.TestCase):
@@ -17,7 +19,29 @@ class TrustedDispatcherWorkflowContractTest(unittest.TestCase):
         on_block = text.split("permissions:", 1)[0]
         self.assertNotIn("\n  pull_request:", on_block)
         self.assertIn("actions: write", text)
-        self.assertIn("Football3 GPT Auto Dispatch Receiver V3", text)
+        self.assertIn(RECEIVER_NAME, text)
+
+    def test_default_branch_receiver_registration_matches_subscription(self) -> None:
+        receiver = RECEIVER.read_text(encoding="utf-8")
+        trusted = TRUSTED.read_text(encoding="utf-8")
+        candidate = CANDIDATE.read_text(encoding="utf-8")
+
+        self.assertTrue(receiver.startswith(f"name: {RECEIVER_NAME}\n"))
+        self.assertIn(f"      - {RECEIVER_NAME}\n", trusted)
+        self.assertIn("    types: [completed]", trusted)
+        self.assertIn("      - football3/formal-gpt-runner-integration-v1", receiver)
+        self.assertNotIn("pull_request_target:", receiver)
+        self.assertNotIn("actions: write", receiver)
+
+        carrier = receiver.split("  carrier-edit-receiver:", 1)[1].split(
+            "  candidate-contract-security:", 1
+        )[0]
+        self.assertNotIn("actions/checkout", carrier)
+        self.assertIn("AUTO_DISPATCH_RECEIVER_SIGNAL=READY", carrier)
+        self.assertIn(
+            "'.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml'",
+            candidate,
+        )
 
     def test_dispatcher_never_consumes_receiver_artifact_or_carrier_checkout(self) -> None:
         text = TRUSTED.read_text(encoding="utf-8")
