@@ -20,6 +20,9 @@ jobs:
   trusted-dispatcher-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      FOOTBALL3_INTEGRATION_RECEIVER_SHA: 0e102ac3689185d3378bab3bc416ccec20d519de
+      FOOTBALL3_INTEGRATION_RECEIVER_PATH: .runtime_sources/integration_receiver.yml
     steps:
       - uses: actions/checkout@v6
         with:
@@ -29,12 +32,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+      - name: Materialize exact accepted integration Receiver without changing candidate checkout
+        run: |
+          set -euo pipefail
+          printf '%s' "$FOOTBALL3_INTEGRATION_RECEIVER_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags --depth=1 origin "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"
+          mkdir -p .runtime_sources
+          git show "$FOOTBALL3_INTEGRATION_RECEIVER_SHA:.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml" > "$FOOTBALL3_INTEGRATION_RECEIVER_PATH"
+          grep -Fx 'name: Football3 GPT Auto Dispatch Receiver V3' "$FOOTBALL3_INTEGRATION_RECEIVER_PATH"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
       - name: Compile trusted dispatcher contract tests
         run: |
           python3 -m py_compile governance/football3/test_trusted_dispatcher_workflow_v1.py
           python3 -m py_compile governance/football3/test_cross_checkout_dependency_integrity_v1.py
           python3 -m py_compile football-data/validation/repository_integrity_runtime_v473.py
-      - name: Verify default-branch trusted workflow security contract
+      - name: Verify default-branch registration and trusted workflow security contract
         run: python3 governance/football3/test_trusted_dispatcher_workflow_v1.py
       - name: Verify generic exact-checkout repository-integrity contract
         run: python3 governance/football3/test_cross_checkout_dependency_integrity_v1.py
@@ -45,6 +58,8 @@ jobs:
     env:
       FOOTBALL3_CANONICAL_CANDIDATE_SHA: f2fdd57c6fe9104c7f031f6a2ac7468757947a12
       FOOTBALL3_CANONICAL_REF: football3/formal-gpt-runner-integration-v1
+      FOOTBALL3_INTEGRATION_RECEIVER_SHA: 0e102ac3689185d3378bab3bc416ccec20d519de
+      FOOTBALL3_INTEGRATION_RECEIVER_PATH: .runtime_sources/integration_receiver.yml
     steps:
       - uses: actions/checkout@v6
         with:
@@ -54,15 +69,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - name: Fetch accepted canonical candidate object without changing checkout
+      - name: Fetch accepted canonical candidate and integration Receiver objects without changing checkout
         run: |
           set -euo pipefail
           printf '%s' "$FOOTBALL3_CANONICAL_CANDIDATE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           git fetch --no-tags --depth=1 origin "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"
           test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_CANONICAL_CANDIDATE_SHA"
+          printf '%s' "$FOOTBALL3_INTEGRATION_RECEIVER_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags --depth=1 origin "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$FOOTBALL3_INTEGRATION_RECEIVER_SHA"
+          mkdir -p .runtime_sources
+          git show "$FOOTBALL3_INTEGRATION_RECEIVER_SHA:.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml" > "$FOOTBALL3_INTEGRATION_RECEIVER_PATH"
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
       - name: Prove exact-checkout dependencies and fail-closed mutations
         run: python3 governance/football3/test_cross_checkout_dependency_integrity_v1.py
+      - name: Prove registration shell and integration Receiver role separation
+        run: python3 governance/football3/test_trusted_dispatcher_workflow_v1.py
       - name: Materialize cross-checkout candidate evidence
         env:
           CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -74,30 +96,46 @@ jobs:
           import os
           from pathlib import Path
 
-          receiver_path = Path('.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml')
+          registration_path = Path('.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml')
+          integration_path = Path(os.environ['FOOTBALL3_INTEGRATION_RECEIVER_PATH'])
           dispatcher_path = Path('.github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml')
-          receiver = receiver_path.read_text(encoding='utf-8')
+          registration = registration_path.read_text(encoding='utf-8')
+          integration = integration_path.read_text(encoding='utf-8')
           dispatcher = dispatcher_path.read_text(encoding='utf-8')
           receiver_name = 'Football3 GPT Auto Dispatch Receiver V3'
-          assert receiver.startswith(f'name: {receiver_name}\n')
+          assert registration.startswith(f'name: {receiver_name}\n')
+          assert integration.startswith(f'name: {receiver_name}\n')
           assert f'      - {receiver_name}\n' in dispatcher
+          assert 'DEFAULT_BRANCH_RECEIVER_EXECUTION=SKIP' in registration
+          assert 'auto_dispatch_bridge_v1.py' not in registration
+          assert 'test_auto_dispatch_bridge_v1.py' not in registration
+          assert 'actions: write' not in registration
+          assert 'pull_request_target:' not in registration
+          assert 'auto_dispatch_bridge_v1.py' in integration
+          assert 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY' in integration
 
           evidence = {
               "schema_version": "football3-trusted-dispatcher-cross-checkout-candidate-v1",
               "candidate_exact_head": os.environ["CANDIDATE_EXACT_HEAD"],
               "canonical_candidate_sha": os.environ["FOOTBALL3_CANONICAL_CANDIDATE_SHA"],
               "canonical_ref": os.environ["FOOTBALL3_CANONICAL_REF"],
+              "integration_receiver_sha": os.environ["FOOTBALL3_INTEGRATION_RECEIVER_SHA"],
               "repository_integrity_contract": "EXACT_CHECKOUT_FAIL_CLOSED",
               "helper_paths": [
                   "football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py",
                   "football-data/formal_gpt_gateway_v1/request_contract_v1.py",
               ],
               "candidate_helper_existence": "PASS",
-              "receiver_registration_path": str(receiver_path),
+              "receiver_registration_path": str(registration_path),
               "receiver_workflow_name": receiver_name,
               "dispatcher_workflow_run_subscription": receiver_name,
               "receiver_dispatcher_name_match": "PASS",
+              "default_branch_registration_shell": "PASS",
+              "integration_full_receiver": "PASS",
+              "registration_shell_python_dependency_count": 0,
+              "registration_shell_privileged": False,
               "production_dispatch_performed": False,
+              "real_workflow_run_e2e_performed": False,
           }
           out = Path(".runtime_sources/trusted-dispatcher-candidate")
           out.mkdir(parents=True, exist_ok=True)
