@@ -1,0 +1,139 @@
+name: Football3 GPT Auto Dispatch Bridge V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - '.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml'
+      - 'football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py'
+      - 'football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py'
+  pull_request_target:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: football3-gpt-auto-dispatch-bridge-v1
+  cancel-in-progress: false
+
+jobs:
+  candidate-contract:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Permanent auto-dispatch bridge contract
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py
+
+  trusted-auto-dispatch:
+    if: >-
+      ${{
+        github.event_name == 'pull_request_target' &&
+        github.event.action == 'edited' &&
+        github.event.pull_request.number == 341 &&
+        github.event.pull_request.base.ref == 'football3/formal-gpt-runner-integration-v1' &&
+        github.event.pull_request.head.ref == 'football3/formal-gpt-runner-request-carrier-v1'
+      }}
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve trusted live canonical integration HEAD
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BODY="$(mktemp)"
+          URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/heads/football3/formal-gpt-runner-integration-v1"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "${URL}" -o "${BODY}"
+          LIVE_SHA="$(jq -r '
+            if .ref == "refs/heads/football3/formal-gpt-runner-integration-v1"
+               and .object.type == "commit"
+               and (.object.sha | type) == "string"
+               and (.object.sha | test("^[0-9a-f]{40}$"))
+            then .object.sha else error("invalid live canonical ref response") end
+          ' "${BODY}")"
+          echo "live_sha=${LIVE_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ steps.live.outputs.live_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Permanent bridge contract before privileged dispatch
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py
+
+      - name: Validate trusted event, permission, live carrier and request_id dedup
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py prepare \
+            --event "${GITHUB_EVENT_PATH}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --token "${GH_TOKEN}" \
+            --trusted-checkout-sha "${{ steps.live.outputs.live_sha }}" \
+            --audit-out .runtime_sources/auto_dispatch_bridge.json
+
+      - name: Reserve request_id before dispatch
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.reservation_name }}
+          path: .runtime_sources/auto_dispatch_bridge.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Dispatch live canonical formal workflow
+        id: dispatch
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py dispatch \
+            --repo "${GITHUB_REPOSITORY}" \
+            --token "${GH_TOKEN}" \
+            --audit .runtime_sources/auto_dispatch_bridge.json
+
+      - name: Seal successful request_id dispatch ledger
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' && steps.dispatch.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.completed_name }}
+          path: .runtime_sources/auto_dispatch_bridge.json
+          if-no-files-found: error
+          retention-days: 90
