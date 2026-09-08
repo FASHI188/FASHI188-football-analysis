@@ -12,14 +12,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 FORMAL_WORKFLOW_FILE = "football3-formal-gpt-runner-integration-v1.yml"
 FORMAL_WORKFLOW_PATH = f".github/workflows/{FORMAL_WORKFLOW_FILE}"
 FORMAL_RUN_PREFIX = "Football3 Formal GPT Runner Integration V1"
 CANONICAL_REF = "football3/formal-gpt-runner-integration-v1"
-RETRYABLE_GET_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
+LOCATOR_SCHEMA = "football3-formal-dispatch-run-locator-v2"
+RETRYABLE_SERVER_STATUSES = frozenset({500, 502, 503, 504})
 DEFAULT_POLL_DELAYS = (1.0, 1.0, 2.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0)
+RATE_HEADER_KEYS = (
+    "date",
+    "x-github-request-id",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+    "x-ratelimit-resource",
+    "retry-after",
+    "content-length",
+)
 
 
 class LocatorError(RuntimeError):
@@ -58,6 +69,49 @@ def expected_display_title(request_sha: str) -> str:
     return f"{FORMAL_RUN_PREFIX} {request_sha}"
 
 
+def evaluate_formal_run(
+    run: dict[str, Any],
+    *,
+    workflow_id: int,
+    before_ids: set[int],
+    request_sha: str,
+    canonical_sha: str,
+    dispatch_started_at: datetime,
+) -> tuple[bool, list[str]]:
+    reasons: list[str] = []
+    try:
+        run_id = int(run.get("id"))
+    except (TypeError, ValueError):
+        run_id = -1
+        reasons.append("RUN_ID_INVALID")
+    try:
+        actual_workflow_id = int(run.get("workflow_id"))
+    except (TypeError, ValueError):
+        actual_workflow_id = -1
+        reasons.append("WORKFLOW_ID_INVALID")
+
+    if run_id in before_ids:
+        reasons.append("PRE_DISPATCH_INVENTORY_MEMBER")
+    if actual_workflow_id != workflow_id:
+        reasons.append("WORKFLOW_ID_MISMATCH")
+    if run.get("event") != "workflow_dispatch":
+        reasons.append("EVENT_MISMATCH")
+    if run.get("head_branch") != CANONICAL_REF:
+        reasons.append("HEAD_BRANCH_MISMATCH")
+    if run.get("head_sha") != canonical_sha:
+        reasons.append("HEAD_SHA_MISMATCH")
+    if run.get("display_title") != expected_display_title(request_sha):
+        reasons.append("DISPLAY_TITLE_REQUEST_SHA_MISMATCH")
+
+    created_at = _parse_time(run.get("created_at"))
+    if created_at is None:
+        reasons.append("CREATED_AT_INVALID")
+    elif created_at < dispatch_started_at.replace(microsecond=0):
+        reasons.append("CREATED_BEFORE_DISPATCH_BASELINE")
+
+    return not reasons, reasons
+
+
 def validate_formal_run(
     run: dict[str, Any],
     *,
@@ -67,49 +121,65 @@ def validate_formal_run(
     canonical_sha: str,
     dispatch_started_at: datetime,
 ) -> bool:
+    accepted, _ = evaluate_formal_run(
+        run,
+        workflow_id=workflow_id,
+        before_ids=before_ids,
+        request_sha=request_sha,
+        canonical_sha=canonical_sha,
+        dispatch_started_at=dispatch_started_at,
+    )
+    return accepted
+
+
+def _run_id(run: dict[str, Any]) -> int | None:
     try:
-        run_id = int(run.get("id"))
-        actual_workflow_id = int(run.get("workflow_id"))
+        return int(run.get("id"))
     except (TypeError, ValueError):
-        return False
-    created_at = _parse_time(run.get("created_at"))
+        return None
+
+
+def _near_candidate(run: dict[str, Any], *, workflow_id: int, request_sha: str, canonical_sha: str) -> bool:
+    try:
+        workflow_match = int(run.get("workflow_id")) == workflow_id
+    except (TypeError, ValueError):
+        workflow_match = False
     return bool(
-        run_id not in before_ids
-        and actual_workflow_id == workflow_id
-        and run.get("event") == "workflow_dispatch"
-        and run.get("head_branch") == CANONICAL_REF
-        and run.get("head_sha") == canonical_sha
-        and run.get("display_title") == expected_display_title(request_sha)
-        and created_at is not None
-        and created_at >= dispatch_started_at.replace(microsecond=0)
+        workflow_match
+        or run.get("head_sha") == canonical_sha
+        or run.get("head_branch") == CANONICAL_REF
+        or request_sha in str(run.get("display_title") or "")
     )
 
 
-def select_unique_formal_run(
-    runs: Iterable[dict[str, Any]],
+def _run_diagnostic(
+    run: dict[str, Any],
     *,
     workflow_id: int,
     before_ids: set[int],
     request_sha: str,
     canonical_sha: str,
     dispatch_started_at: datetime,
-) -> dict[str, Any] | None:
-    matches = [
-        run
-        for run in runs
-        if isinstance(run, dict)
-        and validate_formal_run(
-            run,
-            workflow_id=workflow_id,
-            before_ids=before_ids,
-            request_sha=request_sha,
-            canonical_sha=canonical_sha,
-            dispatch_started_at=dispatch_started_at,
-        )
-    ]
-    if len(matches) > 1:
-        _fail("FORMAL_RUN_AMBIGUOUS")
-    return matches[0] if matches else None
+) -> dict[str, Any]:
+    accepted, reasons = evaluate_formal_run(
+        run,
+        workflow_id=workflow_id,
+        before_ids=before_ids,
+        request_sha=request_sha,
+        canonical_sha=canonical_sha,
+        dispatch_started_at=dispatch_started_at,
+    )
+    return {
+        "run_id": _run_id(run),
+        "workflow_id": run.get("workflow_id"),
+        "event": run.get("event"),
+        "head_branch": run.get("head_branch"),
+        "head_sha": run.get("head_sha"),
+        "display_title": run.get("display_title"),
+        "created_at": run.get("created_at"),
+        "accepted": accepted,
+        "rejection_reasons": reasons,
+    }
 
 
 class GitHubTransport:
@@ -128,7 +198,12 @@ class GitHubTransport:
         self.sleep_fn = sleep_fn
         self.max_get_attempts = max(1, int(max_get_attempts))
 
-    def _request_once(self, method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, str], bytes]:
+    def _request_once(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, str], bytes]:
         req = urllib.request.Request(
             f"https://api.github.com{path}",
             data=_canonical_json_bytes(payload) if payload is not None else None,
@@ -137,7 +212,7 @@ class GitHubTransport:
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "football3-formal-run-locator-v1",
+                "User-Agent": "football3-formal-run-locator-v2",
             },
         )
         try:
@@ -148,23 +223,78 @@ class GitHubTransport:
         except Exception as exc:
             raise LocatorError(f"FORMAL_RUN_GITHUB_API_UNAVAILABLE:{method}:{path}") from exc
 
-    def get_json(self, path: str) -> Any:
-        delays = (0.5, 1.0, 2.0, 4.0)
+    @staticmethod
+    def _selected_headers(headers: dict[str, str]) -> dict[str, str]:
+        return {key: headers[key] for key in RATE_HEADER_KEYS if key in headers}
+
+    @staticmethod
+    def _is_explicit_rate_limit(status: int, headers: dict[str, str]) -> bool:
+        if status == 429:
+            return True
+        if status != 403:
+            return False
+        return headers.get("x-ratelimit-remaining") == "0" or bool(headers.get("retry-after"))
+
+    def _rate_limit_delay(self, headers: dict[str, str], attempt: int) -> float:
+        retry_after = headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 0.0), 30.0)
+            except ValueError:
+                pass
+        reset = headers.get("x-ratelimit-reset")
+        if reset:
+            try:
+                return min(max(float(reset) - time.time(), 0.0), 30.0)
+            except ValueError:
+                pass
+        return (0.5, 1.0, 2.0, 4.0)[min(attempt, 3)]
+
+    def get_json_with_evidence(self, path: str) -> tuple[Any, dict[str, Any]]:
+        attempts: list[dict[str, Any]] = []
         last_status = 0
         last_body = b""
         for attempt in range(self.max_get_attempts):
-            status, _headers, body = self._request_once("GET", path)
+            observed_at = _utc_now()
+            status, headers, body = self._request_once("GET", path)
             last_status, last_body = status, body
+            attempts.append(
+                {
+                    "attempt": attempt + 1,
+                    "observed_at": _iso(observed_at),
+                    "status": status,
+                    "headers": self._selected_headers(headers),
+                }
+            )
             if status == 200:
                 try:
-                    return json.loads(body)
+                    return json.loads(body), {"endpoint": path, "attempts": attempts}
                 except Exception as exc:
                     raise LocatorError(f"FORMAL_RUN_GITHUB_API_JSON_INVALID:{path}") from exc
-            if status not in RETRYABLE_GET_STATUSES or attempt + 1 >= self.max_get_attempts:
+
+            explicit_rate_limit = self._is_explicit_rate_limit(status, headers)
+            retryable = explicit_rate_limit or status in RETRYABLE_SERVER_STATUSES
+            if status == 403 and not explicit_rate_limit:
+                snippet = body.decode("utf-8", "replace")[:240]
+                _fail(f"FORMAL_RUN_GITHUB_PERMISSION_DENIED:GET:{path}:403:{snippet}")
+            if not retryable:
+                snippet = body.decode("utf-8", "replace")[:240]
+                _fail(f"FORMAL_RUN_GITHUB_API_ERROR:GET:{path}:{status}:{snippet}")
+            if attempt + 1 >= self.max_get_attempts:
                 break
-            self.sleep_fn(delays[min(attempt, len(delays) - 1)])
+            if explicit_rate_limit:
+                self.sleep_fn(self._rate_limit_delay(headers, attempt))
+            else:
+                self.sleep_fn((0.5, 1.0, 2.0, 4.0)[min(attempt, 3)])
+
         snippet = last_body.decode("utf-8", "replace")[:240]
+        if last_status in (403, 429):
+            _fail(f"FORMAL_RUN_GITHUB_RATE_LIMITED:GET:{path}:{last_status}:{snippet}")
         _fail(f"FORMAL_RUN_GITHUB_API_ERROR:GET:{path}:{last_status}:{snippet}")
+
+    def get_json(self, path: str) -> Any:
+        value, _ = self.get_json_with_evidence(path)
+        return value
 
     def post_dispatch_once(self, workflow_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         path = f"/repos/{self.repo}/actions/workflows/{workflow_id}/dispatches"
@@ -178,19 +308,7 @@ class GitHubTransport:
             "http_status": status,
             "response_body_utf8": body.decode("utf-8", "replace")[:1000],
             "response_body_sha256": hashlib.sha256(body).hexdigest(),
-            "response_headers": {
-                key: headers[key]
-                for key in (
-                    "date",
-                    "x-github-request-id",
-                    "x-ratelimit-limit",
-                    "x-ratelimit-remaining",
-                    "x-ratelimit-reset",
-                    "retry-after",
-                    "content-length",
-                )
-                if key in headers
-            },
+            "response_headers": self._selected_headers(headers),
         }
 
 
@@ -208,10 +326,9 @@ class FormalRunLocator:
         self.poll_delays = tuple(poll_delays)
         self.max_pages = max(1, int(max_pages))
 
-    def resolve_workflow_id(self) -> int:
-        value = self.transport.get_json(
-            f"/repos/{self.transport.repo}/actions/workflows/{urllib.parse.quote(FORMAL_WORKFLOW_FILE, safe='')}"
-        )
+    def resolve_workflow_id(self) -> tuple[int, dict[str, Any]]:
+        path = f"/repos/{self.transport.repo}/actions/workflows/{urllib.parse.quote(FORMAL_WORKFLOW_FILE, safe='')}"
+        value, api_evidence = self.transport.get_json_with_evidence(path)
         if not isinstance(value, dict):
             _fail("FORMAL_WORKFLOW_METADATA_INVALID")
         try:
@@ -220,36 +337,67 @@ class FormalRunLocator:
             _fail("FORMAL_WORKFLOW_ID_INVALID")
         if value.get("path") != FORMAL_WORKFLOW_PATH:
             _fail("FORMAL_WORKFLOW_PATH_MISMATCH")
-        return workflow_id
+        return workflow_id, {"workflow_id": workflow_id, "path": value.get("path"), "api": api_evidence}
 
-    def list_all_runs(self, workflow_id: int) -> tuple[list[dict[str, Any]], int]:
-        runs: list[dict[str, Any]] = []
-        pages = 0
-        for page in range(1, self.max_pages + 1):
-            pages = page
-            value = self.transport.get_json(
-                f"/repos/{self.transport.repo}/actions/workflows/{workflow_id}/runs?event=workflow_dispatch&per_page=100&page={page}"
+    def _endpoint(self, channel: str, workflow_id: int, canonical_sha: str, page: int) -> str:
+        if channel == "workflow":
+            return (
+                f"/repos/{self.transport.repo}/actions/workflows/{workflow_id}/runs"
+                f"?event=workflow_dispatch&per_page=100&page={page}"
             )
+        if channel == "repository":
+            branch = urllib.parse.quote(CANONICAL_REF, safe="")
+            return (
+                f"/repos/{self.transport.repo}/actions/runs"
+                f"?event=workflow_dispatch&branch={branch}&head_sha={canonical_sha}&per_page=100&page={page}"
+            )
+        raise AssertionError(channel)
+
+    def list_channel_runs(
+        self,
+        channel: str,
+        *,
+        workflow_id: int,
+        canonical_sha: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        runs: list[dict[str, Any]] = []
+        pages_evidence: list[dict[str, Any]] = []
+        for page in range(1, self.max_pages + 1):
+            endpoint = self._endpoint(channel, workflow_id, canonical_sha, page)
+            value, api_evidence = self.transport.get_json_with_evidence(endpoint)
             batch = value.get("workflow_runs") if isinstance(value, dict) else None
             total = value.get("total_count") if isinstance(value, dict) else None
             if not isinstance(batch, list):
-                _fail("FORMAL_RUN_LIST_INVALID")
-            runs.extend(run for run in batch if isinstance(run, dict))
+                _fail(f"FORMAL_RUN_LIST_INVALID:{channel}")
+            clean_batch = [run for run in batch if isinstance(run, dict)]
+            runs.extend(clean_batch)
+            pages_evidence.append(
+                {
+                    "page": page,
+                    "endpoint": endpoint,
+                    "total_count": total,
+                    "returned_run_ids": [rid for run in clean_batch if (rid := _run_id(run)) is not None],
+                    "api": api_evidence,
+                }
+            )
             if isinstance(total, int) and len(runs) >= total:
-                return runs, pages
+                break
             if len(batch) < 100:
-                return runs, pages
-        _fail("FORMAL_RUN_LIST_PAGINATION_LIMIT")
+                break
+        else:
+            _fail(f"FORMAL_RUN_LIST_PAGINATION_LIMIT:{channel}")
+        return runs, {"channel": channel, "pages": pages_evidence, "run_count": len(runs)}
 
-    def inventory_before_dispatch(self, workflow_id: int) -> tuple[set[int], dict[str, Any]]:
-        runs, pages = self.list_all_runs(workflow_id)
-        ids: set[int] = set()
-        for run in runs:
-            try:
-                ids.add(int(run.get("id")))
-            except (TypeError, ValueError):
-                continue
-        return ids, {"run_count": len(runs), "pages": pages, "run_ids": sorted(ids)}
+    def inventory_before_dispatch(self, workflow_id: int, canonical_sha: str) -> tuple[set[int], dict[str, Any]]:
+        union: set[int] = set()
+        channels: dict[str, Any] = {}
+        for channel in ("workflow", "repository"):
+            runs, evidence = self.list_channel_runs(channel, workflow_id=workflow_id, canonical_sha=canonical_sha)
+            ids = sorted({rid for run in runs if (rid := _run_id(run)) is not None})
+            union.update(ids)
+            evidence["run_ids"] = ids
+            channels[channel] = evidence
+        return union, {"channels": channels, "union_run_ids": sorted(union), "run_count": len(union)}
 
     def _reread_and_verify(
         self,
@@ -260,24 +408,64 @@ class FormalRunLocator:
         request_sha: str,
         canonical_sha: str,
         dispatch_started_at: datetime,
-    ) -> dict[str, Any]:
-        try:
-            run_id = int(candidate["id"])
-        except (KeyError, TypeError, ValueError):
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        run_id = _run_id(candidate)
+        if run_id is None:
             _fail("FORMAL_RUN_ID_INVALID")
-        reread = self.transport.get_json(f"/repos/{self.transport.repo}/actions/runs/{run_id}")
+        path = f"/repos/{self.transport.repo}/actions/runs/{run_id}"
+        reread, api_evidence = self.transport.get_json_with_evidence(path)
         if not isinstance(reread, dict):
             _fail("FORMAL_RUN_REREAD_INVALID")
-        if int(reread.get("id") or 0) != run_id or not validate_formal_run(
+        accepted, reasons = evaluate_formal_run(
             reread,
             workflow_id=workflow_id,
             before_ids=before_ids,
             request_sha=request_sha,
             canonical_sha=canonical_sha,
             dispatch_started_at=dispatch_started_at,
-        ):
-            _fail("FORMAL_RUN_REVALIDATION_FAILED")
-        return reread
+        )
+        if int(reread.get("id") or 0) != run_id or not accepted:
+            _fail(f"FORMAL_RUN_REVALIDATION_FAILED:{','.join(reasons) or 'RUN_ID_MISMATCH'}")
+        return reread, {"endpoint": path, "api": api_evidence, "revalidated": True}
+
+    def _poll_channel(
+        self,
+        channel: str,
+        *,
+        workflow_id: int,
+        before_ids: set[int],
+        request_sha: str,
+        canonical_sha: str,
+        dispatch_started_at: datetime,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        runs, list_evidence = self.list_channel_runs(channel, workflow_id=workflow_id, canonical_sha=canonical_sha)
+        matches: list[dict[str, Any]] = []
+        near: list[dict[str, Any]] = []
+        for run in runs:
+            accepted, _ = evaluate_formal_run(
+                run,
+                workflow_id=workflow_id,
+                before_ids=before_ids,
+                request_sha=request_sha,
+                canonical_sha=canonical_sha,
+                dispatch_started_at=dispatch_started_at,
+            )
+            if accepted:
+                matches.append(run)
+            if accepted or _near_candidate(run, workflow_id=workflow_id, request_sha=request_sha, canonical_sha=canonical_sha):
+                near.append(
+                    _run_diagnostic(
+                        run,
+                        workflow_id=workflow_id,
+                        before_ids=before_ids,
+                        request_sha=request_sha,
+                        canonical_sha=canonical_sha,
+                        dispatch_started_at=dispatch_started_at,
+                    )
+                )
+        list_evidence["near_candidates"] = near
+        list_evidence["exact_match_run_ids"] = [rid for run in matches if (rid := _run_id(run)) is not None]
+        return matches, list_evidence
 
     def locate(
         self,
@@ -287,33 +475,90 @@ class FormalRunLocator:
         request_sha: str,
         canonical_sha: str,
         dispatch_started_at: datetime,
+        audit_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        poll_count = 0
-        page_counts: list[int] = []
-        for delay in (0.0,) + self.poll_delays:
+        polls: list[dict[str, Any]] = []
+        for poll_number, delay in enumerate((0.0,) + self.poll_delays, start=1):
             if delay:
                 self.sleep_fn(delay)
-            poll_count += 1
-            runs, pages = self.list_all_runs(workflow_id)
-            page_counts.append(pages)
-            found = select_unique_formal_run(
-                runs,
-                workflow_id=workflow_id,
-                before_ids=before_ids,
-                request_sha=request_sha,
-                canonical_sha=canonical_sha,
-                dispatch_started_at=dispatch_started_at,
-            )
-            if found is not None:
-                reread = self._reread_and_verify(
-                    found,
+            poll_started = _utc_now()
+            channel_matches: dict[str, list[dict[str, Any]]] = {}
+            channel_evidence: dict[str, Any] = {}
+            for channel in ("workflow", "repository"):
+                matches, evidence = self._poll_channel(
+                    channel,
                     workflow_id=workflow_id,
                     before_ids=before_ids,
                     request_sha=request_sha,
                     canonical_sha=canonical_sha,
                     dispatch_started_at=dispatch_started_at,
                 )
-                return reread, {"poll_count": poll_count, "pages_per_poll": page_counts}
+                channel_matches[channel] = matches
+                channel_evidence[channel] = evidence
+
+            poll_record = {
+                "poll_number": poll_number,
+                "poll_started_at": _iso(poll_started),
+                "poll_finished_at": _iso(_utc_now()),
+                "channels": channel_evidence,
+            }
+            polls.append(poll_record)
+
+            per_channel_ids: dict[str, list[int]] = {}
+            for channel, matches in channel_matches.items():
+                ids = [rid for run in matches if (rid := _run_id(run)) is not None]
+                per_channel_ids[channel] = ids
+                if len(set(ids)) > 1:
+                    poll_record["decision"] = f"AMBIGUOUS_{channel.upper()}"
+                    if audit_sink:
+                        audit_sink(poll_record)
+                    _fail(f"FORMAL_RUN_AMBIGUOUS:{channel}")
+
+            workflow_ids = set(per_channel_ids["workflow"])
+            repository_ids = set(per_channel_ids["repository"])
+            union_ids = workflow_ids | repository_ids
+            if workflow_ids and repository_ids and workflow_ids != repository_ids:
+                poll_record["decision"] = "CHANNEL_CONFLICT"
+                if audit_sink:
+                    audit_sink(poll_record)
+                _fail("FORMAL_RUN_CHANNEL_CONFLICT")
+            if len(union_ids) > 1:
+                poll_record["decision"] = "AMBIGUOUS_UNION"
+                if audit_sink:
+                    audit_sink(poll_record)
+                _fail("FORMAL_RUN_AMBIGUOUS:union")
+
+            if audit_sink:
+                audit_sink(poll_record)
+
+            if len(union_ids) == 1:
+                selected_id = next(iter(union_ids))
+                source_run = None
+                for matches in channel_matches.values():
+                    for run in matches:
+                        if _run_id(run) == selected_id:
+                            source_run = run
+                            break
+                    if source_run is not None:
+                        break
+                assert source_run is not None
+                reread, reread_evidence = self._reread_and_verify(
+                    source_run,
+                    workflow_id=workflow_id,
+                    before_ids=before_ids,
+                    request_sha=request_sha,
+                    canonical_sha=canonical_sha,
+                    dispatch_started_at=dispatch_started_at,
+                )
+                return reread, {
+                    "schema_version": LOCATOR_SCHEMA,
+                    "poll_count": poll_number,
+                    "polls": polls,
+                    "selected_run_id": selected_id,
+                    "selected_channels": [channel for channel, ids in per_channel_ids.items() if selected_id in ids],
+                    "reread": reread_evidence,
+                }
+
         _fail("FORMAL_RUN_NOT_FOUND")
 
     def dispatch_once_and_locate(
@@ -323,6 +568,7 @@ class FormalRunLocator:
         before_ids: set[int],
         request_sha: str,
         canonical_sha: str,
+        audit_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         payload = {
             "ref": CANONICAL_REF,
@@ -338,6 +584,7 @@ class FormalRunLocator:
             request_sha=request_sha,
             canonical_sha=canonical_sha,
             dispatch_started_at=dispatch_started_at,
+            audit_sink=audit_sink,
         )
         locator_evidence["dispatch_started_at"] = _iso(dispatch_started_at)
         return run, http_evidence, locator_evidence
@@ -379,13 +626,20 @@ def dispatch_command(args: argparse.Namespace) -> int:
 
     transport = GitHubTransport(args.repo, args.token)
     locator = FormalRunLocator(transport)
-    workflow_id = locator.resolve_workflow_id()
-    before_ids, inventory = locator.inventory_before_dispatch(workflow_id)
+    workflow_id, workflow_metadata = locator.resolve_workflow_id()
+    before_ids, inventory = locator.inventory_before_dispatch(workflow_id, live_sha)
+    diagnostics: dict[str, Any] = {
+        "schema_version": LOCATOR_SCHEMA,
+        "workflow_metadata": workflow_metadata,
+        "inventory": inventory,
+        "polls": [],
+    }
     audit.update(
         {
             "formal_workflow_id": workflow_id,
             "formal_run_inventory_before_dispatch": inventory,
-            "locator_helper": "formal_dispatch_run_locator_v1",
+            "locator_helper": LOCATOR_SCHEMA,
+            "formal_run_locator_diagnostics": diagnostics,
         }
     )
     _write_audit(audit_path, audit)
@@ -400,26 +654,29 @@ def dispatch_command(args: argparse.Namespace) -> int:
     except LocatorError as exc:
         audit.update(
             {
-                "phase": "FORMAL_DISPATCH_FAILED",
+                "phase": "FORMAL_DISPATCH_RESULT_UNKNOWN",
                 "status": "FAIL_CLOSED",
-                "dispatch_performed": False,
+                "dispatch_performed": "UNKNOWN",
                 "locator_error": str(exc),
             }
         )
         _write_audit(audit_path, audit)
         raise
+
     if int(http_evidence.get("http_status") or 0) != 204:
+        status = int(http_evidence.get("http_status") or 0)
+        dispatch_state: bool | str = False if 400 <= status < 500 and status not in (408, 429) else "UNKNOWN"
         audit.update(
             {
                 "phase": "FORMAL_DISPATCH_FAILED",
                 "status": "FAIL_CLOSED",
-                "dispatch_performed": False,
+                "dispatch_performed": dispatch_state,
                 "formal_dispatch_http": http_evidence,
-                "locator_error": f"FORMAL_DISPATCH_HTTP_STATUS:{http_evidence.get('http_status')}",
+                "locator_error": f"FORMAL_DISPATCH_HTTP_STATUS:{status}",
             }
         )
         _write_audit(audit_path, audit)
-        _fail(f"FORMAL_DISPATCH_HTTP_STATUS:{http_evidence.get('http_status')}")
+        _fail(f"FORMAL_DISPATCH_HTTP_STATUS:{status}")
 
     audit.update(
         {
@@ -430,7 +687,13 @@ def dispatch_command(args: argparse.Namespace) -> int:
             "formal_dispatch_started_at": _iso(dispatch_started_at),
         }
     )
+    diagnostics["dispatch_started_at"] = _iso(dispatch_started_at)
     _write_audit(audit_path, audit)
+
+    def persist_poll(poll_record: dict[str, Any]) -> None:
+        diagnostics.setdefault("polls", []).append(poll_record)
+        audit["formal_run_locator_diagnostics"] = diagnostics
+        _write_audit(audit_path, audit)
 
     try:
         run, locator_evidence = locator.locate(
@@ -439,6 +702,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
             request_sha=request_sha,
             canonical_sha=live_sha,
             dispatch_started_at=dispatch_started_at,
+            audit_sink=persist_poll,
         )
     except LocatorError as exc:
         audit.update(
@@ -447,6 +711,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
                 "status": "FAIL_CLOSED",
                 "dispatch_performed": True,
                 "locator_error": str(exc),
+                "formal_run_locator_diagnostics": diagnostics,
             }
         )
         _write_audit(audit_path, audit)
@@ -454,6 +719,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
 
     locator_evidence["dispatch_started_at"] = _iso(dispatch_started_at)
     run_id = int(run["id"])
+    diagnostics["selected_run_id"] = run_id
     audit.update(
         {
             "phase": "DISPATCHED",
@@ -461,6 +727,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
             "dispatch_performed": True,
             "formal_dispatch_http": http_evidence,
             "formal_run_locator": locator_evidence,
+            "formal_run_locator_diagnostics": diagnostics,
             "formal_run_id": run_id,
             "formal_run_url": run.get("html_url"),
             "formal_run_head_sha": run.get("head_sha"),
