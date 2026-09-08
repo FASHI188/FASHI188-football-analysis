@@ -161,12 +161,30 @@ class BridgeContractSecurityTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             (root / "request.json").write_bytes(contract.canonical_bytes(request))
-            (root / "transport.json").write_text(json.dumps({"expected_request_sha256": request_sha, "request_sha256": request_sha, "request_sha_verified": True, "pr_number": "341"}), encoding="utf-8")
+            (root / "transport.json").write_text(json.dumps({"transport": binding.CARRIER_TRANSPORT, "expected_request_sha256": request_sha, "request_sha256": request_sha, "request_sha_verified": True, "pr_number": "341"}), encoding="utf-8")
             (root / "binding.json").write_text(json.dumps({"request_sha256": request_sha, "request_id": "bind", "request_carrier_ref": bridge.CARRIER_REF, "request_carrier_head": "1" * 40, "checkout_head_sha": "2" * 40, "canonical_base_ref": bridge.CANONICAL_REF, "runner_code_source": "CANONICAL_INTEGRATION_EXACT_SHA"}), encoding="utf-8")
             receipt = binding.verify(str(root / "request.json"), str(root / "transport.json"), str(root / "binding.json"))
             self.assertEqual(receipt["carrier_pr_number"], "341"); self.assertEqual(receipt["carrier_head_sha"], "1" * 40); self.assertEqual(receipt["canonical_execution_sha"], "2" * 40)
             changed = json.loads((root / "request.json").read_text(encoding="utf-8")); changed["match"]["away_team_name"] = "Inter"; (root / "request.json").write_text(json.dumps(changed), encoding="utf-8")
             with self.assertRaisesRegex(binding.RequestBindingError, "PRODUCTION_REQUEST_SHA_MISMATCH"):
+                binding.verify(str(root / "request.json"), str(root / "transport.json"), str(root / "binding.json"))
+
+    def test_non_carrier_selftest_binding_is_transport_scoped(self) -> None:
+        request = contract.validate_request({"schema_version": contract.SCHEMA, "mode": "cache_reuse_probe", "request_id": "push-selftest"}, carrier_request=False)
+        request_sha = contract.request_sha256(request)
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / "request.json").write_bytes(contract.canonical_bytes(request))
+            transport = {"transport": "COMMITTED_SELFTEST_REQUEST", "expected_request_sha256": None, "request_sha256": request_sha, "request_sha_verified": False, "pr_number": None}
+            base_binding = {"request_sha256": request_sha, "request_id": "push-selftest", "request_carrier_ref": None, "request_carrier_head": None, "checkout_head_sha": "2" * 40, "canonical_base_ref": bridge.CANONICAL_REF, "runner_code_source": "CANONICAL_INTEGRATION_EXACT_SHA"}
+            (root / "transport.json").write_text(json.dumps(transport), encoding="utf-8")
+            (root / "binding.json").write_text(json.dumps(base_binding), encoding="utf-8")
+            receipt = binding.verify(str(root / "request.json"), str(root / "transport.json"), str(root / "binding.json"))
+            self.assertEqual(receipt["status"], "NOT_APPLICABLE_NON_CARRIER")
+            self.assertFalse(receipt["request_sha_verified"])
+            transport["expected_request_sha256"] = "3" * 64
+            (root / "transport.json").write_text(json.dumps(transport), encoding="utf-8")
+            with self.assertRaisesRegex(binding.RequestBindingError, "PRODUCTION_NON_CARRIER_EXPECTED_REQUEST_SHA_UNEXPECTED"):
                 binding.verify(str(root / "request.json"), str(root / "transport.json"), str(root / "binding.json"))
 
     def test_final_orchestration_receipt_contract(self) -> None:
