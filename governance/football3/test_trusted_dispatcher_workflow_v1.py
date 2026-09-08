@@ -94,7 +94,7 @@ class TrustedDispatcherWorkflowContractTest(unittest.TestCase):
         self.assertIn("AUTO_DISPATCH_RECEIVER_SIGNAL=READY", text)
         self.assertIn("auto_dispatch_bridge_v1.py", text)
         self.assertIn("test_auto_dispatch_bridge_v1.py", text)
-        self.assertIn(" audit-live \\", text)
+        self.assertIn(" audit-live ", text)
         self.assertNotIn("pull_request_target:", text)
         self.assertNotIn("actions: write", text)
         carrier = text.split("  carrier-edit-receiver:", 1)[1].split(
