@@ -116,14 +116,15 @@ class BridgeContractTest(unittest.TestCase):
 
     def test_workflow_executes_trusted_live_canonical_source_only(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("pull_request_target:", text)
-        self.assertIn("types: [edited]", text)
+        self.assertNotIn("pull_request_target:", text)
+        self.assertIn("types: [opened, edited, reopened, synchronize]", text)
         self.assertIn("actions: write", text)
         self.assertIn("ref: ${{ steps.live.outputs.live_sha }}", text)
         self.assertIn("group: football3-gpt-auto-dispatch-bridge-v1", text)
         self.assertIn("cancel-in-progress: false", text)
         trusted = text.split("  trusted-auto-dispatch:", 1)[1]
         self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", trusted)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", trusted)
         self.assertIn(
             "python3 football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py",
             text,

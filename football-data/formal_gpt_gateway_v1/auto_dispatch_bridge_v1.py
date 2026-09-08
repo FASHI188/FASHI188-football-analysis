@@ -244,7 +244,7 @@ def _append_output(values: dict[str, str]) -> None:
 
 
 def prepare(args: argparse.Namespace) -> int:
-    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request_target":
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
         raise BridgeError("AUTO_DISPATCH_TRUSTED_EVENT_REQUIRED")
     event = json.loads(pathlib.Path(args.event).read_text(encoding="utf-8"))
     event_audit = validate_event(event, args.repo)
