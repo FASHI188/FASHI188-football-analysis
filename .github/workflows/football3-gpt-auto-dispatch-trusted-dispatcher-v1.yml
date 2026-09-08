@@ -1,0 +1,167 @@
+name: Football3 GPT Auto Dispatch Trusted Dispatcher V1
+
+on:
+  workflow_run:
+    workflows:
+      - Football3 GPT Auto Dispatch Receiver V3
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: football3-gpt-auto-dispatch-trusted-dispatcher-v1
+  cancel-in-progress: false
+
+jobs:
+  trusted-dispatch:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.pull_requests[0].number == 341
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate upstream receiver metadata and resolve live canonical HEAD
+        id: trusted_source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECEIVER_RUN_ID: ${{ github.event.workflow_run.id }}
+          RECEIVER_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RECEIVER_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          RECEIVER_ACTOR: ${{ github.event.workflow_run.actor.login }}
+        run: |
+          set -euo pipefail
+          test "$RECEIVER_HEAD_BRANCH" = 'football3/formal-gpt-runner-request-carrier-v1'
+          test "$RECEIVER_HEAD_REPO" = "$GITHUB_REPOSITORY"
+          test -n "$RECEIVER_ACTOR"
+          test "$RECEIVER_RUN_ID" -gt 0
+
+          PR="$(mktemp)"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/341" \
+            -o "$PR"
+          jq -e \
+            --arg base 'football3/formal-gpt-runner-integration-v1' \
+            --arg carrier 'football3/formal-gpt-runner-request-carrier-v1' \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.state=="open" and .draft==true and .merged_at==null and .base.ref==$base and .head.ref==$carrier and .head.repo.full_name==$repo' \
+            "$PR" >/dev/null
+
+          REF="$(mktemp)"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/heads/football3%2Fformal-gpt-runner-integration-v1" \
+            -o "$REF"
+          LIVE_SHA="$(jq -r '.object.sha' "$REF")"
+          printf '%s' "$LIVE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          {
+            echo "canonical_sha=$LIVE_SHA"
+            echo "receiver_actor=$RECEIVER_ACTOR"
+            echo "receiver_run_id=$RECEIVER_RUN_ID"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ steps.trusted_source.outputs.canonical_sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify checkout is exact trusted canonical source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.trusted_source.outputs.canonical_sha }}"
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/request_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py
+
+      - name: Prepare exact request and idempotency reservation
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
+            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py prepare \
+              --repo "$GITHUB_REPOSITORY" \
+              --token "$GH_TOKEN" \
+              --actor "${{ steps.trusted_source.outputs.receiver_actor }}" \
+              --trusted-checkout-sha "${{ steps.trusted_source.outputs.canonical_sha }}" \
+              --trusted-dispatcher-sha "$GITHUB_SHA" \
+              --trusted-dispatcher-run-id "$GITHUB_RUN_ID" \
+              --receiver-run-id "${{ steps.trusted_source.outputs.receiver_run_id }}" \
+              --audit-out .runtime_sources/auto_dispatch_audit.json
+
+      - name: Materialize reservation ledger
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/reservation
+          cp .runtime_sources/auto_dispatch_audit.json .runtime_sources/reservation/ledger.json
+
+      - name: Upload reservation before dispatch
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.reservation_name }}
+          path: .runtime_sources/reservation/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Dispatch formal SHA-bound runner and locate new production Run ID
+        id: dispatch
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
+            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py dispatch \
+              --repo "$GITHUB_REPOSITORY" \
+              --token "$GH_TOKEN" \
+              --audit .runtime_sources/auto_dispatch_audit.json
+          echo "AUTO_DISPATCH_FORMAL_RUN_ID=${{ steps.dispatch.outputs.formal_run_id }}"
+
+      - name: Wait for formal terminal state and bind formal Receipt
+        id: finalize
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/completed
+          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
+            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py finalize \
+              --repo "$GITHUB_REPOSITORY" \
+              --token "$GH_TOKEN" \
+              --audit .runtime_sources/auto_dispatch_audit.json \
+              --final-receipt-out .runtime_sources/completed/auto_dispatch_final_binding_receipt.json
+          cp .runtime_sources/auto_dispatch_audit.json .runtime_sources/completed/auto_dispatch_audit.json
+
+      - name: Upload trusted completed ledger and final binding Receipt
+        if: ${{ steps.prepare.outputs.dispatch_required == 'true' && steps.finalize.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.completed_name }}
+          path: .runtime_sources/completed/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record duplicate suppression without a second production dispatch
+        if: ${{ steps.prepare.outputs.dispatch_required == 'false' }}
+        run: |
+          set -euo pipefail
+          test "${{ steps.prepare.outputs.result }}" = 'DUPLICATE_REQUEST_ID_SUPPRESSED'
+          echo 'AUTO_DISPATCH_DUPLICATE_REQUEST_SUPPRESSED=true'
