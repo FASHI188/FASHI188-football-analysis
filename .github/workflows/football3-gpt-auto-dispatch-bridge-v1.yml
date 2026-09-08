@@ -1,0 +1,141 @@
+name: Football3 GPT Auto Dispatch Receiver V3
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: football3-gpt-auto-dispatch-receiver-v3-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  carrier-edit-receiver:
+    if: ${{ github.event.pull_request.number == 341 && github.event.action == 'edited' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Emit unprivileged carrier edit signal without carrier checkout
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          test "$PR_NUMBER" = '341'
+          test "$PR_BASE_REF" = 'football3/formal-gpt-runner-integration-v1'
+          test "$PR_HEAD_REF" = 'football3/formal-gpt-runner-request-carrier-v1'
+          test "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY"
+          test -n "$ACTOR"
+          echo 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY'
+          echo 'AUTO_DISPATCH_RECEIVER_PRIVILEGED=false'
+          echo 'AUTO_DISPATCH_RECEIVER_CARRIER_CODE_EXECUTED=false'
+
+  candidate-contract-security:
+    if: ${{ github.event.pull_request.number != 341 }}
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile bridge request contract and authority router
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            football-data/formal_gpt_gateway_v1/request_contract_v1.py \
+            football-data/formal_gpt_gateway_v1/request_sha_binding_v1.py \
+            football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py \
+            football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py \
+            governance/football3/audit_football3_changed_authority_v1.py
+
+      - name: Permanent bridge contract and security tests
+        run: |
+          set -euo pipefail
+          python3 football-data/formal_gpt_gateway_v1/test_auto_dispatch_bridge_v1.py
+
+      - name: Read-only live PR 341 nested request and changed-file audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources
+          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
+            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py audit-live \
+              --repo "$GITHUB_REPOSITORY" \
+              --token "$GH_TOKEN" \
+              --audit-out .runtime_sources/auto_dispatch_bridge_candidate_audit.json
+
+      - name: Prove candidate receiver and governed artifacts bind the PR head
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/football3-gpt-auto-dispatch-bridge-v1.yml').read_text(encoding='utf-8')
+          assert ('pull_request' + '_target') not in text
+          assert ('actions' + ': write') not in text
+          receiver=text.split('  carrier-edit-receiver:',1)[1].split('  candidate-contract-security:',1)[0]
+          assert 'actions/checkout' not in receiver
+          assert 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY' in receiver
+          governed=Path('.github/workflows/football3-governed-permanent-regression-v1.yml').read_text(encoding='utf-8')
+          opener='$' + '{' + '{'
+          closer='}' + '}'
+          exact='CANDIDATE_EXACT_HEAD: ' + opener + ' github.event.pull_request.head.sha ' + closer
+          forbidden='CANDIDATE_EXACT_HEAD: ' + opener + ' github.sha ' + closer
+          assert governed.count(exact) == 3
+          assert governed.count('candidate_exact_head') >= 3
+          assert forbidden not in governed
+          print('AUTO_DISPATCH_RECEIVER_CANDIDATE_SECURITY_PASS')
+          print('CANDIDATE_ARTIFACT_HEAD_BINDING_CONTRACT_PASS')
+          PY
+
+      - name: Stamp receiver Artifact with exact PR head
+        if: ${{ always() }}
+        env:
+          CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          python3 - <<'PY'
+          import json, os, pathlib
+          head=os.environ['CANDIDATE_EXACT_HEAD']
+          p=pathlib.Path('.runtime_sources/auto_dispatch_bridge_candidate_audit.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          d['candidate_exact_head']=head
+          p.write_text(json.dumps(d,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          bound=json.loads(p.read_text(encoding='utf-8'))
+          assert bound['candidate_exact_head']==head
+          print('CANDIDATE_EXACT_HEAD_BINDING_PASS',head)
+          PY
+
+      - name: Upload read-only bridge candidate evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-auto-dispatch-bridge-candidate-${{ github.run_id }}
+          path: .runtime_sources/auto_dispatch_bridge_candidate_audit.json
+          if-no-files-found: error
+          retention-days: 90

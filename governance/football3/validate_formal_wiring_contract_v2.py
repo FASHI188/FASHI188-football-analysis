@@ -5,6 +5,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -54,23 +55,11 @@ EXPECTED_BINDINGS = {
     "cumulative_audit_base_head": EXPECTED_BASE_HEAD,
 }
 REQUIRED_FORBIDDEN = {
-    "market_features",
-    "market_validator_change",
-    "new_target_labels",
-    "retrain",
-    "retune",
-    "change_weight",
-    "change_gate",
-    "change_model_parameters",
-    "post_view_repair",
-    "future_research_queue",
-    "CURRENT",
-    "PR334/R5",
-    "Ready",
-    "merge",
-    "force",
-    "formal_enablement",
+    "market_features", "market_validator_change", "new_target_labels", "retrain", "retune",
+    "change_weight", "change_gate", "change_model_parameters", "post_view_repair",
+    "future_research_queue", "CURRENT", "PR334/R5", "Ready", "merge", "force", "formal_enablement",
 }
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class FormalWiringGovernanceError(RuntimeError):
@@ -115,11 +104,8 @@ def validate_schema(schema: dict) -> None:
     if required != expected_required:
         fail("formal_wiring schema required-key set drift")
     constants = {
-        "schema_version": 2,
-        "project_id": "football3",
-        "contract_kind": EXPECTED_KIND,
-        "branch": EXPECTED_BRANCH,
-        "status": EXPECTED_STATUS,
+        "schema_version": 2, "project_id": "football3", "contract_kind": EXPECTED_KIND,
+        "branch": EXPECTED_BRANCH, "status": EXPECTED_STATUS,
     }
     for key, expected in constants.items():
         if not isinstance(props.get(key), dict) or props[key].get("const") != expected:
@@ -132,14 +118,10 @@ def validate_schema(schema: dict) -> None:
 
 def validate_contract(contract: dict, schema: dict) -> None:
     validate_schema(schema)
-    require_exact_keys(
-        contract,
-        {
-            "schema_version", "project_id", "contract_kind", "branch", "status",
-            "research_acceptance", "frozen_v1", "fusion", "runtime", "governance", "forbidden",
-        },
-        "contract",
-    )
+    require_exact_keys(contract, {
+        "schema_version", "project_id", "contract_kind", "branch", "status",
+        "research_acceptance", "frozen_v1", "fusion", "runtime", "governance", "forbidden",
+    }, "contract")
     if contract["schema_version"] != 2 or contract["project_id"] != "football3":
         fail("formal_wiring contract must be football3 schema v2")
     if contract["contract_kind"] != EXPECTED_KIND:
@@ -152,7 +134,6 @@ def validate_contract(contract: dict, schema: dict) -> None:
         fail("frozen research acceptance identity drift")
     if contract["frozen_v1"] != EXPECTED_V1:
         fail("Frozen V1 identity drift")
-
     fusion = contract["fusion"]
     require_exact_keys(fusion, {"xg_weight", "v1_weight", "formula", "score_matrix_lift", "xg_insufficient"}, "fusion")
     if fusion["xg_weight"] != 0.75 or fusion["v1_weight"] != 0.25:
@@ -163,13 +144,8 @@ def validate_contract(contract: dict, schema: dict) -> None:
         fail("XG-insufficient route must be exact Frozen V1 fallback")
     if not isinstance(fusion["score_matrix_lift"], str) or not fusion["score_matrix_lift"].strip():
         fail("score-matrix lift semantics must be explicit")
-
     runtime = contract["runtime"]
-    require_exact_keys(
-        runtime,
-        {"candidate_entry", "formal_enablement", "production_pointer_changed", "prospective_queue", "historical_completed_only_for_acceptance"},
-        "runtime",
-    )
+    require_exact_keys(runtime, {"candidate_entry", "formal_enablement", "production_pointer_changed", "prospective_queue", "historical_completed_only_for_acceptance"}, "runtime")
     if runtime != {
         "candidate_entry": "football-data/new_engine_v1/formal_fusion_v2.py",
         "formal_enablement": False,
@@ -178,38 +154,26 @@ def validate_contract(contract: dict, schema: dict) -> None:
         "historical_completed_only_for_acceptance": True,
     }:
         fail("runtime governance must remain non-enabled historical-only")
-
     gov = contract["governance"]
-    require_exact_keys(
-        gov,
-        {
-            "mode", "market_features", "market_inputs", "market_baseline", "market_validator_semantics",
-            "training", "tuning", "new_target_labels", "existing_frozen_historical_replay_only",
-            "same_kickoff_isolation_required", "formal_enablement", "production_pointer_change",
-            "whitelist_base_head", "changed_file_whitelist", "scientific_code_bindings",
-            "immutable_market_governance_git_blobs", "immutable_formal_source_git_blobs",
-        },
-        "governance",
-    )
+    require_exact_keys(gov, {
+        "mode", "market_features", "market_inputs", "market_baseline", "market_validator_semantics",
+        "training", "tuning", "new_target_labels", "existing_frozen_historical_replay_only",
+        "same_kickoff_isolation_required", "formal_enablement", "production_pointer_change",
+        "whitelist_base_head", "changed_file_whitelist", "scientific_code_bindings",
+        "immutable_market_governance_git_blobs", "immutable_formal_source_git_blobs",
+    }, "governance")
     exact_nonmarket = {
-        "mode": "FORMAL_WIRING_NON_MARKET",
-        "market_features": False,
-        "market_inputs": [],
+        "mode": "FORMAL_WIRING_NON_MARKET", "market_features": False, "market_inputs": [],
         "market_baseline": False,
         "market_validator_semantics": "UNCHANGED_AND_NOT_APPLICABLE_TO_NON_MARKET_FORMAL_WIRING",
-        "training": False,
-        "tuning": False,
-        "new_target_labels": False,
-        "existing_frozen_historical_replay_only": True,
-        "same_kickoff_isolation_required": True,
-        "formal_enablement": False,
-        "production_pointer_change": False,
+        "training": False, "tuning": False, "new_target_labels": False,
+        "existing_frozen_historical_replay_only": True, "same_kickoff_isolation_required": True,
+        "formal_enablement": False, "production_pointer_change": False,
         "whitelist_base_head": EXPECTED_BASE_HEAD,
     }
     for key, expected in exact_nonmarket.items():
         if gov.get(key) != expected:
             fail(f"non-market formal_wiring gate drift: {key}")
-
     whitelist = gov.get("changed_file_whitelist")
     if not isinstance(whitelist, list) or len(whitelist) > 12 or len(whitelist) != len(set(whitelist)):
         fail("changed-file whitelist must contain <=12 unique paths")
@@ -221,7 +185,6 @@ def validate_contract(contract: dict, schema: dict) -> None:
         fail("market validator/schema/guard blob locks changed")
     if gov.get("immutable_formal_source_git_blobs") != EXPECTED_FORMAL_BLOBS:
         fail("formal source/test blob locks changed")
-
     forbidden = contract["forbidden"]
     if not isinstance(forbidden, list) or len(forbidden) != len(set(forbidden)):
         fail("forbidden list must be unique")
@@ -244,9 +207,7 @@ def _top_level_string_constant(path: Path, name: str) -> str | None:
         value = node.value
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             matches.append(value.value)
-    if len(matches) != 1:
-        return None
-    return matches[0]
+    return matches[0] if len(matches) == 1 else None
 
 
 def validate_source_bindings(contract: dict, repo_root: Path) -> None:
@@ -284,27 +245,89 @@ def validate_repo_locks(contract: dict, repo_root: Path) -> None:
             fail(f"immutable repository blob drift: {rel}: expected={expected} actual={actual}")
 
 
-def validate_runtime_branch(contract: dict) -> None:
-    runtime = (os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME") or "").strip()
-    if runtime and runtime != contract["branch"]:
-        fail(f"runtime branch mismatch: contract={contract['branch']} runtime={runtime}")
+def _runtime_branch() -> str:
+    return (os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME") or "").strip()
 
 
-def validate_changed_files(contract: dict, repo_root: Path, base_head: str) -> None:
-    if base_head != EXPECTED_BASE_HEAD or base_head != contract["governance"]["whitelist_base_head"]:
-        fail("diff base must equal frozen cumulative research wiring HEAD")
+def _pull_request_base_sha() -> str | None:
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return None
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        fail("candidate authority requires GITHUB_EVENT_PATH")
     try:
-        out = subprocess.check_output(
-            ["git", "diff", "--name-only", f"{base_head}...HEAD"],
-            cwd=repo_root,
-            text=True,
-        )
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     except Exception as exc:
-        fail(f"cannot compute frozen cumulative remediation diff: {exc}")
-    changed = {line.strip() for line in out.splitlines() if line.strip()}
-    expected = set(contract["governance"]["changed_file_whitelist"])
-    if changed != expected:
-        fail(f"remediation diff scope mismatch: changed={sorted(changed)} expected={sorted(expected)}")
+        fail(f"candidate authority event unreadable: {exc}")
+    sha = (((event or {}).get("pull_request") or {}).get("base") or {}).get("sha")
+    if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha):
+        fail("candidate authority pull-request base SHA invalid")
+    return sha
+
+
+def validate_runtime_branch(contract: dict) -> str:
+    runtime = _runtime_branch()
+    if not runtime or runtime == contract["branch"]:
+        return "CONTRACT_BRANCH"
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        fail(f"runtime branch mismatch outside pull-request candidate: contract={contract['branch']} runtime={runtime}")
+    _pull_request_base_sha()
+    return "PULL_REQUEST_CANDIDATE"
+
+
+def _git_changed_files(repo_root: Path, base_head: str) -> set[str]:
+    try:
+        subprocess.check_call(["git", "merge-base", "--is-ancestor", base_head, "HEAD"], cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(["git", "diff", "--name-only", f"{base_head}...HEAD"], cwd=repo_root, text=True)
+    except Exception as exc:
+        fail(f"cannot compute governed candidate diff: {exc}")
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _candidate_protected_paths(contract: dict) -> set[str]:
+    gov = contract["governance"]
+    protected = set(gov["immutable_market_governance_git_blobs"])
+    protected.update(gov["immutable_formal_source_git_blobs"])
+    protected.add("football-data/historical_xg_fusion_v2/contracts/FORMAL_FUSION_V2_WIRING.json")
+    protected.add("governance/football3/formal_wiring_contract_schema_v2.json")
+    protected.add(gov["scientific_code_bindings"]["runner"])
+    protected.update(gov["scientific_code_bindings"]["helpers"])
+    protected.add(gov["scientific_code_bindings"]["authority_guard"])
+    return protected
+
+
+def _is_additionally_protected_scientific_path(path: str) -> bool:
+    if path.startswith("football-data/new_engine_v1/"):
+        return True
+    if path.startswith("football-data/historical_xg_fusion_v2/contracts/"):
+        return True
+    lowered = path.lower()
+    if "current" in lowered and path.startswith("football-data/"):
+        return True
+    if "formal_model_pointer" in lowered:
+        return True
+    return False
+
+
+def validate_changed_files(contract: dict, repo_root: Path, base_head: str, authority_mode: str) -> tuple[set[str], str]:
+    if authority_mode == "CONTRACT_BRANCH":
+        if base_head != EXPECTED_BASE_HEAD or base_head != contract["governance"]["whitelist_base_head"]:
+            fail("diff base must equal frozen cumulative research wiring HEAD")
+        changed = _git_changed_files(repo_root, base_head)
+        expected = set(contract["governance"]["changed_file_whitelist"])
+        if changed != expected:
+            fail(f"remediation diff scope mismatch: changed={sorted(changed)} expected={sorted(expected)}")
+        return changed, base_head
+    candidate_base = _pull_request_base_sha()
+    assert candidate_base is not None
+    changed = _git_changed_files(repo_root, candidate_base)
+    protected = _candidate_protected_paths(contract)
+    violations = sorted(path for path in changed if path in protected or _is_additionally_protected_scientific_path(path))
+    if violations:
+        fail(f"candidate scientific authority violation: {violations}")
+    if not changed:
+        fail("candidate authority diff must not be empty")
+    return changed, candidate_base
 
 
 def main() -> int:
@@ -315,27 +338,33 @@ def main() -> int:
     ap.add_argument("--base-head", default=EXPECTED_BASE_HEAD)
     ap.add_argument("--skip-diff", action="store_true")
     args = ap.parse_args()
-
     contract = load_json(args.contract)
     schema = load_json(args.schema)
     validate_contract(contract, schema)
-    validate_runtime_branch(contract)
+    authority_mode = validate_runtime_branch(contract)
     validate_source_bindings(contract, args.repo_root)
     validate_repo_locks(contract, args.repo_root)
-    if not args.skip_diff:
-        validate_changed_files(contract, args.repo_root, args.base_head)
+    if args.skip_diff:
+        if authority_mode != "CONTRACT_BRANCH":
+            fail("skip-diff is forbidden for pull-request candidates")
+        changed: set[str] = set()
+        diff_base = args.base_head
+    else:
+        changed, diff_base = validate_changed_files(contract, args.repo_root, args.base_head, authority_mode)
     print(json.dumps({
         "status": "FORMAL_WIRING_GOVERNANCE_V2_PASS",
         "contract_kind": contract["contract_kind"],
         "branch": contract["branch"],
-        "base_head": args.base_head,
+        "runtime_branch": _runtime_branch() or None,
+        "authority_mode": authority_mode,
+        "base_head": diff_base,
         "market_features": False,
         "market_validator_semantics": "UNCHANGED",
         "training": False,
         "tuning": False,
         "new_target_labels": False,
         "formal_enablement": False,
-        "changed_file_count": len(contract["governance"]["changed_file_whitelist"]),
+        "changed_file_count": len(changed) if authority_mode == "PULL_REQUEST_CANDIDATE" else len(contract["governance"]["changed_file_whitelist"]),
         "scientific_code_bindings": contract["governance"]["scientific_code_bindings"],
     }, indent=2, sort_keys=True))
     return 0

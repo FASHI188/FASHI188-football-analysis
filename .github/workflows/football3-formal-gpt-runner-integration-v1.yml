@@ -1,4 +1,5 @@
 name: Football3 Formal GPT Runner Integration V1
+run-name: Football3 Formal GPT Runner Integration V1 ${{ inputs.expected_request_sha256 || github.sha }}
 
 on:
   push:
@@ -13,6 +14,10 @@ on:
     inputs:
       request_pr_number:
         description: 'Optional permanent request-carrier PR number; when set, load the audited request from that Draft PR body'
+        required: false
+        type: string
+      expected_request_sha256:
+        description: 'Required with request_pr_number; binds workflow_dispatch to the exact canonical carrier request bytes'
         required: false
         type: string
   pull_request:
@@ -30,7 +35,7 @@ concurrency:
 
 jobs:
   formal-request:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.ref == 'football3/formal-gpt-runner-request-carrier-v1' }}
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -44,6 +49,7 @@ jobs:
           REQUEST_CARRIER_HEAD: ${{ github.event.pull_request.head.sha || '' }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
           DISPATCH_REQUEST_PR: ${{ inputs.request_pr_number || '' }}
+          EXPECTED_REQUEST_SHA256: ${{ inputs.expected_request_sha256 || '' }}
         run: |
           set -euo pipefail
           CANONICAL_BASE_REF='football3/formal-gpt-runner-integration-v1'
@@ -52,11 +58,16 @@ jobs:
           CARRIER_BOUND=false
 
           if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
-            CARRIER_BOUND=true
+            echo 'PRODUCTION_DIRECT_PULL_REQUEST_EXECUTION_DISABLED' >&2
+            exit 28
           elif [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ] && [ -n "$DISPATCH_REQUEST_PR" ]; then
             if [ "$GITHUB_REF_NAME" != "$CANONICAL_BASE_REF" ]; then
               echo "PRODUCTION_UNAUTHORIZED_DISPATCH_REF:event=$GITHUB_REF_NAME:required=$CANONICAL_BASE_REF" >&2
               exit 20
+            fi
+            if ! printf '%s' "$EXPECTED_REQUEST_SHA256" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo 'PRODUCTION_EXPECTED_REQUEST_SHA_MISSING' >&2
+              exit 27
             fi
             REQUEST_PR_NUMBER="$DISPATCH_REQUEST_PR"
             PR_META="$(mktemp)"
@@ -68,7 +79,7 @@ jobs:
               exit 25
             fi
             if ! jq -e --arg base "$CANONICAL_BASE_REF" --arg carrier 'football3/formal-gpt-runner-request-carrier-v1' \
-              'type=="object" and .state=="open" and .draft==true and .base.ref==$base and .head.ref==$carrier and (.base.sha|type)=="string" and (.base.sha|test("^[0-9a-f]{40}$")) and (.head.sha|type)=="string" and (.head.sha|test("^[0-9a-f]{40}$"))' \
+              'type=="object" and .state=="open" and .draft==true and .merged_at==null and .base.ref==$base and .head.ref==$carrier and .head.repo.full_name==.base.repo.full_name and (.base.sha|type)=="string" and (.base.sha|test("^[0-9a-f]{40}$")) and (.head.sha|type)=="string" and (.head.sha|test("^[0-9a-f]{40}$"))' \
               "$PR_META" >/dev/null; then
               echo 'PRODUCTION_REQUEST_CARRIER_INVALID_RESPONSE' >&2
               exit 26
@@ -147,7 +158,7 @@ jobs:
             --request-carrier-head "${{ steps.base_target.outputs.request_carrier_head }}" \
             --out .runtime_sources/production_base_binding.json
 
-      - name: Build audited invocation request
+      - name: Build fully validated SHA-bound invocation request
         id: transport
         env:
           GH_TOKEN: ${{ github.token }}
@@ -157,6 +168,8 @@ jobs:
           PR_HEAD_SHA: ${{ steps.base_target.outputs.request_carrier_head }}
           PR_BASE_REF: ${{ steps.base_target.outputs.canonical_base_ref }}
           DISPATCH_REQUEST_PR: ${{ inputs.request_pr_number || '' }}
+          EXPECTED_REQUEST_SHA256: ${{ inputs.expected_request_sha256 || '' }}
+          CANONICAL_EXECUTION_SHA: ${{ steps.base_target.outputs.resolved_live_base_sha }}
         run: |
           set -euo pipefail
           mkdir -p .runtime_sources
@@ -166,54 +179,76 @@ jobs:
               -H 'Accept: application/vnd.github+json' \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${DISPATCH_REQUEST_PR}" \
               -o .runtime_sources/dispatch_carrier_pr.json
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${DISPATCH_REQUEST_PR}/files?per_page=100&page=1" \
+              -o .runtime_sources/dispatch_carrier_files.json
           fi
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib
+          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" python3 - <<'PY'
+          import json, os, pathlib, re
+          import request_contract_v1 as contract
+
           event=os.environ['GITHUB_EVENT_NAME']
           out=pathlib.Path('.runtime_sources/invocation_request.json')
+          execution_out=pathlib.Path('.runtime_sources/execution_request.json')
+          expected=os.environ.get('EXPECTED_REQUEST_SHA256','').strip()
+          carrier_bound=(event=='workflow_dispatch' and bool(os.environ.get('DISPATCH_REQUEST_PR')))
           if event=='pull_request':
-              body=os.environ.get('PR_BODY','')
-              transport='DRAFT_PR_BODY_EDIT'
-          elif event=='workflow_dispatch' and os.environ.get('DISPATCH_REQUEST_PR'):
+              raise SystemExit('PRODUCTION_DIRECT_PULL_REQUEST_EXECUTION_DISABLED')
+          elif carrier_bound:
+              if not re.fullmatch(r'[0-9a-f]{64}',expected):
+                  raise SystemExit('PRODUCTION_EXPECTED_REQUEST_SHA_MISSING')
               meta=json.loads(pathlib.Path('.runtime_sources/dispatch_carrier_pr.json').read_text(encoding='utf-8'))
-              if type(meta) is not dict or meta.get('state')!='open' or meta.get('draft') is not True:
-                  raise SystemExit('dispatch request carrier must remain open Draft PR')
-              base=meta.get('base') or {}; head=meta.get('head') or {}
-              if base.get('ref')!='football3/formal-gpt-runner-integration-v1' or head.get('ref')!='football3/formal-gpt-runner-request-carrier-v1':
-                  raise SystemExit('dispatch request carrier authority mismatch')
+              files=json.loads(pathlib.Path('.runtime_sources/dispatch_carrier_files.json').read_text(encoding='utf-8'))
+              if type(meta) is not dict or meta.get('state')!='open' or meta.get('draft') is not True or meta.get('merged_at') is not None:
+                  raise SystemExit('PRODUCTION_REQUEST_CARRIER_INVALID_RESPONSE')
+              base=meta.get('base') or {}; head=meta.get('head') or {}; head_repo=head.get('repo') or {}
+              if base.get('ref')!='football3/formal-gpt-runner-integration-v1' or head.get('ref')!='football3/formal-gpt-runner-request-carrier-v1' or head_repo.get('full_name')!=os.environ['GITHUB_REPOSITORY']:
+                  raise SystemExit('PRODUCTION_REQUEST_CARRIER_AUTHORITY_MISMATCH')
               if head.get('sha')!=os.environ.get('PR_HEAD_SHA'):
-                  raise SystemExit('dispatch request carrier head moved during request acquisition')
+                  raise SystemExit('PRODUCTION_REQUEST_CARRIER_HEAD_MOVED')
+              if type(files) is not list or [f.get('filename') for f in files if type(f) is dict] != ['FOOTBALL3_FORMAL_GPT_REQUEST_CARRIER.md'] or len(files)!=1:
+                  raise SystemExit('PRODUCTION_REQUEST_CARRIER_CHANGED_FILES_UNAUTHORIZED')
               body=meta.get('body') or ''
-              transport='DRAFT_PR_BODY_DISPATCH'
-          else:
-              req=json.loads(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json').read_text(encoding='utf-8'))
-              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
-              body=None
-          if body is not None:
-              if os.environ.get('PR_HEAD_REF')!='football3/formal-gpt-runner-request-carrier-v1':
-                  raise SystemExit('unauthorized request carrier branch')
-              begin='<!-- football3-request-json -->'
-              end='<!-- /football3-request-json -->'
-              if begin not in body or end not in body:
-                  raise SystemExit('request carrier markers missing')
+              begin='<!-- football3-request-json -->'; end='<!-- /football3-request-json -->'
+              if body.count(begin)!=1 or body.count(end)!=1:
+                  raise SystemExit('PRODUCTION_REQUEST_CARRIER_MARKERS_INVALID')
               raw=body.split(begin,1)[1].split(end,1)[0].strip()
-              req=json.loads(raw)
-          if type(req) is not dict or req.get('schema_version')!='football3-formal-gpt-gateway-v1':
-              raise SystemExit('gateway request schema mismatch at transport')
-          canonical=json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
+              try:
+                  req=contract.parse_json(raw,carrier_request=True)
+              except contract.FormalRequestContractError as exc:
+                  raise SystemExit(f'PRODUCTION_REQUEST_CONTRACT:{exc.code}') from exc
+              transport='DRAFT_PR_BODY_DISPATCH_SHA_BOUND'
+          else:
+              try:
+                  req=contract.load_request(pathlib.Path('football-data/formal_gpt_gateway_v1/request.json'),carrier_request=False)
+              except contract.FormalRequestContractError as exc:
+                  raise SystemExit(f'PRODUCTION_REQUEST_CONTRACT:{exc.code}') from exc
+              transport='COMMITTED_SELFTEST_REQUEST' if event=='push' else 'WORKFLOW_DISPATCH_DEFAULT_REQUEST'
+
+          canonical=contract.canonical_bytes(req)
+          actual=contract.request_sha256(req)
+          if carrier_bound and actual != expected:
+              raise SystemExit('PRODUCTION_REQUEST_SHA_MISMATCH')
           out.write_bytes(canonical)
+          execution_out.write_bytes(contract.canonical_bytes(contract.execution_request(req)))
           audit={
-              'schema_version':'football3-gpt-request-transport-v1',
+              'schema_version':'football3-gpt-request-transport-v2',
               'event':event,'transport':transport,
-              'request_sha256':hashlib.sha256(canonical).hexdigest(),
+              'request_id':req.get('request_id'),
+              'request_sha256':actual,
+              'expected_request_sha256':expected or None,
+              'request_sha_verified':bool(carrier_bound and actual==expected),
               'pr_number':os.environ.get('PR_NUMBER') or None,
               'pr_head_ref':os.environ.get('PR_HEAD_REF') or None,
+              'pr_head_sha':os.environ.get('PR_HEAD_SHA') or None,
               'pr_base_ref':os.environ.get('PR_BASE_REF') or None,
+              'canonical_execution_sha':os.environ.get('CANONICAL_EXECUTION_SHA') or None,
               'code_ref':os.environ.get('GITHUB_SHA'),
               'commit_per_match_required':False,
           }
-          pathlib.Path('.runtime_sources/request_transport.json').write_text(
-              json.dumps(audit,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          pathlib.Path('.runtime_sources/request_transport.json').write_text(json.dumps(audit,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
           print(json.dumps(audit,sort_keys=True))
           PY
           echo 'accepted=true' >> "$GITHUB_OUTPUT"
@@ -225,6 +260,10 @@ jobs:
             --binding .runtime_sources/production_base_binding.json \
             --request .runtime_sources/invocation_request.json \
             --transport .runtime_sources/request_transport.json
+          PYTHONPATH="$PWD/football-data/formal_gpt_gateway_v1" python3 football-data/formal_gpt_gateway_v1/request_sha_binding_v1.py verify \
+            --request .runtime_sources/invocation_request.json \
+            --transport .runtime_sources/request_transport.json \
+            --binding .runtime_sources/production_base_binding.json
 
       - name: Restore cutoff-aware eligible durable formal state Artifact
         id: durable_selector
@@ -298,20 +337,14 @@ jobs:
           assert selector.get('status')=='SKIPPED_NON_PREDICTION_MODE'
           receipt={
               'schema_version':'football3-formal-runner-non-prediction-selftest-v1',
-              'status':'PASS',
-              'result':'SKIPPED_BUNDLE_DEPENDENT_GATEWAY',
+              'status':'PASS','result':'SKIPPED_BUNDLE_DEPENDENT_GATEWAY',
               'reason':'NON_PREDICTION_MODE_DOES_NOT_REQUIRE_DURABLE_BUNDLE',
-              'mode':req.get('mode'),
-              'transport':transport.get('transport'),
-              'selector_status':selector.get('status'),
-              'prediction_required':False,
-              'bundle_required':False,
-              'gateway_prediction_executed':False,
-              'prediction_sha':None,
-              'fail_closed_relaxed':False,
+              'mode':req.get('mode'),'transport':transport.get('transport'),
+              'selector_status':selector.get('status'),'prediction_required':False,
+              'bundle_required':False,'gateway_prediction_executed':False,
+              'prediction_sha':None,'fail_closed_relaxed':False,
           }
-          pathlib.Path('football-data/formal_gpt_gateway_v1/output/non_prediction_selftest_receipt.json').write_text(
-              json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n')
+          pathlib.Path('football-data/formal_gpt_gateway_v1/output/non_prediction_selftest_receipt.json').write_text(json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n')
           print(json.dumps(receipt,sort_keys=True))
           PY
 
@@ -321,16 +354,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .runtime_sources/understat .runtime_sources/confirmation
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
-            -o .runtime_sources/understat.zip
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
-            -o .runtime_sources/confirmation.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" -o .runtime_sources/confirmation.zip
           unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
 
@@ -347,7 +372,7 @@ jobs:
           export FOOTBALL3_DURABLE_SELECTOR_REQUIRED=1
           PYTHONPATH="$PWD/football-data:$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1" \
             python3 football-data/formal_gpt_gateway_v1/entry.py \
-              --request "$PWD/.runtime_sources/invocation_request.json" \
+              --request "$PWD/.runtime_sources/execution_request.json" \
               --repo-root "$PWD" \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
@@ -380,6 +405,7 @@ jobs:
           set -euo pipefail
           mkdir -p football-data/formal_gpt_gateway_v1/output
           cp .runtime_sources/production_base_binding.json football-data/formal_gpt_gateway_v1/output/production_base_binding.json
+          cp .runtime_sources/request_transport.json football-data/formal_gpt_gateway_v1/output/request_transport.json
           test ! -f .runtime_sources/github_api_stats.json || cp .runtime_sources/github_api_stats.json football-data/formal_gpt_gateway_v1/output/github_api_stats.json
           python3 - <<'PY'
           import json, os, pathlib
@@ -425,6 +451,10 @@ jobs:
             --out-dir football-data/formal_gpt_gateway_v1/output \
             --stats .runtime_sources/github_api_stats.json \
             --prediction-required "${{ steps.durable_selector.outputs.prediction_required }}"
+          PYTHONPATH="$PWD/football-data/formal_gpt_gateway_v1" python3 football-data/formal_gpt_gateway_v1/request_sha_binding_v1.py enrich \
+            --transport .runtime_sources/request_transport.json \
+            --binding .runtime_sources/production_base_binding.json \
+            --out-dir football-data/formal_gpt_gateway_v1/output
 
       - name: Upload prediction or gap receipt
         if: ${{ always() }}
