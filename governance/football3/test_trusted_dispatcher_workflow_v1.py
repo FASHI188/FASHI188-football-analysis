@@ -13,6 +13,89 @@ RECEIVER_NAME = "Football3 GPT Auto Dispatch Receiver V3"
 INTEGRATION_BRANCH = "football3/formal-gpt-runner-integration-v1"
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _top_level_block(text: str, key: str) -> list[str]:
+    lines = text.splitlines()
+    header = f"{key}:"
+    for index, line in enumerate(lines):
+        if line == header:
+            block: list[str] = []
+            for child in lines[index + 1 :]:
+                if child.strip() and not child.lstrip().startswith("#") and _indent(child) == 0:
+                    break
+                block.append(child)
+            return block
+    raise AssertionError(f"missing top-level YAML key: {key}")
+
+
+def _mapping_entries(block: list[str], indent: int) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in block:
+        if not line.strip() or line.lstrip().startswith("#") or _indent(line) != indent:
+            continue
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        entries[key.strip()] = value.strip()
+    return entries
+
+
+def _permission_blocks(text: str) -> tuple[dict[str, str], list[dict[str, str]]]:
+    top = _mapping_entries(_top_level_block(text, "permissions"), 2)
+    jobs = _top_level_block(text, "jobs")
+    job_blocks: list[dict[str, str]] = []
+
+    index = 0
+    while index < len(jobs):
+        line = jobs[index]
+        if _indent(line) == 4 and line.strip().startswith("permissions:"):
+            scalar = line.strip().split(":", 1)[1].strip()
+            if scalar:
+                job_blocks.append({"__scalar__": scalar})
+                index += 1
+                continue
+
+            block: list[str] = []
+            index += 1
+            while index < len(jobs):
+                child = jobs[index]
+                if child.strip() and not child.lstrip().startswith("#") and _indent(child) <= 4:
+                    break
+                block.append(child)
+                index += 1
+            job_blocks.append(_mapping_entries(block, 6))
+            continue
+        index += 1
+
+    return top, job_blocks
+
+
+def assert_candidate_read_only(text: str) -> None:
+    triggers = _mapping_entries(_top_level_block(text, "on"), 2)
+    if set(triggers) != {"pull_request"}:
+        raise AssertionError(f"candidate trigger contract changed: {sorted(triggers)}")
+    if "pull_request_target" in triggers:
+        raise AssertionError("candidate must not use pull_request_target")
+
+    top_permissions, job_permissions = _permission_blocks(text)
+    if top_permissions != {"contents": "read"}:
+        raise AssertionError(f"candidate top-level permissions changed: {top_permissions}")
+
+    for permissions in job_permissions:
+        scalar = permissions.get("__scalar__")
+        if scalar is not None:
+            if scalar != "read-all":
+                raise AssertionError(f"candidate job permission scalar is not read-only: {scalar}")
+            continue
+        for scope, access in permissions.items():
+            if access == "write":
+                raise AssertionError(f"candidate job grants write permission: {scope}: {access}")
+
+
 def assert_registration_safe(text: str) -> None:
     required = (
         f"name: {RECEIVER_NAME}\n",
@@ -133,6 +216,32 @@ class TrustedDispatcherWorkflowContractTest(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 assert_registration_safe(mutated)
 
+    def test_candidate_workflow_is_read_only(self) -> None:
+        text = CANDIDATE.read_text(encoding="utf-8")
+        assert_candidate_read_only(text)
+        self.assertIn("FOOTBALL3_INTEGRATION_RECEIVER_SHA", text)
+        self.assertIn("FOOTBALL3_INTEGRATION_RECEIVER_PATH", text)
+
+    def test_candidate_structural_security_mutations_fail_closed(self) -> None:
+        base = CANDIDATE.read_text(encoding="utf-8")
+        mutations = (
+            base.replace("on:\n  pull_request:\n", "on:\n  pull_request_target:\n", 1),
+            base.replace(
+                "permissions:\n  contents: read",
+                "permissions:\n  contents: read\n  actions: write",
+                1,
+            ),
+            base.replace("permissions:\n  contents: read", "permissions:\n  contents: write", 1),
+            base.replace(
+                "  trusted-dispatcher-contract:\n",
+                "  trusted-dispatcher-contract:\n    permissions:\n      actions: write\n",
+                1,
+            ),
+        )
+        for mutated in mutations:
+            with self.assertRaises(AssertionError):
+                assert_candidate_read_only(mutated)
+
     def test_dispatcher_never_consumes_receiver_artifact_or_carrier_checkout(self) -> None:
         text = TRUSTED.read_text(encoding="utf-8")
         self.assertNotIn("download-artifact", text)
@@ -156,16 +265,6 @@ class TrustedDispatcherWorkflowContractTest(unittest.TestCase):
             "auto_dispatch_final_binding_receipt.json",
         ):
             self.assertIn(token, text)
-
-    def test_candidate_workflow_is_read_only(self) -> None:
-        text = CANDIDATE.read_text(encoding="utf-8")
-        self.assertIn("pull_request:", text)
-        self.assertNotIn("pull_request_target:", text)
-        self.assertNotIn("actions: write", text)
-        self.assertIn("permissions:", text)
-        self.assertIn("contents: read", text)
-        self.assertIn("FOOTBALL3_INTEGRATION_RECEIVER_SHA", text)
-        self.assertIn("FOOTBALL3_INTEGRATION_RECEIVER_PATH", text)
 
 
 if __name__ == "__main__":
