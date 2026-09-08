@@ -1,0 +1,71 @@
+name: Football3 Formal Terminal Finalizer Candidate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml'
+      - '.github/workflows/football3-formal-terminal-finalizer-candidate.yml'
+      - '.github/workflows/football3-formal-terminal-protected-diff-guard.yml'
+      - 'governance/football3/formal_terminal_finalizer_v1.py'
+      - 'governance/football3/test_formal_terminal_finalizer_v1.py'
+
+permissions:
+  contents: read
+
+jobs:
+  finalizer-terminal-permanent-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify candidate exact HEAD
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          printf '%s' "$CANDIDATE_EXACT_HEAD" | grep -Eq '^[0-9a-f]{40}$'
+      - name: Verify trusted workflow binds exact dispatcher-side finalizer
+        run: |
+          set -euo pipefail
+          WF=.github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml
+          grep -F 'Materialize exact trusted formal terminal finalizer from dispatcher SHA' "$WF"
+          grep -F 'git show "${GITHUB_SHA}:governance/football3/formal_terminal_finalizer_v1.py" > .runtime_sources/formal_terminal_finalizer_v1.py' "$WF"
+          grep -F 'python3 .runtime_sources/formal_terminal_finalizer_v1.py finalize' "$WF"
+          grep -F -- '--diagnostic-out .runtime_sources/formal_terminal_finalizer_diagnostics.json' "$WF"
+          grep -F 'Upload finalizer failure diagnostic audit' "$WF"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+      - name: Compile finalizer and permanent tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile governance/football3/formal_terminal_finalizer_v1.py
+          python3 -m py_compile governance/football3/test_formal_terminal_finalizer_v1.py
+      - name: Run finalizer terminal freshness permanent tests
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/formal-terminal-finalizer-candidate
+          python3 governance/football3/test_formal_terminal_finalizer_v1.py 2>&1 | tee .runtime_sources/formal-terminal-finalizer-candidate/test_output.txt
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          test -s .runtime_sources/formal-terminal-finalizer-candidate/formal_terminal_finalizer_candidate_evidence.json
+          jq -e --arg head "$CANDIDATE_EXACT_HEAD" '.status=="PASS" and .candidate_exact_head==$head and .production_dispatch_performed==false and .manual_finalize_performed==false' .runtime_sources/formal-terminal-finalizer-candidate/formal_terminal_finalizer_candidate_evidence.json >/dev/null
+      - name: Record exact candidate binding
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$CANDIDATE_EXACT_HEAD" > .runtime_sources/formal-terminal-finalizer-candidate/candidate_exact_head.txt
+          sha256sum governance/football3/formal_terminal_finalizer_v1.py governance/football3/test_formal_terminal_finalizer_v1.py > .runtime_sources/formal-terminal-finalizer-candidate/source_sha256.txt
+      - name: Upload finalizer candidate evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: football3-formal-terminal-finalizer-candidate-${{ github.run_id }}
+          path: .runtime_sources/formal-terminal-finalizer-candidate/
+          if-no-files-found: error
+          retention-days: 90
