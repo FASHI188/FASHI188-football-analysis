@@ -43,11 +43,60 @@ jobs:
           python -m py_compile football-data/validation/repository_integrity_runtime_v473.py
           python -m py_compile football-data/validation/repository_asset_topology_v472.py
           python -m py_compile football-data/validation/workflow_stability_audit_v474.py
+      - name: Materialize and verify frozen workflow-stability baseline blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASELINE_SHA="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('football-data/validation/workflow_stability_audit_v474.py').read_text(encoding='utf-8')
+          match = re.search(r'^LEGACY_BASELINE_BLOB_SHA = "([0-9a-f]{40})"$', text, re.MULTILINE)
+          if match is None:
+              raise SystemExit('WORKFLOW_STABILITY_BASELINE_SHA_NOT_DECLARED')
+          print(match.group(1))
+          PY
+          )"
+          printf '%s' "$BASELINE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          BLOB_JSON="$(mktemp)"
+          BLOB_RAW="$(mktemp)"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/blobs/${BASELINE_SHA}" \
+            -o "$BLOB_JSON"
+          jq -e --arg sha "$BASELINE_SHA" '.sha==$sha and .encoding=="base64"' "$BLOB_JSON" >/dev/null
+          jq -r '.content' "$BLOB_JSON" | tr -d '\n' | base64 --decode > "$BLOB_RAW"
+          MATERIALIZED_SHA="$(git hash-object -w --stdin < "$BLOB_RAW")"
+          test "$MATERIALIZED_SHA" = "$BASELINE_SHA"
+          test "$(git cat-file -t "$BASELINE_SHA")" = 'blob'
+          git cat-file blob "$BASELINE_SHA" | cmp - "$BLOB_RAW"
+          echo "WORKFLOW_STABILITY_BASELINE_BLOB_SHA=${BASELINE_SHA}"
+          echo 'WORKFLOW_STABILITY_BASELINE_BLOB_VERIFIED=true'
       - name: Run fail-closed integrity gates
         run: |
           python football-data/validation/repository_integrity_runtime_v473.py --strict-exit --print-summary
           python football-data/validation/repository_asset_topology_v472.py --strict-exit --print-summary
-          python football-data/validation/workflow_stability_audit_v474.py --print-summary
+          python football-data/validation/workflow_stability_audit_v474.py --strict-exit --print-summary
+      - name: Verify workflow-stability PASS invariants
+        run: |
+          python - <<'PY'
+          import json
+          import runpy
+          module = runpy.run_path('football-data/validation/workflow_stability_audit_v474.py')
+          report = module['audit']()
+          evidence = {
+              'workflow_stability_status': report['status'],
+              'critical_finding_count': report['critical_finding_count'],
+              'baseline_integrity_verified': report['legacy_quarantine']['baseline_integrity_verified'],
+              'baseline_git_blob_sha': report['legacy_quarantine']['baseline_git_blob_sha'],
+          }
+          print(json.dumps(evidence, sort_keys=True))
+          assert evidence['workflow_stability_status'] == 'PASS'
+          assert evidence['critical_finding_count'] == 0
+          assert evidence['baseline_integrity_verified'] is True
+          PY
       - name: Confirm no repository writeback
         run: |
           git status --short
