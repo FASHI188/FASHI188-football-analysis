@@ -88,7 +88,7 @@ jobs:
               --token "$GH_TOKEN" \
               --audit-out .runtime_sources/auto_dispatch_bridge_candidate_audit.json
 
-      - name: Prove candidate receiver has no privileged carrier execution path
+      - name: Prove candidate receiver and governed artifacts bind the PR head
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -99,7 +99,33 @@ jobs:
           receiver=text.split('  carrier-edit-receiver:',1)[1].split('  candidate-contract-security:',1)[0]
           assert 'actions/checkout' not in receiver
           assert 'AUTO_DISPATCH_RECEIVER_SIGNAL=READY' in receiver
+          governed=Path('.github/workflows/football3-governed-permanent-regression-v1.yml').read_text(encoding='utf-8')
+          exact='CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}'
+          assert governed.count(exact) == 3
+          assert governed.count('candidate_exact_head') >= 3
+          assert 'CANDIDATE_EXACT_HEAD: ${{ github.sha }}' not in governed
           print('AUTO_DISPATCH_RECEIVER_CANDIDATE_SECURITY_PASS')
+          print('CANDIDATE_ARTIFACT_HEAD_BINDING_CONTRACT_PASS')
+          PY
+
+      - name: Stamp receiver Artifact with exact PR head
+        if: ${{ always() }}
+        env:
+          CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CANDIDATE_EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          python3 - <<'PY'
+          import json, os, pathlib
+          head=os.environ['CANDIDATE_EXACT_HEAD']
+          p=pathlib.Path('.runtime_sources/auto_dispatch_bridge_candidate_audit.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          d['candidate_exact_head']=head
+          p.write_text(json.dumps(d,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
+          bound=json.loads(p.read_text(encoding='utf-8'))
+          assert bound['candidate_exact_head']==head
+          print('CANDIDATE_EXACT_HEAD_BINDING_PASS',head)
           PY
 
       - name: Upload read-only bridge candidate evidence
