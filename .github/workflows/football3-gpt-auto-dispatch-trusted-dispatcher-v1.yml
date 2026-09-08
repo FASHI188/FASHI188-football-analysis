@@ -100,6 +100,20 @@ jobs:
           grep -F 'LOCATOR_SCHEMA = "football3-formal-dispatch-freshness-locator-v3"' .runtime_sources/formal_dispatch_run_locator_v1.py
           test "$(git rev-parse HEAD)" = "${{ steps.trusted_source.outputs.canonical_sha }}"
 
+      - name: Materialize exact trusted formal terminal finalizer from dispatcher SHA
+        run: |
+          set -euo pipefail
+          printf '%s' "$GITHUB_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse --verify "${GITHUB_SHA}^{commit}")" = "$GITHUB_SHA"
+          git cat-file -e "${GITHUB_SHA}:governance/football3/formal_terminal_finalizer_v1.py"
+          mkdir -p .runtime_sources
+          git show "${GITHUB_SHA}:governance/football3/formal_terminal_finalizer_v1.py" > .runtime_sources/formal_terminal_finalizer_v1.py
+          python3 -m py_compile .runtime_sources/formal_terminal_finalizer_v1.py
+          grep -F 'FINALIZER_SCHEMA = "football3-formal-terminal-finalizer-freshness-v1"' .runtime_sources/formal_terminal_finalizer_v1.py
+          test "$(git rev-parse HEAD)" = "${{ steps.trusted_source.outputs.canonical_sha }}"
+
       - name: Prepare exact request and idempotency reservation
         id: prepare
         env:
@@ -165,13 +179,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .runtime_sources/completed
-          PYTHONPATH="$PWD/football-data/formal_fast_runtime_v1:$PWD/football-data/formal_gpt_gateway_v1:$PWD/football-data" \
-            python3 football-data/formal_gpt_gateway_v1/auto_dispatch_bridge_v1.py finalize \
-              --repo "$GITHUB_REPOSITORY" \
-              --token "$GH_TOKEN" \
-              --audit .runtime_sources/auto_dispatch_audit.json \
-              --final-receipt-out .runtime_sources/completed/auto_dispatch_final_binding_receipt.json
+          python3 .runtime_sources/formal_terminal_finalizer_v1.py finalize \
+            --repo "$GITHUB_REPOSITORY" \
+            --token "$GH_TOKEN" \
+            --audit .runtime_sources/auto_dispatch_audit.json \
+            --final-receipt-out .runtime_sources/completed/auto_dispatch_final_binding_receipt.json \
+            --diagnostic-out .runtime_sources/formal_terminal_finalizer_diagnostics.json
           cp .runtime_sources/auto_dispatch_audit.json .runtime_sources/completed/auto_dispatch_audit.json
+          cp .runtime_sources/formal_terminal_finalizer_diagnostics.json .runtime_sources/completed/formal_terminal_finalizer_diagnostics.json
+
+      - name: Upload finalizer failure diagnostic audit
+        if: ${{ always() && steps.prepare.outputs.dispatch_required == 'true' && steps.finalize.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: football3-auto-dispatch-finalizer-failure-${{ github.run_id }}
+          path: |
+            .runtime_sources/formal_terminal_finalizer_diagnostics.json
+            .runtime_sources/auto_dispatch_audit.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Upload trusted completed ledger and final binding Receipt
         if: ${{ steps.prepare.outputs.dispatch_required == 'true' && steps.finalize.outcome == 'success' }}

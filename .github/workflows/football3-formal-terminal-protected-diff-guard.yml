@@ -1,0 +1,92 @@
+name: Football3 Formal Terminal Protected Diff Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml'
+      - '.github/workflows/football3-formal-terminal-finalizer-candidate.yml'
+      - '.github/workflows/football3-formal-terminal-protected-diff-guard.yml'
+      - 'governance/football3/formal_terminal_finalizer_v1.py'
+      - 'governance/football3/test_formal_terminal_finalizer_v1.py'
+
+permissions:
+  contents: read
+
+jobs:
+  protected-diff-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      CANDIDATE_EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Fetch exact base and verify candidate binding
+        run: |
+          set -euo pipefail
+          printf '%s' "$BASE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$CANDIDATE_EXACT_HEAD" | grep -Eq '^[0-9a-f]{40}$'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+      - name: Enforce exact protected diff allowlist
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime_sources/formal-terminal-protected-diff
+          git diff --name-only "$BASE_SHA" "$CANDIDATE_EXACT_HEAD" | sort > .runtime_sources/formal-terminal-protected-diff/changed_files.txt
+          test -s .runtime_sources/formal-terminal-protected-diff/changed_files.txt
+          cat > .runtime_sources/formal-terminal-protected-diff/allowed_files.txt <<'EOF'
+          .github/workflows/football3-formal-terminal-finalizer-candidate.yml
+          .github/workflows/football3-formal-terminal-protected-diff-guard.yml
+          .github/workflows/football3-gpt-auto-dispatch-trusted-dispatcher-v1.yml
+          governance/football3/formal_terminal_finalizer_v1.py
+          governance/football3/test_formal_terminal_finalizer_v1.py
+          EOF
+          sort -o .runtime_sources/formal-terminal-protected-diff/allowed_files.txt .runtime_sources/formal-terminal-protected-diff/allowed_files.txt
+          diff -u .runtime_sources/formal-terminal-protected-diff/allowed_files.txt .runtime_sources/formal-terminal-protected-diff/changed_files.txt
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          out = Path('.runtime_sources/formal-terminal-protected-diff')
+          changed = [line.strip() for line in (out / 'changed_files.txt').read_text(encoding='utf-8').splitlines() if line.strip()]
+          expected = [line.strip() for line in (out / 'allowed_files.txt').read_text(encoding='utf-8').splitlines() if line.strip()]
+          assert changed == expected
+          evidence = {
+              'schema_version': 'football3-formal-terminal-protected-diff-v1',
+              'status': 'PASS',
+              'base_exact_head': os.environ['BASE_SHA'],
+              'candidate_exact_head': os.environ['CANDIDATE_EXACT_HEAD'],
+              'changed_files': changed,
+              'changed_file_count': len(changed),
+              'model_changed': False,
+              'current_changed': False,
+              'mixture_75_25_changed': False,
+              'selector_changed': False,
+              'state_changed': False,
+              'prediction_route_changed': False,
+              'evidence_threshold_changed': False,
+              'scientific_logic_changed': False,
+              'production_dispatch_performed': False,
+              'pr341_modified_by_guard': False,
+              'airtable_written': False,
+          }
+          (out / 'protected_diff_evidence.json').write_text(json.dumps(evidence, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+          PY
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_EXACT_HEAD"
+      - name: Upload protected diff evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: football3-formal-terminal-protected-diff-${{ github.run_id }}
+          path: .runtime_sources/formal-terminal-protected-diff/
+          if-no-files-found: error
+          retention-days: 90
