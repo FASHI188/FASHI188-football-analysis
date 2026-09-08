@@ -15,6 +15,10 @@ import request_contract_v1 as contract
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CARRIER_TRANSPORT = "DRAFT_PR_BODY_DISPATCH_SHA_BOUND"
+NON_CARRIER_TRANSPORTS = frozenset(
+    {"COMMITTED_SELFTEST_REQUEST", "WORKFLOW_DISPATCH_DEFAULT_REQUEST"}
+)
 
 
 class RequestBindingError(RuntimeError):
@@ -36,34 +40,62 @@ def _load(path: str) -> dict[str, Any]:
 
 
 def verify(request_path: str, transport_path: str, binding_path: str) -> dict[str, Any]:
-    request = contract.validate_request(_load(request_path), carrier_request=True)
     transport = _load(transport_path)
     binding = _load(binding_path)
+    carrier_bound = bool(binding.get("request_carrier_ref"))
+    request = contract.validate_request(
+        _load(request_path), carrier_request=carrier_bound
+    )
     actual = contract.request_sha256(request)
-    expected = transport.get("expected_request_sha256")
-    if not isinstance(expected, str) or not SHA256_RE.fullmatch(expected):
-        _fail("PRODUCTION_EXPECTED_REQUEST_SHA_MISSING")
-    if actual != expected or transport.get("request_sha256") != actual:
+
+    if transport.get("request_sha256") != actual:
         _fail("PRODUCTION_REQUEST_SHA_MISMATCH")
-    if transport.get("request_sha_verified") is not True:
-        _fail("PRODUCTION_REQUEST_SHA_NOT_VERIFIED")
     if binding.get("request_sha256") != actual:
         _fail("PRODUCTION_BASE_BINDING_REQUEST_SHA_MISMATCH")
     if binding.get("request_id") != request.get("request_id"):
         _fail("PRODUCTION_BASE_BINDING_REQUEST_ID_MISMATCH")
-    carrier_head = binding.get("request_carrier_head")
+
     canonical_execution = binding.get("checkout_head_sha")
-    if not isinstance(carrier_head, str) or not SHA_RE.fullmatch(carrier_head):
-        _fail("PRODUCTION_CARRIER_HEAD_SHA_MISSING")
     if not isinstance(canonical_execution, str) or not SHA_RE.fullmatch(canonical_execution):
         _fail("PRODUCTION_CANONICAL_EXECUTION_SHA_MISSING")
+
+    expected = transport.get("expected_request_sha256")
+    carrier_head = binding.get("request_carrier_head")
+    transport_kind = transport.get("transport")
+
+    if carrier_bound:
+        if transport_kind != CARRIER_TRANSPORT:
+            _fail("PRODUCTION_CARRIER_TRANSPORT_INVALID")
+        if not isinstance(expected, str) or not SHA256_RE.fullmatch(expected):
+            _fail("PRODUCTION_EXPECTED_REQUEST_SHA_MISSING")
+        if actual != expected:
+            _fail("PRODUCTION_REQUEST_SHA_MISMATCH")
+        if transport.get("request_sha_verified") is not True:
+            _fail("PRODUCTION_REQUEST_SHA_NOT_VERIFIED")
+        if not isinstance(carrier_head, str) or not SHA_RE.fullmatch(carrier_head):
+            _fail("PRODUCTION_CARRIER_HEAD_SHA_MISSING")
+        status = "PASS"
+        request_sha_verified = True
+    else:
+        if transport_kind not in NON_CARRIER_TRANSPORTS:
+            _fail("PRODUCTION_NON_CARRIER_TRANSPORT_INVALID")
+        if expected not in (None, ""):
+            _fail("PRODUCTION_NON_CARRIER_EXPECTED_REQUEST_SHA_UNEXPECTED")
+        if transport.get("request_sha_verified") is not False:
+            _fail("PRODUCTION_NON_CARRIER_SHA_VERIFICATION_FLAG_INVALID")
+        if carrier_head not in (None, ""):
+            _fail("PRODUCTION_NON_CARRIER_HEAD_SHA_UNEXPECTED")
+        status = "NOT_APPLICABLE_NON_CARRIER"
+        request_sha_verified = False
+        expected = None
+
     return {
         "schema_version": "football3-request-sha-binding-v1",
-        "status": "PASS",
+        "status": status,
         "request_id": request["request_id"],
         "request_sha256": actual,
         "expected_request_sha256": expected,
-        "request_sha_verified": True,
+        "request_sha_verified": request_sha_verified,
         "carrier_pr_number": transport.get("pr_number"),
         "carrier_head_sha": carrier_head,
         "canonical_execution_sha": canonical_execution,
