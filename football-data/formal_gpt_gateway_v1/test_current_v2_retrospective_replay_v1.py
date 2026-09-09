@@ -83,20 +83,43 @@ class LeakageBoundaryTests(unittest.TestCase):
 
 
 class GatewayIsolationAndReceiptTests(unittest.TestCase):
-    def test_install_delegates_every_non_research_request_unchanged(self):
-        calls = []
-
+    @staticmethod
+    def _delegating_gateway(calls):
         class G:
             @staticmethod
             def normal_request(req, state_root, out, repo_root, understat_db, confirmation_dir):
                 calls.append(req)
-                return {"status": "ORIGINAL"}
+                return {"status": "ORIGINAL", "request": req}
+        return G
 
+    def test_install_delegates_prospective_request_unchanged(self):
+        calls = []
+        G = self._delegating_gateway(calls)
         adapter = replay.install(G)
-        result = G.normal_request({"mode": "predict"}, Path("."), Path("."), Path("."), Path("."), Path("."))
-        self.assertEqual(result, {"status": "ORIGINAL"})
-        self.assertEqual(len(calls), 1)
+        request = {
+            "mode": "predict",
+            "request_mode": "PROSPECTIVE_FORMAL_PREDICTION",
+            "sentinel": "prospective-original-path",
+        }
+        result = G.normal_request(request, Path("."), Path("."), Path("."), Path("."), Path("."))
+        self.assertEqual(result, {"status": "ORIGINAL", "request": request})
+        self.assertEqual(calls, [request])
         self.assertFalse(adapter["prospective_path_changed"])
+        self.assertFalse(adapter["formal_scope_changed"])
+
+    def test_install_delegates_strict_pit_request_unchanged(self):
+        calls = []
+        G = self._delegating_gateway(calls)
+        adapter = replay.install(G)
+        request = {
+            "mode": "predict",
+            "request_mode": "ACTIVE_AT_CUTOFF_REPLAY",
+            "strict_pit_claimed": True,
+            "sentinel": "strict-pit-original-path",
+        }
+        result = G.normal_request(request, Path("."), Path("."), Path("."), Path("."), Path("."))
+        self.assertEqual(result, {"status": "ORIGINAL", "request": request})
+        self.assertEqual(calls, [request])
         self.assertFalse(adapter["strict_pit_path_changed"])
         self.assertFalse(adapter["formal_scope_changed"])
 
@@ -142,9 +165,11 @@ class GatewayIsolationAndReceiptTests(unittest.TestCase):
                 },
                 "aux": {},
             }
+            # Non-production sentinel values: the contract under test is mechanical
+            # propagation from the runtime formal binding, not any particular weight.
             formal_binding = {
-                "xg_weight": 0.75,
-                "frozen_v1_weight": 0.25,
+                "xg_weight": 0.61,
+                "frozen_v1_weight": 0.39,
                 "runtime_formal_head": "runtime-selected",
                 "runtime_current_sha256": "runtime-selected",
             }
@@ -169,7 +194,10 @@ class GatewayIsolationAndReceiptTests(unittest.TestCase):
             self.assertTrue(receipt["target_fixture_excluded"])
             self.assertTrue(receipt["post_kickoff_events_excluded"])
             self.assertTrue(receipt["matrix_conservation"])
-            self.assertEqual(receipt["fusion_weights"], {"xg": 0.75, "v1": 0.25})
+            self.assertEqual(receipt["fusion_weights"], {
+                "xg": formal_binding["xg_weight"],
+                "v1": formal_binding["frozen_v1_weight"],
+            })
             self.assertEqual(receipt["model_route"], "FROZEN_V1_EXACT_FALLBACK")
             self.assertTrue(receipt["fallback_exact_v1"])
             self.assertEqual(len(receipt["top_scores"]), 3)
