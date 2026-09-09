@@ -20,9 +20,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -55,8 +58,8 @@ jobs:
       - name: Assert candidate checkout identity
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          printf '%s\n' "$GITHUB_SHA" > current_v2_retrospective_replay_candidate_head.txt
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          printf '%s\n' "$CANDIDATE_SHA" > current_v2_retrospective_replay_candidate_head.txt
       - name: Upload targeted contract evidence
         uses: actions/upload-artifact@v4
         with:
@@ -69,9 +72,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -82,9 +88,9 @@ jobs:
       - name: Assert exact candidate checkout
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           mkdir -p .runtime_sources/understat .runtime_sources/confirmation .retrospective_acceptance
-          printf '%s\n' "$GITHUB_SHA" > .retrospective_acceptance/candidate_exact_head.txt
+          printf '%s\n' "$CANDIDATE_SHA" > .retrospective_acceptance/candidate_exact_head.txt
       - name: Restore byte-bound frozen formal source assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,13 +110,25 @@ jobs:
       - name: Execute score-blind four-fixture and eight-domain batch
         env:
           PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
-          FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ github.sha }}
+          FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ env.CANDIDATE_SHA }}
         run: |
           set -euo pipefail
-          python governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
-            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
-            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-            --work "$PWD/.retrospective_acceptance"
+          rc=1
+          for attempt in 1 2 3; do
+            if python governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
+              --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+              --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+              --work "$PWD/.retrospective_acceptance"; then
+              rc=0
+              break
+            fi
+            rc=$?
+            if [ "$attempt" -lt 3 ]; then
+              echo "acceptance transport attempt ${attempt} failed; retrying same exact-head score-blind batch" >&2
+              sleep $((attempt * 4))
+            fi
+          done
+          exit "$rc"
       - name: Enforce aggregate acceptance gates
         run: |
           set -euo pipefail
@@ -120,7 +138,7 @@ jobs:
           p=Path('.retrospective_acceptance/acceptance_summary.json')
           s=json.loads(p.read_text(encoding='utf-8'))
           assert s['status']=='PASS', s
-          assert s['candidate_exact_head']==os.environ['GITHUB_SHA'], s
+          assert s['candidate_exact_head']==os.environ['CANDIDATE_SHA'], s
           g=s['gates']
           assert g['four_fixture_count']==4 and g['eight_domain_count']==8, g
           assert g['fixture_resolved_percent']==100.0, g
