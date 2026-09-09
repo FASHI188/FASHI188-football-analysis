@@ -39,15 +39,18 @@ jobs:
           python -m py_compile \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_exact_history_v1.py \
+            football-data/formal_gpt_gateway_v1/current_v2_retrospective_utc_day_boundary_v1.py \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_xg_coverage_v1.py \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_receipt_contract_v1.py \
             football-data/formal_gpt_gateway_v1/entry.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
+            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_utc_day_boundary_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
             governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
             governance/football3/current_v2_retrospective_replay_acceptance_runner_v1.py \
-            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py
+            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py \
+            governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py
       - name: Run targeted replay adapter and source contract tests
         env:
           PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
@@ -56,8 +59,10 @@ jobs:
           python -m pytest -q \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
+            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_utc_day_boundary_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
-            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py
+            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py \
+            governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py
       - name: Assert candidate checkout identity
         run: |
           set -euo pipefail
@@ -176,4 +181,182 @@ jobs:
             .retrospective_acceptance/candidate_exact_head.txt
             .retrospective_acceptance/acceptance_transport_audit.json
             .retrospective_acceptance/failure_diagnostics.json
+          if-no-files-found: error
+
+  acceptance-failure-evidence:
+    needs: [targeted-adapter-contract, four-fixture-eight-domain]
+    if: ${{ always() }}
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      TARGETED_RESULT: ${{ needs.targeted-adapter-contract.result }}
+      BATCH_RESULT: ${{ needs.four-fixture-eight-domain.result }}
+    steps:
+      - name: Build always-on acceptance evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .acceptance_always_evidence
+          python - <<'PY'
+          import io
+          import json
+          import os
+          import re
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          run_id = os.environ['GITHUB_RUN_ID']
+          token = os.environ['GH_TOKEN']
+          candidate = os.environ['CANDIDATE_SHA']
+          targeted_result = os.environ.get('TARGETED_RESULT') or 'unknown'
+          batch_result = os.environ.get('BATCH_RESULT') or 'unknown'
+          out = Path('.acceptance_always_evidence')
+          headers = {
+              'Authorization': f'Bearer {token}',
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'football3-current-v2-retrospective-acceptance-evidence/1.0',
+          }
+
+          def get_json(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return json.loads(r.read().decode('utf-8'))
+
+          def get_bytes(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return r.read()
+
+          evidence_error = None
+          jobs = []
+          diagnostics = None
+          pytest_test = None
+          pytest_error = None
+          try:
+              jobs_obj = get_json(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')
+              jobs = jobs_obj.get('jobs') or []
+          except Exception as exc:
+              evidence_error = f'job inventory failed: {type(exc).__name__}: {exc}'
+
+          by_name = {str(j.get('name')): j for j in jobs}
+          targeted = by_name.get('targeted-adapter-contract') or {}
+          batch = by_name.get('four-fixture-eight-domain') or {}
+
+          first_failed_job = None
+          first_failed_step = None
+          for job_name, job in (('targeted-adapter-contract', targeted), ('four-fixture-eight-domain', batch)):
+              result = str(job.get('conclusion') or '')
+              if result in {'failure', 'cancelled', 'timed_out', 'action_required'}:
+                  first_failed_job = job_name
+                  for step in job.get('steps') or []:
+                      if str(step.get('conclusion') or '') in {'failure', 'cancelled', 'timed_out', 'action_required'}:
+                          first_failed_step = str(step.get('name') or '') or None
+                          break
+                  break
+
+          if targeted_result in {'failure', 'cancelled', 'timed_out', 'action_required'} and targeted.get('id'):
+              try:
+                  raw = get_bytes(f"https://api.github.com/repos/{repo}/actions/jobs/{targeted['id']}/logs")
+                  text = raw.decode('utf-8', errors='replace')
+                  ansi = re.compile(r'\x1b\[[0-9;]*m')
+                  clean_lines = [ansi.sub('', line) for line in text.splitlines()]
+                  for line in clean_lines:
+                      marker = 'FAILED '
+                      if marker in line and '::' in line and pytest_test is None:
+                          pytest_test = line.split(marker, 1)[1].split(' - ', 1)[0].strip()
+                      stripped = line.strip()
+                      if stripped.startswith('E ') and pytest_error is None:
+                          pytest_error = stripped[2:].strip()
+              except Exception as exc:
+                  if evidence_error is None:
+                      evidence_error = f'targeted log read failed: {type(exc).__name__}: {exc}'
+
+          if batch_result in {'failure', 'cancelled', 'timed_out', 'action_required'}:
+              try:
+                  artifacts_obj = get_json(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
+                  artifacts = artifacts_obj.get('artifacts') or []
+                  preferred = [a for a in artifacts if str(a.get('name', '')).startswith('football3-current-v2-retrospective-failure-resilience-')]
+                  if not preferred:
+                      preferred = [a for a in artifacts if str(a.get('name', '')).startswith('football3-current-v2-retrospective-acceptance-')]
+                  if preferred:
+                      blob = get_bytes(f"https://api.github.com/repos/{repo}/actions/artifacts/{preferred[0]['id']}/zip")
+                      with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                          for name in zf.namelist():
+                              if name.endswith('failure_diagnostics.json'):
+                                  diagnostics = json.loads(zf.read(name).decode('utf-8'))
+                                  break
+              except Exception as exc:
+                  if evidence_error is None:
+                      evidence_error = f'batch diagnostic read failed: {type(exc).__name__}: {exc}'
+
+          aggregate_gate_status = 'NOT_REACHED'
+          for step in batch.get('steps') or []:
+              if step.get('name') == 'Enforce aggregate acceptance gates':
+                  aggregate_gate_status = str(step.get('conclusion') or step.get('status') or 'UNKNOWN').upper()
+                  break
+
+          failed_domain = diagnostics.get('failed_domain') if isinstance(diagnostics, dict) else None
+          failed_source = None
+          if isinstance(diagnostics, dict):
+              for attempt in diagnostics.get('source_attempts') or []:
+                  if str(attempt.get('outcome') or '').upper() == 'FAIL':
+                      failed_source = attempt.get('source') or attempt.get('url')
+                      if failed_source:
+                          break
+
+          score_blind_guard = (
+              diagnostics.get('score_blind_guard_status')
+              if isinstance(diagnostics, dict) and diagnostics.get('score_blind_guard_status')
+              else 'NOT_REACHED'
+          )
+          authoritative = diagnostics.get('first_authoritative_failure') if isinstance(diagnostics, dict) else None
+          if authoritative is None and first_failed_job:
+              authoritative = {'job': first_failed_job, 'step': first_failed_step}
+
+          gate_pass = targeted_result == 'success' and batch_result == 'success' and aggregate_gate_status == 'SUCCESS'
+          evidence = {
+              'schema_version': 'football3-current-v2-retrospective-acceptance-always-evidence-v1',
+              'status': 'PASS' if gate_pass else 'FAIL',
+              'candidate_exact_head': candidate,
+              'workflow_run_id': int(run_id),
+              'targeted_job_result': targeted_result,
+              'batch_job_result': batch_result,
+              'first_failed_job': first_failed_job,
+              'first_failed_step': first_failed_step,
+              'pytest_failed_test': pytest_test,
+              'pytest_error': pytest_error,
+              'failed_domain': failed_domain,
+              'failed_source': failed_source,
+              'aggregate_gate_status': aggregate_gate_status,
+              'score_blind_guard_status': score_blind_guard,
+              'first_authoritative_failure': authoritative,
+              'production_dispatch_performed': False,
+              'pr_341_modified': False,
+              'model_current_weights_changed': False,
+              'failure_artifact_is_gate_pass': False,
+              'evidence_collection_error': evidence_error,
+          }
+          (out / 'acceptance_always_evidence.json').write_text(
+              json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
+              encoding='utf-8',
+          )
+          (out / 'candidate_exact_head.txt').write_text(candidate + '\n', encoding='utf-8')
+          print(json.dumps(evidence, sort_keys=True))
+          if evidence_error is not None:
+              raise SystemExit(2)
+          PY
+      - name: Upload always-on acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-current-v2-retrospective-always-evidence-${{ github.run_id }}
+          path: .acceptance_always_evidence
           if-no-files-found: error
