@@ -18,6 +18,15 @@ RUNNER_V1 = ROOT / "governance" / "football3" / "current_v2_retrospective_replay
 
 PR_MERGE_SHA = "604ad71736fb59a8a6fec0219c471132688d341a"
 CANDIDATE_SHA = "f07e21bf6ed79a4768f284e1a8802915b5e06dde"
+INTEGRATION_BRANCH = "football3/formal-gpt-runner-integration-v1"
+CANDIDATE_BINDING = "CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+PUSH_PATHS = {
+    ".github/workflows/football3-current-v2-retrospective-replay-acceptance.yml",
+    "football-data/formal_gpt_gateway_v1/current_v2_retrospective_*.py",
+    "football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_*.py",
+    "governance/football3/current_v2_retrospective_*.py",
+    "governance/football3/test_current_v2_retrospective_*.py",
+}
 
 
 def _text() -> str:
@@ -33,6 +42,74 @@ def _job_block(name: str) -> str:
         return text[start:]
     end = start + len(marker) + match.start()
     return text[start:end]
+
+
+def _push_block(text: str) -> str:
+    start = text.index("  push:\n")
+    end = text.index("  workflow_dispatch:\n", start)
+    return text[start:end]
+
+
+def _quoted_paths(block: str) -> set[str]:
+    return set(re.findall(r"^      - '([^']+)'$", block, flags=re.MULTILINE))
+
+
+def _assert_merged_push_contract(text: str) -> None:
+    assert "  pull_request:\n" in text
+    assert "  workflow_dispatch:\n" in text
+    push = _push_block(text)
+    assert f"    branches:\n      - {INTEGRATION_BRANCH}\n" in push
+    assert _quoted_paths(push) == PUSH_PATHS
+    assert "**" not in push
+    assert "pull_request_target" not in text
+    assert "actions: write" not in text
+    assert "contents: write" not in text
+    assert "repository_dispatch" not in text
+    assert "/dispatches" not in text
+    assert "gh workflow run" not in text
+    assert text.count(CANDIDATE_BINDING) == 4
+    assert "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" not in text
+    for name in ("targeted-adapter-contract", "four-fixture-eight-domain"):
+        marker = f"  {name}:\n"
+        start = text.index(marker)
+        next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\n", text[start + len(marker):])
+        end = len(text) if next_job is None else start + len(marker) + next_job.start()
+        block = text[start:end]
+        assert "github.event_name == 'push'" in block
+        assert "startsWith(github.head_ref, 'football3/current-v2-retrospective-')" in block
+
+
+def test_merged_push_trigger_and_provenance_contract():
+    _assert_merged_push_contract(_text())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda text: text.replace("  push:\n", "  push_REMOVED:\n", 1),
+        lambda text: text.replace(
+            "  push:\n    branches:\n      - football3/formal-gpt-runner-integration-v1\n",
+            "  push:\n    branches:\n      - main\n",
+            1,
+        ),
+        lambda text: text.replace(
+            "      - 'governance/football3/test_current_v2_retrospective_*.py'\n",
+            "      - 'governance/football3/**'\n",
+            1,
+        ),
+        lambda text: text.replace(
+            CANDIDATE_BINDING,
+            "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}",
+            1,
+        ),
+        lambda text: text.replace("actions: read", "actions: write", 1),
+        lambda text: text.replace("  pull_request:\n", "  pull_request_target:\n", 1),
+        lambda text: text.replace("github.event_name == 'push' || ", "", 1),
+    ],
+)
+def test_merged_push_contract_mutations_fail_closed(mutate):
+    with pytest.raises((AssertionError, ValueError)):
+        _assert_merged_push_contract(mutate(_text()))
 
 
 def test_candidate_exact_head_prefers_explicit_pr_head_over_merge_sha():
@@ -134,7 +211,7 @@ def test_batch_command_and_aggregate_result_are_captured_before_enforcement():
 
 def test_candidate_sha_is_checkout_and_provenance_source_across_acceptance_evidence():
     batch = _job_block("four-fixture-eight-domain")
-    assert "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in batch
+    assert CANDIDATE_BINDING in batch
     assert "ref: ${{ env.CANDIDATE_SHA }}" in batch
     assert 'test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"' in batch
     assert "FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ env.CANDIDATE_SHA }}" in batch
@@ -143,11 +220,11 @@ def test_candidate_sha_is_checkout_and_provenance_source_across_acceptance_evide
     assert "candidate_exact_head.txt" in batch
 
     aggregate = _job_block("aggregate-acceptance-gate")
-    assert "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in aggregate
+    assert CANDIDATE_BINDING in aggregate
     assert '\"candidate_exact_head\":\"%s\"' in aggregate
 
     failure = _job_block("acceptance-failure-evidence")
-    assert "CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in failure
+    assert CANDIDATE_BINDING in failure
     assert "'candidate_exact_head':os.environ['CANDIDATE_SHA']" in failure
     assert "(out/'candidate_exact_head.txt').write_text(os.environ['CANDIDATE_SHA']+'\\n'" in failure
 
