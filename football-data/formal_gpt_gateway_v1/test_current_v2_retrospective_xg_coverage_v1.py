@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -114,12 +116,28 @@ class CurrentV2RetrospectiveXGCoverageTests(unittest.TestCase):
         self.assertTrue(audit["missing_xg_delegated_to_formal_evidence_route"])
         self.assertTrue(audit["fallback_not_forced_by_adapter"])
 
+    def test_audit_hash_is_local_deterministic_canonical_json(self):
+        value = ["fixture-a", "fixture-b"]
+        expected_payload = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        self.assertEqual(coverage._audit_sha256(value), hashlib.sha256(expected_payload).hexdigest())
+        source = Path(coverage.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("rt._canon_bytes", source)
+        self.assertNotIn("rt._sha_bytes", source)
+
     def test_entry_wiring_order_preserves_gateway_and_receipt_layers(self):
         entry = Path(__file__).with_name("entry.py").read_text(encoding="utf-8")
+        durable_pos = entry.index("formal_durable_state_governance_v1.install(gateway)")
         exact_pos = entry.index("current_v2_retrospective_exact_history_v1.install(current_v2_retrospective_replay_v1)")
         coverage_pos = entry.index("current_v2_retrospective_xg_coverage_v1.install(current_v2_retrospective_replay_v1)")
         replay_pos = entry.index("current_v2_retrospective_replay_v1.install(gateway)")
         receipt_pos = entry.index("current_v2_retrospective_receipt_contract_v1.install(gateway)")
+        self.assertLess(durable_pos, exact_pos)
         self.assertLess(exact_pos, coverage_pos)
         self.assertLess(coverage_pos, replay_pos)
         self.assertLess(replay_pos, receipt_pos)
