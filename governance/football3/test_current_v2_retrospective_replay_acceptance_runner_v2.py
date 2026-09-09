@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import current_v2_retrospective_replay_acceptance_runner_v2 as runner
 
@@ -155,3 +158,103 @@ def test_successful_fallback_source_failure_is_recorded_without_domain_failure(m
     assert audit.get("failed_domain") is None
     assert audit["fixture_identity_selected_provider"][comp] == "APPROVED_FALLBACK"
     assert any(x.get("source") == "FOOTBALL_DATA_E0_CSV" and x.get("http_status") == 503 for x in audit["source_attempts"])
+
+
+def _write_history_snapshot(root: Path, *, payload: bytes = b"frozen-history", expected_sha: str | None = None):
+    url = "https://www.football-data.co.uk/mmz4281/2526/E0.csv"
+    raw = root / "football-data/raw/ENG_PremierLeague/2025-26.csv"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_bytes(payload)
+    sha = expected_sha or hashlib.sha256(payload).hexdigest()
+    manifest = root / "football-data/manifests/latest_ingestion.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({"entries": [{
+        "league_id": "ENG_PremierLeague",
+        "season": "2025/26",
+        "source_type": "main",
+        "url": url,
+        "download_status": "downloaded",
+        "validated": True,
+        "raw_path": "raw/ENG_PremierLeague/2025-26.csv",
+        "raw_sha256": sha,
+    }]}), encoding="utf-8")
+    return url, sha
+
+
+def test_frozen_history_snapshot_precedes_network_and_is_sha_bound(tmp_path, monkeypatch):
+    url, sha = _write_history_snapshot(tmp_path)
+    calls = []
+    def network(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("network must not be called for manifest-bound frozen history")
+    monkeypatch.setattr(runner.live, "_fetch", network)
+    audit = {"source_attempts": [], "first_authoritative_failure": None}
+    original = runner.install_frozen_history_source_chain(audit, tmp_path)
+    try:
+        payload, actual_sha = runner.live._fetch(url)
+    finally:
+        runner.live._fetch = original
+    assert payload == b"frozen-history"
+    assert actual_sha == sha
+    assert calls == []
+    assert audit["historical_frozen_snapshot_used"] == 1
+    assert any(x.get("source") == "GOVERNED_FROZEN_INGESTION_SNAPSHOT" and x.get("outcome") == "SUCCESS" for x in audit["source_attempts"])
+
+
+def test_frozen_history_integrity_mismatch_fails_closed_without_network(tmp_path, monkeypatch):
+    url, _ = _write_history_snapshot(tmp_path, payload=b"changed", expected_sha="0" * 64)
+    calls = []
+    def network(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("network fallback must not mask frozen history integrity failure")
+    monkeypatch.setattr(runner.live, "_fetch", network)
+    audit = {"source_attempts": [], "first_authoritative_failure": None}
+    original = runner.install_frozen_history_source_chain(audit, tmp_path)
+    try:
+        try:
+            runner.live._fetch(url)
+        except runner.live.AcquisitionError as exc:
+            assert "FROZEN_HISTORY_SNAPSHOT_SHA_MISMATCH" in str(exc)
+        else:
+            raise AssertionError("expected fail-closed SHA mismatch")
+    finally:
+        runner.live._fetch = original
+    assert calls == []
+    assert audit["first_authoritative_failure"]["stage"] == "RETROSPECTIVE_EXACT_HISTORY_FROZEN_SOURCE"
+
+
+def test_unfrozen_current_history_url_falls_through_to_existing_transport(tmp_path, monkeypatch):
+    _write_history_snapshot(tmp_path)
+    current_url = "https://www.football-data.co.uk/mmz4281/2627/E0.csv"
+    calls = []
+    def network(url, *, data=None, headers=None, timeout=60):
+        calls.append((url, data))
+        return b"network-current-season", "b" * 64
+    monkeypatch.setattr(runner.live, "_fetch", network)
+    audit = {"source_attempts": [], "first_authoritative_failure": None}
+    original = runner.install_frozen_history_source_chain(audit, tmp_path)
+    try:
+        value = runner.live._fetch(current_url)
+    finally:
+        runner.live._fetch = original
+    assert value == (b"network-current-season", "b" * 64)
+    assert calls == [(current_url, None)]
+    assert audit["historical_frozen_snapshot_used"] == 0
+
+
+def test_post_requests_never_use_frozen_history_snapshot(tmp_path, monkeypatch):
+    url, _ = _write_history_snapshot(tmp_path)
+    calls = []
+    def network(url, *, data=None, headers=None, timeout=60):
+        calls.append((url, data))
+        return b"post", "c" * 64
+    monkeypatch.setattr(runner.live, "_fetch", network)
+    audit = {"source_attempts": [], "first_authoritative_failure": None}
+    original = runner.install_frozen_history_source_chain(audit, tmp_path)
+    try:
+        value = runner.live._fetch(url, data=b"request-body")
+    finally:
+        runner.live._fetch = original
+    assert value == (b"post", "c" * 64)
+    assert calls == [(url, b"request-body")]
+    assert audit["historical_frozen_snapshot_used"] == 0

@@ -16,8 +16,11 @@ live = legacy.live
 
 FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
 MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
-SCHEMA = "football3-current-v2-retrospective-replay-acceptance-provider-chain-v1"
+SCHEMA = "football3-current-v2-retrospective-replay-acceptance-provider-chain-v2"
+HISTORY_SOURCE_SCHEMA = "football3-current-v2-retrospective-frozen-history-source-chain-v1"
 ROOT = Path(__file__).resolve().parents[2]
+INGESTION_MANIFEST = ROOT / "football-data/manifests/latest_ingestion.json"
+FOOTBALL_DATA_HISTORY_PREFIX = "https://www.football-data.co.uk/mmz4281/"
 
 ESPN_SLUGS = {
     "ENG_PremierLeague": "eng.1",
@@ -277,13 +280,117 @@ def install_common_fixture_identity_provider_chain(audit: dict[str, Any]) -> tup
     return original_main, original_j1
 
 
+def _history_manifest_index(root: Path = ROOT) -> dict[str, dict[str, Any]]:
+    manifest = root / "football-data/manifests/latest_ingestion.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise live.AcquisitionError(f"FROZEN_HISTORY_INGESTION_MANIFEST_INVALID:{exc}") from exc
+    entries = obj.get("entries") if isinstance(obj, dict) else None
+    if not isinstance(entries, list):
+        raise live.AcquisitionError("FROZEN_HISTORY_INGESTION_MANIFEST_SCHEMA_INVALID")
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url") or "").strip()
+        if not url.startswith(FOOTBALL_DATA_HISTORY_PREFIX) or str(entry.get("source_type") or "") != "main":
+            continue
+        previous = out.get(url)
+        if previous is not None and previous != entry:
+            raise live.AcquisitionError(f"FROZEN_HISTORY_INGESTION_DUPLICATE_URL:{url}")
+        out[url] = entry
+    return out
+
+
+def _frozen_history_payload(url: str, entry: dict[str, Any], root: Path = ROOT) -> tuple[bytes, str, str]:
+    if entry.get("download_status") != "downloaded" or entry.get("validated") is not True:
+        raise live.AcquisitionError(f"FROZEN_HISTORY_SNAPSHOT_NOT_VALIDATED:{url}")
+    raw_path_text = str(entry.get("raw_path") or "").strip()
+    expected_sha = str(entry.get("raw_sha256") or "").strip().lower()
+    if not raw_path_text or len(expected_sha) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha):
+        raise live.AcquisitionError(f"FROZEN_HISTORY_SNAPSHOT_PROVENANCE_INVALID:{url}")
+    raw_path = Path(raw_path_text)
+    if raw_path.is_absolute() or ".." in raw_path.parts:
+        raise live.AcquisitionError(f"FROZEN_HISTORY_SNAPSHOT_PATH_INVALID:{url}")
+    data_root = (root / "football-data").resolve()
+    path = (data_root / raw_path).resolve()
+    if path != data_root and data_root not in path.parents:
+        raise live.AcquisitionError(f"FROZEN_HISTORY_SNAPSHOT_PATH_ESCAPE:{url}")
+    if not path.is_file():
+        raise live.AcquisitionError(f"FROZEN_HISTORY_SNAPSHOT_MISSING:{url}:{raw_path_text}")
+    payload = path.read_bytes()
+    actual_sha = hashlib.sha256(payload).hexdigest()
+    if actual_sha != expected_sha:
+        raise live.AcquisitionError(
+            f"FROZEN_HISTORY_SNAPSHOT_SHA_MISMATCH:{url}:expected={expected_sha}:actual={actual_sha}"
+        )
+    return payload, actual_sha, raw_path.as_posix()
+
+
+def install_frozen_history_source_chain(audit: dict[str, Any], root: Path = ROOT) -> object:
+    original_fetch = live._fetch
+    index = _history_manifest_index(root)
+    audit["historical_source_chain_schema"] = HISTORY_SOURCE_SCHEMA
+    audit["historical_frozen_snapshot_network_bypass"] = True
+    audit["historical_frozen_snapshot_used"] = 0
+    audit["historical_frozen_snapshot_result_fields_emitted"] = False
+
+    def governed_fetch(url: str, *, data: bytes | None = None, headers: dict[str, str] | None = None,
+                       timeout: int = 60):
+        entry = index.get(url) if data is None and url.startswith(FOOTBALL_DATA_HISTORY_PREFIX) else None
+        if entry is None:
+            return original_fetch(url, data=data, headers=headers, timeout=timeout)
+        try:
+            payload, source_sha, raw_path = _frozen_history_payload(url, entry, root)
+        except live.AcquisitionError as exc:
+            attempt = {
+                "source": "GOVERNED_FROZEN_INGESTION_SNAPSHOT",
+                "url": url,
+                "outcome": "FAIL",
+                "error": str(exc),
+            }
+            audit.setdefault("source_attempts", []).append(attempt)
+            if audit.get("first_authoritative_failure") is None:
+                audit["first_authoritative_failure"] = {
+                    "stage": "RETROSPECTIVE_EXACT_HISTORY_FROZEN_SOURCE",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            raise
+        audit["historical_frozen_snapshot_used"] += 1
+        audit.setdefault("source_attempts", []).append({
+            "source": "GOVERNED_FROZEN_INGESTION_SNAPSHOT",
+            "url": url,
+            "outcome": "SUCCESS",
+            "sha256": source_sha,
+            "raw_path": raw_path,
+            "network_attempted": False,
+        })
+        return payload, source_sha
+
+    live._fetch = governed_fetch
+    return original_fetch
+
+
 def main() -> int:
-    original = legacy.install_fixture_identity_fallback
+    original_fixture_install = legacy.install_fixture_identity_fallback
+    original_retry_install = legacy.install_retry
+
+    def install_retry_with_frozen_history():
+        original_raw_fetch, audit = original_retry_install()
+        install_frozen_history_source_chain(audit)
+        return original_raw_fetch, audit
+
     legacy.install_fixture_identity_fallback = install_common_fixture_identity_provider_chain
+    legacy.install_retry = install_retry_with_frozen_history
     try:
         return int(legacy.main())
     finally:
-        legacy.install_fixture_identity_fallback = original
+        legacy.install_fixture_identity_fallback = original_fixture_install
+        legacy.install_retry = original_retry_install
 
 
 if __name__ == "__main__":
