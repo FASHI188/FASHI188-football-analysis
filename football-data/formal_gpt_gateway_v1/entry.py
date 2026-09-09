@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+
 # Install the explicit authoritative result-semantic adjudication before any
 # gateway/source wrappers capture runtime functions. V2 is the governed successor
 # to formal_result_adjudication_v1: it preserves that contract while adding the
