@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,15 +93,37 @@ def test_research_replay_hardcoded_current_or_head_is_blocked(tmp_path: Path, mo
 def test_research_replay_scientific_disguise_still_blocked(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
     rel = "football-data/formal_gpt_gateway_v1/test_fake_replay.py"
+    source = (
+        "FOOTBALL3_GOVERNED_RESEARCH_REPLAY='football3-current-formal-retrospective-research-replay-v1'\n"
+        "MODE='CURRENT_V2_RETROSPECTIVE_REPLAY'\n"
+        "rt.FUSION_WEIGHTS={'xg':1.0}\n"
+    )
+    _write(tmp_path, rel, source)
+
+    # Negative-control validity: with the governance guard absent, this exact fixture
+    # performs a real mutation of the supplied runtime authority object.
+    runtime = SimpleNamespace(FUSION_WEIGHTS={"historical_xg": 0.75, "frozen_v1": 0.25})
+    namespace = {"rt": runtime}
+    exec(compile(source, rel, "exec"), namespace, namespace)
+    assert runtime.FUSION_WEIGHTS == {"xg": 1.0}
+
+    blockers = router.research_replay_blockers(rel)
+    assert any("RESEARCH_REPLAY_RUNTIME_MUTATION_FORBIDDEN:FUSION_WEIGHTS" in x for x in blockers)
+
+
+def test_research_replay_scientific_names_and_receipt_fields_do_not_false_positive(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/test_replay_labels.py"
     _write(
         tmp_path,
         rel,
         "FOOTBALL3_GOVERNED_RESEARCH_REPLAY='football3-current-formal-retrospective-research-replay-v1'\n"
         "MODE='CURRENT_V2_RETROSPECTIVE_REPLAY'\n"
-        "FUSION_WEIGHTS={'xg':1.0}\n",
+        "def test_FUSION_WEIGHTS_receipt_label():\n"
+        "    receipt={'fusion_weights': {'historical_xg': 0.75, 'frozen_v1': 0.25}, 'note': 'FUSION_WEIGHTS'}\n"
+        "    return receipt\n",
     )
-    blockers = router.research_replay_blockers(rel)
-    assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:FUSION_WEIGHTS" in x for x in blockers)
+    assert router.research_replay_blockers(rel) == []
 
 
 def test_research_replay_dynamic_reflection_is_blocked(tmp_path: Path, monkeypatch):
