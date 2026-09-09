@@ -20,6 +20,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      targeted_result: ${{ steps.execute-targeted.outputs.targeted_result }}
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -33,9 +35,13 @@ jobs:
           python-version: '3.11'
       - name: Install test dependencies
         run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1 pytest==8.4.1
-      - name: Compile replay adapters and targeted tests
+      - name: Execute targeted adapter/source/governance contracts
+        id: execute-targeted
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
         run: |
-          set -euo pipefail
+          set +e
+          mkdir -p targeted_acceptance_evidence
           python -m py_compile \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/current_v2_retrospective_exact_history_v1.py \
@@ -49,37 +55,62 @@ jobs:
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
             governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
             governance/football3/current_v2_retrospective_replay_acceptance_runner_v1.py \
+            governance/football3/current_v2_retrospective_fixture_identity_provider_v1.py \
+            governance/football3/current_v2_retrospective_replay_acceptance_runner_v2.py \
+            governance/football3/test_current_v2_retrospective_fixture_identity_provider_v1.py \
             governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py \
-            governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py
-      - name: Run targeted replay adapter and source contract tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
-        run: |
-          set -euo pipefail
-          python -m pytest -q \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_utc_day_boundary_v1.py \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
-            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py \
-            governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py
-      - name: Assert candidate checkout identity
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          printf '%s\n' "$CANDIDATE_SHA" > current_v2_retrospective_replay_candidate_head.txt
+            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v2.py \
+            governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py \
+            governance/football3/audit_football3_changed_authority_v1.py \
+            governance/football3/test_audit_football3_changed_authority_v1.py
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            python -m pytest -q \
+              football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
+              football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
+              football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_utc_day_boundary_v1.py \
+              football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
+              governance/football3/test_current_v2_retrospective_fixture_identity_provider_v1.py \
+              governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py \
+              governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v2.py \
+              governance/football3/test_current_v2_retrospective_replay_acceptance_workflow_v1.py \
+              governance/football3/test_audit_football3_changed_authority_v1.py
+            rc=$?
+          fi
+          if [ "$rc" -eq 0 ]; then result=success; else result=failure; fi
+          printf '%s\n' "$CANDIDATE_SHA" > targeted_acceptance_evidence/candidate_exact_head.txt
+          printf '{"candidate_exact_head":"%s","targeted_result":"%s","exit_code":%s}\n' "$CANDIDATE_SHA" "$result" "$rc" > targeted_acceptance_evidence/targeted_result.json
+          echo "targeted_result=$result" >> "$GITHUB_OUTPUT"
+          echo "targeted_rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
       - name: Upload targeted contract evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: football3-current-v2-retrospective-targeted-${{ github.run_id }}
-          path: current_v2_retrospective_replay_candidate_head.txt
+          path: targeted_acceptance_evidence/
           if-no-files-found: error
+      - name: Enforce targeted contract result
+        if: ${{ always() }}
+        env:
+          TARGETED_RESULT: ${{ steps.execute-targeted.outputs.targeted_result }}
+        run: |
+          test "$TARGETED_RESULT" = "success"
 
   four-fixture-eight-domain:
     needs: targeted-adapter-contract
     if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      batch_result: ${{ steps.summarize-batch.outputs.batch_result }}
+      aggregate_result: ${{ steps.summarize-batch.outputs.aggregate_result }}
+      failed_domain: ${{ steps.summarize-batch.outputs.failed_domain }}
+      failed_source: ${{ steps.summarize-batch.outputs.failed_source }}
+      failed_http_status: ${{ steps.summarize-batch.outputs.failed_http_status }}
+      score_blind_guard: ${{ steps.summarize-batch.outputs.score_blind_guard }}
+      source_fallback_attempts: ${{ steps.summarize-batch.outputs.source_fallback_attempts }}
+      first_authoritative_failure: ${{ steps.summarize-batch.outputs.first_authoritative_failure }}
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -116,64 +147,109 @@ jobs:
           unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
           test -f .runtime_sources/understat/understat_frozen.db
       - name: Execute score-blind four-fixture and eight-domain batch
+        id: execute-batch
         env:
           PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
           FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ env.CANDIDATE_SHA }}
         run: |
-          set -euo pipefail
+          set +e
           rc=1
           for attempt in 1 2 3; do
-            if python governance/football3/current_v2_retrospective_replay_acceptance_runner_v1.py \
+            python governance/football3/current_v2_retrospective_replay_acceptance_runner_v2.py \
               --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
               --confirmation-dir "$PWD/.runtime_sources/confirmation" \
-              --work "$PWD/.retrospective_acceptance"; then
-              rc=0
-              break
-            else
-              rc=$?
-            fi
+              --work "$PWD/.retrospective_acceptance"
+            rc=$?
+            if [ "$rc" -eq 0 ]; then break; fi
             if [ "$attempt" -lt 3 ]; then
               echo "acceptance transport attempt ${attempt} failed; retrying same exact-head score-blind batch" >&2
               sleep $((attempt * 4))
             fi
           done
-          exit "$rc"
-      - name: Enforce aggregate acceptance gates
+          echo "batch_rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Summarize batch and aggregate gate without masking upstream failure
+        id: summarize-batch
+        if: ${{ always() }}
+        env:
+          BATCH_RC: ${{ steps.execute-batch.outputs.batch_rc }}
         run: |
-          set -euo pipefail
           python - <<'PY'
           import json, os
           from pathlib import Path
-          p=Path('.retrospective_acceptance/acceptance_summary.json')
-          s=json.loads(p.read_text(encoding='utf-8'))
-          assert s['status']=='PASS', s
-          assert s['candidate_exact_head']==os.environ['CANDIDATE_SHA'], s
-          g=s['gates']
-          assert g['four_fixture_count']==4 and g['eight_domain_count']==8, g
-          assert g['fixture_resolved_percent']==100.0, g
-          assert g['valid_receipt_percent']==100.0, g
-          assert g['nonempty_prediction_sha_percent']==100.0, g
-          assert g['result_target_post_kickoff_exclusion_percent']==100.0, g
-          assert g['identity_anomaly_count']==0 and g['state_anomaly_count']==0 and g['matrix_inconsistency_count']==0, g
-          assert g['actual_scores_emitted'] is False, g
-          assert s['ucl_research_only_scope_exception_only'] is True and s['formal_scope_widened'] is False, s
-          assert len(s['four_fixture'])==4 and len(s['eight_domain'])==8
-          for row in s['four_fixture']+s['eight_domain']:
-              assert row['valid_receipt'] and row['prediction_sha'] and row['state_integrity_status']=='PASS'
-              assert row['matrix_conservation'] and row['identity_status']=='PASS'
-              assert row['result_excluded'] and row['target_fixture_excluded'] and row['post_kickoff_events_excluded']
-              assert row['strict_pit_claimed'] is False and row['actual_scores_emitted'] is False
-          print(json.dumps({'status':s['status'],'head':s['candidate_exact_head'],'gates':g,'actual_fusion_weights':s['actual_fusion_weights']},sort_keys=True))
+          out = Path(os.environ['GITHUB_OUTPUT'])
+          work = Path('.retrospective_acceptance')
+          try:
+              rc = int(os.environ.get('BATCH_RC') or 1)
+          except Exception:
+              rc = 1
+          diagnostics = {}
+          transport = {}
+          summary = {}
+          for name, target in [('failure_diagnostics.json', diagnostics), ('acceptance_transport_audit.json', transport), ('acceptance_summary.json', summary)]:
+              p = work / name
+              if p.is_file():
+                  try:
+                      target.update(json.loads(p.read_text(encoding='utf-8')))
+                  except Exception:
+                      pass
+          aggregate = 'NOT_REACHED'
+          if rc == 0 and summary:
+              try:
+                  g=summary['gates']
+                  checks = [
+                      summary['status']=='PASS',
+                      summary['candidate_exact_head']==os.environ['CANDIDATE_SHA'],
+                      g['four_fixture_count']==4 and g['eight_domain_count']==8,
+                      g['fixture_resolved_percent']==100.0,
+                      g['valid_receipt_percent']==100.0,
+                      g['nonempty_prediction_sha_percent']==100.0,
+                      g['result_target_post_kickoff_exclusion_percent']==100.0,
+                      g['identity_anomaly_count']==0 and g['state_anomaly_count']==0 and g['matrix_inconsistency_count']==0,
+                      g['actual_scores_emitted'] is False,
+                      summary['ucl_research_only_scope_exception_only'] is True and summary['formal_scope_widened'] is False,
+                      len(summary['four_fixture'])==4 and len(summary['eight_domain'])==8,
+                  ]
+                  for row in summary['four_fixture']+summary['eight_domain']:
+                      checks.extend([
+                          bool(row['valid_receipt'] and row['prediction_sha'] and row['state_integrity_status']=='PASS'),
+                          bool(row['matrix_conservation'] and row['identity_status']=='PASS'),
+                          bool(row['result_excluded'] and row['target_fixture_excluded'] and row['post_kickoff_events_excluded']),
+                          bool(row['strict_pit_claimed'] is False and row['actual_scores_emitted'] is False),
+                      ])
+                  aggregate = 'SUCCESS' if all(checks) else 'FAILURE'
+              except Exception:
+                  aggregate = 'FAILURE'
+          attempts = diagnostics.get('source_attempts') or transport.get('source_attempts') or transport.get('fixture_identity_provider_attempts') or []
+          failed = next((x for x in attempts if str(x.get('outcome') or '').upper()=='FAIL'), {})
+          failed_source = failed.get('source') or failed.get('provider') or failed.get('url') or ''
+          failed_http = failed.get('http_status') or ''
+          first = diagnostics.get('first_authoritative_failure') or transport.get('first_authoritative_failure') or {}
+          score_blind = diagnostics.get('score_blind_guard_status') or transport.get('score_blind_guard_status') or 'NOT_REACHED'
+          def emit(k, v):
+              text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+              text = text.replace('\n',' ')
+              with out.open('a', encoding='utf-8') as f:
+                  f.write(f'{k}={text}\n')
+          emit('batch_result', 'success' if rc==0 else 'failure')
+          emit('aggregate_result', aggregate)
+          emit('failed_domain', diagnostics.get('failed_domain') or transport.get('failed_domain') or '')
+          emit('failed_source', str(failed_source))
+          emit('failed_http_status', str(failed_http))
+          emit('score_blind_guard', str(score_blind))
+          emit('source_fallback_attempts', attempts)
+          emit('first_authoritative_failure', first)
           PY
       - name: Upload replay acceptance evidence
-        if: always()
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: football3-current-v2-retrospective-acceptance-${{ github.run_id }}
-          path: .retrospective_acceptance
+          path: .retrospective_acceptance/
+          include-hidden-files: true
           if-no-files-found: error
       - name: Upload failure resilience diagnostics
-        if: always()
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: football3-current-v2-retrospective-failure-resilience-${{ github.run_id }}
@@ -182,9 +258,50 @@ jobs:
             .retrospective_acceptance/acceptance_transport_audit.json
             .retrospective_acceptance/failure_diagnostics.json
           if-no-files-found: error
+      - name: Enforce batch and aggregate result after evidence upload
+        if: ${{ always() }}
+        env:
+          BATCH_RESULT: ${{ steps.summarize-batch.outputs.batch_result }}
+          AGGREGATE_RESULT: ${{ steps.summarize-batch.outputs.aggregate_result }}
+        run: |
+          test "$BATCH_RESULT" = "success"
+          test "$AGGREGATE_RESULT" = "SUCCESS"
+
+  aggregate-acceptance-gate:
+    needs: [targeted-adapter-contract, four-fixture-eight-domain]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      aggregate_result: ${{ steps.record-aggregate.outputs.aggregate_result }}
+    steps:
+      - name: Record aggregate upstream state
+        id: record-aggregate
+        env:
+          TARGETED_JOB: ${{ needs.targeted-adapter-contract.result }}
+          BATCH_JOB: ${{ needs.four-fixture-eight-domain.result }}
+          BATCH_AGGREGATE: ${{ needs.four-fixture-eight-domain.outputs.aggregate_result }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p acceptance_aggregate_evidence
+          if [ "$TARGETED_JOB" = "success" ] && [ "$BATCH_JOB" = "success" ] && [ "$BATCH_AGGREGATE" = "SUCCESS" ]; then result=success; else result=failure; fi
+          printf '{"candidate_exact_head":"%s","targeted_job":"%s","batch_job":"%s","batch_aggregate":"%s","aggregate_result":"%s"}\n' "$CANDIDATE_SHA" "$TARGETED_JOB" "$BATCH_JOB" "$BATCH_AGGREGATE" "$result" > acceptance_aggregate_evidence/aggregate_result.json
+          echo "aggregate_result=$result" >> "$GITHUB_OUTPUT"
+      - name: Upload aggregate acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-current-v2-retrospective-aggregate-${{ github.run_id }}
+          path: acceptance_aggregate_evidence/
+          if-no-files-found: error
+      - name: Enforce aggregate upstream state after evidence upload
+        if: ${{ always() }}
+        env:
+          AGGREGATE_RESULT: ${{ steps.record-aggregate.outputs.aggregate_result }}
+        run: test "$AGGREGATE_RESULT" = "success"
 
   acceptance-failure-evidence:
-    needs: [targeted-adapter-contract, four-fixture-eight-domain]
+    needs: [targeted-adapter-contract, four-fixture-eight-domain, aggregate-acceptance-gate]
     if: ${{ always() }}
     permissions:
       contents: read
@@ -195,168 +312,79 @@ jobs:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       TARGETED_RESULT: ${{ needs.targeted-adapter-contract.result }}
       BATCH_RESULT: ${{ needs.four-fixture-eight-domain.result }}
+      AGGREGATE_RESULT: ${{ needs.aggregate-acceptance-gate.result }}
+      BATCH_AGGREGATE_RESULT: ${{ needs.four-fixture-eight-domain.outputs.aggregate_result }}
+      FAILED_DOMAIN: ${{ needs.four-fixture-eight-domain.outputs.failed_domain }}
+      FAILED_SOURCE: ${{ needs.four-fixture-eight-domain.outputs.failed_source }}
+      FAILED_HTTP_STATUS: ${{ needs.four-fixture-eight-domain.outputs.failed_http_status }}
+      SCORE_BLIND_GUARD: ${{ needs.four-fixture-eight-domain.outputs.score_blind_guard }}
+      SOURCE_FALLBACK_ATTEMPTS: ${{ needs.four-fixture-eight-domain.outputs.source_fallback_attempts }}
+      FIRST_AUTHORITATIVE_FAILURE: ${{ needs.four-fixture-eight-domain.outputs.first_authoritative_failure }}
     steps:
-      - name: Build always-on acceptance evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build minimum always-on acceptance evidence
+        if: ${{ always() }}
         run: |
-          set -euo pipefail
-          mkdir -p .acceptance_always_evidence
+          mkdir -p acceptance_always_evidence
           python - <<'PY'
-          import io
-          import json
-          import os
-          import re
-          import urllib.request
-          import zipfile
+          import json, os
           from pathlib import Path
-
-          repo = os.environ['GITHUB_REPOSITORY']
-          run_id = os.environ['GITHUB_RUN_ID']
-          token = os.environ['GH_TOKEN']
-          candidate = os.environ['CANDIDATE_SHA']
-          targeted_result = os.environ.get('TARGETED_RESULT') or 'unknown'
-          batch_result = os.environ.get('BATCH_RESULT') or 'unknown'
-          out = Path('.acceptance_always_evidence')
-          headers = {
-              'Authorization': f'Bearer {token}',
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'User-Agent': 'football3-current-v2-retrospective-acceptance-evidence/1.0',
-          }
-
-          def get_json(url):
-              req = urllib.request.Request(url, headers=headers)
-              with urllib.request.urlopen(req, timeout=60) as r:
-                  return json.loads(r.read().decode('utf-8'))
-
-          def get_bytes(url):
-              req = urllib.request.Request(url, headers=headers)
-              with urllib.request.urlopen(req, timeout=60) as r:
-                  return r.read()
-
-          evidence_error = None
-          jobs = []
-          diagnostics = None
-          pytest_test = None
-          pytest_error = None
-          try:
-              jobs_obj = get_json(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')
-              jobs = jobs_obj.get('jobs') or []
-          except Exception as exc:
-              evidence_error = f'job inventory failed: {type(exc).__name__}: {exc}'
-
-          by_name = {str(j.get('name')): j for j in jobs}
-          targeted = by_name.get('targeted-adapter-contract') or {}
-          batch = by_name.get('four-fixture-eight-domain') or {}
-
-          first_failed_job = None
-          first_failed_step = None
-          for job_name, job in (('targeted-adapter-contract', targeted), ('four-fixture-eight-domain', batch)):
-              result = str(job.get('conclusion') or '')
-              if result in {'failure', 'cancelled', 'timed_out', 'action_required'}:
-                  first_failed_job = job_name
-                  for step in job.get('steps') or []:
-                      if str(step.get('conclusion') or '') in {'failure', 'cancelled', 'timed_out', 'action_required'}:
-                          first_failed_step = str(step.get('name') or '') or None
-                          break
-                  break
-
-          if targeted_result in {'failure', 'cancelled', 'timed_out', 'action_required'} and targeted.get('id'):
+          def parse_json(name, default):
+              raw=os.environ.get(name,'').strip()
+              if not raw:
+                  return default
               try:
-                  raw = get_bytes(f"https://api.github.com/repos/{repo}/actions/jobs/{targeted['id']}/logs")
-                  text = raw.decode('utf-8', errors='replace')
-                  ansi = re.compile(r'\x1b\[[0-9;]*m')
-                  clean_lines = [ansi.sub('', line) for line in text.splitlines()]
-                  for line in clean_lines:
-                      marker = 'FAILED '
-                      if marker in line and '::' in line and pytest_test is None:
-                          pytest_test = line.split(marker, 1)[1].split(' - ', 1)[0].strip()
-                      stripped = line.strip()
-                      if stripped.startswith('E ') and pytest_error is None:
-                          pytest_error = stripped[2:].strip()
-              except Exception as exc:
-                  if evidence_error is None:
-                      evidence_error = f'targeted log read failed: {type(exc).__name__}: {exc}'
-
-          if batch_result in {'failure', 'cancelled', 'timed_out', 'action_required'}:
-              try:
-                  artifacts_obj = get_json(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
-                  artifacts = artifacts_obj.get('artifacts') or []
-                  preferred = [a for a in artifacts if str(a.get('name', '')).startswith('football3-current-v2-retrospective-failure-resilience-')]
-                  if not preferred:
-                      preferred = [a for a in artifacts if str(a.get('name', '')).startswith('football3-current-v2-retrospective-acceptance-')]
-                  if preferred:
-                      blob = get_bytes(f"https://api.github.com/repos/{repo}/actions/artifacts/{preferred[0]['id']}/zip")
-                      with zipfile.ZipFile(io.BytesIO(blob)) as zf:
-                          for name in zf.namelist():
-                              if name.endswith('failure_diagnostics.json'):
-                                  diagnostics = json.loads(zf.read(name).decode('utf-8'))
-                                  break
-              except Exception as exc:
-                  if evidence_error is None:
-                      evidence_error = f'batch diagnostic read failed: {type(exc).__name__}: {exc}'
-
-          aggregate_gate_status = 'NOT_REACHED'
-          for step in batch.get('steps') or []:
-              if step.get('name') == 'Enforce aggregate acceptance gates':
-                  aggregate_gate_status = str(step.get('conclusion') or step.get('status') or 'UNKNOWN').upper()
-                  break
-
-          failed_domain = diagnostics.get('failed_domain') if isinstance(diagnostics, dict) else None
-          failed_source = None
-          if isinstance(diagnostics, dict):
-              for attempt in diagnostics.get('source_attempts') or []:
-                  if str(attempt.get('outcome') or '').upper() == 'FAIL':
-                      failed_source = attempt.get('source') or attempt.get('url')
-                      if failed_source:
-                          break
-
-          score_blind_guard = (
-              diagnostics.get('score_blind_guard_status')
-              if isinstance(diagnostics, dict) and diagnostics.get('score_blind_guard_status')
-              else 'NOT_REACHED'
-          )
-          authoritative = diagnostics.get('first_authoritative_failure') if isinstance(diagnostics, dict) else None
-          if authoritative is None and first_failed_job:
-              authoritative = {'job': first_failed_job, 'step': first_failed_step}
-
-          gate_pass = targeted_result == 'success' and batch_result == 'success' and aggregate_gate_status == 'SUCCESS'
-          evidence = {
-              'schema_version': 'football3-current-v2-retrospective-acceptance-always-evidence-v1',
-              'status': 'PASS' if gate_pass else 'FAIL',
-              'candidate_exact_head': candidate,
-              'workflow_run_id': int(run_id),
-              'targeted_job_result': targeted_result,
-              'batch_job_result': batch_result,
-              'first_failed_job': first_failed_job,
-              'first_failed_step': first_failed_step,
-              'pytest_failed_test': pytest_test,
-              'pytest_error': pytest_error,
-              'failed_domain': failed_domain,
-              'failed_source': failed_source,
-              'aggregate_gate_status': aggregate_gate_status,
-              'score_blind_guard_status': score_blind_guard,
-              'first_authoritative_failure': authoritative,
-              'production_dispatch_performed': False,
-              'pr_341_modified': False,
-              'model_current_weights_changed': False,
-              'failure_artifact_is_gate_pass': False,
-              'evidence_collection_error': evidence_error,
+                  return json.loads(raw)
+              except Exception:
+                  return default
+          targeted=os.environ.get('TARGETED_RESULT') or 'unknown'
+          batch=os.environ.get('BATCH_RESULT') or 'unknown'
+          aggregate=os.environ.get('AGGREGATE_RESULT') or 'unknown'
+          batch_aggregate=os.environ.get('BATCH_AGGREGATE_RESULT') or 'NOT_REACHED'
+          authoritative=parse_json('FIRST_AUTHORITATIVE_FAILURE', {})
+          if not authoritative:
+              if targeted != 'success':
+                  authoritative={'job':'targeted-adapter-contract','result':targeted}
+              elif batch != 'success':
+                  authoritative={'job':'four-fixture-eight-domain','result':batch}
+              elif aggregate != 'success':
+                  authoritative={'job':'aggregate-acceptance-gate','result':aggregate}
+          passed = targeted=='success' and batch=='success' and aggregate=='success' and batch_aggregate=='SUCCESS'
+          evidence={
+              'schema_version':'football3-current-v2-retrospective-acceptance-always-evidence-v2',
+              'status':'PASS' if passed else 'FAIL',
+              'candidate_exact_head':os.environ['CANDIDATE_SHA'],
+              'workflow_run_id':int(os.environ['GITHUB_RUN_ID']),
+              'targeted_result':targeted,
+              'batch_result':batch,
+              'aggregate_result':aggregate,
+              'batch_aggregate_result':batch_aggregate,
+              'first_authoritative_failure':authoritative,
+              'failed_domain':os.environ.get('FAILED_DOMAIN') or None,
+              'failed_source':os.environ.get('FAILED_SOURCE') or None,
+              'failed_http_status':os.environ.get('FAILED_HTTP_STATUS') or None,
+              'score_blind_guard':os.environ.get('SCORE_BLIND_GUARD') or 'NOT_REACHED',
+              'source_fallback_attempts':parse_json('SOURCE_FALLBACK_ATTEMPTS', []),
+              'model_current_weights_changed':False,
+              'production_dispatch_performed':False,
+              'pr_341_modified':False,
+              'failure_artifact_is_gate_pass':False,
           }
-          (out / 'acceptance_always_evidence.json').write_text(
-              json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
-              encoding='utf-8',
-          )
-          (out / 'candidate_exact_head.txt').write_text(candidate + '\n', encoding='utf-8')
-          print(json.dumps(evidence, sort_keys=True))
-          if evidence_error is not None:
-              raise SystemExit(2)
+          out=Path('acceptance_always_evidence')
+          (out/'acceptance_always_evidence.json').write_text(json.dumps(evidence,ensure_ascii=False,sort_keys=True,separators=(',',':')),encoding='utf-8')
+          (out/'candidate_exact_head.txt').write_text(os.environ['CANDIDATE_SHA']+'\n',encoding='utf-8')
+          print(json.dumps(evidence,sort_keys=True))
           PY
       - name: Upload always-on acceptance evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: football3-current-v2-retrospective-always-evidence-${{ github.run_id }}
-          path: .acceptance_always_evidence
+          path: acceptance_always_evidence/
           if-no-files-found: error
+      - name: Enforce upstream acceptance status after evidence upload
+        if: ${{ always() }}
+        run: |
+          test "$TARGETED_RESULT" = "success"
+          test "$BATCH_RESULT" = "success"
+          test "$AGGREGATE_RESULT" = "success"
+          test "$BATCH_AGGREGATE_RESULT" = "SUCCESS"

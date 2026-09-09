@@ -31,6 +31,26 @@ def test_real_candidate_gateway_roles_are_explicit_and_clean():
     assert router.research_replay_blockers("football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py") == []
 
 
+def test_real_utc_day_boundary_test_uses_same_research_replay_contract():
+    rel = "football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_utc_day_boundary_v1.py"
+    assert router.is_research_replay(rel)
+    assert router.research_replay_blockers(rel) == []
+
+
+def test_legal_research_replay_test_marker_and_mode_are_recognized(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/test_replay_contract.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_RESEARCH_REPLAY='football3-current-formal-retrospective-research-replay-v1'\n"
+        "MODE='CURRENT_V2_RETROSPECTIVE_REPLAY'\n"
+        "def test_contract():\n    assert True\n",
+    )
+    assert router.is_research_replay(rel)
+    assert router.research_replay_blockers(rel) == []
+
+
 def test_unmarked_gateway_python_is_not_silently_exempt(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
     rel = "football-data/formal_gpt_gateway_v1/unmarked.py"
@@ -67,6 +87,20 @@ def test_research_replay_hardcoded_current_or_head_is_blocked(tmp_path: Path, mo
     blockers = router.research_replay_blockers(rel)
     assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:CURRENT_SHA256" in x for x in blockers)
     assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:FORMAL_HEAD" in x for x in blockers)
+
+
+def test_research_replay_scientific_disguise_still_blocked(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/test_fake_replay.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_RESEARCH_REPLAY='football3-current-formal-retrospective-research-replay-v1'\n"
+        "MODE='CURRENT_V2_RETROSPECTIVE_REPLAY'\n"
+        "FUSION_WEIGHTS={'xg':1.0}\n",
+    )
+    blockers = router.research_replay_blockers(rel)
+    assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:FUSION_WEIGHTS" in x for x in blockers)
 
 
 def test_research_replay_dynamic_reflection_is_blocked(tmp_path: Path, monkeypatch):

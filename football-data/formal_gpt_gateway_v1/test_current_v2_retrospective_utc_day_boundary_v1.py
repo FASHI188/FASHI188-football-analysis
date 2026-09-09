@@ -10,6 +10,7 @@ import current_v2_retrospective_replay_v1 as replay
 import current_v2_retrospective_utc_day_boundary_v1 as boundary
 
 FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
+MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 
 
 class UtcDayHistoryBoundaryTests(unittest.TestCase):
