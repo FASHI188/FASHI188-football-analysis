@@ -13,6 +13,8 @@ from unittest import mock
 import current_v2_retrospective_replay_v1 as replay
 import request_contract_v1 as contract
 
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+
 
 class RequestContractTests(unittest.TestCase):
     def _request(self, mode: str, comp: str) -> dict:
