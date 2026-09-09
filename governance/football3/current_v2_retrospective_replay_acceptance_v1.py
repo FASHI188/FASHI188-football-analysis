@@ -26,6 +26,7 @@ import gateway
 import live_delta_acquisition_v1 as live
 import request_contract_v1 as request_contract
 import runtime as rt
+from current_v2_retrospective_candidate_head_v1 import resolve_candidate_exact_head
 
 SCHEMA = "football3-current-v2-retrospective-replay-acceptance-v1"
 MODE = request_contract.CURRENT_V2_RETROSPECTIVE_REPLAY
@@ -386,7 +387,7 @@ def run_manifest(manifest: dict[str, Any], understat_db: Path, confirmation_dir:
         "schema_version": SCHEMA,
         "status": "PASS",
         "mode": MODE,
-        "candidate_exact_head": os.environ.get("GITHUB_SHA") or os.environ.get("FOOTBALL3_CANDIDATE_EXACT_HEAD") or "LOCAL",
+        "candidate_exact_head": resolve_candidate_exact_head(),
         "four_fixture": four_results,
         "eight_domain": batch_results,
         "gates": {
