@@ -11,7 +11,8 @@ from typing import Any
 import current_v2_retrospective_replay_v1 as replay
 import runtime as rt
 
-FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
+MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 SCHEMA = "football3-current-v2-retrospective-receipt-contract-v1"
 
 
@@ -35,7 +36,7 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise rt.RuntimeGateError("retrospective prediction receipt unreadable") from exc
-    if type(receipt) is not dict or receipt.get("mode") != replay.MODE:
+    if type(receipt) is not dict or receipt.get("mode") != MODE:
         raise rt.RuntimeGateError("retrospective prediction receipt mode mismatch")
     reconstruction = receipt.get("reconstruction_audit") or {}
     binding = receipt.get("formal_binding") or {}
@@ -59,7 +60,7 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(current_sha, str) or not current_sha or not isinstance(formal_head, str) or not formal_head:
         raise rt.RuntimeGateError("retrospective current/formal model binding missing")
     receipt.update({
-        "request_mode": replay.MODE,
+        "request_mode": MODE,
         "retrospective": True,
         "research_only": True,
         "history_event_cutoff": history_cutoff,
@@ -69,8 +70,6 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
         "formal_model_head": formal_head,
         "state_integrity": integrity,
         "run_id": os.environ.get("GITHUB_RUN_ID") or "LOCAL_TEST",
-        # GitHub allocates a numeric artifact id only after upload. The immutable
-        # terminal artifact manifest binds that id back to this receipt/prediction.
         "receipt_artifact_id": os.environ.get("FOOTBALL3_RECEIPT_ARTIFACT_ID") or "PENDING_TERMINAL_ARTIFACT_BINDING",
         "receipt_artifact_binding_required": True,
         "receipt_contract_schema": SCHEMA,
@@ -82,7 +81,7 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     receipt_path.write_bytes(_canon(receipt))
     result = dict(result)
     result["receipt_sha"] = receipt_sha
-    result["request_mode"] = replay.MODE
+    result["request_mode"] = MODE
     result["retrospective"] = True
     result["research_only"] = True
     result["history_event_cutoff"] = history_cutoff
@@ -97,7 +96,7 @@ def install(gateway_module) -> dict[str, Any]:
     def normal_request(req: dict[str, Any], state_root: Path, out: Path, repo_root: Path,
                        understat_db: Path, confirmation_dir: Path) -> dict[str, Any]:
         result = original(req, state_root, out, repo_root, understat_db, confirmation_dir)
-        if str(req.get("request_mode") or "") != replay.MODE:
+        if str(req.get("request_mode") or "") != MODE:
             return result
         return _enrich(out, result)
 
@@ -105,7 +104,7 @@ def install(gateway_module) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "installed": True,
-        "request_mode": replay.MODE,
+        "request_mode": MODE,
         "prediction_or_matrix_changed": False,
         "route_or_fallback_changed": False,
         "current_or_model_or_weight_changed": False,
