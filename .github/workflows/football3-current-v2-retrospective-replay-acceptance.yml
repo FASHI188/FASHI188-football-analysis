@@ -41,7 +41,8 @@ jobs:
             football-data/formal_gpt_gateway_v1/entry.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py
+            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
+            governance/football3/current_v2_retrospective_replay_acceptance_v1.py
       - name: Run targeted replay adapter contract tests
         env:
           PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
@@ -61,4 +62,85 @@ jobs:
         with:
           name: football3-current-v2-retrospective-targeted-${{ github.run_id }}
           path: current_v2_retrospective_replay_candidate_head.txt
+          if-no-files-found: error
+
+  four-fixture-eight-domain:
+    needs: targeted-adapter-contract
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.2 pandas==2.3.1
+      - name: Assert exact candidate checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p .runtime_sources/understat .runtime_sources/confirmation .retrospective_acceptance
+          printf '%s\n' "$GITHUB_SHA" > .retrospective_acceptance/candidate_exact_head.txt
+      - name: Restore byte-bound frozen formal source assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9798682425/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9827606506/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          test -f .runtime_sources/understat/understat_frozen.db
+      - name: Execute score-blind four-fixture and eight-domain batch
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+          FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --work "$PWD/.retrospective_acceptance"
+      - name: Enforce aggregate acceptance gates
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path('.retrospective_acceptance/acceptance_summary.json')
+          s=json.loads(p.read_text(encoding='utf-8'))
+          assert s['status']=='PASS', s
+          assert s['candidate_exact_head']==os.environ['GITHUB_SHA'], s
+          g=s['gates']
+          assert g['four_fixture_count']==4 and g['eight_domain_count']==8, g
+          assert g['fixture_resolved_percent']==100.0, g
+          assert g['valid_receipt_percent']==100.0, g
+          assert g['nonempty_prediction_sha_percent']==100.0, g
+          assert g['result_target_post_kickoff_exclusion_percent']==100.0, g
+          assert g['identity_anomaly_count']==0 and g['state_anomaly_count']==0 and g['matrix_inconsistency_count']==0, g
+          assert g['actual_scores_emitted'] is False, g
+          assert s['ucl_research_only_scope_exception_only'] is True and s['formal_scope_widened'] is False, s
+          assert len(s['four_fixture'])==4 and len(s['eight_domain'])==8
+          for row in s['four_fixture']+s['eight_domain']:
+              assert row['valid_receipt'] and row['prediction_sha'] and row['state_integrity_status']=='PASS'
+              assert row['matrix_conservation'] and row['identity_status']=='PASS'
+              assert row['result_excluded'] and row['target_fixture_excluded'] and row['post_kickoff_events_excluded']
+              assert row['strict_pit_claimed'] is False and row['actual_scores_emitted'] is False
+          print(json.dumps({'status':s['status'],'head':s['candidate_exact_head'],'gates':g,'actual_fusion_weights':s['actual_fusion_weights']},sort_keys=True))
+          PY
+      - name: Upload replay acceptance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-current-v2-retrospective-acceptance-${{ github.run_id }}
+          path: .retrospective_acceptance
           if-no-files-found: error
