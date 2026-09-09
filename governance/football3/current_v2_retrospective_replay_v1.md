@@ -7,19 +7,23 @@
 - Exact construction base: `0e102ac3689185d3378bab3bc416ccec20d519de`
 - Live main at construction start: `2b74066607fa8fe64dadb6bf4815aba22bc52ce7`
 - Construction branch: `football3/current-v2-retrospective-replay-v1`
-- Stage: `BASELINE_PERSISTED_IMPLEMENTATION_PENDING`
+- Stage: `WEIGHT_SEMANTICS_VERIFIED_IMPLEMENTATION_IN_PROGRESS`
 
 ## Formal model baseline
 
 The canonical formal pointer is `football-data/config/formal_model_pointer_historical_xg_fusion_v2.json` and declares:
 
-- formal model: `football3_historical_xg_fusion_v2`
-- family: `HISTORICAL_XG_ENSEMBLE_FUSION_V2`
-- CURRENT mode: `EXTERNAL_UNIQUE_CURRENT_ONLY`
-- production CURRENT status: `FORMAL`
-- final fusion weights: Frozen V1 baseline `0.75`, Historical XG boost `0.25`
+- formal model: `Historical XG Fusion V2`
+- authority: `EXTERNAL_UNIQUE_CURRENT_ONLY`
+- CURRENT is not stored in GitHub and must select the exact formal head at runtime
+- formal fusion formula: `normalize((1-w)*p_V1 + w*p_XG)`
+- formal `xg_weight`: `0.75`
+- formal `frozen_v1_weight`: `0.25`
+- xG-insufficient route: `FROZEN_V1_EXACT_FALLBACK`
 
-The implementation MUST resolve the actual CURRENT identity dynamically at runtime and record the actual CURRENT SHA/model/runtime identity in each final Receipt. No CURRENT SHA, model HEAD, runtime HEAD, or route is hard-coded by this feature.
+The immutable formal wiring contract independently declares the same formula and weights, and `formal_fusion_v2.py` defines `FUSION_WEIGHT = 0.75` with `w` being the Historical XG component. Therefore the correct semantic reading is **Historical XG 0.75 + Frozen V1 0.25**. The initial construction note had these component labels reversed; that documentation error is corrected here. No formal configuration, pointer, model code, or weight was changed.
+
+The implementation MUST resolve the actual CURRENT identity and formal pointer dynamically at runtime and record the actual CURRENT SHA/model/runtime identity and mechanically resolved fusion weights in each final Receipt. This feature MUST NOT introduce a new hard-coded CURRENT SHA, model HEAD, runtime HEAD, fusion weight, or route.
 
 ## Product contract
 
