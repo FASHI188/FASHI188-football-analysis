@@ -95,6 +95,11 @@ FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gat
 import current_v2_retrospective_replay_v1
 CURRENT_V2_RETROSPECTIVE_REPLAY = current_v2_retrospective_replay_v1.install(gateway)
 
+# Receipt-only provenance is outermost over the isolated research replay. It never
+# changes the prediction, route, fallback, model, CURRENT, weights, or other modes.
+import current_v2_retrospective_receipt_contract_v1
+CURRENT_V2_RETROSPECTIVE_RECEIPT = current_v2_retrospective_receipt_contract_v1.install(gateway)
+
 
 def _direct_complete_fixture(history):
     lower = datetime(2023, 3, 1, tzinfo=timezone.utc)
@@ -147,6 +152,7 @@ def main() -> int:
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
             "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
             "current_v2_retrospective_replay_adapter.json": CURRENT_V2_RETROSPECTIVE_REPLAY,
+            "current_v2_retrospective_receipt_contract_adapter.json": CURRENT_V2_RETROSPECTIVE_RECEIPT,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -179,6 +185,7 @@ def main() -> int:
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
             d["current_v2_retrospective_replay_adapter"] = CURRENT_V2_RETROSPECTIVE_REPLAY
+            d["current_v2_retrospective_receipt_contract_adapter"] = CURRENT_V2_RETROSPECTIVE_RECEIPT
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "
