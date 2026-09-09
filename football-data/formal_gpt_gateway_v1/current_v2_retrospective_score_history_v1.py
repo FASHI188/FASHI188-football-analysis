@@ -147,7 +147,7 @@ def _source_native_identity(repo_root: Path, comp: str, raw: str, authority_name
 def _authority_names(rows: list[Any], comp: str) -> set[str]:
     out: set[str] = set()
     for row in rows:
-        if getattr(row, "competition_id", None) == comp:
+        if row.competition_id == comp:
             out.add(str(row.home_team_name))
             out.add(str(row.away_team_name))
     return out
