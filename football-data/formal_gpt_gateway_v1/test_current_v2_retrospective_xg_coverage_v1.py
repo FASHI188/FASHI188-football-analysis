@@ -172,7 +172,8 @@ class CurrentV2RetrospectiveXGCoverageTests(unittest.TestCase):
         build_end = source.index("def run", build_start)
         build = source[build_start:build_end]
         self.assertLess(build.index("_research_v1_rows"), build.index("_current_xg_labels"))
-        self.assertLess(build.index("current_hist"), build.index("rt.replay_history_state"))
+        final_replay = build.index("state, replay = rt.replay_history_state(combined, labels, target_kickoff)")
+        self.assertLess(build.index("current_history = [_history_fixture(r) for r in current_rows]"), final_replay)
         run = source[source.index("def run"):]
         self.assertIn("rt._prediction_from_state(state, target)", run)
 
