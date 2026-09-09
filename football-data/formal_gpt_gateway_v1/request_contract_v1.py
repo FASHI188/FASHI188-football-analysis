@@ -19,18 +19,21 @@ if str(HERE.parent) not in sys.path:
 import runtime as rt
 
 SCHEMA = "football3-formal-gpt-gateway-v1"
+CURRENT_V2_RETROSPECTIVE_REPLAY = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 FORMAL_PREDICTION_MODES = frozenset(
     {
         "predict",
         "PROSPECTIVE_FORMAL_PREDICTION",
         "ACTIVE_AT_CUTOFF_REPLAY",
         "CURRENT_MODEL_RETROSPECTIVE_REPLAY",
+        CURRENT_V2_RETROSPECTIVE_REPLAY,
     }
 )
 INTERNAL_SELFTEST_MODES = frozenset(
     {"bootstrap_selftest", "cache_reuse_probe", "missing_data_probe"}
 )
 ALLOWED_MODES = FORMAL_PREDICTION_MODES | INTERNAL_SELFTEST_MODES
+CURRENT_V2_RESEARCH_ONLY_COMPETITIONS = frozenset({"UEFA_ChampionsLeague"})
 REQUIRED_MATCH_KEYS = frozenset(
     {
         "competition_id",
@@ -95,6 +98,12 @@ def supported_competitions() -> tuple[str, ...]:
     return scope
 
 
+def _competition_allowed(mode: str, competition_id: str) -> bool:
+    if competition_id in set(supported_competitions()):
+        return True
+    return mode == CURRENT_V2_RETROSPECTIVE_REPLAY and competition_id in CURRENT_V2_RESEARCH_ONLY_COMPETITIONS
+
+
 def validate_request(value: Any, *, carrier_request: bool) -> dict[str, Any]:
     if type(value) is not dict:
         _fail("FORMAL_REQUEST_ROOT_INVALID")
@@ -132,7 +141,7 @@ def validate_request(value: Any, *, carrier_request: bool) -> dict[str, Any]:
     competition_id = _nonempty_string(
         match.get("competition_id"), "FORMAL_REQUEST_COMPETITION_ID_INVALID", max_len=128
     )
-    if competition_id not in set(supported_competitions()):
+    if not _competition_allowed(mode, competition_id):
         _fail("FORMAL_REQUEST_COMPETITION_ID_INVALID")
     season = _nonempty_string(match.get("season"), "FORMAL_REQUEST_SEASON_INVALID", max_len=32)
     home = _nonempty_string(
@@ -195,6 +204,10 @@ def load_request(path: Path, *, carrier_request: bool = False) -> dict[str, Any]
 
 def execution_request(request: dict[str, Any]) -> dict[str, Any]:
     result = dict(request)
-    if result.get("mode") in FORMAL_PREDICTION_MODES:
+    mode = result.get("mode")
+    if mode in FORMAL_PREDICTION_MODES:
         result["mode"] = "predict"
+    if mode == CURRENT_V2_RETROSPECTIVE_REPLAY:
+        # Keep gateway CLI compatibility while preserving an explicit isolated route marker.
+        result["request_mode"] = CURRENT_V2_RETROSPECTIVE_REPLAY
     return result

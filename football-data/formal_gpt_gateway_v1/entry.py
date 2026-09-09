@@ -5,19 +5,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Install the explicit authoritative result-semantic adjudication before any
-# gateway/source wrappers capture runtime functions. V2 is the governed successor
-# to formal_result_adjudication_v1: it preserves that contract while adding the
-# bounded identity bridge and delayed-settlement V1 release-order handling.
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
+
 import formal_result_adjudication_v2
 FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
-
 import formal_source_contract_v1
-
 COMPAT = formal_source_contract_v1.install()
-# The legacy source-contract installer assigns its historical compatibility
-# loader into runtime. Reassert the governed result/identity contract before
-# downstream gateway modules capture or call runtime functions.
 FORMAL_RESULT_ADJUDICATION = formal_result_adjudication_v2.install()
 import source_contract_resolution_v1
 SOURCE_RESOLUTION = source_contract_resolution_v1.install()
@@ -37,42 +30,20 @@ import live_fast_reuse_audit_v1
 LIVE_FAST_AUDIT = live_fast_reuse_audit_v1.install()
 import gateway
 
-# An exact-cutoff verified empty delta is a real no-op. Install this before any
-# gateway wrappers capture the runtime path so repeat sealed requests remain byte-stable.
 import formal_runtime_exact_noop_v1
 FORMAL_RUNTIME_EXACT_NOOP = formal_runtime_exact_noop_v1.install()
-
 import live_source_failure_probe_v1
 LIVE_SOURCE_FAILURE_PROBE = live_source_failure_probe_v1.install(gateway)
 import live_gateway_patch_v1
-
 LIVE_GATEWAY = live_gateway_patch_v1.install(gateway)
-
-# Canonical future/absent fixture identity must be available inside the gateway
-# before the integrity guard captures the production normal-request chain. This
-# bridge is generic and identity-only; it does not install target replay logic.
 import formal_future_fixture_identity_bridge_v1
 FORMAL_FUTURE_FIXTURE_IDENTITY_BRIDGE = formal_future_fixture_identity_bridge_v1.install(gateway)
-
-# Preserve the historical missing-data probe contract when stricter live source
-# guards fail closed with a newer error class. This affects probe mode only.
 import formal_missing_data_probe_compat_v1
 FORMAL_MISSING_DATA_PROBE_COMPAT = formal_missing_data_probe_compat_v1.install(gateway)
-
-# If a validated state is already sealed exactly at the requested cutoff, execute
-# a source-silent replay rather than trying to re-observe a historical cutoff.
 import formal_exact_cutoff_sealed_replay_v1
 FORMAL_EXACT_CUTOFF_SEALED_REPLAY = formal_exact_cutoff_sealed_replay_v1.install(gateway)
-
-# Install the isolated 2025/26 Ligue 1 historical xG completeness repair before
-# the generic integrity guard. It only supplies two source-provenance rows to the
-# already-frozen linked-history loader and does not alter model parameters/weights.
 import formal_ligue1_2025_26_xg_repair_v1
 FORMAL_LIGUE1_2025_26_XG_REPAIR = formal_ligue1_2025_26_xg_repair_v1.install()
-
-# Install generic integrity controls after the existing production gateway stack.
-# Target-specific Stuttgart/xG replay and diagnostic patches are intentionally not
-# installed here; those remain confined to diagnostic workflows.
 import formal_state_integrity_guard_v1
 FORMAL_STATE_INTEGRITY_GUARD = formal_state_integrity_guard_v1.install(gateway)
 import formal_cache_reuse_binding_v1
@@ -81,12 +52,26 @@ import formal_state_integrity_xg_history_count_fix_v1
 FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX = formal_state_integrity_xg_history_count_fix_v1.install()
 import formal_state_integrity_coverage_patch_v1
 FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1.install()
-
-# Durable state governance is outermost: a verified cutoff-aware state selection
-# must be bound before prediction, and transition/cache/fallback semantics are
-# checked after the unchanged formal model call.
 import formal_durable_state_governance_v1
 FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gateway)
+
+# Research-only current-V2 replay is the sole bypass of historical observation-time
+# rejection. Its exact-history and xG-coverage adapters change only this replay
+# module; normal prospective and STRICT_PIT requests remain on the captured durable
+# chain. The UTC-day history boundary is reasserted after exact-history installation
+# so target-day labels cannot be admitted by the exact-kickoff helper.
+import current_v2_retrospective_replay_v1
+import current_v2_retrospective_exact_history_v1
+import current_v2_retrospective_utc_day_boundary_v1
+import current_v2_retrospective_xg_coverage_v1
+CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY = current_v2_retrospective_exact_history_v1.install(current_v2_retrospective_replay_v1)
+CURRENT_V2_RETROSPECTIVE_UTC_DAY_BOUNDARY = current_v2_retrospective_utc_day_boundary_v1.install(current_v2_retrospective_replay_v1)
+CURRENT_V2_RETROSPECTIVE_XG_COVERAGE = current_v2_retrospective_xg_coverage_v1.install(current_v2_retrospective_replay_v1)
+CURRENT_V2_RETROSPECTIVE_REPLAY = current_v2_retrospective_replay_v1.install(gateway)
+
+# Receipt-only provenance remains outermost and never changes model probabilities.
+import current_v2_retrospective_receipt_contract_v1
+CURRENT_V2_RETROSPECTIVE_RECEIPT = current_v2_retrospective_receipt_contract_v1.install(gateway)
 
 
 def _direct_complete_fixture(history):
@@ -139,6 +124,11 @@ def main() -> int:
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
             "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
+            "current_v2_retrospective_exact_history_adapter.json": CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY,
+            "current_v2_retrospective_utc_day_boundary_adapter.json": CURRENT_V2_RETROSPECTIVE_UTC_DAY_BOUNDARY,
+            "current_v2_retrospective_xg_coverage_adapter.json": CURRENT_V2_RETROSPECTIVE_XG_COVERAGE,
+            "current_v2_retrospective_replay_adapter.json": CURRENT_V2_RETROSPECTIVE_REPLAY,
+            "current_v2_retrospective_receipt_contract_adapter.json": CURRENT_V2_RETROSPECTIVE_RECEIPT,
         }
         (out / "source_contract_audit.json").write_bytes(gateway.canon(audit))
         for name, obj in adapters.items():
@@ -170,6 +160,11 @@ def main() -> int:
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
+            d["current_v2_retrospective_exact_history_adapter"] = CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY
+            d["current_v2_retrospective_utc_day_boundary_adapter"] = CURRENT_V2_RETROSPECTIVE_UTC_DAY_BOUNDARY
+            d["current_v2_retrospective_xg_coverage_adapter"] = CURRENT_V2_RETROSPECTIVE_XG_COVERAGE
+            d["current_v2_retrospective_replay_adapter"] = CURRENT_V2_RETROSPECTIVE_REPLAY
+            d["current_v2_retrospective_receipt_contract_adapter"] = CURRENT_V2_RETROSPECTIVE_RECEIPT
             d["bootstrap_fixture_selection"] = (
                 "direct first frozen ENG_PremierLeague 2022/23 fixture in 2023-03, "
                 "strictly before first quarantined source-contract boundary; "

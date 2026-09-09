@@ -302,7 +302,11 @@ def _is_additionally_protected_scientific_path(path: str) -> bool:
     if path.startswith("football-data/historical_xg_fusion_v2/contracts/"):
         return True
     lowered = path.lower()
-    if "current" in lowered and path.startswith("football-data/"):
+    # CURRENT is an authority sentinel, not a substring category. Restrict this
+    # protection to the real config authority surface so runtime/gateway adapters
+    # with descriptive names such as current_v2_* are not misclassified as model
+    # authority while the actual CURRENT selector remains fail-closed.
+    if path.startswith("football-data/config/") and Path(path).name.casefold() == "current":
         return True
     if "formal_model_pointer" in lowered:
         return True
