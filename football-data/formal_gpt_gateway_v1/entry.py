@@ -56,11 +56,14 @@ import formal_durable_state_governance_v1
 FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gateway)
 
 # Research-only current-V2 replay is the sole bypass of historical observation-time
-# rejection. Its exact-history adapter changes only this replay module; normal
-# prospective and STRICT_PIT requests remain on the captured durable chain.
+# rejection. Its exact-history and xG-coverage adapters change only this replay
+# module; normal prospective and STRICT_PIT requests remain on the captured durable
+# chain. Coverage limitations are delegated to the formal V2 evidence/route verdict.
 import current_v2_retrospective_replay_v1
 import current_v2_retrospective_exact_history_v1
+import current_v2_retrospective_xg_coverage_v1
 CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY = current_v2_retrospective_exact_history_v1.install(current_v2_retrospective_replay_v1)
+CURRENT_V2_RETROSPECTIVE_XG_COVERAGE = current_v2_retrospective_xg_coverage_v1.install(current_v2_retrospective_replay_v1)
 CURRENT_V2_RETROSPECTIVE_REPLAY = current_v2_retrospective_replay_v1.install(gateway)
 
 # Receipt-only provenance remains outermost and never changes model probabilities.
@@ -119,6 +122,7 @@ def main() -> int:
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
             "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
             "current_v2_retrospective_exact_history_adapter.json": CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY,
+            "current_v2_retrospective_xg_coverage_adapter.json": CURRENT_V2_RETROSPECTIVE_XG_COVERAGE,
             "current_v2_retrospective_replay_adapter.json": CURRENT_V2_RETROSPECTIVE_REPLAY,
             "current_v2_retrospective_receipt_contract_adapter.json": CURRENT_V2_RETROSPECTIVE_RECEIPT,
         }
@@ -153,6 +157,7 @@ def main() -> int:
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
             d["current_v2_retrospective_exact_history_adapter"] = CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY
+            d["current_v2_retrospective_xg_coverage_adapter"] = CURRENT_V2_RETROSPECTIVE_XG_COVERAGE
             d["current_v2_retrospective_replay_adapter"] = CURRENT_V2_RETROSPECTIVE_REPLAY
             d["current_v2_retrospective_receipt_contract_adapter"] = CURRENT_V2_RETROSPECTIVE_RECEIPT
             d["bootstrap_fixture_selection"] = (
