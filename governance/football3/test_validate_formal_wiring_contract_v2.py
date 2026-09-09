@@ -123,6 +123,8 @@ def test_candidate_authority_protects_scientific_model_and_current_surfaces():
     assert mod._is_additionally_protected_scientific_path("football-data/config/CURRENT")
     assert mod._is_additionally_protected_scientific_path("football-data/config/formal_model_pointer_v9.json")
     assert not mod._is_additionally_protected_scientific_path("football-data/formal_gpt_gateway_v1/request_contract_v1.py")
+    assert not mod._is_additionally_protected_scientific_path("football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py")
+    assert not mod._is_additionally_protected_scientific_path("football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py")
 
 
 def test_candidate_runtime_without_pull_request_event_fails_closed(monkeypatch):
