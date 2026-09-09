@@ -46,16 +46,18 @@ jobs:
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
             governance/football3/current_v2_retrospective_replay_acceptance_v1.py \
-            governance/football3/current_v2_retrospective_replay_acceptance_runner_v1.py
-      - name: Run targeted replay adapter contract tests
+            governance/football3/current_v2_retrospective_replay_acceptance_runner_v1.py \
+            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py
+      - name: Run targeted replay adapter and source contract tests
         env:
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
         run: |
           set -euo pipefail
           python -m pytest -q \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py \
             football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_exact_history_v1.py \
-            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py
+            football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_xg_coverage_v1.py \
+            governance/football3/test_current_v2_retrospective_replay_acceptance_runner_v1.py
       - name: Assert candidate checkout identity
         run: |
           set -euo pipefail
@@ -110,7 +112,7 @@ jobs:
           test -f .runtime_sources/understat/understat_frozen.db
       - name: Execute score-blind four-fixture and eight-domain batch
         env:
-          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/governance/football3
           FOOTBALL3_CANDIDATE_EXACT_HEAD: ${{ env.CANDIDATE_SHA }}
         run: |
           set -euo pipefail
@@ -159,8 +161,19 @@ jobs:
           print(json.dumps({'status':s['status'],'head':s['candidate_exact_head'],'gates':g,'actual_fusion_weights':s['actual_fusion_weights']},sort_keys=True))
           PY
       - name: Upload replay acceptance evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: football3-current-v2-retrospective-acceptance-${{ github.run_id }}
           path: .retrospective_acceptance
+          if-no-files-found: error
+      - name: Upload failure resilience diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-current-v2-retrospective-failure-resilience-${{ github.run_id }}
+          path: |
+            .retrospective_acceptance/candidate_exact_head.txt
+            .retrospective_acceptance/acceptance_transport_audit.json
+            .retrospective_acceptance/failure_diagnostics.json
           if-no-files-found: error
