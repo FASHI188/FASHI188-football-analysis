@@ -17,8 +17,15 @@ MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 
 
 class _BombMapping(dict):
-    def get(self, *args, **kwargs):  # pragma: no cover - must never be touched
+    def get(self, *args, **kwargs):
         raise AssertionError("post-cutoff score/xG field was read")
+
+
+class _ScoreSentinel(dict):
+    def get(self, key, default=None):
+        if key == "score":
+            raise AssertionError("score must not be read before cutoff eligibility")
+        return super().get(key, default)
 
 
 class CurrentV2RetrospectiveXGCoverageTests(unittest.TestCase):
@@ -33,23 +40,26 @@ class CurrentV2RetrospectiveXGCoverageTests(unittest.TestCase):
             away_goals=0,
         )
 
-    def test_install_changes_only_research_replay_xg_hook(self):
+    def test_install_changes_only_research_replay_history_and_xg_hooks(self):
         original_safe_history_upper = object()
-        original_research_v1_rows = object()
         module = SimpleNamespace(
             _safe_history_upper=original_safe_history_upper,
-            _research_v1_rows=original_research_v1_rows,
+            _research_v1_rows=object(),
+            _ucl_history=object(),
             _current_xg_labels=object(),
         )
         audit = coverage.install(module)
         self.assertIs(module._current_xg_labels, coverage.research_xg_labels)
         self.assertIs(module._safe_history_upper, original_safe_history_upper)
-        self.assertIs(module._research_v1_rows, original_research_v1_rows)
+        self.assertIs(module._research_v1_rows, coverage.score_history.research_v1_rows)
+        self.assertIs(module._ucl_history, coverage.score_history.research_ucl_history)
         self.assertEqual(audit["request_mode"], replay.MODE)
         self.assertEqual(audit["missing_xg_policy"], "DELEGATE_TO_CURRENT_FORMAL_V2_EVIDENCE_ROUTE")
+        self.assertEqual(audit["score_history_adapter"]["fail_closed_error"], "RETROSPECTIVE_SCORE_HISTORY_UNAVAILABLE")
         self.assertFalse(audit["fallback_forced"])
         self.assertFalse(audit["evidence_threshold_changed"])
         self.assertFalse(audit["model_or_current_or_weight_changed"])
+        self.assertFalse(audit["score_history_adapter"]["model_or_current_or_weight_changed"])
 
     def test_target_or_post_cutoff_row_is_rejected_before_score_or_xg_access(self):
         upper = datetime(2026, 9, 7, 18, 45, tzinfo=timezone.utc)
@@ -144,6 +154,81 @@ class CurrentV2RetrospectiveXGCoverageTests(unittest.TestCase):
         self.assertLess(exact_pos, coverage_pos)
         self.assertLess(coverage_pos, replay_pos)
         self.assertLess(replay_pos, receipt_pos)
+
+
+class CurrentV2RetrospectiveScoreHistoryTests(unittest.TestCase):
+    def test_openfootball_pin_is_big5_only_and_time_bounded(self):
+        sh = coverage.score_history
+        self.assertEqual(sh.OPENFOOTBALL_PIN, "8aa4cd0ce0410b21037f063eeb4edd981081d85d")
+        self.assertEqual(set(sh.OPENFOOTBALL_FILES), {
+            "ENG_PremierLeague", "ESP_LaLiga", "GER_Bundesliga", "ITA_SerieA", "FRA_Ligue1",
+        })
+        self.assertEqual(sh.OPENFOOTBALL_COVERAGE_END, datetime(2026, 9, 3, tzinfo=timezone.utc))
+        self.assertNotIn("JPN_J1", sh.OPENFOOTBALL_FILES)
+        self.assertNotIn("KOR_KLeague1", sh.OPENFOOTBALL_FILES)
+        self.assertNotIn(replay.UCL, sh.OPENFOOTBALL_FILES)
+
+    def test_public_identity_is_strict_and_never_fuzzy(self):
+        sh = coverage.score_history
+        with mock.patch.object(sh.rt, "_read_aliases", return_value={
+            "ENG_PremierLeague": {"Man United": "Manchester United"}
+        }):
+            self.assertEqual(
+                sh._strict_identity(Path("."), "ENG_PremierLeague", "Man United", {"Manchester United"}),
+                "Manchester United",
+            )
+            self.assertIsNone(
+                sh._strict_identity(Path("."), "ENG_PremierLeague", "Manchester Utd", {"Manchester United"}),
+            )
+
+    def test_public_score_conflict_fails_closed(self):
+        sh = coverage.score_history
+        ko = datetime(2026, 8, 30, 15, 0, tzinfo=timezone.utc)
+        fid = sh.rt._fixture_id("ENG_PremierLeague", "2026/27", ko, "Alpha", "Beta")
+        def mk(hg):
+            return sh.live.V1Row(
+                fid, "ENG_PremierLeague", "2026/27", ko, "Alpha", "Beta",
+                sh.rt._global_team_id("Alpha"), sh.rt._global_team_id("Beta"),
+                hg, 0, "synthetic", "a" * 64,
+            )
+        with self.assertRaises(sh.rt.RuntimeGateError) as ctx:
+            sh._combine([mk(1)], [("OPENFOOTBALL_PINNED", [mk(2)])])
+        self.assertIn("RETROSPECTIVE_SCORE_HISTORY_UNAVAILABLE", str(ctx.exception))
+
+    def test_openfootball_cutoff_gate_precedes_score_access(self):
+        sh = coverage.score_history
+        lower = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        upper = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+        item = _ScoreSentinel({
+            "date": "2026-09-01",
+            "time": "15:00",
+            "team1": "Alpha",
+            "team2": "Beta",
+        })
+        calls = {"n": 0}
+        def fake_fetch(url):
+            calls["n"] += 1
+            return ({"matches": [item]} if calls["n"] == 1 else {"matches": []}, "b" * 64)
+        with mock.patch.object(sh, "_fetch_json", side_effect=fake_fetch):
+            rows, sources, unresolved = sh._openfootball_rows(Path("."), [], lower, upper)
+        self.assertEqual(rows, [])
+        self.assertEqual(unresolved, 0)
+        self.assertTrue(sources)
+
+    def test_score_history_report_discloses_no_eight_domain_openfootball_claim(self):
+        sh = coverage.score_history
+        lower = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        upper = datetime(2026, 8, 2, tzinfo=timezone.utc)
+        with mock.patch.object(sh.exact, "research_v1_rows", return_value=([], {"sources": []})), \
+             mock.patch.object(sh, "_openfootball_rows", return_value=([], [], 0)), \
+             mock.patch.object(sh, "_fixturedownload_rows", return_value=([], [], 0)):
+            rows, audit = sh.research_v1_rows(Path("."), lower, upper)
+        self.assertEqual(rows, [])
+        self.assertEqual(audit["status"], "COMPLETE")
+        self.assertEqual(audit["openfootball_pin"]["not_covered"], [replay.UCL, "JPN_J1", "KOR_KLeague1"])
+        self.assertFalse(audit["fuzzy_alias_used"])
+        self.assertFalse(audit["manual_score_used"])
+        self.assertFalse(audit["target_score_fields_read_before_eligibility_gate"])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import current_v2_retrospective_replay_v1 as replay
+import current_v2_retrospective_score_history_v1 as score_history
 import live_delta_acquisition_v1 as live
 import runtime as rt
 
@@ -70,7 +71,6 @@ def research_xg_labels(rows: list[live.V1Row], lower: datetime, upper: datetime,
                     actual = actual.astimezone(timezone.utc)
                 except ValueError:
                     continue
-                # Eligibility is resolved before goals/xG fields are touched.
                 if actual >= upper:
                     continue
                 hraw = str((item.get("h") or {}).get("title") or "").strip()
@@ -121,11 +121,13 @@ def research_xg_labels(rows: list[live.V1Row], lower: datetime, upper: datetime,
 
 
 def install(replay_module) -> dict[str, Any]:
+    score_history_adapter = score_history.install(replay_module)
     replay_module._current_xg_labels = research_xg_labels
     return {
         "schema_version": SCHEMA,
         "installed": True,
         "request_mode": MODE,
+        "score_history_adapter": score_history_adapter,
         "missing_xg_policy": "DELEGATE_TO_CURRENT_FORMAL_V2_EVIDENCE_ROUTE",
         "legal_routes": ["FUSION_V2_ACTIVE", "FROZEN_V1_EXACT_FALLBACK"],
         "fallback_forced": False,
