@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -11,6 +13,17 @@ import runtime as rt
 FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
 MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 SCHEMA = "football3-current-v2-retrospective-xg-coverage-v1"
+
+
+def _audit_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def research_xg_labels(rows: list[live.V1Row], lower: datetime, upper: datetime,
@@ -96,7 +109,7 @@ def research_xg_labels(rows: list[live.V1Row], lower: datetime, upper: datetime,
         "joined_results": len(out),
         "eligible_big5_v1_results": len(big5_rows),
         "missing_xg_history_count": len(missing),
-        "missing_xg_history_fixture_ids_sha256": rt._sha_bytes(rt._canon_bytes(missing)),
+        "missing_xg_history_fixture_ids_sha256": _audit_sha256(missing),
         "source_observation_semantics": "CURRENT_SOURCE_RESEARCH_RECONSTRUCTION",
         "strict_pit_claimed": False,
         "research_release_adapter": "kickoff_plus_3h",
