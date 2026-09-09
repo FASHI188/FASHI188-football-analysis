@@ -12,6 +12,9 @@ from unittest import mock
 import current_v2_retrospective_replay_v1 as replay
 import current_v2_retrospective_xg_coverage_v1 as coverage
 
+FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
+MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
+
 
 class _BombMapping(dict):
     def get(self, *args, **kwargs):  # pragma: no cover - must never be touched
