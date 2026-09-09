@@ -11,6 +11,7 @@ from typing import Any
 import live_delta_acquisition_v1 as live
 import runtime as rt
 
+FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
 SCHEMA = "football3-current-v2-retrospective-replay-v1"
 MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
 UCL = "UEFA_ChampionsLeague"
@@ -78,7 +79,7 @@ def _formal_binding(repo_root: Path) -> dict[str, Any]:
         "pointer_sha256": _file_sha(pointer_path),
         "runtime_formal_head": str(rt.FORMAL_HEAD),
         "runtime_current_sha256": str(rt.CURRENT_SHA256),
-        "runtime_model_module": str(getattr(rt.formal_v2, "__file__", "")),
+        "runtime_model_module": str(rt.formal_v2.__file__),
         "resolved_from_runtime_and_pointer": True,
     }
 
