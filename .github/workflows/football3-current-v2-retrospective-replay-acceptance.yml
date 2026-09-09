@@ -9,6 +9,15 @@ on:
       - 'football-data/formal_gpt_gateway_v1/**'
       - 'governance/football3/**'
       - '.github/workflows/football3-current-v2-retrospective-replay-acceptance.yml'
+  push:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - '.github/workflows/football3-current-v2-retrospective-replay-acceptance.yml'
+      - 'football-data/formal_gpt_gateway_v1/current_v2_retrospective_*.py'
+      - 'football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_*.py'
+      - 'governance/football3/current_v2_retrospective_*.py'
+      - 'governance/football3/test_current_v2_retrospective_*.py'
   workflow_dispatch:
 
 permissions:
@@ -17,13 +26,13 @@ permissions:
 
 jobs:
   targeted-adapter-contract:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || startsWith(github.head_ref, 'football3/current-v2-retrospective-')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       targeted_result: ${{ steps.execute-targeted.outputs.targeted_result }}
     env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,7 +108,7 @@ jobs:
 
   four-fixture-eight-domain:
     needs: targeted-adapter-contract
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'football3/current-v2-retrospective-replay')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || startsWith(github.head_ref, 'football3/current-v2-retrospective-')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     outputs:
@@ -112,7 +121,7 @@ jobs:
       source_fallback_attempts: ${{ steps.summarize-batch.outputs.source_fallback_attempts }}
       first_authoritative_failure: ${{ steps.summarize-batch.outputs.first_authoritative_failure }}
     env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -281,7 +290,7 @@ jobs:
           TARGETED_JOB: ${{ needs.targeted-adapter-contract.result }}
           BATCH_JOB: ${{ needs.four-fixture-eight-domain.result }}
           BATCH_AGGREGATE: ${{ needs.four-fixture-eight-domain.outputs.aggregate_result }}
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p acceptance_aggregate_evidence
           if [ "$TARGETED_JOB" = "success" ] && [ "$BATCH_JOB" = "success" ] && [ "$BATCH_AGGREGATE" = "SUCCESS" ]; then result=success; else result=failure; fi
@@ -309,7 +318,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       TARGETED_RESULT: ${{ needs.targeted-adapter-contract.result }}
       BATCH_RESULT: ${{ needs.four-fixture-eight-domain.result }}
       AGGREGATE_RESULT: ${{ needs.aggregate-acceptance-gate.result }}
