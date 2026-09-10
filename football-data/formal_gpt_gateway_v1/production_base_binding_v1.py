@@ -9,6 +9,7 @@ import re
 import subprocess
 import urllib.request
 from typing import Any
+FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = 'football3-formal-gpt-request-transport-v1'
 SCHEMA = 'football3-production-live-base-binding-v1'
 EXECUTION_SCHEMA = 'football3-production-execution-binding-receipt-v1'
 BLOCKER_SCHEMA = 'football3-production-base-binding-blocker-v1'
@@ -117,6 +118,55 @@ def finalize_evidence(binding: dict[str, Any], final_live_base_sha: str, final_t
     result['status'] = 'INTEGRATION_MOVED_DURING_RUN' if moved else 'PASS'
     return result
 
+def _optional_provenance_value(container: dict[str, Any], key: str, invalid_code: str) -> str | None:
+    if key not in container:
+        return None
+    value = container[key]
+    if not isinstance(value, str) or not value:
+        raise ProductionBaseBindingError(invalid_code)
+    return value
+
+def _resolve_provenance_value(*, authoritative: list[str | None], corroborating: list[str | None], missing_code: str, conflict_code: str) -> str:
+    values = [value for value in authoritative if value is not None]
+    if not values:
+        raise ProductionBaseBindingError(missing_code)
+    all_values = values + [value for value in corroborating if value is not None]
+    if len(set(all_values)) != 1:
+        raise ProductionBaseBindingError(conflict_code)
+    return values[0]
+
+def resolve_receipt_provenance(receipt: dict[str, Any], summary: dict[str, Any]) -> tuple[str, str]:
+    formal_binding = receipt.get('formal_binding')
+    if formal_binding is None:
+        formal_binding = {}
+    if type(formal_binding) is not dict:
+        raise ProductionBaseBindingError('PRODUCTION_FORMAL_BINDING_INVALID')
+    formal_head = _resolve_provenance_value(
+        authoritative=[
+            _optional_provenance_value(receipt, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+            _optional_provenance_value(receipt, 'formal_model_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+            _optional_provenance_value(formal_binding, 'runtime_formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+        ],
+        corroborating=[
+            _optional_provenance_value(summary, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+        ],
+        missing_code='PRODUCTION_FORMAL_HEAD_MISSING',
+        conflict_code='PRODUCTION_FORMAL_HEAD_CONFLICT',
+    )
+    current_sha256 = _resolve_provenance_value(
+        authoritative=[
+            _optional_provenance_value(receipt, 'current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
+            _optional_provenance_value(receipt, 'actual_current_sha', 'PRODUCTION_CURRENT_SHA_INVALID'),
+            _optional_provenance_value(formal_binding, 'runtime_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
+        ],
+        corroborating=[
+            _optional_provenance_value(summary, 'formal_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
+        ],
+        missing_code='PRODUCTION_CURRENT_SHA_MISSING',
+        conflict_code='PRODUCTION_CURRENT_SHA_CONFLICT',
+    )
+    return formal_head, current_sha256
+
 def finalize(args: argparse.Namespace) -> None:
     binding_path = Path(args.binding)
     binding = json.loads(binding_path.read_text(encoding='utf-8'))
@@ -177,13 +227,10 @@ def finalize(args: argparse.Namespace) -> None:
         raise ProductionBaseBindingError('PRODUCTION_API_BUDGET_EXCEEDED')
     candidates = selector.get('candidates') or []
     production_inventory_sha = hashlib.sha256(canonical_bytes(candidates)).hexdigest()
-    execution = {'schema_version': EXECUTION_SCHEMA, 'status': 'PASS', 'run_id': binding.get('run_id'), 'request_id': binding.get('request_id'), 'request_sha256': binding.get('request_sha256'), 'request_carrier_ref': binding.get('request_carrier_ref'), 'request_carrier_head': binding.get('request_carrier_head'), 'event_base_sha': binding.get('event_base_sha'), 'stale_event_metadata': binding.get('stale_event_metadata'), 'canonical_base_ref': binding.get('canonical_base_ref'), 'resolved_live_base_sha': binding.get('resolved_live_base_sha'), 'checkout_head_sha': binding.get('checkout_head_sha'), 'final_live_base_sha': binding.get('final_live_base_sha'), 'integration_moved_during_run': False, 'resolution_timestamp': binding.get('resolution_timestamp'), 'final_resolution_timestamp': binding.get('final_resolution_timestamp'), 'workflow_identity': binding.get('workflow_identity'), 'workflow_contract_version': binding.get('workflow_contract_version'), 'workflow_ref': binding.get('workflow_ref'), 'workflow_sha': binding.get('workflow_sha'), 'workflow_git_blob_sha': binding.get('workflow_git_blob_sha'), 'workflow_file_sha256': binding.get('workflow_file_sha256'), 'binding_helper_git_blob_sha': binding.get('binding_helper_git_blob_sha'), 'binding_helper_file_sha256': binding.get('binding_helper_file_sha256'), 'runner_code_source': binding.get('runner_code_source'), 'request_transport_source': binding.get('request_transport_source'), 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'live_ref_query_count': binding.get('total_live_ref_query_count'), 'production_selector_inventory_sha256': production_inventory_sha, 'production_selector_candidate_count': len(candidates), 'selection_sha256': selector.get('selection_sha256'), 'github_api_stats': stats, 'summary_sha256': hashlib.sha256((out / 'summary.json').read_bytes()).hexdigest(), 'prediction_receipt_sha256': hashlib.sha256((out / 'prediction_receipt.json').read_bytes()).hexdigest(), 'state_recovery_sha256': hashlib.sha256((out / 'state_recovery.json').read_bytes()).hexdigest(), 'github_api_stats_sha256': hashlib.sha256(stats_path.read_bytes()).hexdigest() if stats_path and stats_path.exists() else None, 'production_base_binding_sha256': hashlib.sha256((out / 'production_base_binding.json').read_bytes()).hexdigest(), 'formal_head': receipt.get('formal_head'), 'current_sha256': receipt.get('current_sha256'), 'fusion_weights': weights, 'prediction_sha': prediction_sha, 'model_route': receipt.get('model_route'), 'fallback_exact_v1': receipt.get('fallback_exact_v1'), 'state_integrity_guard_status': 'PASS'}
+    formal_head, current_sha256 = resolve_receipt_provenance(receipt, summary)
+    execution = {'schema_version': EXECUTION_SCHEMA, 'status': 'PASS', 'run_id': binding.get('run_id'), 'request_id': binding.get('request_id'), 'request_sha256': binding.get('request_sha256'), 'request_carrier_ref': binding.get('request_carrier_ref'), 'request_carrier_head': binding.get('request_carrier_head'), 'event_base_sha': binding.get('event_base_sha'), 'stale_event_metadata': binding.get('stale_event_metadata'), 'canonical_base_ref': binding.get('canonical_base_ref'), 'resolved_live_base_sha': binding.get('resolved_live_base_sha'), 'checkout_head_sha': binding.get('checkout_head_sha'), 'final_live_base_sha': binding.get('final_live_base_sha'), 'integration_moved_during_run': False, 'resolution_timestamp': binding.get('resolution_timestamp'), 'final_resolution_timestamp': binding.get('final_resolution_timestamp'), 'workflow_identity': binding.get('workflow_identity'), 'workflow_contract_version': binding.get('workflow_contract_version'), 'workflow_ref': binding.get('workflow_ref'), 'workflow_sha': binding.get('workflow_sha'), 'workflow_git_blob_sha': binding.get('workflow_git_blob_sha'), 'workflow_file_sha256': binding.get('workflow_file_sha256'), 'binding_helper_git_blob_sha': binding.get('binding_helper_git_blob_sha'), 'binding_helper_file_sha256': binding.get('binding_helper_file_sha256'), 'runner_code_source': binding.get('runner_code_source'), 'request_transport_source': binding.get('request_transport_source'), 'request_carrier_code_executed': False, 'repository_run_list_scan_used': False, 'live_ref_query_count': binding.get('total_live_ref_query_count'), 'production_selector_inventory_sha256': production_inventory_sha, 'production_selector_candidate_count': len(candidates), 'selection_sha256': selector.get('selection_sha256'), 'github_api_stats': stats, 'summary_sha256': hashlib.sha256((out / 'summary.json').read_bytes()).hexdigest(), 'prediction_receipt_sha256': hashlib.sha256((out / 'prediction_receipt.json').read_bytes()).hexdigest(), 'state_recovery_sha256': hashlib.sha256((out / 'state_recovery.json').read_bytes()).hexdigest(), 'github_api_stats_sha256': hashlib.sha256(stats_path.read_bytes()).hexdigest() if stats_path and stats_path.exists() else None, 'production_base_binding_sha256': hashlib.sha256((out / 'production_base_binding.json').read_bytes()).hexdigest(), 'formal_head': formal_head, 'current_sha256': current_sha256, 'fusion_weights': weights, 'prediction_sha': prediction_sha, 'model_route': receipt.get('model_route'), 'fallback_exact_v1': receipt.get('fallback_exact_v1'), 'state_integrity_guard_status': 'PASS'}
     if not execution['resolved_live_base_sha'] == execution['checkout_head_sha'] == execution['final_live_base_sha']:
         raise ProductionBaseBindingError('PRODUCTION_EXACT_HEAD_BINDING_MISMATCH')
-    if not isinstance(execution['formal_head'], str) or not execution['formal_head']:
-        raise ProductionBaseBindingError('PRODUCTION_FORMAL_HEAD_MISSING')
-    if not isinstance(execution['current_sha256'], str) or not execution['current_sha256']:
-        raise ProductionBaseBindingError('PRODUCTION_CURRENT_SHA_MISSING')
     (out / 'production_execution_binding_receipt.json').write_bytes(canonical_bytes(execution) + b'\n')
     print('PRODUCTION_EXECUTION_BINDING_PASS', prediction_sha, production_inventory_sha)
 
