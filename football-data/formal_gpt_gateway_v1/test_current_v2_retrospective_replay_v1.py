@@ -208,6 +208,30 @@ class ProductionReceiptProvenanceCompatibilityTests(unittest.TestCase):
     FORMAL_HEAD = "a" * 40
     CURRENT_SHA = "b" * 64
 
+    def _assert_alias_invalid(self, alias: str, value: object, expected_code: str) -> None:
+        receipt = {"formal_head": self.FORMAL_HEAD, "current_sha256": self.CURRENT_SHA}
+        summary = {}
+        if alias == "receipt.formal_head":
+            receipt["formal_head"] = value
+        elif alias == "receipt.formal_model_head":
+            receipt["formal_model_head"] = value
+        elif alias == "receipt.formal_binding.runtime_formal_head":
+            receipt["formal_binding"] = {"runtime_formal_head": value}
+        elif alias == "summary.formal_head":
+            summary["formal_head"] = value
+        elif alias == "receipt.current_sha256":
+            receipt["current_sha256"] = value
+        elif alias == "receipt.actual_current_sha":
+            receipt["actual_current_sha"] = value
+        elif alias == "receipt.formal_binding.runtime_current_sha256":
+            receipt.setdefault("formal_binding", {})["runtime_current_sha256"] = value
+        elif alias == "summary.formal_current_sha256":
+            summary["formal_current_sha256"] = value
+        else:
+            self.fail(f"unknown provenance alias: {alias}")
+        with self.assertRaisesRegex(production_binding.ProductionBaseBindingError, expected_code):
+            production_binding.resolve_receipt_provenance(receipt, summary)
+
     def test_legacy_receipt_fields_remain_supported(self):
         actual = production_binding.resolve_receipt_provenance(
             {"formal_head": self.FORMAL_HEAD, "current_sha256": self.CURRENT_SHA},
@@ -230,6 +254,52 @@ class ProductionReceiptProvenanceCompatibilityTests(unittest.TestCase):
         )
         self.assertEqual(actual, (self.FORMAL_HEAD, self.CURRENT_SHA))
 
+    def test_every_formal_head_alias_rejects_wrong_length_nonhex_and_uppercase(self):
+        aliases = (
+            "receipt.formal_head",
+            "receipt.formal_model_head",
+            "receipt.formal_binding.runtime_formal_head",
+            "summary.formal_head",
+        )
+        malformed = ("a" * 39, "g" * 40, "A" * 40)
+        for alias in aliases:
+            for value in malformed:
+                with self.subTest(alias=alias, value=value):
+                    self._assert_alias_invalid(alias, value, "PRODUCTION_FORMAL_HEAD_INVALID")
+
+    def test_every_current_sha_alias_rejects_wrong_length_nonhex_and_uppercase(self):
+        aliases = (
+            "receipt.current_sha256",
+            "receipt.actual_current_sha",
+            "receipt.formal_binding.runtime_current_sha256",
+            "summary.formal_current_sha256",
+        )
+        malformed = ("b" * 63, "g" * 64, "B" * 64)
+        for alias in aliases:
+            for value in malformed:
+                with self.subTest(alias=alias, value=value):
+                    self._assert_alias_invalid(alias, value, "PRODUCTION_CURRENT_SHA_INVALID")
+
+    def test_formal_head_aliases_reject_empty_and_non_string_values(self):
+        for alias in ("receipt.formal_head", "receipt.formal_model_head", "receipt.formal_binding.runtime_formal_head", "summary.formal_head"):
+            for value in ("", None, 40):
+                with self.subTest(alias=alias, value=value):
+                    self._assert_alias_invalid(alias, value, "PRODUCTION_FORMAL_HEAD_INVALID")
+
+    def test_current_sha_aliases_reject_empty_and_non_string_values(self):
+        for alias in ("receipt.current_sha256", "receipt.actual_current_sha", "receipt.formal_binding.runtime_current_sha256", "summary.formal_current_sha256"):
+            for value in ("", None, 64):
+                with self.subTest(alias=alias, value=value):
+                    self._assert_alias_invalid(alias, value, "PRODUCTION_CURRENT_SHA_INVALID")
+
+    def test_nested_formal_binding_malformed_fields_fail_closed(self):
+        self._assert_alias_invalid("receipt.formal_binding.runtime_formal_head", "not-a-git-sha", "PRODUCTION_FORMAL_HEAD_INVALID")
+        self._assert_alias_invalid("receipt.formal_binding.runtime_current_sha256", "not-a-current-sha", "PRODUCTION_CURRENT_SHA_INVALID")
+
+    def test_summary_corroborating_malformed_fields_fail_closed(self):
+        self._assert_alias_invalid("summary.formal_head", "C" * 40, "PRODUCTION_FORMAL_HEAD_INVALID")
+        self._assert_alias_invalid("summary.formal_current_sha256", "D" * 64, "PRODUCTION_CURRENT_SHA_INVALID")
+
     def test_conflicting_receipt_aliases_fail_closed(self):
         receipt = {
             "formal_head": self.FORMAL_HEAD,
@@ -251,6 +321,20 @@ class ProductionReceiptProvenanceCompatibilityTests(unittest.TestCase):
     def test_missing_receipt_provenance_fails_closed(self):
         with self.assertRaisesRegex(production_binding.ProductionBaseBindingError, "PRODUCTION_FORMAL_HEAD_MISSING"):
             production_binding.resolve_receipt_provenance({}, {})
+        with self.assertRaisesRegex(production_binding.ProductionBaseBindingError, "PRODUCTION_CURRENT_SHA_MISSING"):
+            production_binding.resolve_receipt_provenance({"formal_head": self.FORMAL_HEAD}, {})
+
+    def test_incident_retrospective_provenance_combination_remains_supported(self):
+        receipt = {
+            "formal_model_head": self.FORMAL_HEAD,
+            "actual_current_sha": self.CURRENT_SHA,
+            "formal_binding": {
+                "runtime_formal_head": self.FORMAL_HEAD,
+                "runtime_current_sha256": self.CURRENT_SHA,
+            },
+        }
+        summary = {"formal_head": self.FORMAL_HEAD, "formal_current_sha256": self.CURRENT_SHA}
+        self.assertEqual(production_binding.resolve_receipt_provenance(receipt, summary), (self.FORMAL_HEAD, self.CURRENT_SHA))
 
     def test_finalize_writes_retrospective_provenance_to_execution_receipt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

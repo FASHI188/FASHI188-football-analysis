@@ -19,6 +19,7 @@ WORKFLOW_CONTRACT_VERSION = 'football3-production-live-base-binding-v1'
 WORKFLOW_PATH = '.github/workflows/football3-formal-gpt-runner-integration-v1.yml'
 HELPER_PATH = 'football-data/formal_gpt_gateway_v1/production_base_binding_v1.py'
 _SHA_RE = re.compile('^[0-9a-f]{40}$')
+_SHA256_RE = re.compile('^[0-9a-f]{64}$')
 
 class ProductionBaseBindingError(RuntimeError):
     pass
@@ -118,11 +119,11 @@ def finalize_evidence(binding: dict[str, Any], final_live_base_sha: str, final_t
     result['status'] = 'INTEGRATION_MOVED_DURING_RUN' if moved else 'PASS'
     return result
 
-def _optional_provenance_value(container: dict[str, Any], key: str, invalid_code: str) -> str | None:
+def _optional_provenance_value(container: dict[str, Any], key: str, invalid_code: str, pattern: re.Pattern[str]) -> str | None:
     if key not in container:
         return None
     value = container[key]
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
         raise ProductionBaseBindingError(invalid_code)
     return value
 
@@ -143,24 +144,24 @@ def resolve_receipt_provenance(receipt: dict[str, Any], summary: dict[str, Any])
         raise ProductionBaseBindingError('PRODUCTION_FORMAL_BINDING_INVALID')
     formal_head = _resolve_provenance_value(
         authoritative=[
-            _optional_provenance_value(receipt, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
-            _optional_provenance_value(receipt, 'formal_model_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
-            _optional_provenance_value(formal_binding, 'runtime_formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+            _optional_provenance_value(receipt, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID', _SHA_RE),
+            _optional_provenance_value(receipt, 'formal_model_head', 'PRODUCTION_FORMAL_HEAD_INVALID', _SHA_RE),
+            _optional_provenance_value(formal_binding, 'runtime_formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID', _SHA_RE),
         ],
         corroborating=[
-            _optional_provenance_value(summary, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID'),
+            _optional_provenance_value(summary, 'formal_head', 'PRODUCTION_FORMAL_HEAD_INVALID', _SHA_RE),
         ],
         missing_code='PRODUCTION_FORMAL_HEAD_MISSING',
         conflict_code='PRODUCTION_FORMAL_HEAD_CONFLICT',
     )
     current_sha256 = _resolve_provenance_value(
         authoritative=[
-            _optional_provenance_value(receipt, 'current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
-            _optional_provenance_value(receipt, 'actual_current_sha', 'PRODUCTION_CURRENT_SHA_INVALID'),
-            _optional_provenance_value(formal_binding, 'runtime_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
+            _optional_provenance_value(receipt, 'current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID', _SHA256_RE),
+            _optional_provenance_value(receipt, 'actual_current_sha', 'PRODUCTION_CURRENT_SHA_INVALID', _SHA256_RE),
+            _optional_provenance_value(formal_binding, 'runtime_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID', _SHA256_RE),
         ],
         corroborating=[
-            _optional_provenance_value(summary, 'formal_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID'),
+            _optional_provenance_value(summary, 'formal_current_sha256', 'PRODUCTION_CURRENT_SHA_INVALID', _SHA256_RE),
         ],
         missing_code='PRODUCTION_CURRENT_SHA_MISSING',
         conflict_code='PRODUCTION_CURRENT_SHA_CONFLICT',
