@@ -295,3 +295,180 @@ def test_integration_runtime_surface_drift_fails_closed(monkeypatch):
     monkeypatch.setattr(mod, "_git_blob_at_ref", blob)
     with pytest.raises(mod.FormalWiringGovernanceError, match="formal integration protected surface drift"):
         mod.validate_integration_runtime_surface(c, Path("."))
+
+
+FULL_STACK_WORKFLOW_PATH = HERE.parents[1] / ".github" / "workflows" / "football3-full-stack-remediation.yml"
+INTEGRATION_BRANCH = "football3/formal-gpt-runner-integration-v1"
+ACTIVATION_BRANCH = "football3/historical-xg-fusion-v2-formal-activation-v1"
+INCIDENT_RUN_ID = 34491680012
+INCIDENT_HEAD = "92a6a2ee68cfa5dfe9bd1cb54cbc5e569b5b7d32"
+INCIDENT_PARENT_1 = "15a1f6a9266d2636339723d66891829cf286c0ba"
+INCIDENT_PARENT_2 = "5b044d8d6f53b1b0b857e668b1fd623156ffd4b6"
+
+
+def _full_stack_workflow_text() -> str:
+    return FULL_STACK_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def _full_stack_step_block(name: str) -> str:
+    text = _full_stack_workflow_text()
+    marker = f"      - name: {name}\n"
+    start = text.index(marker)
+    end = text.find("\n      - name: ", start + len(marker))
+    return text[start:] if end < 0 else text[start:end]
+
+
+def _authority_step() -> str:
+    return _full_stack_step_block("Authoritative cumulative changed-file domain audit")
+
+
+def _sealed_step() -> str:
+    return _full_stack_step_block("Prove cumulative remediation opens no real target or sealed data")
+
+
+def test_full_stack_diff_base_pr_event_selects_exact_pr_base():
+    block = _authority_step()
+    assert 'if [ "$TRUSTED_EVENT_NAME" = \'pull_request\' ]; then' in block
+    assert 'BASE_SHA="$PR_BASE_SHA"' in block
+    assert 'PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}' in block
+
+
+def test_full_stack_diff_base_integration_push_selects_two_parent_first_parent():
+    block = _authority_step()
+    assert "[ \"$TRUSTED_EVENT_NAME\" = 'push' ]" in block
+    assert f"[ \"$TRUSTED_REF_NAME\" = '{INTEGRATION_BRANCH}' ]" in block
+    assert 'PARENT_COUNT" -ne 2' in block
+    assert 'BASE_SHA="$PARENT_1"' in block
+
+
+def test_full_stack_diff_base_integration_workflow_dispatch_selects_two_parent_first_parent():
+    block = _authority_step()
+    assert "[ \"$TRUSTED_EVENT_NAME\" = 'workflow_dispatch' ]" in block
+    assert f"refs/heads/{INTEGRATION_BRANCH}" in block
+    assert 'BASE_SHA="$PARENT_1"' in block
+
+
+def test_full_stack_diff_base_selected_range_is_exact_base_three_dot_head():
+    block = _authority_step()
+    sealed = _sealed_step()
+    assert 'AUDIT_RANGE="${BASE_SHA}...HEAD"' in block
+    assert 'final audit range=%s\\n' in block
+    assert 'EXPECTED_RANGE="${FOOTBALL3_SELECTED_BASE_SHA}...HEAD"' in sealed
+    assert 'git\',\'diff\',\'--name-only\',audit_range' in sealed.replace(" ", "")
+
+
+def test_full_stack_diff_base_rejects_checkout_head_github_sha_mismatch():
+    block = _authority_step()
+    assert '[ "$CHECKOUT_HEAD" != "$TRUSTED_SHA" ]' in block
+    assert 'integration checkout HEAD mismatch' in block
+
+
+def test_full_stack_diff_base_rejects_wrong_integration_ref():
+    block = _authority_step()
+    exact_ref = f"refs/heads/{INTEGRATION_BRANCH}"
+    assert f"[ \"$TRUSTED_REF\" = '{exact_ref}' ]" in block
+    assert 'unsupported branch/ref' in block
+
+
+def test_full_stack_diff_base_rejects_similar_prefix_suffix_and_case_variants():
+    block = _authority_step()
+    assert f"[ \"$TRUSTED_REF_NAME\" = '{INTEGRATION_BRANCH}' ]" in block
+    assert "startsWith" not in block
+    assert "=~ .*formal-gpt-runner-integration" not in block
+    assert 'unsupported branch/ref' in block
+
+
+def test_full_stack_diff_base_rejects_single_parent_head():
+    block = _authority_step()
+    assert 'PARENT_COUNT" -ne 2' in block
+    assert 'HEAD must be a standard two-parent merge commit' in block
+
+
+def test_full_stack_diff_base_rejects_any_parent_count_other_than_two():
+    block = _authority_step()
+    assert '[ "$PARENT_COUNT" -ne 2 ]' in block
+    assert '[ -n "${EXTRA_PARENT:-}" ]' in block
+
+
+def test_full_stack_diff_base_rejects_invalid_or_missing_parent_sha_and_commit():
+    block = _authority_step()
+    assert '! [[ "$PARENT_1" =~ $SHA_RE ]]' in block
+    assert '! [[ "$PARENT_2" =~ $SHA_RE ]]' in block
+    assert 'git cat-file -e "$PARENT_1^{commit}"' in block
+    assert 'git cat-file -e "$PARENT_2^{commit}"' in block
+
+
+def test_full_stack_diff_base_rejects_schedule_and_other_events():
+    block = _authority_step()
+    assert "'push'" in block and "'workflow_dispatch'" in block and "'pull_request'" in block
+    assert 'FULL_STACK_DIFF_BASE_FAIL: unsupported event:' in block
+    assert "'schedule'" not in block
+
+
+def test_full_stack_diff_base_research_branch_keeps_frozen_research_base():
+    block = _authority_step()
+    assert "football3/historical-xg-fusion-v2-formal-wiring-governed-v1" in block
+    assert 'BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"' in block
+    assert RESEARCH_BASE in _full_stack_workflow_text()
+
+
+def test_full_stack_diff_base_activation_context_keeps_frozen_research_base():
+    block = _authority_step()
+    activation_pos = block.index(ACTIVATION_BRANCH)
+    frozen_pos = block.index('BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"', activation_pos)
+    assert frozen_pos > activation_pos
+
+
+def test_full_stack_diff_base_pr_context_does_not_read_merge_parents():
+    block = _authority_step()
+    pr_start = block.index('if [ "$TRUSTED_EVENT_NAME" = \'pull_request\' ]; then')
+    integration_start = block.index("elif [ \"$TRUSTED_EVENT_NAME\" = 'push' ]")
+    pr_clause = block[pr_start:integration_start]
+    assert "git rev-list --parents" not in pr_clause
+    assert "PARENT_1" not in pr_clause
+
+
+def test_full_stack_diff_base_integration_context_does_not_read_pr_only_base():
+    block = _authority_step()
+    integration_start = block.index("elif [ \"$TRUSTED_EVENT_NAME\" = 'push' ]")
+    integration_end = block.index("else\n            echo \"FULL_STACK_DIFF_BASE_FAIL: unsupported event", integration_start)
+    integration_clause = block[integration_start:integration_end]
+    assert "PR_BASE_SHA" not in integration_clause
+
+
+def test_full_stack_diff_base_uses_trusted_github_context_not_forgeable_runtime_env():
+    block = _authority_step()
+    assert 'TRUSTED_EVENT_NAME: ${{ github.event_name }}' in block
+    assert 'TRUSTED_REF_NAME: ${{ github.ref_name }}' in block
+    assert 'TRUSTED_REF: ${{ github.ref }}' in block
+    assert 'TRUSTED_SHA: ${{ github.sha }}' in block
+    assert '"$GITHUB_EVENT_NAME"' not in block
+    assert '"$GITHUB_REF_NAME"' not in block
+    assert '"$GITHUB_REF"' not in block
+    assert '"$GITHUB_SHA"' not in block
+
+
+def test_full_stack_authority_auditor_still_executes_and_cannot_be_soft_skipped():
+    block = _authority_step()
+    assert 'python governance/football3/audit_football3_changed_authority_v1.py' in block
+    assert 'continue-on-error' not in block
+    assert '|| true' not in block
+    assert '--base "$BASE_SHA" --head HEAD' in block
+
+
+def test_run_34491680012_accident_fixture_proves_old_base_wrong_new_parent1_required():
+    fixture = {
+        "run_id": INCIDENT_RUN_ID,
+        "event": "workflow_dispatch",
+        "branch": INTEGRATION_BRANCH,
+        "head": INCIDENT_HEAD,
+        "parent_1": INCIDENT_PARENT_1,
+        "parent_2": INCIDENT_PARENT_2,
+        "old_selected_base": RESEARCH_BASE,
+    }
+    assert fixture["run_id"] == 34491680012
+    assert fixture["head"] == "92a6a2ee68cfa5dfe9bd1cb54cbc5e569b5b7d32"
+    assert fixture["old_selected_base"] == "d3b3e322f78c48b91477ef6e11054e51ac00fd85"
+    assert fixture["parent_1"] != fixture["old_selected_base"]
+    assert fixture["parent_2"] != fixture["parent_1"]
+    assert 'BASE_SHA="$PARENT_1"' in _authority_step()
