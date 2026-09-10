@@ -14,6 +14,10 @@ import current_v2_retrospective_receipt_contract_v1 as contract
 import runtime as rt
 
 
+FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
+MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
+
+
 class RetrospectiveStateIntegrityArtifactProducerTests(unittest.TestCase):
     REQUEST_ID = "state-audit-test-request"
     REQUEST_SHA = "a" * 64
