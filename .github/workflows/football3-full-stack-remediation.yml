@@ -166,24 +166,112 @@ jobs:
         env:
           PYTHONPATH: football-data/research
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TRUSTED_EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_REF_NAME: ${{ github.ref_name }}
+          TRUSTED_REF: ${{ github.ref }}
+          TRUSTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then BASE_SHA="$PR_BASE_SHA"; else BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"; fi
+          SHA_RE='^[0-9a-f]{40}$'
+          CHECKOUT_HEAD="$(git rev-parse HEAD)"
+          PARENT_COUNT='NOT_READ'
+          PARENT_1='NOT_READ'
+          PARENT_2='NOT_READ'
+          BASE_SHA=''
+
+          printf 'event=%s\n' "$TRUSTED_EVENT_NAME"
+          printf 'branch/ref=%s | %s\n' "$TRUSTED_REF_NAME" "$TRUSTED_REF"
+          printf 'GITHUB_SHA=%s\n' "$TRUSTED_SHA"
+          printf 'checkout HEAD=%s\n' "$CHECKOUT_HEAD"
+
+          if [ "$TRUSTED_EVENT_NAME" = 'pull_request' ]; then
+            if ! [[ "$PR_BASE_SHA" =~ $SHA_RE ]]; then
+              echo 'FULL_STACK_DIFF_BASE_FAIL: pull_request base SHA invalid or missing' >&2
+              exit 2
+            fi
+            BASE_SHA="$PR_BASE_SHA"
+          elif [ "$TRUSTED_EVENT_NAME" = 'push' ] || [ "$TRUSTED_EVENT_NAME" = 'workflow_dispatch' ]; then
+            if [ "$TRUSTED_REF_NAME" = 'football3/formal-gpt-runner-integration-v1' ] && [ "$TRUSTED_REF" = 'refs/heads/football3/formal-gpt-runner-integration-v1' ]; then
+              if ! [[ "$TRUSTED_SHA" =~ $SHA_RE ]]; then
+                echo 'FULL_STACK_DIFF_BASE_FAIL: integration GITHUB_SHA invalid or missing' >&2
+                exit 2
+              fi
+              if [ "$CHECKOUT_HEAD" != "$TRUSTED_SHA" ]; then
+                echo "FULL_STACK_DIFF_BASE_FAIL: integration checkout HEAD mismatch github=$TRUSTED_SHA checkout=$CHECKOUT_HEAD" >&2
+                exit 2
+              fi
+              PARENTS_LINE="$(git rev-list --parents -n 1 "$CHECKOUT_HEAD")"
+              read -r COMMIT_SHA PARENT_1 PARENT_2 EXTRA_PARENT <<< "$PARENTS_LINE"
+              PARENT_COUNT="$(( $(wc -w <<< "$PARENTS_LINE") - 1 ))"
+              if [ "$COMMIT_SHA" != "$CHECKOUT_HEAD" ] || [ "$PARENT_COUNT" -ne 2 ] || [ -n "${EXTRA_PARENT:-}" ]; then
+                echo "FULL_STACK_DIFF_BASE_FAIL: integration HEAD must be a standard two-parent merge commit; parent_count=$PARENT_COUNT" >&2
+                exit 2
+              fi
+              if ! [[ "$PARENT_1" =~ $SHA_RE ]] || ! [[ "$PARENT_2" =~ $SHA_RE ]]; then
+                echo 'FULL_STACK_DIFF_BASE_FAIL: integration merge parent SHA invalid or missing' >&2
+                exit 2
+              fi
+              git cat-file -e "$PARENT_1^{commit}"
+              git cat-file -e "$PARENT_2^{commit}"
+              BASE_SHA="$PARENT_1"
+            elif [ "$TRUSTED_REF_NAME" = 'football3/historical-xg-fusion-v2-formal-wiring-governed-v1' ] && [ "$TRUSTED_REF" = 'refs/heads/football3/historical-xg-fusion-v2-formal-wiring-governed-v1' ]; then
+              if ! [[ "$TRUSTED_SHA" =~ $SHA_RE ]] || [ "$CHECKOUT_HEAD" != "$TRUSTED_SHA" ]; then
+                echo 'FULL_STACK_DIFF_BASE_FAIL: governed research SHA/ref binding invalid' >&2
+                exit 2
+              fi
+              BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"
+            elif [ "$TRUSTED_REF_NAME" = 'football3/historical-xg-fusion-v2-formal-activation-v1' ] && [ "$TRUSTED_REF" = 'refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1' ]; then
+              if ! [[ "$TRUSTED_SHA" =~ $SHA_RE ]] || [ "$CHECKOUT_HEAD" != "$TRUSTED_SHA" ]; then
+                echo 'FULL_STACK_DIFF_BASE_FAIL: activation SHA/ref binding invalid' >&2
+                exit 2
+              fi
+              BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"
+            else
+              echo "FULL_STACK_DIFF_BASE_FAIL: unsupported branch/ref for $TRUSTED_EVENT_NAME: $TRUSTED_REF_NAME | $TRUSTED_REF" >&2
+              exit 2
+            fi
+          else
+            echo "FULL_STACK_DIFF_BASE_FAIL: unsupported event: $TRUSTED_EVENT_NAME" >&2
+            exit 2
+          fi
+
+          if ! [[ "$BASE_SHA" =~ $SHA_RE ]]; then
+            echo 'FULL_STACK_DIFF_BASE_FAIL: selected BASE_SHA invalid or missing' >&2
+            exit 2
+          fi
+          AUDIT_RANGE="${BASE_SHA}...HEAD"
+          printf 'parent count=%s\n' "$PARENT_COUNT"
+          printf 'parent 1=%s\n' "$PARENT_1"
+          printf 'parent 2=%s\n' "$PARENT_2"
+          printf 'selected BASE_SHA=%s\n' "$BASE_SHA"
+          printf 'final audit range=%s\n' "$AUDIT_RANGE"
+          printf 'FOOTBALL3_SELECTED_BASE_SHA=%s\n' "$BASE_SHA" >> "$GITHUB_ENV"
+          printf 'FOOTBALL3_SELECTED_AUDIT_RANGE=%s\n' "$AUDIT_RANGE" >> "$GITHUB_ENV"
+
           python governance/football3/audit_football3_changed_authority_v1.py \
             --base "$BASE_SHA" --head HEAD \
             --expected-guard-canonical-ast-sha256 "$HDA_EXPECTED_GUARD_CANONICAL_AST_SHA256" \
             --expected-audit-canonical-ast-sha256 "$HDA_EXPECTED_AUDIT_CANONICAL_AST_SHA256"
       - name: Prove cumulative remediation opens no real target or sealed data
-        env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then BASE_SHA="$PR_BASE_SHA"; else BASE_SHA="$FORMAL_WIRING_RESEARCH_BASE_HEAD"; fi
-          export BASE_SHA
+          : "${FOOTBALL3_SELECTED_BASE_SHA:?missing selected governed diff base}"
+          : "${FOOTBALL3_SELECTED_AUDIT_RANGE:?missing selected governed audit range}"
+          SHA_RE='^[0-9a-f]{40}$'
+          if ! [[ "$FOOTBALL3_SELECTED_BASE_SHA" =~ $SHA_RE ]]; then
+            echo 'FULL_STACK_SEALED_BOUNDARY_FAIL: selected base SHA invalid' >&2
+            exit 2
+          fi
+          EXPECTED_RANGE="${FOOTBALL3_SELECTED_BASE_SHA}...HEAD"
+          if [ "$FOOTBALL3_SELECTED_AUDIT_RANGE" != "$EXPECTED_RANGE" ]; then
+            echo "FULL_STACK_SEALED_BOUNDARY_FAIL: audit range mismatch expected=$EXPECTED_RANGE actual=$FOOTBALL3_SELECTED_AUDIT_RANGE" >&2
+            exit 2
+          fi
+          export AUDIT_RANGE="$FOOTBALL3_SELECTED_AUDIT_RANGE"
           python - <<'PY'
           import os, subprocess
-          base=os.environ['BASE_SHA']
-          changed=subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines()
+          audit_range=os.environ['AUDIT_RANGE']
+          changed=subprocess.check_output(['git','diff','--name-only',audit_range],text=True).splitlines()
           forbidden_fragments=['c072n17/development_join_audit.csv','c072n20/consumed_n20_p1000_receipt.csv','confirmation1597','reserve266','confirmation150']
           bad=[f for f in changed if any(x.lower() in f.lower() for x in forbidden_fragments)]
           assert not bad, bad
