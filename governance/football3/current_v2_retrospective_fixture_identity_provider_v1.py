@@ -5,11 +5,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 FOOTBALL3_GOVERNED_RESEARCH_REPLAY = "football3-current-formal-retrospective-research-replay-v1"
 MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
-SCHEMA = "football3-score-blind-fixture-identity-provider-chain-v1"
+SCHEMA = "football3-score-blind-fixture-identity-provider-chain-v2"
 
 PROVIDER_FIELDS = (
     "competition",
@@ -30,7 +31,10 @@ HTTP_RE = re.compile(r"HTTP(?: Error)?\s+(\d{3})")
 
 
 class FixtureIdentityProviderError(RuntimeError):
-    pass
+    def __init__(self, code: str, evidence: dict[str, Any] | None = None):
+        self.code = code
+        self.evidence = dict(evidence or {})
+        super().__init__(code)
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,36 @@ def _canon(obj: Any) -> bytes:
 
 def _norm_key(key: Any) -> str:
     return str(key).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _utc_identity(value: str, field: str) -> str:
+    text = str(value or "").strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise FixtureIdentityProviderError(f"FIXTURE_IDENTITY_{field.upper()}_INVALID") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise FixtureIdentityProviderError(f"FIXTURE_IDENTITY_{field.upper()}_TIMEZONE_REQUIRED")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _canonical_fixture_key(row: dict[str, str]) -> tuple[str, str, str, str]:
+    return (
+        row["competition"],
+        row["home_identity"],
+        row["away_identity"],
+        row["kickoff"],
+    )
+
+
+def _slot_key(row: dict[str, str]) -> tuple[str, str]:
+    return (row["competition"], row["kickoff"])
+
+
+def _conflict(code: str, **evidence: Any) -> FixtureIdentityProviderError:
+    return FixtureIdentityProviderError(code, evidence)
 
 
 def http_status(error: BaseException | str | None) -> int | None:
@@ -72,25 +106,46 @@ def validate_record(record: dict[str, Any], expected_competition: str) -> dict[s
         raise FixtureIdentityProviderError("FIXTURE_IDENTITY_COMPETITION_MISMATCH")
     if any(not out[key] for key in PROVIDER_FIELDS):
         raise FixtureIdentityProviderError("FIXTURE_IDENTITY_PROVIDER_VALUE_EMPTY")
-    if len(out["content_sha"]) != 64 or any(c not in "0123456789abcdef" for c in out["content_sha"].lower()):
+    content_sha = out["content_sha"].lower()
+    if len(content_sha) != 64 or any(c not in "0123456789abcdef" for c in content_sha):
         raise FixtureIdentityProviderError("FIXTURE_IDENTITY_CONTENT_SHA_INVALID")
+    out["content_sha"] = content_sha
+    out["kickoff"] = _utc_identity(out["kickoff"], "KICKOFF")
+    out["observed_at"] = _utc_identity(out["observed_at"], "OBSERVED_AT")
     if out["home_identity"] == out["away_identity"]:
         raise FixtureIdentityProviderError("FIXTURE_IDENTITY_SIDES_COLLIDE")
     return out
 
 
 def stable_records(records: Iterable[dict[str, Any]], expected_competition: str) -> list[dict[str, str]]:
-    by_fixture: dict[str, dict[str, str]] = {}
+    rows: list[dict[str, str]] = []
+    exact_seen: set[tuple[str, ...]] = set()
+    source_fixture_claims: dict[tuple[str, str], tuple[str, str, str, str]] = {}
     for raw in records:
         row = validate_record(raw, expected_competition)
-        fid = row["fixture_identity"]
-        old = by_fixture.get(fid)
-        if old is not None and old != row:
-            raise FixtureIdentityProviderError("FIXTURE_IDENTITY_DUPLICATE_CONFLICT")
-        by_fixture[fid] = row
+        fixture_key = _canonical_fixture_key(row)
+        source_fixture = (row["source_identity"], row["fixture_identity"])
+        previous_key = source_fixture_claims.get(source_fixture)
+        if previous_key is not None and previous_key != fixture_key:
+            raise _conflict(
+                "FIXTURE_IDENTITY_SOURCE_ID_REUSED_FOR_DISTINCT_CANONICAL_FIXTURES",
+                source_identity=row["source_identity"],
+                fixture_identity=row["fixture_identity"],
+                first_canonical_fixture_key=list(previous_key),
+                second_canonical_fixture_key=list(fixture_key),
+            )
+        source_fixture_claims[source_fixture] = fixture_key
+        exact_key = tuple(row[key] for key in PROVIDER_FIELDS)
+        if exact_key in exact_seen:
+            continue
+        exact_seen.add(exact_key)
+        rows.append(row)
     return sorted(
-        by_fixture.values(),
-        key=lambda x: (x["competition"], x["kickoff"], x["home_identity"], x["away_identity"], x["fixture_identity"], x["source_identity"]),
+        rows,
+        key=lambda x: (
+            x["competition"], x["kickoff"], x["home_identity"], x["away_identity"],
+            x["source_identity"], x["fixture_identity"], x["observed_at"], x["content_sha"],
+        ),
     )
 
 
@@ -111,26 +166,99 @@ def inventory_sha(records: Iterable[dict[str, Any]], expected_competition: str) 
     return hashlib.sha256(_canon(projection)).hexdigest()
 
 
-def _slot_map(rows: list[dict[str, str]]) -> dict[tuple[str, str], tuple[str, str]]:
-    out: dict[tuple[str, str], tuple[str, str]] = {}
+def _slot_map(
+    rows: list[dict[str, str]],
+) -> dict[tuple[str, str], dict[tuple[str, str, str, str], list[dict[str, str]]]]:
+    """Bucket by competition/kickoff; a slot is a container, never a unique fixture identity."""
+    out: dict[tuple[str, str], dict[tuple[str, str, str, str], list[dict[str, str]]]] = {}
     for row in rows:
-        slot = (row["competition"], row["kickoff"])
-        sides = (row["home_identity"], row["away_identity"])
-        previous = out.get(slot)
-        if previous is not None and previous != sides:
-            raise FixtureIdentityProviderError("FIXTURE_IDENTITY_INTERNAL_SLOT_CONFLICT")
-        out[slot] = sides
+        slot = _slot_key(row)
+        fixture_key = _canonical_fixture_key(row)
+        fixture_rows = out.setdefault(slot, {}).setdefault(fixture_key, [])
+
+        # Only after the strict canonical fixture key proves these observations are the
+        # same fixture may source-specific identity disagreement fail closed. Different
+        # providers may legitimately use different fixture IDs, so this is scoped to
+        # the same underlying source_identity.
+        same_source_ids = {
+            existing["fixture_identity"]
+            for existing in fixture_rows
+            if existing["source_identity"] == row["source_identity"]
+        }
+        if same_source_ids and row["fixture_identity"] not in same_source_ids:
+            raise _conflict(
+                "FIXTURE_IDENTITY_SOURCE_ID_CONFLICT_AFTER_CANONICAL_BIND",
+                canonical_fixture_key=list(fixture_key),
+                source_identity=row["source_identity"],
+                fixture_identities=sorted(same_source_ids | {row["fixture_identity"]}),
+                evidence=[
+                    {
+                        "source_identity": x["source_identity"],
+                        "fixture_identity": x["fixture_identity"],
+                        "observed_at": x["observed_at"],
+                        "content_sha": x["content_sha"],
+                    }
+                    for x in fixture_rows + [row]
+                    if x["source_identity"] == row["source_identity"]
+                ],
+            )
+        fixture_rows.append(row)
     return out
 
 
-def assert_provider_compatible(left: list[dict[str, str]], right: list[dict[str, str]]) -> None:
+def assert_provider_compatible(
+    left: list[dict[str, str]],
+    right: list[dict[str, str]],
+    left_provider: str | None = None,
+    right_provider: str | None = None,
+) -> None:
     lmap = _slot_map(left)
     rmap = _slot_map(right)
     for slot in sorted(set(lmap) & set(rmap)):
-        if lmap[slot] != rmap[slot]:
-            raise FixtureIdentityProviderError(
-                f"FIXTURE_IDENTITY_PROVIDER_CONFLICT:{slot[0]}:{slot[1]}:{lmap[slot]}!={rmap[slot]}"
-            )
+        # Different canonical home/away pairs in the same competition/kickoff slot are
+        # separate fixtures and legally coexist. Cross-source binding happens only on
+        # the complete strict canonical fixture key; source-specific fixture IDs are
+        # evidence only and never establish cross-source identity.
+        for fixture_key in sorted(set(lmap[slot]) & set(rmap[slot])):
+            combined = lmap[slot][fixture_key] + rmap[slot][fixture_key]
+            by_source: dict[str, set[str]] = {}
+            for row in combined:
+                if _canonical_fixture_key(row) != fixture_key:
+                    raise _conflict(
+                        "FIXTURE_IDENTITY_CANONICAL_BIND_INTERNAL_CONFLICT",
+                        canonical_fixture_key=list(fixture_key),
+                        observed_canonical_fixture_key=list(_canonical_fixture_key(row)),
+                        left_provider=left_provider,
+                        right_provider=right_provider,
+                    )
+                by_source.setdefault(row["source_identity"], set()).add(row["fixture_identity"])
+            for source_identity, fixture_ids in sorted(by_source.items()):
+                if len(fixture_ids) > 1:
+                    raise _conflict(
+                        "FIXTURE_IDENTITY_SOURCE_ID_CONFLICT_AFTER_CANONICAL_BIND",
+                        canonical_fixture_key=list(fixture_key),
+                        source_identity=source_identity,
+                        fixture_identities=sorted(fixture_ids),
+                        left_provider=left_provider,
+                        right_provider=right_provider,
+                        evidence=[
+                            {
+                                "source_identity": x["source_identity"],
+                                "fixture_identity": x["fixture_identity"],
+                                "observed_at": x["observed_at"],
+                                "content_sha": x["content_sha"],
+                            }
+                            for x in combined
+                            if x["source_identity"] == source_identity
+                        ],
+                    )
+
+
+def _record_conflict(audit: dict[str, Any], exc: FixtureIdentityProviderError, **context: Any) -> None:
+    if not exc.evidence:
+        return
+    item = {"error": exc.code, **context, "evidence": exc.evidence}
+    audit.setdefault("fixture_identity_conflicts", []).append(item)
 
 
 def resolve(
@@ -146,6 +274,9 @@ def resolve(
     for provider in ordered:
         try:
             rows = stable_records(provider.loader(), competition)
+            # Build the multi-fixture slot container here too so same-source identity
+            # conflicts are rejected before provider selection.
+            _slot_map(rows)
             status = "SUCCESS" if rows else "INSUFFICIENT"
             item = {
                 "competition": competition,
@@ -160,7 +291,7 @@ def resolve(
             if rows:
                 successes.append((provider, rows))
         except Exception as exc:
-            domain_attempts.append({
+            item = {
                 "competition": competition,
                 "provider": provider.name,
                 "priority": provider.priority,
@@ -168,7 +299,11 @@ def resolve(
                 "error_type": type(exc).__name__,
                 "error": str(exc),
                 "http_status": http_status(exc),
-            })
+            }
+            if isinstance(exc, FixtureIdentityProviderError) and exc.evidence:
+                item["conflict_evidence"] = exc.evidence
+                _record_conflict(audit, exc, competition=competition, provider=provider.name)
+            domain_attempts.append(item)
 
     audit.setdefault("fixture_identity_provider_attempts", []).extend(domain_attempts)
     audit.setdefault("fixture_identity_provider_inventory", {})[competition] = domain_attempts
@@ -182,10 +317,11 @@ def resolve(
         raise error_factory(f"FIXTURE_IDENTITY_ALL_PROVIDERS_UNAVAILABLE:{competition}")
 
     try:
-        for i, (_lp, lrows) in enumerate(successes):
-            for _rp, rrows in successes[i + 1:]:
-                assert_provider_compatible(lrows, rrows)
+        for i, (lp, lrows) in enumerate(successes):
+            for rp, rrows in successes[i + 1:]:
+                assert_provider_compatible(lrows, rrows, lp.name, rp.name)
     except FixtureIdentityProviderError as exc:
+        _record_conflict(audit, exc, competition=competition)
         audit["failed_domain"] = competition
         audit["first_authoritative_failure"] = audit.get("first_authoritative_failure") or {
             "stage": "SCORE_BLIND_FIXTURE_IDENTITY_PROVIDER_CHAIN",
