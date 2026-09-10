@@ -32,6 +32,27 @@ def rejects(mutator) -> None:
         mod.validate_contract(c, schema())
 
 
+def _clear_runtime_env(monkeypatch) -> None:
+    for name in (
+        "GITHUB_EVENT_NAME",
+        "GITHUB_EVENT_PATH",
+        "GITHUB_HEAD_REF",
+        "GITHUB_REF_NAME",
+        "GITHUB_REF",
+        "GITHUB_SHA",
+        "FORMAL_WIRING_GOVERNED_BRANCH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _set_integration_context(monkeypatch, *, event: str = "workflow_dispatch", sha: str = "2" * 40) -> None:
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("GITHUB_REF_NAME", mod.EXPECTED_INTEGRATION_BRANCH)
+    monkeypatch.setenv("GITHUB_REF", f"refs/heads/{mod.EXPECTED_INTEGRATION_BRANCH}")
+    monkeypatch.setenv("GITHUB_SHA", sha)
+
+
 def test_positive_contract_and_schema_pass():
     mod.validate_contract(contract(), schema())
 
@@ -108,10 +129,10 @@ def test_git_blob_sha1_matches_git_object_formula(tmp_path: Path):
 def test_pull_request_candidate_authority_is_generic_not_branch_whitelist(tmp_path: Path, monkeypatch):
     event_path = tmp_path / "event.json"
     event_path.write_text(json.dumps({"pull_request": {"base": {"sha": "1" * 40}}}), encoding="utf-8")
+    _clear_runtime_env(monkeypatch)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
     monkeypatch.setenv("GITHUB_HEAD_REF", "arbitrary/integration-hotfix-candidate")
-    monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
     assert mod.validate_runtime_branch(contract()) == "PULL_REQUEST_CANDIDATE"
     assert mod._pull_request_base_sha() == "1" * 40
 
@@ -128,7 +149,149 @@ def test_candidate_authority_protects_scientific_model_and_current_surfaces():
 
 
 def test_candidate_runtime_without_pull_request_event_fails_closed(monkeypatch):
+    _clear_runtime_env(monkeypatch)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
     monkeypatch.setenv("GITHUB_HEAD_REF", "candidate/branch")
     with pytest.raises(mod.FormalWiringGovernanceError, match="runtime branch mismatch outside pull-request candidate"):
         mod.validate_runtime_branch(contract())
+
+
+def test_original_formal_wiring_governed_branch_remains_legal(monkeypatch):
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF_NAME", mod.EXPECTED_BRANCH)
+    monkeypatch.setenv("GITHUB_REF", f"refs/heads/{mod.EXPECTED_BRANCH}")
+    monkeypatch.setenv("GITHUB_SHA", "3" * 40)
+    assert mod.validate_runtime_branch(contract()) == "CONTRACT_BRANCH"
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "push"])
+def test_formal_integration_exact_bound_runtime_is_legal(monkeypatch, event):
+    sha = "4" * 40
+    _set_integration_context(monkeypatch, event=event, sha=sha)
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: sha)
+    assert mod.validate_runtime_branch(contract(), Path(".")) == "FORMAL_INTEGRATION_RUNTIME"
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        "football3/other",
+        "football3/formal-gpt-runner-integration-v1-extra",
+        "prefix/football3/formal-gpt-runner-integration-v1",
+        "Football3/formal-gpt-runner-integration-v1",
+        "football3/FORMAL-GPT-RUNNER-INTEGRATION-V1",
+    ],
+)
+def test_arbitrary_similar_or_case_variant_runtime_branches_are_rejected(monkeypatch, runtime):
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REF_NAME", runtime)
+    monkeypatch.setenv("GITHUB_REF", f"refs/heads/{runtime}")
+    monkeypatch.setenv("GITHUB_SHA", "5" * 40)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime branch mismatch outside pull-request candidate"):
+        mod.validate_runtime_branch(contract())
+
+
+def test_workflow_dispatch_wrong_ref_binding_is_rejected(monkeypatch):
+    sha = "6" * 40
+    _set_integration_context(monkeypatch, sha=sha)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/football3/other")
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: sha)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime ref mismatch"):
+        mod.validate_runtime_branch(contract())
+
+
+def test_workflow_dispatch_wrong_sha_binding_is_rejected(monkeypatch):
+    _set_integration_context(monkeypatch, sha="7" * 40)
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: "8" * 40)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime SHA mismatch"):
+        mod.validate_runtime_branch(contract())
+
+
+def test_workflow_dispatch_invalid_sha_is_rejected(monkeypatch):
+    _set_integration_context(monkeypatch, sha="not-a-sha")
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: "9" * 40)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="SHA invalid or missing"):
+        mod.validate_runtime_branch(contract())
+
+
+def test_integration_event_context_mismatch_is_rejected(monkeypatch):
+    sha = "a" * 40
+    _set_integration_context(monkeypatch, event="schedule", sha=sha)
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: sha)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime event mismatch"):
+        mod.validate_runtime_branch(contract())
+
+
+@pytest.mark.parametrize("missing", ["branch", "ref", "sha"])
+def test_integration_missing_branch_ref_or_sha_is_rejected(monkeypatch, missing):
+    sha = "b" * 40
+    _set_integration_context(monkeypatch, sha=sha)
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: sha)
+    if missing == "branch":
+        monkeypatch.delenv("GITHUB_REF_NAME")
+    elif missing == "ref":
+        monkeypatch.delenv("GITHUB_REF")
+    else:
+        monkeypatch.delenv("GITHUB_SHA")
+    with pytest.raises(mod.FormalWiringGovernanceError):
+        mod.validate_runtime_branch(contract())
+
+
+def test_pull_request_candidate_does_not_require_or_read_integration_binding(tmp_path: Path, monkeypatch):
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"pull_request": {"base": {"sha": "c" * 40}}}), encoding="utf-8")
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_HEAD_REF", "football3/full-stack-integration-runtime-branch-contract-hotfix-v1")
+    monkeypatch.setenv("GITHUB_REF_NAME", "999/merge")
+    assert mod.validate_runtime_branch(contract()) == "PULL_REQUEST_CANDIDATE"
+
+
+def test_push_integration_context_does_not_consult_pull_request_payload(monkeypatch):
+    sha = "d" * 40
+    _set_integration_context(monkeypatch, event="push", sha=sha)
+    monkeypatch.setenv("GITHUB_EVENT_PATH", "/definitely/not/a/pr/payload.json")
+    monkeypatch.setattr(mod, "_git_head_sha", lambda repo_root: sha)
+    assert mod.validate_runtime_branch(contract()) == "FORMAL_INTEGRATION_RUNTIME"
+
+
+def test_contract_branch_mutation_still_fails_before_runtime_authority(monkeypatch):
+    c = contract()
+    c["branch"] = mod.EXPECTED_INTEGRATION_BRANCH
+    with pytest.raises(mod.FormalWiringGovernanceError, match="contract branch mismatch"):
+        mod.validate_contract(c, schema())
+
+
+def test_environment_variable_cannot_forge_broad_authority(monkeypatch):
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setenv("FORMAL_WIRING_GOVERNED_BRANCH", "football3/evil")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REF_NAME", "football3/evil")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/football3/evil")
+    monkeypatch.setenv("GITHUB_SHA", "e" * 40)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="runtime branch mismatch outside pull-request candidate"):
+        mod.validate_runtime_branch(contract())
+
+
+def test_integration_runtime_surface_requires_exact_governed_protected_blobs(monkeypatch):
+    c = contract()
+    monkeypatch.setattr(mod, "_git_blob_at_ref", lambda repo_root, ref, rel: "f" * 40)
+    protected = mod.validate_integration_runtime_surface(c, Path("."))
+    assert protected == mod._candidate_protected_paths(c)
+
+
+def test_integration_runtime_surface_drift_fails_closed(monkeypatch):
+    c = contract()
+    target = sorted(mod._candidate_protected_paths(c))[0]
+
+    def blob(repo_root, ref, rel):
+        if ref == "HEAD" and rel == target:
+            return "1" * 40
+        return "2" * 40
+
+    monkeypatch.setattr(mod, "_git_blob_at_ref", blob)
+    with pytest.raises(mod.FormalWiringGovernanceError, match="formal integration protected surface drift"):
+        mod.validate_integration_runtime_surface(c, Path("."))

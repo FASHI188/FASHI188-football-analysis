@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 
 EXPECTED_BRANCH = "football3/historical-xg-fusion-v2-formal-wiring-governed-v1"
+EXPECTED_INTEGRATION_BRANCH = "football3/formal-gpt-runner-integration-v1"
+EXPECTED_ACTIVATION_BRANCH = "football3/historical-xg-fusion-v2-formal-activation-v1"
 EXPECTED_BASE_HEAD = "d3b3e322f78c48b91477ef6e11054e51ac00fd85"
 EXPECTED_STATUS = "GOVERNANCE_REMEDIATED_PENDING_CODEX_RECHECK"
 EXPECTED_KIND = "historical_xg_fusion_v2_formal_wiring_non_market"
@@ -249,6 +251,42 @@ def _runtime_branch() -> str:
     return (os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME") or "").strip()
 
 
+def _runtime_event() -> str:
+    return (os.environ.get("GITHUB_EVENT_NAME") or "").strip()
+
+
+def _git_head_sha(repo_root: Path) -> str:
+    try:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    except Exception as exc:
+        fail(f"cannot resolve checked-out HEAD: {exc}")
+    if not _SHA_RE.fullmatch(sha):
+        fail("checked-out HEAD SHA invalid")
+    return sha
+
+
+def _validate_integration_runtime_binding(repo_root: Path) -> str:
+    event = _runtime_event()
+    runtime = (os.environ.get("GITHUB_REF_NAME") or "").strip()
+    ref = (os.environ.get("GITHUB_REF") or "").strip()
+    head_ref = (os.environ.get("GITHUB_HEAD_REF") or "").strip()
+    sha = (os.environ.get("GITHUB_SHA") or "").strip()
+    if event not in {"push", "workflow_dispatch"}:
+        fail(f"formal integration runtime event mismatch: {event or '<missing>'}")
+    if runtime != EXPECTED_INTEGRATION_BRANCH:
+        fail(f"formal integration runtime branch mismatch: expected={EXPECTED_INTEGRATION_BRANCH} runtime={runtime or '<missing>'}")
+    if ref != f"refs/heads/{EXPECTED_INTEGRATION_BRANCH}":
+        fail(f"formal integration runtime ref mismatch: expected=refs/heads/{EXPECTED_INTEGRATION_BRANCH} ref={ref or '<missing>'}")
+    if head_ref:
+        fail("formal integration runtime must not use pull-request head ref")
+    if not _SHA_RE.fullmatch(sha):
+        fail("formal integration runtime SHA invalid or missing")
+    checked_out = _git_head_sha(repo_root)
+    if checked_out != sha:
+        fail(f"formal integration runtime SHA mismatch: github={sha} checkout={checked_out}")
+    return sha
+
+
 def _pull_request_base_sha() -> str | None:
     if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
         return None
@@ -265,11 +303,27 @@ def _pull_request_base_sha() -> str | None:
     return sha
 
 
-def validate_runtime_branch(contract: dict) -> str:
+def validate_runtime_branch(contract: dict, repo_root: Path = Path("."), *, allow_activation_contract_context: bool = False) -> str:
     runtime = _runtime_branch()
-    if not runtime or runtime == contract["branch"]:
+    event = _runtime_event()
+    ref = (os.environ.get("GITHUB_REF") or "").strip()
+    integration_ref = f"refs/heads/{EXPECTED_INTEGRATION_BRANCH}"
+    if runtime == EXPECTED_INTEGRATION_BRANCH or ref == integration_ref:
+        _validate_integration_runtime_binding(repo_root)
+        return "FORMAL_INTEGRATION_RUNTIME"
+    if runtime == contract["branch"]:
         return "CONTRACT_BRANCH"
-    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+    if not runtime:
+        if not event:
+            return "CONTRACT_BRANCH"
+        if (
+            allow_activation_contract_context
+            and event in {"push", "workflow_dispatch"}
+            and ref == f"refs/heads/{EXPECTED_ACTIVATION_BRANCH}"
+        ):
+            return "CONTRACT_BRANCH"
+        fail("runtime branch missing in GitHub event context")
+    if event != "pull_request":
         fail(f"runtime branch mismatch outside pull-request candidate: contract={contract['branch']} runtime={runtime}")
     _pull_request_base_sha()
     return "PULL_REQUEST_CANDIDATE"
@@ -302,15 +356,35 @@ def _is_additionally_protected_scientific_path(path: str) -> bool:
     if path.startswith("football-data/historical_xg_fusion_v2/contracts/"):
         return True
     lowered = path.lower()
-    # CURRENT is an authority sentinel, not a substring category. Restrict this
-    # protection to the real config authority surface so runtime/gateway adapters
-    # with descriptive names such as current_v2_* are not misclassified as model
-    # authority while the actual CURRENT selector remains fail-closed.
     if path.startswith("football-data/config/") and Path(path).name.casefold() == "current":
         return True
     if "formal_model_pointer" in lowered:
         return True
     return False
+
+
+def _git_blob_at_ref(repo_root: Path, ref: str, rel: str) -> str:
+    try:
+        blob = subprocess.check_output(["git", "rev-parse", f"{ref}:{rel}"], cwd=repo_root, text=True).strip()
+    except Exception as exc:
+        fail(f"cannot resolve protected formal_wiring path at {ref}: {rel}: {exc}")
+    if not _SHA_RE.fullmatch(blob):
+        fail(f"protected formal_wiring blob identity invalid at {ref}: {rel}")
+    return blob
+
+
+def validate_integration_runtime_surface(contract: dict, repo_root: Path) -> set[str]:
+    baseline_ref = f"refs/remotes/origin/{EXPECTED_BRANCH}"
+    protected = _candidate_protected_paths(contract)
+    for rel in sorted(protected):
+        baseline = _git_blob_at_ref(repo_root, baseline_ref, rel)
+        current = _git_blob_at_ref(repo_root, "HEAD", rel)
+        if current != baseline:
+            fail(
+                "formal integration protected surface drift: "
+                f"path={rel} governed={baseline} runtime={current}"
+            )
+    return protected
 
 
 def validate_changed_files(contract: dict, repo_root: Path, base_head: str, authority_mode: str) -> tuple[set[str], str]:
@@ -322,6 +396,9 @@ def validate_changed_files(contract: dict, repo_root: Path, base_head: str, auth
         if changed != expected:
             fail(f"remediation diff scope mismatch: changed={sorted(changed)} expected={sorted(expected)}")
         return changed, base_head
+    if authority_mode == "FORMAL_INTEGRATION_RUNTIME":
+        protected = validate_integration_runtime_surface(contract, repo_root)
+        return protected, _git_head_sha(repo_root)
     candidate_base = _pull_request_base_sha()
     assert candidate_base is not None
     changed = _git_changed_files(repo_root, candidate_base)
@@ -345,12 +422,16 @@ def main() -> int:
     contract = load_json(args.contract)
     schema = load_json(args.schema)
     validate_contract(contract, schema)
-    authority_mode = validate_runtime_branch(contract)
+    authority_mode = validate_runtime_branch(
+        contract,
+        args.repo_root,
+        allow_activation_contract_context=args.skip_diff,
+    )
     validate_source_bindings(contract, args.repo_root)
     validate_repo_locks(contract, args.repo_root)
     if args.skip_diff:
         if authority_mode != "CONTRACT_BRANCH":
-            fail("skip-diff is forbidden for pull-request candidates")
+            fail("skip-diff is forbidden outside contract branch context")
         changed: set[str] = set()
         diff_base = args.base_head
     else:
@@ -368,7 +449,11 @@ def main() -> int:
         "tuning": False,
         "new_target_labels": False,
         "formal_enablement": False,
-        "changed_file_count": len(changed) if authority_mode == "PULL_REQUEST_CANDIDATE" else len(contract["governance"]["changed_file_whitelist"]),
+        "changed_file_count": (
+            len(changed)
+            if authority_mode in {"PULL_REQUEST_CANDIDATE", "FORMAL_INTEGRATION_RUNTIME"}
+            else len(contract["governance"]["changed_file_whitelist"])
+        ),
         "scientific_code_bindings": contract["governance"]["scientific_code_bindings"],
     }, indent=2, sort_keys=True))
     return 0
