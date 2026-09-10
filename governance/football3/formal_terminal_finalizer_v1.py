@@ -20,6 +20,8 @@ FINALIZER_SCHEMA = "football3-formal-terminal-finalizer-freshness-v1"
 FINAL_RECEIPT_SCHEMA = "football3-auto-dispatch-final-binding-receipt-v1"
 CANONICAL_REF = "football3/formal-gpt-runner-integration-v1"
 FORMAL_RUN_PREFIX = "Football3 Formal GPT Runner Integration V1"
+RETROSPECTIVE_MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
+RETROSPECTIVE_STATE_AUDIT_SCHEMA = "football3-current-v2-retrospective-state-integrity-audit-v1"
 GET_FRESHNESS_HEADERS = {
     "Cache-Control": "no-cache, no-store, max-age=0",
     "Pragma": "no-cache",
@@ -64,6 +66,62 @@ def _now() -> str:
 
 def _is_hex(value: Any, n: int) -> bool:
     return isinstance(value, str) and len(value) == n and all(c in "0123456789abcdef" for c in value)
+
+
+def _validate_state_integrity_contract(
+    audit: dict[str, Any],
+    state: dict[str, Any],
+    prediction: dict[str, Any],
+    prediction_raw: bytes,
+    execution: dict[str, Any],
+    *,
+    run_id: int,
+    request_sha: str,
+    canonical_sha: str,
+    prediction_sha: str,
+) -> None:
+    retrospective = (
+        prediction.get("request_mode") == RETROSPECTIVE_MODE
+        or prediction.get("mode") == RETROSPECTIVE_MODE
+        or state.get("schema_version") == RETROSPECTIVE_STATE_AUDIT_SCHEMA
+    )
+    if not retrospective:
+        if state.get("status") != "PASS" or execution.get("state_integrity_guard_status") != "PASS":
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+        return
+
+    if state.get("schema_version") != RETROSPECTIVE_STATE_AUDIT_SCHEMA:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("status") != "PASS" or state.get("request_mode") != RETROSPECTIVE_MODE:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+    if state.get("request_id") != audit.get("request_id") or state.get("request_sha256") != request_sha:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    try:
+        if int(state.get("formal_run_id") or 0) != run_id:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    except (TypeError, ValueError):
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("canonical_execution_sha") != canonical_sha or state.get("prediction_sha") != prediction_sha:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("source_prediction_receipt_sha256") != hashlib.sha256(prediction_raw).hexdigest():
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    guard = state.get("state_integrity_guard")
+    if type(guard) is not dict or guard.get("status") != "PASS" or state.get("state_integrity_guard_status") != "PASS":
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+    if prediction.get("state_integrity_guard") != guard or prediction.get("state_integrity") != guard:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if execution.get("state_integrity_guard_status") != "PASS":
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+    if state.get("source") != "SAME_FORMAL_RUN_RETROSPECTIVE_PREDICTION_RECEIPT":
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("manual_or_auxiliary_artifact_generation_used") is not False:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("formal_model_head") != prediction.get("formal_model_head"):
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("current_sha256") != prediction.get("actual_current_sha"):
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+    if state.get("fusion_weights") != prediction.get("fusion_weights"):
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
 
 
 def _atomic_json(path: pathlib.Path, value: Any) -> None:
@@ -531,8 +589,17 @@ class FormalTerminalFinalizer:
         prediction_sha = summary.get("prediction_sha")
         if summary.get("status") != "PASS" or not _is_hex(prediction_sha, 64) or prediction.get("prediction_sha") != prediction_sha:
             _fail("AUTO_DISPATCH_FORMAL_PREDICTION_SHA_MISMATCH")
-        if state.get("status") != "PASS" or execution.get("state_integrity_guard_status") != "PASS":
-            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+        _validate_state_integrity_contract(
+            audit,
+            state,
+            prediction,
+            prediction_raw,
+            execution,
+            run_id=run_id,
+            request_sha=str(request_sha or ""),
+            canonical_sha=str(canonical_sha or ""),
+            prediction_sha=prediction_sha,
+        )
         if execution.get("status") != "PASS" or int(execution.get("production_run_id") or 0) != run_id or int(execution.get("run_id") or 0) != run_id:
             _fail("AUTO_DISPATCH_FORMAL_EXECUTION_BINDING_MISMATCH")
         if execution.get("request_sha256") != request_sha or execution.get("canonical_execution_sha") != canonical_sha or execution.get("workflow_sha") != canonical_sha or execution.get("prediction_sha") != prediction_sha:
