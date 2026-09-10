@@ -112,8 +112,6 @@ def test_same_competition_kickoff_slot_is_explicit_multi_fixture_container_posit
 
 @pytest.mark.parametrize("comp", ["FRA_Ligue1", "GER_Bundesliga", "ENG_PremierLeague"])
 def test_redacted_incident_regression_simultaneous_round_fixtures_do_not_trigger_slot_conflict(comp):
-    # Redacted permanent regression for the three observed incident domains.
-    # No score/result/status fields and no league-specific matching rule is used.
     left = [
         row(comp, fid="left-01", home="CANONICAL_HOME_01", away="CANONICAL_AWAY_01", source="LEFT", sha="1"*64),
         row(comp, fid="left-02", home="CANONICAL_HOME_02", away="CANONICAL_AWAY_02", source="LEFT", sha="2"*64),
@@ -169,6 +167,139 @@ def test_same_source_specific_id_reused_for_distinct_canonical_fixtures_is_inval
         ], comp)
 
 
+def test_legal_single_kickoff_revision_selects_latest_and_records_audit_evidence():
+    comp = "ENG_PremierLeague"
+    old = row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64)
+    new = row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64)
+    audit = {}
+    rows = provider.resolve(comp, [provider.Provider("A", 1, lambda: [old, new])], audit)
+    assert len(rows) == 1
+    assert rows[0]["kickoff"] == "2026-09-05T12:00:00+00:00"
+    assert rows[0]["content_sha"] == "2"*64
+    revisions = audit["fixture_identity_kickoff_revisions"]
+    assert len(revisions) == 1
+    revision = revisions[0]
+    assert revision["source_identity"] == "SOURCE"
+    assert revision["fixture_identity"] == "same-id"
+    assert revision["old_kickoff"] == "2026-09-05T10:00:00+00:00"
+    assert revision["new_kickoff"] == "2026-09-05T12:00:00+00:00"
+    assert revision["old_observed_at"] == "2026-09-01T00:00:00+00:00"
+    assert revision["new_observed_at"] == "2026-09-02T00:00:00+00:00"
+    assert revision["old_content_sha"] == "1"*64
+    assert revision["new_content_sha"] == "2"*64
+    assert revision["resolution"] == "LATEST_PRE_FREEZE_OBSERVATION"
+
+
+def test_two_consecutive_legal_kickoff_revisions_select_latest():
+    comp = "ESP_LaLiga"
+    versions = [
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64),
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-06T14:00:00Z", observed_at="2026-09-03T00:00:00Z", sha="3"*64),
+    ]
+    revisions = []
+    rows = provider.stable_records(versions, comp, revision_evidence=revisions)
+    assert rows[0]["kickoff"] == "2026-09-06T14:00:00+00:00"
+    assert rows[0]["content_sha"] == "3"*64
+    assert [(x["old_kickoff"], x["new_kickoff"]) for x in revisions] == [
+        ("2026-09-05T10:00:00+00:00", "2026-09-05T12:00:00+00:00"),
+        ("2026-09-05T12:00:00+00:00", "2026-09-06T14:00:00+00:00"),
+    ]
+
+
+def test_reversed_input_selects_same_latest_version_and_inventory_sha():
+    comp = "ITA_SerieA"
+    versions = [
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64),
+        row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-06T14:00:00Z", observed_at="2026-09-03T00:00:00Z", sha="3"*64),
+    ]
+    forward_revisions, reverse_revisions = [], []
+    forward = provider.stable_records(versions, comp, revision_evidence=forward_revisions)
+    reverse = provider.stable_records(list(reversed(versions)), comp, revision_evidence=reverse_revisions)
+    assert forward == reverse
+    assert forward_revisions == reverse_revisions
+    assert provider.inventory_sha(versions, comp) == provider.inventory_sha(list(reversed(versions)), comp)
+
+
+def test_same_observed_at_with_conflicting_kickoffs_fails_closed():
+    comp = "GER_Bundesliga"
+    with pytest.raises(provider.FixtureIdentityProviderError, match="SOURCE_REVISION_CONFLICT_SAME_OBSERVED_AT"):
+        provider.stable_records([
+            row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+            row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="2"*64),
+        ], comp)
+
+
+def test_same_observed_at_same_kickoff_but_different_content_is_ambiguous_and_fails_closed():
+    comp = "GER_Bundesliga"
+    with pytest.raises(provider.FixtureIdentityProviderError, match="SOURCE_REVISION_ORDER_AMBIGUOUS"):
+        provider.stable_records([
+            row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+            row(comp, fid="same-id", source="SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="2"*64),
+        ], comp)
+
+
+def test_kickoff_revision_that_changes_teams_fails_closed():
+    comp = "FRA_Ligue1"
+    with pytest.raises(provider.FixtureIdentityProviderError, match="SOURCE_ID_REUSED_FOR_DISTINCT_CANONICAL_FIXTURES"):
+        provider.stable_records([
+            row(comp, fid="same-id", source="SOURCE", home="HOME_A", away="AWAY_A", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+            row(comp, fid="same-id", source="SOURCE", home="HOME_B", away="AWAY_A", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64),
+        ], comp)
+
+
+def test_cross_source_stale_kickoff_can_bind_only_through_governed_revision_lineage():
+    comp = "ENG_PremierLeague"
+    old = row(comp, fid="left-id", source="LEFT_SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64)
+    new = row(comp, fid="left-id", source="LEFT_SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64)
+    stale = row(comp, fid="right-id", source="RIGHT_SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T12:00:00Z", sha="3"*64)
+    audit = {}
+    provider.resolve(comp, [
+        provider.Provider("LEFT", 1, lambda: [old, new]),
+        provider.Provider("RIGHT", 2, lambda: [stale]),
+    ], audit)
+    binding = audit["fixture_identity_cross_source_revision_bindings"][0]
+    assert binding["basis"] == "GOVERNED_SOURCE_REVISION_LINEAGE"
+    assert binding["resolved_kickoff"] == "2026-09-05T12:00:00+00:00"
+
+
+def test_cross_source_different_fixture_is_not_merged_when_governed_identity_basis_is_insufficient():
+    comp = "ENG_PremierLeague"
+    audit = {}
+    selected = provider.resolve(comp, [
+        provider.Provider("LEFT", 1, lambda: [
+            row(comp, fid="left-id", source="LEFT_SOURCE", home="HOME", away="AWAY", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+        ]),
+        provider.Provider("RIGHT", 2, lambda: [
+            row(comp, fid="right-id", source="RIGHT_SOURCE", home="HOME", away="AWAY", kickoff="2026-10-05T10:00:00Z", observed_at="2026-09-20T00:00:00Z", sha="2"*64),
+        ]),
+    ], audit)
+    assert selected[0]["kickoff"] == "2026-09-05T10:00:00+00:00"
+    assert not audit.get("fixture_identity_cross_source_revision_bindings")
+    separation = audit["fixture_identity_cross_source_separations"][0]
+    assert separation["resolution"] == "KEEP_SEPARATE"
+    assert separation["reason"] == "INSUFFICIENT_GOVERNED_IDENTITY_BASIS"
+
+
+def test_divergent_cross_source_revisions_of_proven_same_fixture_fail_closed():
+    comp = "ENG_PremierLeague"
+    audit = {}
+    left = [
+        row(comp, fid="left-id", source="LEFT_SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T00:00:00Z", sha="1"*64),
+        row(comp, fid="left-id", source="LEFT_SOURCE", kickoff="2026-09-05T12:00:00Z", observed_at="2026-09-02T00:00:00Z", sha="2"*64),
+    ]
+    right = [
+        row(comp, fid="right-id", source="RIGHT_SOURCE", kickoff="2026-09-05T10:00:00Z", observed_at="2026-09-01T06:00:00Z", sha="3"*64),
+        row(comp, fid="right-id", source="RIGHT_SOURCE", kickoff="2026-09-05T14:00:00Z", observed_at="2026-09-02T06:00:00Z", sha="4"*64),
+    ]
+    with pytest.raises(RuntimeError, match="CROSS_SOURCE_KICKOFF_CONFLICT_AFTER_CANONICAL_BIND"):
+        provider.resolve(comp, [
+            provider.Provider("LEFT", 1, lambda: left),
+            provider.Provider("RIGHT", 2, lambda: right),
+        ], audit, error_factory=RuntimeError)
+
+
 def test_governed_kickoff_identity_is_exact_utc_not_fuzzy():
     comp = "ITA_SerieA"
     a = provider.validate_record(row(comp, kickoff="2026-09-05T10:00:00Z"), comp)
@@ -183,6 +314,14 @@ def test_kickoff_and_observed_at_require_timezone():
         provider.validate_record(row(comp, kickoff="2026-09-05T10:00:00"), comp)
     with pytest.raises(provider.FixtureIdentityProviderError, match="OBSERVED_AT_TIMEZONE_REQUIRED"):
         provider.validate_record(row(comp, observed_at="2026-09-01T00:00:00"), comp)
+
+
+def test_invalid_kickoff_and_observed_at_fail_closed():
+    comp = "ITA_SerieA"
+    with pytest.raises(provider.FixtureIdentityProviderError, match="KICKOFF_INVALID"):
+        provider.validate_record(row(comp, kickoff="not-a-time"), comp)
+    with pytest.raises(provider.FixtureIdentityProviderError, match="OBSERVED_AT_INVALID"):
+        provider.validate_record(row(comp, observed_at="not-a-time"), comp)
 
 
 def test_all_providers_unavailable_fails_closed():
