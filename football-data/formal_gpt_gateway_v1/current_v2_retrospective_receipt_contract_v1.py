@@ -34,13 +34,13 @@ def _is_lower_hex(value: Any, length: int) -> bool:
     return isinstance(value, str) and len(value) == length and all(ch in "0123456789abcdef" for ch in value)
 
 
-def _load_dict(path: Path, code: str) -> dict[str, Any]:
+def _load_dict(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise rt.RuntimeGateError(code) from exc
+        raise rt.RuntimeGateError("retrospective state audit JSON invalid") from exc
     if type(value) is not dict:
-        raise rt.RuntimeGateError(code)
+        raise rt.RuntimeGateError("retrospective state audit JSON invalid")
     return value
 
 
@@ -52,8 +52,8 @@ def _write_retrospective_state_integrity_audit(out: Path, receipt: dict[str, Any
 
     summary_path = out / "summary.json"
     receipt_path = out / "prediction_receipt.json"
-    transport = _load_dict(transport_path, "retrospective state audit request transport invalid")
-    summary = _load_dict(summary_path, "retrospective state audit summary invalid")
+    transport = _load_dict(transport_path)
+    summary = _load_dict(summary_path)
 
     request_id = transport.get("request_id")
     request_sha = transport.get("request_sha256")
@@ -178,17 +178,17 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _finalize_state_integrity_audit_after_gateway_main(out: Path) -> dict[str, Any] | None:
+def finalize_state_integrity_audit_after_gateway_main(out: Path) -> dict[str, Any] | None:
     receipt_path = out / "prediction_receipt.json"
     if not receipt_path.is_file():
         return None
-    receipt = _load_dict(receipt_path, "retrospective state audit source receipt invalid")
+    receipt = _load_dict(receipt_path)
     if receipt.get("request_mode") != MODE:
         return None
     return _write_retrospective_state_integrity_audit(out, receipt)
 
 
-def _out_arg_from_argv() -> Path | None:
+def finalize_state_integrity_audit_after_gateway_main_from_argv() -> dict[str, Any] | None:
     try:
         index = sys.argv.index("--out")
         value = sys.argv[index + 1]
@@ -196,12 +196,11 @@ def _out_arg_from_argv() -> Path | None:
         return None
     if not isinstance(value, str) or not value.strip():
         return None
-    return Path(value).resolve()
+    return finalize_state_integrity_audit_after_gateway_main(Path(value).resolve())
 
 
 def install(gateway_module) -> dict[str, Any]:
     original = gateway_module.normal_request
-    original_main = getattr(gateway_module, "main", None)
 
     def normal_request(req: dict[str, Any], state_root: Path, out: Path, repo_root: Path,
                        understat_db: Path, confirmation_dir: Path) -> dict[str, Any]:
@@ -211,17 +210,6 @@ def install(gateway_module) -> dict[str, Any]:
         return _enrich(out, result)
 
     gateway_module.normal_request = normal_request
-
-    if callable(original_main):
-        def main() -> int:
-            code = original_main()
-            out = _out_arg_from_argv()
-            if out is not None:
-                _finalize_state_integrity_audit_after_gateway_main(out)
-            return code
-
-        gateway_module.main = main
-
     return {
         "schema_version": SCHEMA,
         "installed": True,
