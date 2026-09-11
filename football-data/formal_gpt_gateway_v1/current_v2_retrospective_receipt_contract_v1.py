@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,13 +34,13 @@ def _is_lower_hex(value: Any, length: int) -> bool:
     return isinstance(value, str) and len(value) == length and all(ch in "0123456789abcdef" for ch in value)
 
 
-def _load_dict(path: Path, code: str) -> dict[str, Any]:
+def _load_dict(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise rt.RuntimeGateError(code) from exc
+        raise rt.RuntimeGateError("retrospective state audit JSON invalid") from exc
     if type(value) is not dict:
-        raise rt.RuntimeGateError(code)
+        raise rt.RuntimeGateError("retrospective state audit JSON invalid")
     return value
 
 
@@ -51,8 +52,8 @@ def _write_retrospective_state_integrity_audit(out: Path, receipt: dict[str, Any
 
     summary_path = out / "summary.json"
     receipt_path = out / "prediction_receipt.json"
-    transport = _load_dict(transport_path, "retrospective state audit request transport invalid")
-    summary = _load_dict(summary_path, "retrospective state audit summary invalid")
+    transport = _load_dict(transport_path)
+    summary = _load_dict(summary_path)
 
     request_id = transport.get("request_id")
     request_sha = transport.get("request_sha256")
@@ -166,7 +167,6 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     receipt["receipt_sha"] = receipt_sha
     receipt["pre_contract_receipt_sha"] = old_receipt_sha
     receipt_path.write_bytes(_canon(receipt))
-    _write_retrospective_state_integrity_audit(out, receipt)
     result = dict(result)
     result["receipt_sha"] = receipt_sha
     result["request_mode"] = MODE
@@ -176,6 +176,27 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     result["same_batch_predict_before_update"] = True
     result["receipt_artifact_binding_required"] = True
     return result
+
+
+def finalize_state_integrity_audit_after_gateway_main(out: Path) -> dict[str, Any] | None:
+    receipt_path = out / "prediction_receipt.json"
+    if not receipt_path.is_file():
+        return None
+    receipt = _load_dict(receipt_path)
+    if receipt.get("request_mode") != MODE:
+        return None
+    return _write_retrospective_state_integrity_audit(out, receipt)
+
+
+def finalize_state_integrity_audit_after_gateway_main_from_argv() -> dict[str, Any] | None:
+    try:
+        index = sys.argv.index("--out")
+        value = sys.argv[index + 1]
+    except (ValueError, IndexError):
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return finalize_state_integrity_audit_after_gateway_main(Path(value).resolve())
 
 
 def install(gateway_module) -> dict[str, Any]:
@@ -197,4 +218,5 @@ def install(gateway_module) -> dict[str, Any]:
         "route_or_fallback_changed": False,
         "current_or_model_or_weight_changed": False,
         "terminal_artifact_binding_required": True,
+        "state_integrity_audit_emit_phase": "AFTER_GATEWAY_SUMMARY_PERSISTED",
     }
