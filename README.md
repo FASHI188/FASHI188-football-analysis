@@ -1,8 +1,8 @@
-# FASHI188 Football Analysis Runtime
+# FASHI188 Project Archive
 
-This repository is dedicated exclusively to the football-analysis project.
+This repository contains versioned project materials.
 
-It stores football runtime code, data/research assets, validation assets, frozen evidence, manifests, model diagnostics and audit outputs. Repository visibility is controlled by GitHub settings; this README does not assert a private/public state.
+It preserves runtime assets, validation records, frozen evidence, manifests, diagnostics and audit outputs. Repository visibility is controlled by GitHub settings.
 
 ## Authority boundary
 
