@@ -1,0 +1,116 @@
+{
+  "schema_version": "v510_draw_close_win_information_bound_r21.1",
+  "classification": "VIEWED_HISTORICAL_INFORMATION_BOUND_RESEARCH",
+  "formal_weight": 0,
+  "input_ledger": "manifests/v510_existing_score_market_pit_ledger_r1_rows.csv",
+  "expected_data_identity": {
+    "rows": 26873,
+    "competitions": 16,
+    "draws": 6976,
+    "zero_zero": 1910,
+    "tail_7plus": 630
+  },
+  "split_contract": {
+    "complete_seasons_per_competition": 5,
+    "rolling_test_positions_zero_based": [2, 3, 4],
+    "latest_season_completeness_ratio": 0.8,
+    "same_day_freeze_before_update": true,
+    "prediction_before_own_result_reveal": true,
+    "candidate_selected_on_policy_only": true,
+    "test_labels_used_for_candidate_selection": false,
+    "test_labels_used_for_post_prediction_pair_diagnostic_only": true
+  },
+  "target_contract": {
+    "positive": "goal_difference_equals_zero",
+    "negative": "absolute_goal_difference_equals_one",
+    "excluded": "absolute_goal_difference_greater_than_one",
+    "reason": "isolate the hardest draw-versus-close-win boundary instead of mixing decisive results"
+  },
+  "model_contract": {
+    "logistic_C_grid": [0.01, 0.1, 1.0],
+    "hist_gradient_boosting_candidates": [
+      {
+        "learning_rate": 0.03,
+        "max_leaf_nodes": 7,
+        "max_iter": 150,
+        "l2_regularization": 0.5
+      },
+      {
+        "learning_rate": 0.05,
+        "max_leaf_nodes": 15,
+        "max_iter": 150,
+        "l2_regularization": 1.0
+      }
+    ],
+    "selection_order": ["binary_logloss", "binary_brier", "negative_auc"],
+    "class_weight_allowed": false,
+    "focal_loss_allowed": false,
+    "manual_draw_offset_allowed": false,
+    "threshold_tuning_allowed": false
+  },
+  "matching_contract": {
+    "method": "within_competition_one_to_one_hungarian_on_standardized_strictly_pre_match_features",
+    "minimum_features": 8,
+    "feature_names": [
+      "comp_home_goals",
+      "comp_away_goals",
+      "comp_mean_total",
+      "comp_std_total",
+      "comp_draw",
+      "comp_home_win",
+      "pair_gf_sum",
+      "pair_gf_diff",
+      "pair_ga_sum",
+      "pair_ga_diff",
+      "pair_gd_sum",
+      "pair_gd_diff",
+      "pair_draw_sum",
+      "pair_draw_diff",
+      "pair_mean_total_sum",
+      "pair_mean_total_diff",
+      "pair_recent_gf_sum",
+      "pair_recent_gf_diff",
+      "pair_recent_ga_sum",
+      "pair_recent_ga_diff",
+      "pair_recent_draw_sum",
+      "pair_recent_draw_diff",
+      "pair_recent_total_sum",
+      "pair_recent_total_diff",
+      "rest_days_diff",
+      "season_matches_before"
+    ],
+    "outcomes_used_only_after_probabilities_frozen": true,
+    "pair_reuse_allowed": false
+  },
+  "gold_sample_contract": {
+    "rows": 1000,
+    "seed": 51021,
+    "selection": "deterministic_sha256_rank_without_using_labels"
+  },
+  "evaluation": {
+    "primary_metrics": ["binary_logloss", "binary_brier", "auc", "pairwise_accuracy"],
+    "secondary_metrics": ["average_precision", "probability_std", "cross_competition_window_stability"],
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 510210,
+    "interval": [0.05, 0.95]
+  },
+  "gates": {
+    "proper_score_upper_interval_must_be_below_zero": true,
+    "auc_lower_interval_must_exceed_random": true,
+    "pairwise_accuracy_lower_interval_must_exceed_random": true,
+    "minimum_fold_auc_wins": 2,
+    "minimum_competition_window_auc_win_rate": 0.6
+  },
+  "hard_limits": {
+    "research_only": true,
+    "formal_promotion_allowed": false,
+    "current_match_probability_allowed": false,
+    "unified_matrix_unlock_allowed": false,
+    "exact_score_allowed": false,
+    "ev_allowed": false,
+    "current_or_main_mutation_allowed": false,
+    "provider_request_allowed": false,
+    "historical_result_may_only_update_later_predictions": true,
+    "independent_confirmation_claim_allowed": false
+  }
+}

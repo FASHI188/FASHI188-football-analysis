@@ -1,0 +1,57 @@
+name: Football V5.1 Viewed Tail Freeze R2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_existing_score_market_pit_ledger_r1.json"
+      - "football-data/manifests/v510_viewed_tail_label_freeze_r2.json"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/validation/validate_v510_viewed_tail_label_freeze_r2.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-viewed-tail-freeze-r2.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-viewed-tail-freeze-r2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3
+      - name: Compile freeze validator
+        run: |
+          python -m py_compile \
+            football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py \
+            football-data/validation/validate_v510_viewed_tail_label_freeze_r2.py
+      - name: Run freeze self-test
+        run: python football-data/validation/validate_v510_viewed_tail_label_freeze_r2.py --self-test
+      - name: Materialize audited historical score ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Validate viewed 7+ label freeze
+        run: python football-data/validation/validate_v510_viewed_tail_label_freeze_r2.py
+      - name: Upload freeze receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-viewed-tail-label-freeze-r2
+          path: |
+            football-data/manifests/v510_viewed_tail_label_freeze_r2.json
+            football-data/manifests/v510_existing_score_market_pit_ledger_r1_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"
