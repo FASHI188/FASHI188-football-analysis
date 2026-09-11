@@ -39,6 +39,7 @@ def audit() -> dict:
         "phase": "DISPATCHED",
         "status": "IN_PROGRESS",
         "dispatch_performed": True,
+        "request_mode": "PROSPECTIVE_FORMAL_PREDICTION",
         "formal_workflow_id": WORKFLOW_ID,
         "formal_run_id": RUN_ID,
         "request_id": REQUEST_ID,
