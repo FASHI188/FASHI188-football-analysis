@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -166,7 +167,6 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     receipt["receipt_sha"] = receipt_sha
     receipt["pre_contract_receipt_sha"] = old_receipt_sha
     receipt_path.write_bytes(_canon(receipt))
-    _write_retrospective_state_integrity_audit(out, receipt)
     result = dict(result)
     result["receipt_sha"] = receipt_sha
     result["request_mode"] = MODE
@@ -178,8 +178,30 @@ def _enrich(out: Path, result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _finalize_state_integrity_audit_after_gateway_main(out: Path) -> dict[str, Any] | None:
+    receipt_path = out / "prediction_receipt.json"
+    if not receipt_path.is_file():
+        return None
+    receipt = _load_dict(receipt_path, "retrospective state audit source receipt invalid")
+    if receipt.get("request_mode") != MODE:
+        return None
+    return _write_retrospective_state_integrity_audit(out, receipt)
+
+
+def _out_arg_from_argv() -> Path | None:
+    try:
+        index = sys.argv.index("--out")
+        value = sys.argv[index + 1]
+    except (ValueError, IndexError):
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value).resolve()
+
+
 def install(gateway_module) -> dict[str, Any]:
     original = gateway_module.normal_request
+    original_main = getattr(gateway_module, "main", None)
 
     def normal_request(req: dict[str, Any], state_root: Path, out: Path, repo_root: Path,
                        understat_db: Path, confirmation_dir: Path) -> dict[str, Any]:
@@ -189,6 +211,17 @@ def install(gateway_module) -> dict[str, Any]:
         return _enrich(out, result)
 
     gateway_module.normal_request = normal_request
+
+    if callable(original_main):
+        def main() -> int:
+            code = original_main()
+            out = _out_arg_from_argv()
+            if out is not None:
+                _finalize_state_integrity_audit_after_gateway_main(out)
+            return code
+
+        gateway_module.main = main
+
     return {
         "schema_version": SCHEMA,
         "installed": True,
@@ -197,4 +230,5 @@ def install(gateway_module) -> dict[str, Any]:
         "route_or_fallback_changed": False,
         "current_or_model_or_weight_changed": False,
         "terminal_artifact_binding_required": True,
+        "state_integrity_audit_emit_phase": "AFTER_GATEWAY_SUMMARY_PERSISTED",
     }
