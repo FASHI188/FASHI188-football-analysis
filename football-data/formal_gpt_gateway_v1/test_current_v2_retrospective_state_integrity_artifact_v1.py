@@ -4,10 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import current_v2_retrospective_receipt_contract_v1 as contract
@@ -44,6 +46,15 @@ class RetrospectiveStateIntegrityArtifactProducerTests(unittest.TestCase):
             "formal_model_head": self.FORMAL_HEAD,
             "actual_current_sha": self.CURRENT_SHA,
             "fusion_weights": {"xg": 0.75, "v1": 0.25},
+            "reconstruction_audit": {"history_upper_exclusive": "2026-01-01T00:00:00+00:00"},
+            "formal_binding": {
+                "runtime_current_sha256": self.CURRENT_SHA,
+                "runtime_formal_head": self.FORMAL_HEAD,
+            },
+            "result_excluded": True,
+            "target_fixture_excluded": True,
+            "post_kickoff_events_excluded": True,
+            "strict_pit_claimed": False,
         }
         (out / "prediction_receipt.json").write_bytes(contract._canon(receipt))
         (out / "summary.json").write_text(json.dumps({
@@ -97,6 +108,61 @@ class RetrospectiveStateIntegrityArtifactProducerTests(unittest.TestCase):
                         zf.write(file, file.name)
             with zipfile.ZipFile(zip_path) as zf:
                 self.assertIn("state_integrity_audit.json", zf.namelist())
+
+    def test_enrich_defers_audit_until_authoritative_summary_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._fixture(out)
+            (out / "summary.json").unlink()
+            with mock.patch.dict(os.environ, {
+                "GITHUB_RUN_ID": self.RUN_ID,
+                "GITHUB_SHA": self.CANONICAL_SHA,
+            }, clear=False):
+                result = contract._enrich(out, {"status": "PASS"})
+            self.assertEqual(result["request_mode"], contract.MODE)
+            self.assertTrue((out / "prediction_receipt.json").is_file())
+            self.assertFalse((out / "summary.json").exists())
+            self.assertFalse((out / "state_integrity_audit.json").exists())
+
+    def test_installed_main_emits_only_after_summary_is_persisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._fixture(out)
+            (out / "summary.json").unlink()
+            with mock.patch.dict(os.environ, {
+                "GITHUB_RUN_ID": self.RUN_ID,
+                "GITHUB_SHA": self.CANONICAL_SHA,
+            }, clear=False):
+                contract._enrich(out, {"status": "PASS"})
+            self.assertFalse((out / "state_integrity_audit.json").exists())
+
+            def normal_request(req, state_root, target_out, repo_root, understat_db, confirmation_dir):
+                return {"status": "PASS"}
+
+            def main():
+                self.assertFalse((out / "state_integrity_audit.json").exists())
+                persisted = json.loads((out / "prediction_receipt.json").read_text(encoding="utf-8"))
+                (out / "summary.json").write_text(json.dumps({
+                    "status": "PASS",
+                    "prediction_sha": persisted["prediction_sha"],
+                    "state_integrity_status": "PASS",
+                }), encoding="utf-8")
+                self.assertTrue((out / "summary.json").is_file())
+                self.assertFalse((out / "state_integrity_audit.json").exists())
+                return 0
+
+            gateway = SimpleNamespace(normal_request=normal_request, main=main)
+            contract.install(gateway)
+            with mock.patch.object(sys, "argv", ["entry.py", "--out", str(out)]), mock.patch.dict(os.environ, {
+                "GITHUB_RUN_ID": self.RUN_ID,
+                "GITHUB_SHA": self.CANONICAL_SHA,
+            }, clear=False):
+                self.assertEqual(gateway.main(), 0)
+            self.assertTrue((out / "state_integrity_audit.json").is_file())
+            audit = json.loads((out / "state_integrity_audit.json").read_text(encoding="utf-8"))
+            self.assertEqual(audit["formal_run_id"], int(self.RUN_ID))
+            self.assertEqual(audit["canonical_execution_sha"], self.CANONICAL_SHA)
+            self.assertEqual(audit["prediction_sha"], self.PREDICTION_SHA)
 
     def test_stale_or_old_audit_is_overwritten_from_same_run_sources(self):
         with tempfile.TemporaryDirectory() as td:
