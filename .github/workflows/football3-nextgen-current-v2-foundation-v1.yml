@@ -1,0 +1,305 @@
+name: Football3 NextGen Current V2 Foundation
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - 'governance/football3/nextgen_current_v2_foundation_v1.py'
+      - 'governance/football3/test_nextgen_current_v2_foundation_v1.py'
+      - 'governance/football3/nextgen_current_v2_foundation_contract_v1.json'
+      - '.github/workflows/football3-nextgen-current-v2-foundation-v1.yml'
+  push:
+    branches:
+      - football3/nextgen-current-v2-foundation-v1
+    paths:
+      - 'governance/football3/nextgen_current_v2_foundation_v1.py'
+      - 'governance/football3/test_nextgen_current_v2_foundation_v1.py'
+      - 'governance/football3/nextgen_current_v2_foundation_contract_v1.json'
+      - '.github/workflows/football3-nextgen-current-v2-foundation-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: football3-nextgen-current-v2-foundation-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  EXACT_BASE: '5158fd60ebd773f5006a45035f18032429264307'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  FORMAL_V2_BLOB: 'a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871'
+  FORMAL_V2_TEST_BLOB: '61b25cd403fa1d9efa0dfcbc1643e0f17621944e'
+  FORMAL_POINTER_BLOB: 'f07743f9c873d415fad9612f3225f64c64b10542'
+  FORMAL_GATEWAY_ENTRY_BLOB: 'b41b0ede2db99c116b90270a32cd04dd240eb655'
+  FORMAL_RECEIPT_DISTRIBUTION_BLOB: '2c5be3fa953cc9848f331cf8a2bb3600f93b420e'
+  RETROSPECTIVE_REPLAY_BLOB: 'fda1b62c739ab86996370ae6db0bce69677156f9'
+  CURRENT_SHA256: '71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731'
+
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_name: ${{ steps.names.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind exact base, candidate HEAD, legacy closure and four-file scope
+        id: identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected = {
+              '.github/workflows/football3-nextgen-current-v2-foundation-v1.yml',
+              'governance/football3/nextgen_current_v2_foundation_contract_v1.json',
+              'governance/football3/nextgen_current_v2_foundation_v1.py',
+              'governance/football3/test_nextgen_current_v2_foundation_v1.py',
+          }
+          got = set(subprocess.check_output(
+              ['git', 'diff', '--name-only', '5158fd60ebd773f5006a45035f18032429264307...HEAD'],
+              text=True,
+          ).splitlines())
+          assert got == expected, (sorted(got), sorted(expected))
+          PY
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/340")"
+          python - "$pr_json" <<'PY'
+          import json, sys
+          p = json.loads(sys.argv[1])
+          body = p.get('body') or ''
+          assert p['state'] == 'closed' and p['merged_at'] is None
+          for marker in (
+              'LEGACY_POST_VIEW_PROTOTYPE',
+              'SUPERSEDED_BY_COMPLETED_CURRENT_V2_BASE',
+              'NOT_FORMAL_V3',
+              'PROMOTION_NOT_ALLOWED',
+          ):
+              assert marker in body, marker
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Prove formal V2, CURRENT pointer and formal entry surfaces are immutable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$EXACT_BASE:football-data/new_engine_v1/formal_fusion_v2.py")" = "$FORMAL_V2_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:football-data/new_engine_v1/test_formal_fusion_v2.py")" = "$FORMAL_V2_TEST_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:football-data/config/formal_model_pointer_historical_xg_fusion_v2.json")" = "$FORMAL_POINTER_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:football-data/formal_gpt_gateway_v1/entry.py")" = "$FORMAL_GATEWAY_ENTRY_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:football-data/formal_gpt_gateway_v1/formal_receipt_distribution_contract_v1.py")" = "$FORMAL_RECEIPT_DISTRIBUTION_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py")" = "$RETROSPECTIVE_REPLAY_BLOB"
+          for spec in \
+            "football-data/new_engine_v1/formal_fusion_v2.py:$FORMAL_V2_BLOB" \
+            "football-data/new_engine_v1/test_formal_fusion_v2.py:$FORMAL_V2_TEST_BLOB" \
+            "football-data/config/formal_model_pointer_historical_xg_fusion_v2.json:$FORMAL_POINTER_BLOB" \
+            "football-data/formal_gpt_gateway_v1/entry.py:$FORMAL_GATEWAY_ENTRY_BLOB" \
+            "football-data/formal_gpt_gateway_v1/formal_receipt_distribution_contract_v1.py:$FORMAL_RECEIPT_DISTRIBUTION_BLOB" \
+            "football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py:$RETROSPECTIVE_REPLAY_BLOB"
+          do
+            path="${spec%%:*}"
+            expected="${spec##*:}"
+            test "$(git hash-object "$path")" = "$expected"
+          done
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Static, module and contract tests
+        shell: bash
+        env:
+          PYTHONPATH: football-data:governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nextgen_current_v2_foundation_v1.py \
+            governance/football3/test_nextgen_current_v2_foundation_v1.py \
+            football-data/new_engine_v1/formal_fusion_v2.py \
+            football-data/formal_gpt_gateway_v1/entry.py \
+            football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c = json.loads(Path('governance/football3/nextgen_current_v2_foundation_contract_v1.json').read_text())
+          assert c['status'] == 'RESEARCH_ONLY_FOUNDATION'
+          assert c['phase'] == 'STAGE_0_FOUNDATION_INITIALIZATION'
+          assert c['canonical_integration']['exact_base'] == '5158fd60ebd773f5006a45035f18032429264307'
+          assert c['formal_baseline']['head'] == 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert c['formal_baseline']['xg_weight'] == 0.75
+          assert c['formal_baseline']['frozen_v1_weight'] == 0.25
+          assert c['inactive_contract']['status'] == 'NOT_AVAILABLE'
+          assert c['inactive_contract']['weight'] == 0
+          assert c['inactive_contract']['matrix_delta'] == 0
+          assert c['inactive_contract']['not_available_is_zero_evidence'] is False
+          for key in ('training','tuning','new_target_labels','candidate_logic','market_data_loading','provider_loading','production_activation','current_change','formal_pointer_change','formal_weight_change','selector_change','state_change','formal_route_change','formal_fallback_change','ready','merge'):
+              assert c['governance'][key] is False, key
+          print('nextgen foundation contract: PASS')
+          PY
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/nextgen-tests.txt
+          grep -q 'Ran 14 tests' /tmp/nextgen-tests.txt
+          grep -q '^OK$' /tmp/nextgen-tests.txt
+          if grep -q 'skipped=' /tmp/nextgen-tests.txt; then
+            echo 'NEXTGEN_FOUNDATION_INTEGRATION_SKIP_FORBIDDEN' >&2
+            exit 2
+          fi
+
+      - name: Existing formal V2 permanent regression
+        shell: bash
+        env:
+          PYTHONPATH: football-data:football-data/research
+        run: |
+          set -euo pipefail
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal-v2-tests.txt
+          grep -q 'Ran 13 tests' /tmp/formal-v2-tests.txt
+          grep -q '^OK$' /tmp/formal-v2-tests.txt
+
+      - name: Seal exact-HEAD foundation evidence
+        id: names
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.identity.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          rm -rf _seal
+          mkdir -p _seal/code _seal/contract _seal/evidence _seal/workflow
+          cp governance/football3/nextgen_current_v2_foundation_v1.py _seal/code/
+          cp governance/football3/test_nextgen_current_v2_foundation_v1.py _seal/code/
+          cp governance/football3/nextgen_current_v2_foundation_contract_v1.json _seal/contract/
+          cp .github/workflows/football3-nextgen-current-v2-foundation-v1.yml _seal/workflow/
+          cp /tmp/nextgen-tests.txt _seal/evidence/
+          cp /tmp/formal-v2-tests.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          out = Path('_seal')
+          receipt = {
+              'schema_version': 'football3-nextgen-current-v2-foundation-receipt-v1',
+              'status': 'NEXTGEN_CURRENT_V2_FOUNDATION_GATE_PASS',
+              'candidate_head': os.environ['CANDIDATE_SHA'],
+              'canonical_exact_base': os.environ['EXACT_BASE'],
+              'formal_model_head': os.environ['FORMAL_HEAD'],
+              'current_sha256': os.environ['CURRENT_SHA256'],
+              'research_only': True,
+              'empty_experts_not_available_zero_zero': True,
+              'fallback_and_active_v2_byte_equivalence': True,
+              'formal_v2_unchanged': True,
+              'current_changed': False,
+              'formal_pointer_changed': False,
+              'formal_weights_changed': False,
+              'production_changed': False,
+              'selector_changed': False,
+              'state_changed': False,
+              'formal_route_changed': False,
+              'formal_fallback_changed': False,
+              'new_target_labels_read': False,
+              'training_performed': False,
+              'tuning_performed': False,
+          }
+          (out / 'evidence' / 'foundation_receipt.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
+          files = {}
+          for path in sorted(out.rglob('*')):
+              if path.is_file():
+                  data = path.read_bytes()
+                  files[path.relative_to(out).as_posix()] = {
+                      'sha256': hashlib.sha256(data).hexdigest(),
+                      'bytes': len(data),
+                  }
+          manifest = {
+              'schema_version': 'football3-nextgen-current-v2-foundation-artifact-v1',
+              'status': receipt['status'],
+              'candidate_head': receipt['candidate_head'],
+              'canonical_exact_base': receipt['canonical_exact_base'],
+              'formal_model_head': receipt['formal_model_head'],
+              'current_sha256': receipt['current_sha256'],
+              'changed_file_count': 4,
+              'files': files,
+          }
+          (out / 'artifact_manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
+          PY
+          artifact_name="football3-nextgen-current-v2-foundation-${CANDIDATE_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload foundation artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.names.outputs.artifact_name }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.validate-and-seal.outputs.artifact_name }}
+          path: _readback
+
+      - name: Verify artifact digest, internal HEAD and every sealed file
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.validate-and-seal.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.validate-and-seal.outputs.artifact_digest }}
+          CANDIDATE_SHA: ${{ needs.validate-and-seal.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}")"
+          python - "$meta" "$ARTIFACT_DIGEST" <<'PY'
+          import json, sys
+          meta = json.loads(sys.argv[1])
+          expected = sys.argv[2]
+          got = meta.get('digest')
+          normalize = lambda x: x if x.startswith('sha256:') else 'sha256:' + x
+          assert normalize(got) == normalize(expected), (got, expected)
+          assert meta.get('expired') is False
+          PY
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('_readback')
+          manifest = json.loads((root / 'artifact_manifest.json').read_text())
+          receipt = json.loads((root / 'evidence' / 'foundation_receipt.json').read_text())
+          assert manifest['status'] == 'NEXTGEN_CURRENT_V2_FOUNDATION_GATE_PASS'
+          assert manifest['candidate_head'] == os.environ['CANDIDATE_SHA']
+          assert manifest['canonical_exact_base'] == os.environ['EXACT_BASE']
+          assert manifest['formal_model_head'] == os.environ['FORMAL_HEAD']
+          assert receipt['candidate_head'] == os.environ['CANDIDATE_SHA']
+          assert receipt['new_target_labels_read'] is False
+          assert receipt['training_performed'] is False
+          assert receipt['tuning_performed'] is False
+          expected_files = set(manifest['files'])
+          actual_files = {
+              p.relative_to(root).as_posix()
+              for p in root.rglob('*')
+              if p.is_file() and p.name != 'artifact_manifest.json'
+          }
+          assert actual_files == expected_files, (sorted(actual_files), sorted(expected_files))
+          for rel, meta in manifest['files'].items():
+              data = (root / rel).read_bytes()
+              assert hashlib.sha256(data).hexdigest() == meta['sha256'], rel
+              assert len(data) == meta['bytes'], rel
+          print('NEXTGEN_FOUNDATION_REMOTE_READBACK_PASS')
+          PY
