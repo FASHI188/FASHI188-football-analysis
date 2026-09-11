@@ -94,6 +94,7 @@ gateway.first_fixture = _direct_complete_fixture
 
 def main() -> int:
     code = gateway.main()
+    current_v2_retrospective_receipt_contract_v1.finalize_state_integrity_audit_after_gateway_main_from_argv()
     import sys
     try:
         out_arg = sys.argv[sys.argv.index("--out") + 1]
