@@ -68,6 +68,13 @@ def parse_request_body(body: str) -> dict[str, Any]:
         raise BridgeError(f"AUTO_DISPATCH_REQUEST_CONTRACT:{exc.code}") from exc
 
 
+def trusted_request_mode(request: dict[str, Any]) -> str:
+    mode = request.get("mode")
+    if not isinstance(mode, str) or mode not in request_contract.FORMAL_PREDICTION_MODES:
+        _fail("AUTO_DISPATCH_REQUEST_MODE_INVALID")
+    return mode
+
+
 def validate_live_pr(pr: Any, repo: str) -> None:
     if type(pr) is not dict or pr.get("number") != CARRIER_PR_NUMBER:
         _fail("AUTO_DISPATCH_LIVE_CARRIER_INVALID")
@@ -126,6 +133,11 @@ def assert_request_unchanged(audit: dict[str, Any], request: dict[str, Any]) -> 
         _fail("AUTO_DISPATCH_PREPARED_REQUEST_SHA_INVALID")
     if actual != expected or request.get("request_id") != audit.get("request_id"):
         _fail("AUTO_DISPATCH_REQUEST_CHANGED_AFTER_RESERVATION")
+    expected_mode = audit.get("request_mode")
+    if not isinstance(expected_mode, str) or expected_mode not in request_contract.FORMAL_PREDICTION_MODES:
+        _fail("AUTO_DISPATCH_PREPARED_REQUEST_MODE_INVALID")
+    if trusted_request_mode(request) != expected_mode:
+        _fail("AUTO_DISPATCH_REQUEST_MODE_CHANGED_AFTER_RESERVATION")
     return actual
 
 
@@ -354,6 +366,7 @@ def audit_live(args: argparse.Namespace) -> int:
         "status": "PASS",
         "request_id": request["request_id"],
         "request_sha256": request_contract.request_sha256(request),
+        "request_mode": trusted_request_mode(request),
         "carrier_pr_number": CARRIER_PR_NUMBER,
         "carrier_head_sha": (pr.get("head") or {}).get("sha"),
         "canonical_execution_sha": canonical_sha,
@@ -384,6 +397,7 @@ def prepare(args: argparse.Namespace) -> int:
         "status": "READY",
         "request_id": request["request_id"],
         "request_sha256": request_sha,
+        "request_mode": trusted_request_mode(request),
         "actor": args.actor,
         "actor_permission": permission,
         "carrier_pr_number": CARRIER_PR_NUMBER,
