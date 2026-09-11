@@ -6,6 +6,8 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT = "football3-formal-gpt-request-transport-v1"
 
@@ -45,6 +47,53 @@ class BridgeContractSecurityTest(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, code):
             bridge.parse_request_body(self.body(request))
 
+    def fake_api(self, request: dict):
+        outer = self
+
+        class FakeAPI:
+            repo = "owner/repo"
+
+            def live_pr(self):
+                return {
+                    "number": bridge.CARRIER_PR_NUMBER,
+                    "state": "open",
+                    "draft": True,
+                    "merged_at": None,
+                    "body": outer.body(request),
+                    "base": {"ref": bridge.CANONICAL_REF, "sha": "1" * 40},
+                    "head": {
+                        "ref": bridge.CARRIER_REF,
+                        "sha": "2" * 40,
+                        "repo": {"full_name": self.repo},
+                    },
+                }
+
+            def carrier_files(self):
+                return [bridge.CARRIER_FILE]
+
+            def actor_permission(self, actor):
+                return "write"
+
+            def live_canonical_sha(self):
+                return "3" * 40
+
+            def all_artifacts(self):
+                return []
+
+            def validate_ledger_artifact_sources(self, artifacts, request_id):
+                return None
+
+            def matching_formal_run_ids(self, request_sha, canonical_sha):
+                return set()
+
+            def dispatch_formal(self, request_sha):
+                return None
+
+            def locate_new_formal_run(self, before_ids, request_sha, canonical_sha):
+                return {"id": 123456, "html_url": "https://example.invalid/run", "head_sha": canonical_sha}
+
+        return FakeAPI()
+
     def test_real_nested_match_and_all_formal_modes(self) -> None:
         for mode in ("predict", "PROSPECTIVE_FORMAL_PREDICTION", "ACTIVE_AT_CUTOFF_REPLAY", "CURRENT_MODEL_RETROSPECTIVE_REPLAY"):
             request = self.req(mode); request["mode"] = mode
@@ -57,6 +106,83 @@ class BridgeContractSecurityTest(unittest.TestCase):
         self.assert_contract_error(request, "FORMAL_REQUEST_TOP_LEVEL_REQUIRED_FIELD_MISSING")
         request = self.req(); request["mode"] = "BAD"
         self.assert_contract_error(request, "FORMAL_REQUEST_MODE_INVALID")
+
+    def test_trusted_mode_comes_only_from_validated_canonical_request(self) -> None:
+        retrospective = self.req("trusted-retro")
+        retrospective["mode"] = contract.CURRENT_V2_RETROSPECTIVE_REPLAY
+        prospective = self.req("trusted-prospective")
+        prospective["mode"] = "PROSPECTIVE_FORMAL_PREDICTION"
+        retro = bridge.parse_request_body(self.body(retrospective))
+        pro = bridge.parse_request_body(self.body(prospective))
+        self.assertEqual(bridge.trusted_request_mode(retro), contract.CURRENT_V2_RETROSPECTIVE_REPLAY)
+        self.assertEqual(bridge.trusted_request_mode(pro), "PROSPECTIVE_FORMAL_PREDICTION")
+        source = (HERE / "auto_dispatch_bridge_v1.py").read_text(encoding="utf-8")
+        self.assertNotIn('prediction.get("request_mode")', source)
+        self.assertNotIn('prediction.get("mode")', source)
+        self.assertNotIn('state.get("request_mode")', source)
+
+    def test_audit_live_and_prepare_write_trusted_request_mode(self) -> None:
+        for mode in (contract.CURRENT_V2_RETROSPECTIVE_REPLAY, "PROSPECTIVE_FORMAL_PREDICTION"):
+            request = self.req(f"audit-{mode}")
+            request["mode"] = mode
+            fake = self.fake_api(request)
+            with tempfile.TemporaryDirectory() as td, mock.patch.object(bridge, "GitHubAPI", return_value=fake):
+                audit_path = pathlib.Path(td) / "audit-live.json"
+                bridge.audit_live(SimpleNamespace(repo=fake.repo, token="token", actor="actor", audit_out=str(audit_path)))
+                audit = json.loads(audit_path.read_text(encoding="utf-8"))
+                self.assertEqual(audit["request_mode"], mode)
+                self.assertEqual(audit["request_sha256"], contract.request_sha256(bridge.parse_request_body(self.body(request))))
+
+                prepare_path = pathlib.Path(td) / "prepare.json"
+                bridge.prepare(SimpleNamespace(
+                    repo=fake.repo,
+                    token="token",
+                    actor="actor",
+                    trusted_checkout_sha="3" * 40,
+                    trusted_dispatcher_sha="4" * 40,
+                    trusted_dispatcher_run_id="10",
+                    receiver_run_id="11",
+                    audit_out=str(prepare_path),
+                ))
+                prepared = json.loads(prepare_path.read_text(encoding="utf-8"))
+                self.assertEqual(prepared["request_mode"], mode)
+                self.assertEqual(prepared["request_sha256"], audit["request_sha256"])
+
+    def test_dispatch_rejects_mode_change_even_when_audit_sha_matches_reread_request(self) -> None:
+        request = self.req("mode-race")
+        request["mode"] = "PROSPECTIVE_FORMAL_PREDICTION"
+        parsed = bridge.parse_request_body(self.body(request))
+        audit = {
+            "request_id": parsed["request_id"],
+            "request_sha256": contract.request_sha256(parsed),
+            "request_mode": contract.CURRENT_V2_RETROSPECTIVE_REPLAY,
+        }
+        with self.assertRaisesRegex(bridge.BridgeError, "AUTO_DISPATCH_REQUEST_MODE_CHANGED_AFTER_RESERVATION"):
+            bridge.assert_request_unchanged(audit, parsed)
+
+    def test_dispatch_preserves_prepared_trusted_mode(self) -> None:
+        request = self.req("dispatch-mode")
+        request["mode"] = contract.CURRENT_V2_RETROSPECTIVE_REPLAY
+        parsed = bridge.parse_request_body(self.body(request))
+        fake = self.fake_api(request)
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(bridge, "GitHubAPI", return_value=fake):
+            audit_path = pathlib.Path(td) / "dispatch.json"
+            audit_path.write_text(json.dumps({
+                "schema_version": bridge.SCHEMA,
+                "phase": "PREPARED",
+                "status": "READY",
+                "request_id": parsed["request_id"],
+                "request_sha256": contract.request_sha256(parsed),
+                "request_mode": contract.CURRENT_V2_RETROSPECTIVE_REPLAY,
+                "actor": "actor",
+                "carrier_head_sha": "2" * 40,
+                "canonical_execution_sha": "3" * 40,
+            }), encoding="utf-8")
+            bridge.dispatch(SimpleNamespace(repo=fake.repo, token="token", audit=str(audit_path)))
+            after = json.loads(audit_path.read_text(encoding="utf-8"))
+            self.assertEqual(after["request_mode"], contract.CURRENT_V2_RETROSPECTIVE_REPLAY)
+            self.assertEqual(after["phase"], "DISPATCHED")
+            self.assertTrue(after["dispatch_performed"])
 
     def test_missing_match(self) -> None:
         request = self.req(); request.pop("match")
@@ -91,11 +217,18 @@ class BridgeContractSecurityTest(unittest.TestCase):
 
     def test_prepare_after_body_change_is_rejected(self) -> None:
         first = bridge.parse_request_body(self.body(self.req("race")))
-        audit = {"request_id": "race", "request_sha256": contract.request_sha256(first)}
+        audit = {"request_id": "race", "request_sha256": contract.request_sha256(first), "request_mode": first["mode"]}
         bridge.assert_request_unchanged(audit, first)
         changed = json.loads(json.dumps(first)); changed["match"]["kickoff"] = "2026-09-07T19:45:00+00:00"
         with self.assertRaisesRegex(bridge.BridgeError, "AUTO_DISPATCH_REQUEST_CHANGED_AFTER_RESERVATION"):
             bridge.assert_request_unchanged(audit, changed)
+
+    def test_request_sha_contract_unchanged_by_trusted_mode_binding(self) -> None:
+        request = bridge.parse_request_body(self.body(self.req("sha-contract")))
+        before = contract.request_sha256(request)
+        self.assertEqual(bridge.trusted_request_mode(request), request["mode"])
+        after = contract.request_sha256(request)
+        self.assertEqual(before, after)
 
     def test_dispatch_input_binds_formal_runner_to_exact_request_sha(self) -> None:
         request = bridge.parse_request_body(self.body(self.req("payload"))); request_sha = contract.request_sha256(request)
@@ -189,7 +322,7 @@ class BridgeContractSecurityTest(unittest.TestCase):
 
     def test_final_orchestration_receipt_contract(self) -> None:
         source = (HERE / "auto_dispatch_bridge_v1.py").read_text(encoding="utf-8")
-        for key in ('"request_id"', '"request_sha256"', '"carrier_pr_number"', '"carrier_head_sha"', '"trusted_dispatcher_sha"', '"canonical_integration_execution_sha"', '"resulting_production_run_id"', '"formal_receipt_artifact_id"', '"prediction_sha"'):
+        for key in ('"request_id"', '"request_sha256"', '"request_mode"', '"carrier_pr_number"', '"carrier_head_sha"', '"trusted_dispatcher_sha"', '"canonical_integration_execution_sha"', '"resulting_production_run_id"', '"formal_receipt_artifact_id"', '"prediction_sha"'):
             self.assertIn(key, source)
 
 
