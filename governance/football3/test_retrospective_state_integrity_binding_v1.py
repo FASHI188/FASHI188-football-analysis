@@ -18,10 +18,11 @@ PREDICTION_SHA = "d" * 64
 FORMAL_HEAD = "e" * 40
 CURRENT_SHA = "f" * 64
 RUN_ID = 987654321
+PROSPECTIVE_MODE = "PROSPECTIVE_FORMAL_PREDICTION"
 
 
-def audit() -> dict:
-    return {
+def audit(request_mode: str | None = mod.RETROSPECTIVE_MODE) -> dict:
+    value = {
         "phase": "DISPATCHED",
         "dispatch_performed": True,
         "formal_run_id": RUN_ID,
@@ -30,6 +31,9 @@ def audit() -> dict:
         "canonical_execution_sha": CANONICAL_SHA,
         "carrier_head_sha": CARRIER_HEAD,
     }
+    if request_mode is not None:
+        value["request_mode"] = request_mode
+    return value
 
 
 def _canon(value) -> bytes:
@@ -131,6 +135,26 @@ def receipt_zip(*, retrospective: bool = True, mutation: str | None = None) -> b
         state["current_sha256"] = "0" * 64
     elif mutation == "wrong_weights":
         state["fusion_weights"] = {"xg": 0.5, "v1": 0.5}
+    elif mutation == "missing_prediction_mode":
+        prediction.pop("mode", None)
+    elif mutation == "wrong_prediction_mode":
+        prediction["mode"] = PROSPECTIVE_MODE
+    elif mutation == "missing_prediction_request_mode":
+        prediction.pop("request_mode", None)
+    elif mutation == "wrong_prediction_request_mode":
+        prediction["request_mode"] = PROSPECTIVE_MODE
+    elif mutation == "downgrade_state_schema":
+        state.pop("schema_version", None)
+
+    prediction_raw = _canon(prediction)
+    execution["prediction_receipt_sha256"] = hashlib.sha256(prediction_raw).hexdigest()
+    if retrospective and isinstance(state, dict) and mutation not in {
+        "stale_receipt_sha",
+        "missing_state",
+        "empty_state",
+        "invalid_state_json",
+    }:
+        state["source_prediction_receipt_sha256"] = hashlib.sha256(prediction_raw).hexdigest()
 
     files = {
         "request_sha_binding_receipt.json": _canon(binding),
@@ -152,8 +176,10 @@ def artifact(raw: bytes) -> dict:
 
 
 class RetrospectiveStateIntegrityBindingTests(unittest.TestCase):
-    def validate(self, raw: bytes):
-        return mod.FormalTerminalFinalizer(object()).validate_receipt_zip(audit(), artifact(raw), raw)
+    def validate(self, raw: bytes, *, request_mode: str | None = mod.RETROSPECTIVE_MODE):
+        return mod.FormalTerminalFinalizer(object()).validate_receipt_zip(
+            audit(request_mode), artifact(raw), raw
+        )
 
     def test_valid_retrospective_same_run_binding_passes(self):
         raw = receipt_zip()
@@ -195,8 +221,45 @@ class RetrospectiveStateIntegrityBindingTests(unittest.TestCase):
 
     def test_prospective_legacy_state_contract_remains_accepted(self):
         raw = receipt_zip(retrospective=False)
-        result = self.validate(raw)
+        result = self.validate(raw, request_mode=PROSPECTIVE_MODE)
         self.assertEqual(result["prediction_sha"], PREDICTION_SHA)
+
+    def test_retrospective_audit_rejects_modeless_legacy_receipt(self):
+        with self.assertRaisesRegex(mod.FinalizerError, "AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID"):
+            self.validate(receipt_zip(retrospective=False))
+
+    def test_retrospective_audit_rejects_missing_or_wrong_prediction_mode(self):
+        for mutation in (
+            "missing_prediction_mode",
+            "wrong_prediction_mode",
+            "missing_prediction_request_mode",
+            "wrong_prediction_request_mode",
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaisesRegex(mod.FinalizerError, "AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID"):
+                    self.validate(receipt_zip(mutation=mutation))
+
+    def test_retrospective_audit_rejects_downgraded_state_schema(self):
+        with self.assertRaisesRegex(mod.FinalizerError, "AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID"):
+            self.validate(receipt_zip(mutation="downgrade_state_schema"))
+
+    def test_missing_or_unknown_audit_request_mode_fails_closed(self):
+        raw = receipt_zip(retrospective=False)
+        for request_mode in (None, "UNKNOWN_MODE"):
+            with self.subTest(request_mode=request_mode):
+                with self.assertRaisesRegex(mod.FinalizerError, "AUTO_DISPATCH_AUDIT_REQUEST_MODE_INVALID"):
+                    self.validate(raw, request_mode=request_mode)
+
+    def test_prospective_audit_rejects_retrospective_receipt(self):
+        with self.assertRaisesRegex(mod.FinalizerError, "AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID"):
+            self.validate(receipt_zip(), request_mode=PROSPECTIVE_MODE)
+
+    def test_trusted_request_mode_mechanical_proof(self):
+        self.assertEqual(audit()["request_mode"], mod.RETROSPECTIVE_MODE)
+        with self.assertRaises(mod.FinalizerError):
+            self.validate(receipt_zip(retrospective=False))
+        print("AUDIT_HAS_REQUEST_MODE=True")
+        print("MODELESS_LEGACY_RECEIPT_ACCEPTED=False")
 
 
 if __name__ == "__main__":

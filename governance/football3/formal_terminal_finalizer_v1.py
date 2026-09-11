@@ -21,6 +21,15 @@ FINAL_RECEIPT_SCHEMA = "football3-auto-dispatch-final-binding-receipt-v1"
 CANONICAL_REF = "football3/formal-gpt-runner-integration-v1"
 FORMAL_RUN_PREFIX = "Football3 Formal GPT Runner Integration V1"
 RETROSPECTIVE_MODE = "CURRENT_V2_RETROSPECTIVE_REPLAY"
+TRUSTED_FORMAL_REQUEST_MODES = frozenset(
+    {
+        "predict",
+        "PROSPECTIVE_FORMAL_PREDICTION",
+        "ACTIVE_AT_CUTOFF_REPLAY",
+        "CURRENT_MODEL_RETROSPECTIVE_REPLAY",
+        RETROSPECTIVE_MODE,
+    }
+)
 RETROSPECTIVE_STATE_AUDIT_SCHEMA = "football3-current-v2-retrospective-state-integrity-audit-v1"
 GET_FRESHNESS_HEADERS = {
     "Cache-Control": "no-cache, no-store, max-age=0",
@@ -68,6 +77,15 @@ def _is_hex(value: Any, n: int) -> bool:
     return isinstance(value, str) and len(value) == n and all(c in "0123456789abcdef" for c in value)
 
 
+def _trusted_audit_request_mode(audit: dict[str, Any]) -> str:
+    if type(audit) is not dict:
+        _fail("AUTO_DISPATCH_AUDIT_REQUEST_MODE_INVALID")
+    mode = audit.get("request_mode")
+    if not isinstance(mode, str) or mode not in TRUSTED_FORMAL_REQUEST_MODES:
+        _fail("AUTO_DISPATCH_AUDIT_REQUEST_MODE_INVALID")
+    return mode
+
+
 def _validate_state_integrity_contract(
     audit: dict[str, Any],
     state: dict[str, Any],
@@ -75,25 +93,37 @@ def _validate_state_integrity_contract(
     prediction_raw: bytes,
     execution: dict[str, Any],
     *,
+    request_mode: str,
     run_id: int,
     request_sha: str,
     canonical_sha: str,
     prediction_sha: str,
 ) -> None:
-    retrospective = (
-        prediction.get("request_mode") == RETROSPECTIVE_MODE
-        or prediction.get("mode") == RETROSPECTIVE_MODE
-        or state.get("schema_version") == RETROSPECTIVE_STATE_AUDIT_SCHEMA
-    )
-    if not retrospective:
+    if request_mode != RETROSPECTIVE_MODE:
+        if state.get("schema_version") == RETROSPECTIVE_STATE_AUDIT_SCHEMA:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+        if state.get("request_mode") == RETROSPECTIVE_MODE:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+        if prediction.get("request_mode") == RETROSPECTIVE_MODE or prediction.get("mode") == RETROSPECTIVE_MODE:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+        if state.get("request_mode") is not None and state.get("request_mode") != request_mode:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+        if prediction.get("request_mode") is not None and prediction.get("request_mode") != request_mode:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
+        if prediction.get("mode") is not None and prediction.get("mode") not in {request_mode, "predict"}:
+            _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
         if state.get("status") != "PASS" or execution.get("state_integrity_guard_status") != "PASS":
             _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
         return
 
+    if prediction.get("request_mode") != request_mode or prediction.get("mode") != request_mode:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
     if state.get("schema_version") != RETROSPECTIVE_STATE_AUDIT_SCHEMA:
         _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
-    if state.get("status") != "PASS" or state.get("request_mode") != RETROSPECTIVE_MODE:
+    if state.get("status") != "PASS":
         _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_NOT_PASS")
+    if state.get("request_mode") != request_mode:
+        _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
     if state.get("request_id") != audit.get("request_id") or state.get("request_sha256") != request_sha:
         _fail("AUTO_DISPATCH_FORMAL_STATE_INTEGRITY_BINDING_INVALID")
     try:
@@ -567,6 +597,7 @@ class FormalTerminalFinalizer:
         return value, raw
 
     def validate_receipt_zip(self, audit: dict[str, Any], artifact: dict[str, Any], zip_bytes: bytes) -> dict[str, Any]:
+        request_mode = _trusted_audit_request_mode(audit)
         zip_sha = hashlib.sha256(zip_bytes).hexdigest()
         if artifact.get("digest") != f"sha256:{zip_sha}":
             _fail("AUTO_DISPATCH_FORMAL_RECEIPT_ARTIFACT_DIGEST_MISMATCH")
@@ -595,6 +626,7 @@ class FormalTerminalFinalizer:
             prediction,
             prediction_raw,
             execution,
+            request_mode=request_mode,
             run_id=run_id,
             request_sha=str(request_sha or ""),
             canonical_sha=str(canonical_sha or ""),
@@ -620,6 +652,7 @@ class FormalTerminalFinalizer:
             _fail("AUTO_DISPATCH_AUDIT_NOT_DISPATCHED")
         if not _is_hex(audit.get("request_sha256"), 64) or not _is_hex(audit.get("canonical_execution_sha"), 40):
             _fail("AUTO_DISPATCH_FINALIZER_AUDIT_IDENTITY_INVALID")
+        _trusted_audit_request_mode(audit)
         run = self.wait_terminal(audit, diagnostics, persist)
         artifact = self.wait_receipt_artifact(audit, diagnostics, persist)
         zip_bytes = self.transport.download_artifact_zip(int(artifact["id"]), diagnostics, persist)
