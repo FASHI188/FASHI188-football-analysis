@@ -9,7 +9,6 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 import current_v2_retrospective_receipt_contract_v1 as contract
@@ -124,7 +123,7 @@ class RetrospectiveStateIntegrityArtifactProducerTests(unittest.TestCase):
             self.assertFalse((out / "summary.json").exists())
             self.assertFalse((out / "state_integrity_audit.json").exists())
 
-    def test_installed_main_emits_only_after_summary_is_persisted(self):
+    def test_static_finalizer_emits_only_after_summary_is_persisted(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
             self._fixture(out)
@@ -135,31 +134,18 @@ class RetrospectiveStateIntegrityArtifactProducerTests(unittest.TestCase):
             }, clear=False):
                 contract._enrich(out, {"status": "PASS"})
             self.assertFalse((out / "state_integrity_audit.json").exists())
-
-            def normal_request(req, state_root, target_out, repo_root, understat_db, confirmation_dir):
-                return {"status": "PASS"}
-
-            def main():
-                self.assertFalse((out / "state_integrity_audit.json").exists())
-                persisted = json.loads((out / "prediction_receipt.json").read_text(encoding="utf-8"))
-                (out / "summary.json").write_text(json.dumps({
-                    "status": "PASS",
-                    "prediction_sha": persisted["prediction_sha"],
-                    "state_integrity_status": "PASS",
-                }), encoding="utf-8")
-                self.assertTrue((out / "summary.json").is_file())
-                self.assertFalse((out / "state_integrity_audit.json").exists())
-                return 0
-
-            gateway = SimpleNamespace(normal_request=normal_request, main=main)
-            contract.install(gateway)
+            persisted = json.loads((out / "prediction_receipt.json").read_text(encoding="utf-8"))
+            (out / "summary.json").write_text(json.dumps({
+                "status": "PASS",
+                "prediction_sha": persisted["prediction_sha"],
+                "state_integrity_status": "PASS",
+            }), encoding="utf-8")
             with mock.patch.object(sys, "argv", ["entry.py", "--out", str(out)]), mock.patch.dict(os.environ, {
                 "GITHUB_RUN_ID": self.RUN_ID,
                 "GITHUB_SHA": self.CANONICAL_SHA,
             }, clear=False):
-                self.assertEqual(gateway.main(), 0)
+                audit = contract.finalize_state_integrity_audit_after_gateway_main_from_argv()
             self.assertTrue((out / "state_integrity_audit.json").is_file())
-            audit = json.loads((out / "state_integrity_audit.json").read_text(encoding="utf-8"))
             self.assertEqual(audit["formal_run_id"], int(self.RUN_ID))
             self.assertEqual(audit["canonical_execution_sha"], self.CANONICAL_SHA)
             self.assertEqual(audit["prediction_sha"], self.PREDICTION_SHA)
