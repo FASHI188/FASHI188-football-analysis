@@ -40,7 +40,7 @@ def validate(c,m,i):
 
 def repo_checks(root:Path):
     out=[]
-    formal=subprocess.check_output(['git','-C',str(root),'rev-parse','football3/historical-xg-fusion-v2-formal-activation-v1'],text=True).strip()
+    formal=subprocess.check_output(['git','-C',str(root),'rev-parse','refs/remotes/origin/football3/historical-xg-fusion-v2-formal-activation-v1'],text=True).strip()
     req(formal==FORMAL,'formal head drift'); out.append('formal_head')
     changed=set(subprocess.check_output(['git','-C',str(root),'diff','--name-only',f'{BASE}...HEAD'],text=True).splitlines())
     expected={
