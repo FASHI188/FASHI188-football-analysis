@@ -17,6 +17,91 @@ import formal_receipt_distribution_contract_v1 as receipt_distribution
 RECEIPT_DISTRIBUTION = receipt_distribution.install()
 
 SCHEMA = "football3-formal-future-fixture-identity-bridge-v1"
+_BASE_RESOLVE_TEAM = identity_bridge.resolve_team
+_BASE_RESOLVE_FIXTURE = identity_bridge.resolve_fixture
+
+
+def _authority_season(repo_root: Path, comp: str, request_season: str) -> str:
+    """Map only the current natural-year compatibility alias to its authority season.
+
+    The model/request season remains unchanged. This exists for domains such as JPN_J1
+    where the production request uses 2026/27 while the frozen participation authority
+    deliberately uses the formal compatibility key 2026.
+    """
+    request_season = str(request_season or "").strip()
+    expected = cross_season_identity.current_season(repo_root, comp)
+    if request_season == expected:
+        return expected
+    if comp not in cross_season_identity.NATURAL_YEAR_COMPETITIONS:
+        return request_season
+    request_start, _ = rt._season_years(request_season)
+    authority_start, _ = rt._season_years(expected)
+    if request_start is not None and request_start == authority_start:
+        return expected
+    return request_season
+
+
+def _alias_aware_resolve_team(repo_root: Path, state: Any, comp: str, season: str, requested: str):
+    authority_season = _authority_season(repo_root, comp, season)
+    ident = _BASE_RESOLVE_TEAM(repo_root, state, comp, authority_season, requested)
+    if authority_season != season:
+        ident = dict(ident)
+        ident["request_season"] = season
+        ident["authority_season"] = authority_season
+        ident["season_alias_resolution"] = "NATURAL_YEAR_CURRENT_SEASON_COMPATIBILITY_KEY"
+    return ident
+
+
+def _alias_aware_resolve_fixture(repo_root: Path, state: Any, comp: str, season: str,
+                                 home: str, away: str, kickoff):
+    h = _alias_aware_resolve_team(repo_root, state, comp, season, home)
+    a = _alias_aware_resolve_team(repo_root, state, comp, season, away)
+    if h["strength_team_id"] == a["strength_team_id"]:
+        raise rt.RuntimeGateError("resolved home/away strength identity collision")
+    fixture = {
+        "fixture_id": rt._fixture_id(comp, season, kickoff, home, away),
+        "competition_id": comp,
+        "season": season,
+        "kickoff": kickoff.isoformat(),
+        "home_team_id": h["strength_team_id"],
+        "away_team_id": a["strength_team_id"],
+        "home_team_name": home,
+        "away_team_name": away,
+    }
+    authority_season = _authority_season(repo_root, comp, season)
+    audit = {
+        "schema_version": cross_season_identity.SCHEMA,
+        "competition_id": comp,
+        "season": season,
+        "authority_season": authority_season,
+        "fixture_id": fixture["fixture_id"],
+        "home": h,
+        "away": a,
+        "identity_selection_uses_result_or_xg": False,
+        "fuzzy_cross_club_substitution": False,
+        "request_season_preserved": True,
+    }
+    audit["mapping_sha256"] = cross_season_identity._sha(audit)
+    return fixture, audit
+
+
+def _install_season_alias_bridge() -> dict[str, Any]:
+    identity_bridge.resolve_team = _alias_aware_resolve_team
+    identity_bridge.resolve_fixture = _alias_aware_resolve_fixture
+    return {
+        "schema_version": "football3-natural-year-authority-season-alias-v1",
+        "installed": True,
+        "natural_year_competitions": sorted(cross_season_identity.NATURAL_YEAR_COMPETITIONS),
+        "request_season_preserved": True,
+        "authority_season_separate": True,
+        "same_start_year_required": True,
+        "historical_season_aliasing_allowed": False,
+        "club_specific_runtime_branching": False,
+        "model_parameters_or_weights_changed": False,
+    }
+
+
+SEASON_ALIAS_CONTRACT = _install_season_alias_bridge()
 
 
 def _resolve(repo_root: Path, state_root: Path, comp: str, season: str,
@@ -99,6 +184,7 @@ def install(gateway_module) -> dict[str, Any]:
         "fixture_time_preserved": True,
         "identity_source": "validated_frozen_state_plus_cross_season_permanent_identity_bridge",
         "cross_season_identity_contract": CROSS_SEASON_IDENTITY,
+        "season_alias_contract": SEASON_ALIAS_CONTRACT,
         "cross_season_authority_contract": cross_season_authority.SCHEMA,
         "receipt_distribution_contract": RECEIPT_DISTRIBUTION,
         "result_or_xg_identity_selection": False,
