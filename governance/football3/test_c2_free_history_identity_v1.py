@@ -32,8 +32,8 @@ class T(unittest.TestCase):
   with self.assertRaises(m.C2DataError): m.resolve_exact('Racing Santanderr',m.build_exact_alias_index(m.parse_openfootball_club_registry(REG)))
  def test_17_case_fold_forbidden(self):
   with self.assertRaises(m.C2DataError): m.resolve_exact('racing santander',m.build_exact_alias_index(m.parse_openfootball_club_registry(REG)))
- def test_18_derive_promotions(self):
-  idx=m.build_exact_alias_index(m.parse_openfootball_club_registry(REG)); self.assertEqual(m.derive_promotions({'Racing Santander','Málaga CF'},{'Real Racing Club de Santander','Málaga CF'},idx),['Málaga CF','Real Racing Santander'])
+ def test_18_derive_promotions_ignores_unrelated_unresolved(self):
+  idx=m.build_exact_alias_index(m.parse_openfootball_club_registry(REG)); self.assertEqual(m.derive_promotions({'Racing Santander','Málaga CF','Unknown Lower Club'},{'Real Racing Club de Santander','Málaga CF','Unknown Top Club'},idx),['Málaga CF','Real Racing Santander'])
  def test_19_ambiguous_alias_removed(self):
   r=m.parse_openfootball_club_registry('A FC\n | X\nB FC\n | X\n'); self.assertNotIn('X',m.build_exact_alias_index(r))
  def _gz(self):
