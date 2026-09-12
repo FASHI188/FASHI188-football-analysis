@@ -1,0 +1,147 @@
+name: Football3 V3 C3 Prospective Zero-Label Preflight V1
+on:
+  push:
+    branches: ['football3/v3-c3-prospective-confirmation-v1']
+    paths:
+      - '.github/workflows/football3-v3-c3-prospective-preflight-v1.yml'
+      - 'governance/football3/v3_c3_prospective_confirmation_contract_v1.json'
+      - 'governance/football3/v3_c3_consumed_identity_exclusion_ledger_v1.json'
+      - 'governance/football3/v3_c3_prospective_preflight_v1.py'
+      - 'governance/football3/test_v3_c3_prospective_preflight_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: football3-v3-c3-prospective-preflight-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  FROZEN_C3_HEAD: 8a0da8528b9074e095cab323f825fd53570b5db4
+  C3_DEV_CONTRACT_BLOB: 382ec960ec2eed52021d11b125f8748d3e4f65df
+  C3_DEV_RUNNER_BLOB: 99a7ba47c5b8fa33e288766af63e983522b41c89
+  C3_DEV_TEST_BLOB: e8661e8bd815971786e9b77f80d8a36ef0937830
+  C3_DEV_WORKFLOW_BLOB: 37b76177cf3918dc8592771b086118b48f433443
+  C3_PREREG_BLOB: c54072399451e99a6a67af6c613051fc528d1de5
+  REQUIRED_N: '8454'
+jobs:
+  zero-label-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exact lineage and frozen candidate guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'football3/v3-c3-prospective-confirmation-v1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base "$FROZEN_C3_HEAD" HEAD)" = "$FROZEN_C3_HEAD"
+          test "$(git hash-object governance/football3/v3_c3_score_matrix_development_contract_v1.json)" = "$C3_DEV_CONTRACT_BLOB"
+          test "$(git hash-object governance/football3/v3_c3_score_matrix_development_v1.py)" = "$C3_DEV_RUNNER_BLOB"
+          test "$(git hash-object governance/football3/test_v3_c3_score_matrix_development_v1.py)" = "$C3_DEV_TEST_BLOB"
+          test "$(git hash-object .github/workflows/football3-v3-c3-score-matrix-development-v1.yml)" = "$C3_DEV_WORKFLOW_BLOB"
+          test "$(git hash-object governance/football3/v3_c3_score_matrix_prereg_contract_v1.json)" = "$C3_PREREG_BLOB"
+          python - <<'PY'
+          import json,os,subprocess
+          allowed={
+            '.github/workflows/football3-v3-c3-prospective-preflight-v1.yml',
+            'governance/football3/v3_c3_prospective_confirmation_contract_v1.json',
+            'governance/football3/v3_c3_consumed_identity_exclusion_ledger_v1.json',
+            'governance/football3/v3_c3_prospective_preflight_v1.py',
+            'governance/football3/test_v3_c3_prospective_preflight_v1.py',
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only',os.environ['FROZEN_C3_HEAD']+'...HEAD'],text=True).splitlines())
+          assert changed==allowed,(changed,allowed)
+          c=json.load(open('governance/football3/v3_c3_prospective_confirmation_contract_v1.json'))
+          assert c['status']=='FROZEN_BEFORE_FRESH_ENROLLMENT'
+          assert c['frozen_candidate']['head']==os.environ['FROZEN_C3_HEAD']
+          assert c['frozen_candidate']['beta']==0.878653613734059
+          assert c['cohort_rule']['required_n']==8454
+          assert c['scientific_state']['CONFIRMATION_PASS'] is False
+          assert c['scientific_state']['PROSPECTIVE_PASS'] is False
+          assert c['scientific_state']['promotion_allowed'] is False
+          PY
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Static and permanent tests
+        shell: bash
+        working-directory: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile v3_c3_prospective_preflight_v1.py test_v3_c3_prospective_preflight_v1.py
+          python -m unittest -v test_v3_c3_prospective_preflight_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Online zero-label rolling inventory preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/v3_c3_prospective_preflight_v1.py \
+            --contract governance/football3/v3_c3_prospective_confirmation_contract_v1.json \
+            --exclusions governance/football3/v3_c3_consumed_identity_exclusion_ledger_v1.json \
+            --out _run/source_preflight.json \
+            --inventory-out _run/initial_inventory_snapshot.json \
+            --receipt-out _run/cohort_rule_receipt.json
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/source_preflight.json')); q=json.load(open('_run/initial_inventory_snapshot.json')); s=json.load(open('_run/cohort_rule_receipt.json'))
+          assert r['source_preflight_status']=='PASS_ROLLING_COHORT_RULE_ZERO_LABEL'
+          assert r['required_total_n']==8454 and r['real_target_result_or_goal_values_read']==0
+          assert r['stage6_overlap_after_exclusion_n']==0
+          assert q['target_labels_opened'] is False and q['result_or_goal_fields_persisted'] is False
+          assert q['this_snapshot_is_final_cohort'] is False
+          assert s['candidate_head']=='8a0da8528b9074e095cab323f825fd53570b5db4'
+          assert s['required_n']==8454 and s['CONFIRMATION_PASS'] is False and s['PROSPECTIVE_PASS'] is False and s['promotion_allowed'] is False
+          PY
+      - name: Seal preflight artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _seal && mkdir -p _seal/{contracts,evidence}
+          cp governance/football3/v3_c3_prospective_confirmation_contract_v1.json _seal/contracts/
+          cp governance/football3/v3_c3_consumed_identity_exclusion_ledger_v1.json _seal/contracts/
+          cp _run/*.json _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_seal'); files=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+            b=p.read_bytes(); files.append({'path':p.relative_to(root).as_posix(),'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
+          m={'schema_version':'football3-v3-c3-prospective-preflight-seal-v1','exact_head':os.environ['GITHUB_SHA'],'frozen_candidate_head':os.environ['FROZEN_C3_HEAD'],'required_n':8454,'terminal_status':'PASS_ROLLING_COHORT_RULE_ZERO_LABEL','target_labels_opened':False,'files':files}
+          (root/'MANIFEST.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Upload preflight artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-c3-prospective-preflight-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
+          compression-level: 6
+  remote-readback:
+    needs: zero-label-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-v3-c3-prospective-preflight-${{ github.sha }}
+          path: _readback
+      - name: Verify sealed readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('_readback'); m=json.load(open(root/'MANIFEST.json'))
+          assert m['exact_head']==os.environ['GITHUB_SHA']; assert m['required_n']==8454; assert m['target_labels_opened'] is False
+          for f in m['files']:
+            b=(root/f['path']).read_bytes(); assert len(b)==f['bytes']; assert hashlib.sha256(b).hexdigest()==f['sha256']
+          r=json.load(open(root/'evidence/source_preflight.json')); q=json.load(open(root/'evidence/initial_inventory_snapshot.json'))
+          assert r['source_preflight_status']=='PASS_ROLLING_COHORT_RULE_ZERO_LABEL'; assert r['stage6_overlap_after_exclusion_n']==0
+          assert q['target_labels_opened'] is False and q['this_snapshot_is_final_cohort'] is False
+          print('PASS: C3 rolling fresh-confirmation zero-label preflight artifact readback verified')
+          PY
