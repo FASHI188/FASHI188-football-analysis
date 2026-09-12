@@ -11,6 +11,7 @@ import formal_state_integrity_guard_v1 as guard
 import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
 SCHEMA = "football3-formal-durable-state-governance-v1"
 
 
