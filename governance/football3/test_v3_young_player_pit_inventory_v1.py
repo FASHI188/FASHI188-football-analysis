@@ -13,12 +13,21 @@ class TestYoungPlayerPitInventory(unittest.TestCase):
     def test_frozen_inventory_total(self):
         self.assertEqual(sum(v.PRE_STAGE6_COUNTS.values()), 99)
 
+    def test_two_historical_probes(self):
+        self.assertEqual(len(v.SNAPSHOTS), 2)
+        self.assertEqual({s["declared_nfiles"] for s in v.SNAPSHOTS}, {17, 74})
+        self.assertEqual({s["name"] for s in v.SNAPSHOTS}, {
+            "transfermarkt-scraper-2026-07-11",
+            "transfermarkt-api-2026-07-11",
+        })
+
     def test_dvc_urls_descriptor_only(self):
-        urls = v.dvc_descriptor_urls(v.HISTORICAL_DIR_MD5)
-        self.assertEqual(len(urls), 2)
-        for u in urls:
-            self.assertTrue(u.endswith(".dir"))
-            self.assertTrue(u.startswith(v.REMOTE))
+        for snapshot in v.SNAPSHOTS:
+            urls = v.dvc_descriptor_urls(snapshot["dir_md5"])
+            self.assertEqual(len(urls), 2)
+            for u in urls:
+                self.assertTrue(u.endswith(".dir"))
+                self.assertTrue(u.startswith(v.REMOTE))
 
     def test_bad_md5_rejected(self):
         with self.assertRaises(ValueError):
@@ -38,10 +47,11 @@ class TestYoungPlayerPitInventory(unittest.TestCase):
         with self.assertRaises(ValueError):
             v.parse_descriptor(raw)
 
-    def test_category_surface(self):
-        cats = v.categorize(["players.jsonl", "clubs.jsonl", "transfers.jsonl", "player_valuations.jsonl", "games.jsonl"])
-        for k in ("players", "clubs", "transfers", "valuations", "games"):
-            self.assertIn(k, cats)
+    def test_category_union_can_satisfy_required_surface(self):
+        scraper = v.categorize(["players.csv", "clubs.csv", "games.csv"])
+        api = v.categorize(["transfers_2025.json", "market_values_2025.json"])
+        union = set(scraper) | set(api)
+        self.assertTrue(v.REQUIRED.issubset(union))
 
     def test_offline_is_zero_label(self):
         r = v.run(network=False)
