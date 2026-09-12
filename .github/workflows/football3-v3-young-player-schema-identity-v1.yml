@@ -1,0 +1,58 @@
+name: Football3 V3 Young Player Schema Identity V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-young-player-schema-identity-v1.yml'
+      - 'governance/football3/v3_young_player_schema_identity_contract_v1.json'
+      - 'governance/football3/v3_young_player_object_allowlist_v1.json'
+      - 'governance/football3/validate_v3_young_player_schema_identity_v1.py'
+      - 'governance/football3/test_v3_young_player_schema_identity_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safe-hash-bound-schema-identity-zero-label:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+      - name: Exact candidate HEAD binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          printf '{"head":"%s","expected_head":"%s","event":"%s","github_sha":"%s"}\n' "$(git rev-parse HEAD)" "$EXPECTED_HEAD" "$GITHUB_EVENT_NAME" "$GITHUB_SHA" > head-binding.json
+      - name: Compile and permanent tests
+        run: |
+          python -m py_compile governance/football3/validate_v3_young_player_schema_identity_v1.py governance/football3/test_v3_young_player_schema_identity_v1.py
+          python governance/football3/test_v3_young_player_schema_identity_v1.py
+      - name: Audit only exact-hash safe player club transfer objects
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          python governance/football3/validate_v3_young_player_schema_identity_v1.py --output artifact/schema-identity-receipt.json
+          cp governance/football3/v3_young_player_schema_identity_contract_v1.json artifact/
+          cp governance/football3/v3_young_player_object_allowlist_v1.json artifact/
+          cp head-binding.json artifact/
+          python - <<'PY'
+          import json
+          p=json.load(open('artifact/schema-identity-receipt.json'))
+          assert p['decision'] in {
+            'PASS_SAFE_SCHEMA_IDENTITY_TIME_SEMANTICS_NEXT_TARGET_IDENTITY_AUDIT',
+            'STOP_SAFE_OBJECT_SET_INCOMPLETE','STOP_FORBIDDEN_COLUMNS_PRESENT','STOP_REQUIRED_SCHEMA_MISSING',
+            'STOP_STABLE_ID_INTEGRITY','STOP_DOB_COVERAGE','STOP_TRANSFER_REQUIRED_NONNULL'
+          }
+          assert p['labels_opened']==0 and p['target_result_or_goal_values_read']==0
+          assert p['training'] is False and p['tuning'] is False and p['stage6_touched'] is False
+          assert [x['relpath'] for x in p['blocked_objects']]==['2025/appearances.json.gz']
+          assert len(p['downloaded_objects'])==3
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-young-player-schema-identity-${{ env.EXPECTED_HEAD }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
