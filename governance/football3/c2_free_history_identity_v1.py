@@ -102,9 +102,27 @@ def resolve_exact(name: str, alias_index: Mapping[str, str]) -> str:
         raise C2DataError(f"UNRESOLVED_EXACT_IDENTITY:{key}")
     return alias_index[key]
 
+def resolve_exact_set_with_unresolved(names: Iterable[str], alias_index: Mapping[str, str]) -> tuple[set[str], list[str]]:
+    """Resolve only source-declared exact names; unresolved names are retained for audit, never guessed."""
+    resolved: set[str] = set(); unresolved: list[str] = []
+    for name in sorted(set(names)):
+        key = _text(name)
+        canonical = alias_index.get(key)
+        if canonical is None:
+            unresolved.append(key)
+        else:
+            resolved.add(canonical)
+    return resolved, unresolved
+
 def derive_promotions(prior_second: Iterable[str], current_top: Iterable[str], alias_index: Mapping[str, str]) -> list[str]:
-    prior = {resolve_exact(x, alias_index) for x in prior_second}
-    current = {resolve_exact(x, alias_index) for x in current_top}
+    """Derive only exactly resolvable promotion intersections.
+
+    Unresolved non-intersection clubs must not poison the whole materialization. A frozen
+    expected-promotion manifest is compared by the caller, so an unresolved actual
+    promoted club still fails closed as a missing expected lineage rather than being guessed.
+    """
+    prior, _ = resolve_exact_set_with_unresolved(prior_second, alias_index)
+    current, _ = resolve_exact_set_with_unresolved(current_top, alias_index)
     return sorted(prior & current)
 
 def read_transfermarkt_clubs_gz(content: bytes) -> list[dict[str, str]]:
