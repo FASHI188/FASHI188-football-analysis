@@ -7,11 +7,13 @@ spec = importlib.util.spec_from_file_location("v", P)
 v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
 
 class TestAudit(unittest.TestCase):
-    def test_descriptor_url_is_descriptor_only(self):
-        u = v.descriptor_url("91552aec889cc33c803e6dcd471b333b.dir")
-        self.assertTrue(u.endswith(".dir")); self.assertIn("/files/md5/91/", u)
+    def test_descriptor_urls_are_descriptor_only(self):
+        urls = v.descriptor_urls("91552aec889cc33c803e6dcd471b333b.dir")
+        self.assertEqual(len(urls), 2)
+        self.assertTrue(all(u.endswith(".dir") for u in urls))
+        self.assertIn("/files/md5/91/", urls[0]); self.assertIn("/dvc/91/", urls[1])
     def test_reject_bad_md5(self):
-        with self.assertRaises(ValueError): v.descriptor_url("bad.dir")
+        with self.assertRaises(ValueError): v.descriptor_urls("bad.dir")
     def test_parse_descriptor_metadata_only(self):
         raw = json.dumps([{"md5":"a"*32,"relpath":"players.jsonl","size":12},{"md5":"b"*32,"relpath":"games.jsonl","size":22}]).encode()
         rows = v.parse_descriptor_bytes(raw)
@@ -27,5 +29,7 @@ class TestAudit(unittest.TestCase):
         self.assertEqual(r["labels_opened"],0); self.assertFalse(r["training"]); self.assertFalse(r["tuning"]); self.assertFalse(r["data_ready"])
     def test_no_data_object_download_counter(self):
         r = v.run(network=False); self.assertEqual(r["downloaded_data_objects"], 0)
+    def test_canary_is_current_only_transport_control(self):
+        self.assertEqual(v.CURRENT_CANARY["dir_md5"], "c9ec80fd8b18310f7bded68fe92b67d3.dir")
 
 if __name__ == "__main__": unittest.main()
