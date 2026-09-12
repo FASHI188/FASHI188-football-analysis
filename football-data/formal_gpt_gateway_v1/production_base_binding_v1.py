@@ -168,6 +168,82 @@ def resolve_receipt_provenance(receipt: dict[str, Any], summary: dict[str, Any])
     )
     return formal_head, current_sha256
 
+def _preserve_gateway_fail_closed(*, out: Path, binding: dict[str, Any], summary: dict[str, Any]) -> None:
+    if summary.get('status') != 'FAIL_CLOSED':
+        return
+    reason = summary.get('reason')
+    if not isinstance(reason, str) or not reason.strip():
+        raise ProductionBaseBindingError('PRODUCTION_GATEWAY_FAIL_CLOSED_OUTPUT_INVALID')
+    if summary.get('prediction_sha') is not None or summary.get('receipt_sha') is not None:
+        raise ProductionBaseBindingError('PRODUCTION_GATEWAY_FAIL_CLOSED_OUTPUT_INVALID')
+    if (out / 'prediction_receipt.json').exists():
+        raise ProductionBaseBindingError('PRODUCTION_GATEWAY_FAIL_CLOSED_OUTPUT_INVALID')
+    formal_head = summary.get('formal_head')
+    current_sha256 = summary.get('formal_current_sha256')
+    if not isinstance(formal_head, str) or not _SHA_RE.fullmatch(formal_head):
+        raise ProductionBaseBindingError('PRODUCTION_FORMAL_HEAD_INVALID')
+    if not isinstance(current_sha256, str) or not _SHA256_RE.fullmatch(current_sha256):
+        raise ProductionBaseBindingError('PRODUCTION_CURRENT_SHA_INVALID')
+    if not binding.get('resolved_live_base_sha') == binding.get('checkout_head_sha') == binding.get('final_live_base_sha'):
+        raise ProductionBaseBindingError('PRODUCTION_EXACT_HEAD_BINDING_MISMATCH')
+    summary_path = out / 'summary.json'
+    base_binding_path = out / 'production_base_binding.json'
+    blocker = {
+        'schema_version': BLOCKER_SCHEMA,
+        'status': 'FAIL_CLOSED',
+        'blocker': reason,
+        'gateway_status': 'FAIL_CLOSED',
+        'run_id': binding.get('run_id'),
+        'request_id': binding.get('request_id'),
+        'request_sha256': binding.get('request_sha256'),
+        'resolved_live_base_sha': binding.get('resolved_live_base_sha'),
+        'checkout_head_sha': binding.get('checkout_head_sha'),
+        'final_live_base_sha': binding.get('final_live_base_sha'),
+        'integration_moved_during_run': False,
+        'formal_head': formal_head,
+        'current_sha256': current_sha256,
+        'prediction_sha': None,
+        'receipt_sha': None,
+        'summary_sha256': hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+        'production_base_binding_sha256': hashlib.sha256(base_binding_path.read_bytes()).hexdigest(),
+    }
+    execution = {
+        'schema_version': EXECUTION_SCHEMA,
+        'status': 'FAIL_CLOSED',
+        'reason': reason,
+        'run_id': binding.get('run_id'),
+        'request_id': binding.get('request_id'),
+        'request_sha256': binding.get('request_sha256'),
+        'request_carrier_ref': binding.get('request_carrier_ref'),
+        'request_carrier_head': binding.get('request_carrier_head'),
+        'canonical_base_ref': binding.get('canonical_base_ref'),
+        'resolved_live_base_sha': binding.get('resolved_live_base_sha'),
+        'checkout_head_sha': binding.get('checkout_head_sha'),
+        'final_live_base_sha': binding.get('final_live_base_sha'),
+        'integration_moved_during_run': False,
+        'resolution_timestamp': binding.get('resolution_timestamp'),
+        'final_resolution_timestamp': binding.get('final_resolution_timestamp'),
+        'workflow_identity': binding.get('workflow_identity'),
+        'workflow_contract_version': binding.get('workflow_contract_version'),
+        'workflow_ref': binding.get('workflow_ref'),
+        'workflow_sha': binding.get('workflow_sha'),
+        'runner_code_source': binding.get('runner_code_source'),
+        'request_transport_source': binding.get('request_transport_source'),
+        'request_carrier_code_executed': False,
+        'repository_run_list_scan_used': False,
+        'live_ref_query_count': binding.get('total_live_ref_query_count'),
+        'formal_head': formal_head,
+        'current_sha256': current_sha256,
+        'prediction_sha': None,
+        'receipt_sha': None,
+        'summary_sha256': blocker['summary_sha256'],
+        'production_base_binding_sha256': blocker['production_base_binding_sha256'],
+    }
+    (out / 'production_base_blocker.json').write_bytes(canonical_bytes(blocker) + b'\n')
+    (out / 'production_execution_binding_receipt.json').write_bytes(canonical_bytes(execution) + b'\n')
+    print('PRODUCTION_GATEWAY_FAIL_CLOSED', reason)
+    raise ProductionBaseBindingError(f'PRODUCTION_GATEWAY_FAIL_CLOSED:{reason}')
+
 def finalize(args: argparse.Namespace) -> None:
     binding_path = Path(args.binding)
     binding = json.loads(binding_path.read_text(encoding='utf-8'))
@@ -194,7 +270,11 @@ def finalize(args: argparse.Namespace) -> None:
     if args.prediction_required != 'true':
         print('PRODUCTION_BASE_BINDING_PASS_NON_PREDICTION', final_sha)
         return
-    summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
+    summary_path = out / 'summary.json'
+    if not summary_path.exists():
+        raise ProductionBaseBindingError('PRODUCTION_SUMMARY_MISSING')
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    _preserve_gateway_fail_closed(out=out, binding=binding, summary=summary)
     receipt = json.loads((out / 'prediction_receipt.json').read_text(encoding='utf-8'))
     selector = json.loads((out / 'state_recovery.json').read_text(encoding='utf-8'))
     stats = json.loads(stats_path.read_text(encoding='utf-8')) if stats_path and stats_path.exists() else {}
