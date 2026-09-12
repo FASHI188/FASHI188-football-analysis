@@ -18,6 +18,11 @@ def descriptor_url(md5):
     h=md5[:-4]
     return f'{REMOTE}files/md5/{h[:2]}/{h[2:]}.dir'
 
+def object_url(md5):
+    if not isinstance(md5,str) or len(md5)!=32 or any(c not in '0123456789abcdef' for c in md5):
+        raise ValueError('invalid object md5')
+    return f'{REMOTE}files/md5/{md5[:2]}/{md5[2:]}'
+
 def fetch(url):
     if not url.startswith(REMOTE) or not url.endswith('.dir'):
         raise ValueError('descriptor only')
@@ -26,6 +31,15 @@ def fetch(url):
     if len(raw)>MAX_DESCRIPTOR_BYTES:
         raise RuntimeError('descriptor too large')
     return raw
+
+def head_size(md5):
+    url=object_url(md5)
+    req=Request(url,method='HEAD',headers={'User-Agent':'Football3-young-player-schema-freeze/1.0'})
+    with urlopen(req,timeout=30) as r:
+        value=r.headers.get('Content-Length')
+    if value is None or not value.isdigit() or int(value)<=0:
+        raise RuntimeError('HEAD Content-Length unavailable')
+    return int(value),url
 
 def parse(raw):
     obj=json.loads(raw)
@@ -46,8 +60,8 @@ def freeze(network=True):
       'schema_version':'football3-v3-young-player-object-hash-freeze-receipt-v1',
       'phase':'DESCRIPTOR_OBJECT_HASH_FREEZE_ONLY',
       'labels_opened':0,'training':False,'tuning':False,'result_or_goal_values_read':0,
-      'referenced_dvc_data_objects_downloaded':0,'selected_objects':[],
-      'data_ready':False,'formal_weight':0,'matrix_delta':0
+      'referenced_dvc_data_objects_downloaded':0,'object_get_requests':0,'object_head_requests':0,
+      'selected_objects':[],'data_ready':False,'formal_weight':0,'matrix_delta':0
     }
     if not network:
         receipt['decision']='OFFLINE_SYNTHETIC_ONLY'
@@ -63,7 +77,13 @@ def freeze(network=True):
             receipt['decision']='STOP_TARGET_OBJECT_MISSING'; receipt['missing']=missing
             return receipt
         for rel in sorted(TARGETS[source]):
-            r=dict(by[rel]); r['source']=source; receipt['selected_objects'].append(r)
+            r=dict(by[rel]); r['source']=source
+            if r['size'] is None:
+                size,url=head_size(r['md5']); receipt['object_head_requests']+=1
+                r['size']=size; r['size_source']='HTTP_HEAD_CONTENT_LENGTH'; r['object_url']=url
+            else:
+                r['size_source']='DVC_DESCRIPTOR'
+            receipt['selected_objects'].append(r)
     if len(receipt['selected_objects'])!=4 or any(x['size'] is None for x in receipt['selected_objects']):
         receipt['decision']='STOP_OBJECT_METADATA_INCOMPLETE'
     else:
@@ -74,5 +94,5 @@ def freeze(network=True):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--output',required=True); ap.add_argument('--offline',action='store_true'); a=ap.parse_args()
     r=freeze(not a.offline); Path(a.output).write_text(json.dumps(r,indent=2,sort_keys=True)+'\n')
-    print(json.dumps({'decision':r['decision'],'selected_n':len(r.get('selected_objects',[])),'downloads':r['referenced_dvc_data_objects_downloaded']},sort_keys=True))
+    print(json.dumps({'decision':r['decision'],'selected_n':len(r.get('selected_objects',[])),'downloads':r['referenced_dvc_data_objects_downloaded'],'head_requests':r.get('object_head_requests',0)},sort_keys=True))
 if __name__=='__main__': main()
