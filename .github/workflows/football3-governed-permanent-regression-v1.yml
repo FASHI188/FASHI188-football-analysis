@@ -42,6 +42,7 @@ env:
   UNDERSTAT_ARTIFACT_ID: '9798682425'
   CONFIRMATION_ARTIFACT_ID: '9827606506'
   REGRESSION_CUTOFF: '2026-09-04T13:19:44+00:00'
+  REGRESSION_ENGINEERING_KICKOFF: '2026-09-12T07:40:40+00:00'
 
 jobs:
   candidate-inventory:
@@ -200,11 +201,14 @@ jobs:
           created=[dt.datetime.fromisoformat(str(a['created_at']).replace('Z','+00:00')) for a in inv['artifacts'] if a.get('created_at')]
           assert created
           latest=max(created)
-          kickoff=latest+dt.timedelta(seconds=1)
+          kickoff=dt.datetime.fromisoformat(os.environ['REGRESSION_ENGINEERING_KICKOFF'])
+          eligible=[x for x in created if x <= kickoff]
+          assert eligible
+          latest_eligible=max(eligible)
           cutoff=dt.datetime.fromisoformat(os.environ['REGRESSION_CUTOFF'])
           assert cutoff < kickoff
           request={'schema_version':'football3-formal-gpt-gateway-v1','mode':'predict','request_id':'governed-permanent-regression-eng-v1','match':{'competition_id':'ENG_PremierLeague','season':'2026/27','kickoff':kickoff.isoformat(),'cutoff':cutoff.isoformat(),'home_team_name':'Nottingham Forest','away_team_name':'Tottenham Hotspur'}}
-          clock={'schema_version':'football3-governed-permanent-regression-clock-v1','scope':'ENGINEERING_REGRESSION_ONLY','availability_ceiling_basis':'MAX_CANDIDATE_ARTIFACT_CREATED_AT_PLUS_1S','reference_fixture_kickoff':'2026-09-05T14:00:00+00:00','regression_cutoff':cutoff.isoformat(),'max_candidate_artifact_created_at':latest.isoformat(),'synthetic_regression_kickoff':kickoff.isoformat(),'inventory_sha':inv['inventory_sha'],'production_semantics_changed':False}
+          clock={'schema_version':'football3-governed-permanent-regression-clock-v1','scope':'ENGINEERING_REGRESSION_ONLY','availability_ceiling_basis':'FROZEN_ENGINEERING_REGRESSION_KICKOFF','reference_fixture_kickoff':'2026-09-05T14:00:00+00:00','regression_cutoff':cutoff.isoformat(),'max_candidate_artifact_created_at':latest.isoformat(),'max_eligible_candidate_artifact_created_at':latest_eligible.isoformat(),'synthetic_regression_kickoff':kickoff.isoformat(),'inventory_sha':inv['inventory_sha'],'production_semantics_changed':False}
           (root/'request.json').write_text(json.dumps(request,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n')
           (root/'regression-clock.json').write_text(json.dumps(clock,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
           print('ENGINEERING_REGRESSION_CLOCK',clock)
@@ -438,7 +442,11 @@ jobs:
           inv=json.load(open('regression/inventory/candidate-inventory.json'))
           created=[dt.datetime.fromisoformat(str(a['created_at']).replace('Z','+00:00')) for a in inv['artifacts'] if a.get('created_at')]
           assert created
-          latest=max(created); regression_kickoff=latest+dt.timedelta(seconds=1)
+          latest=max(created)
+          regression_kickoff=dt.datetime.fromisoformat(os.environ['REGRESSION_ENGINEERING_KICKOFF'])
+          eligible=[x for x in created if x <= regression_kickoff]
+          assert eligible
+          latest_eligible=max(eligible)
           assert cutoff < regression_kickoff
           fixtures={
             'eng':('ENG_PremierLeague','2026/27','2026-09-05T14:00:00+00:00','Nottingham Forest','Tottenham Hotspur'),
@@ -454,7 +462,7 @@ jobs:
               (root/f'{key}.request.json').write_text(json.dumps(req,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n')
               fixture_evidence[key]={'competition_id':comp,'season':season,'reference_fixture_kickoff':reference_kickoff,'synthetic_regression_kickoff':regression_kickoff.isoformat(),'home_team_name':home,'away_team_name':away}
           (root/'fixture-set.json').write_text(json.dumps(fixture_evidence,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
-          clock={'schema_version':'football3-governed-permanent-regression-clock-v1','scope':'ENGINEERING_REGRESSION_ONLY','availability_ceiling_basis':'MAX_CANDIDATE_ARTIFACT_CREATED_AT_PLUS_1S','regression_cutoff':cutoff.isoformat(),'max_candidate_artifact_created_at':latest.isoformat(),'synthetic_regression_kickoff':regression_kickoff.isoformat(),'inventory_sha':inv['inventory_sha'],'production_semantics_changed':False}
+          clock={'schema_version':'football3-governed-permanent-regression-clock-v1','scope':'ENGINEERING_REGRESSION_ONLY','availability_ceiling_basis':'FROZEN_ENGINEERING_REGRESSION_KICKOFF','regression_cutoff':cutoff.isoformat(),'max_candidate_artifact_created_at':latest.isoformat(),'max_eligible_candidate_artifact_created_at':latest_eligible.isoformat(),'synthetic_regression_kickoff':regression_kickoff.isoformat(),'inventory_sha':inv['inventory_sha'],'production_semantics_changed':False}
           (root/'regression-clock.json').write_text(json.dumps(clock,ensure_ascii=False,sort_keys=True,indent=2)+'\n')
           print('ENGINEERING_REGRESSION_CLOCK',clock)
           PY
