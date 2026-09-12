@@ -27,9 +27,15 @@ def test_real_candidate_gateway_roles_are_explicit_and_clean():
     assert router.is_transport("football-data/formal_gpt_gateway_v1/entry.py")
     assert router.is_transport("football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py")
     assert router.is_research_replay("football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py")
+    assert router.is_production_governance("football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py")
+    assert router.is_production_governance("football-data/formal_gpt_gateway_v1/formal_future_fixture_identity_bridge_v1.py")
+    assert router.is_production_governance("football-data/formal_gpt_gateway_v1/test_prematch_state_identity_contract_v1.py")
     assert router.transport_blockers("football-data/formal_gpt_gateway_v1/entry.py") == []
     assert router.transport_blockers("football-data/formal_gpt_gateway_v1/test_current_v2_retrospective_replay_v1.py") == []
     assert router.research_replay_blockers("football-data/formal_gpt_gateway_v1/current_v2_retrospective_replay_v1.py") == []
+    assert router.production_governance_blockers("football-data/formal_gpt_gateway_v1/formal_durable_state_governance_v1.py") == []
+    assert router.production_governance_blockers("football-data/formal_gpt_gateway_v1/formal_future_fixture_identity_bridge_v1.py") == []
+    assert router.production_governance_blockers("football-data/formal_gpt_gateway_v1/test_prematch_state_identity_contract_v1.py") == []
 
 
 def test_real_utc_day_boundary_test_uses_same_research_replay_contract():
@@ -52,12 +58,82 @@ def test_legal_research_replay_test_marker_and_mode_are_recognized(tmp_path: Pat
     assert router.research_replay_blockers(rel) == []
 
 
+def test_legal_production_governance_marker_is_recognized(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/governance_contract.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE='football3-formal-production-runtime-governance-v1'\n"
+        "import runtime as rt\n"
+        "def gate(raw):\n    return rt._parse_dt(raw, 'cutoff')\n",
+    )
+    assert router.is_production_governance(rel)
+    assert router.production_governance_blockers(rel) == []
+
+
 def test_unmarked_gateway_python_is_not_silently_exempt(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
     rel = "football-data/formal_gpt_gateway_v1/unmarked.py"
     _write(tmp_path, rel, "def helper():\n    return 1\n")
     assert not router.is_transport(rel)
+    assert not router.is_production_governance(rel)
     assert not router.is_research_replay(rel)
+
+
+def test_production_governance_direct_scientific_import_is_blocked(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/governance.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE='football3-formal-production-runtime-governance-v1'\n"
+        "import new_engine_v1.formal_fusion_v2\n",
+    )
+    blockers = router.production_governance_blockers(rel)
+    assert any("SCIENTIFIC_IMPORT_FORBIDDEN" in x for x in blockers)
+
+
+def test_production_governance_hardcoded_current_or_head_is_blocked(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/governance.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE='football3-formal-production-runtime-governance-v1'\n"
+        "CURRENT_SHA256='forbidden'\n"
+        "FORMAL_HEAD='forbidden'\n",
+    )
+    blockers = router.production_governance_blockers(rel)
+    assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:CURRENT_SHA256" in x for x in blockers)
+    assert any("SCIENTIFIC_CONSTANT_FORBIDDEN:FORMAL_HEAD" in x for x in blockers)
+
+
+def test_production_governance_runtime_mutation_is_blocked(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/governance.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE='football3-formal-production-runtime-governance-v1'\n"
+        "import runtime as rt\n"
+        "rt.FORMAL_SCOPE = ()\n",
+    )
+    blockers = router.production_governance_blockers(rel)
+    assert any("PRODUCTION_GOVERNANCE_RUNTIME_MUTATION_FORBIDDEN:FORMAL_SCOPE" in x for x in blockers)
+
+
+def test_production_governance_cannot_claim_transport_role_at_same_time(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(router, "REPO_ROOT", tmp_path)
+    rel = "football-data/formal_gpt_gateway_v1/governance.py"
+    _write(
+        tmp_path,
+        rel,
+        "FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE='football3-formal-production-runtime-governance-v1'\n"
+        "FOOTBALL3_GOVERNED_PRODUCTION_TRANSPORT='football3-formal-gpt-request-transport-v1'\n",
+    )
+    blockers = router.production_governance_blockers(rel)
+    assert any("MUST_NOT_CLAIM_PRODUCTION_TRANSPORT" in x for x in blockers)
 
 
 def test_research_replay_direct_scientific_import_is_blocked(tmp_path: Path, monkeypatch):
@@ -100,8 +176,6 @@ def test_research_replay_scientific_disguise_still_blocked(tmp_path: Path, monke
     )
     _write(tmp_path, rel, source)
 
-    # Negative-control validity: with the governance guard absent, this exact fixture
-    # performs a real mutation of the supplied runtime authority object.
     runtime = SimpleNamespace(FUSION_WEIGHTS={"historical_xg": 0.75, "frozen_v1": 0.25})
     namespace = {"rt": runtime}
     exec(compile(source, rel, "exec"), namespace, namespace)

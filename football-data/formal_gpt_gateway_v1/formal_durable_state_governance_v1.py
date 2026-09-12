@@ -11,6 +11,7 @@ import formal_state_integrity_guard_v1 as guard
 import permanent_team_identity_bridge_v1 as identity_bridge
 import runtime as rt
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
 SCHEMA = "football3-formal-durable-state-governance-v1"
 
 
@@ -112,7 +113,7 @@ def _selection_preflight(state_root: Path, out: Path, repo_root: Path, m: dict[s
     }
 
 
-def _delta_from_output(out: Path, base_cutoff, target_cutoff):
+def _delta_from_output(out: Path, base_cutoff, requested_cutoff):
     inp = _read_obj(out / "runtime_input.json")
     if inp is None:
         raise rt.RuntimeGateError("runtime input missing after prediction")
@@ -124,9 +125,12 @@ def _delta_from_output(out: Path, base_cutoff, target_cutoff):
         raise rt.RuntimeGateError("runtime delta not verified complete")
     dfrom = rt._parse_dt(str(coverage.get("from")), "delta from")
     dto = rt._parse_dt(str(coverage.get("to")), "delta to")
-    if dto != target_cutoff:
-        raise rt.RuntimeGateError("delta target cutoff mismatch")
-    if dfrom not in (base_cutoff, target_cutoff):
+    runtime_cutoff = rt._parse_dt(str(inp.get("cutoff")), "runtime input cutoff")
+    if dto > requested_cutoff:
+        raise rt.RuntimeGateError("delta target cutoff exceeds requested cutoff")
+    if runtime_cutoff != dto:
+        raise rt.RuntimeGateError("runtime input cutoff does not bind delta target cutoff")
+    if dfrom not in (base_cutoff, dto):
         raise rt.RuntimeGateError("discontinuous delta interval")
     if coverage.get("records_sha256") != rt._sha_bytes(rt._canon_bytes(delta)):
         raise rt.RuntimeGateError("delta records SHA mismatch after gateway")
@@ -164,43 +168,55 @@ def install(gateway_module) -> dict[str, Any]:
         if result.get("status") != "PASS":
             return result
         try:
-            target_cutoff = pre["cutoff"]
-            first_input, coverage, delta, dfrom, dto = _delta_from_output(out, pre["base_cutoff"], target_cutoff)
+            requested_cutoff = pre["cutoff"]
+            first_input, coverage, delta, dfrom, effective_cutoff = _delta_from_output(
+                out, pre["base_cutoff"], requested_cutoff
+            )
             target_loaded = rt.validate_bundle(state_root / "bundle")
             target_state_cutoff = rt._parse_dt(str(target_loaded["meta"]["historical_cutoff"]), "target state cutoff")
-            if target_state_cutoff != target_cutoff:
-                raise rt.RuntimeGateError("TARGET_STATE_CUTOFF_MISMATCH")
-            if rt._parse_dt(contract.max_source_observed_at(target_loaded), "target max source observed") > target_cutoff:
+            if target_state_cutoff != effective_cutoff:
+                raise rt.RuntimeGateError("TARGET_STATE_EFFECTIVE_CUTOFF_MISMATCH")
+            target_max_source = rt._parse_dt(
+                contract.max_source_observed_at(target_loaded), "target max source observed"
+            )
+            if target_max_source > effective_cutoff:
                 raise rt.RuntimeGateError("TARGET_STATE_PIT_VIOLATION")
 
             transition = contract.transition_receipt(
                 base_state_sha=pre["base_state_sha"],
                 base_cutoff=pre["base_cutoff"].isoformat(),
                 delta_from=dfrom.isoformat(),
-                delta_to=dto.isoformat(),
+                delta_to=effective_cutoff.isoformat(),
                 delta=delta,
-                target_cutoff=target_cutoff.isoformat(),
+                target_cutoff=effective_cutoff.isoformat(),
                 target_state_sha=target_loaded["manifest"]["state_sha256"],
                 artifact_created_at=pre["artifact_created_at"],
                 max_source_observed_at_value=contract.max_source_observed_at(target_loaded),
                 route=str(result.get("model_route") or result.get("gateway_route") or "UNKNOWN"),
             )
 
-            # Canonicalize a first-time empty transition into the same exact-cutoff sealed
-            # request used by every subsequent identical invocation. This makes the final
-            # state/input/prediction SHA deterministic without re-fetching FULL history.
-            if transition["transition_status"] == contract.NO_OP_DELTA and pre["base_cutoff"] < target_cutoff:
+            clamped_future_cutoff = effective_cutoff < requested_cutoff
+            if (
+                transition["transition_status"] == contract.NO_OP_DELTA
+                and pre["base_cutoff"] < effective_cutoff
+                and not clamped_future_cutoff
+            ):
                 rerun = original(req, state_root, out, repo_root, understat_db, confirmation_dir)
                 if rerun.get("status") != "PASS":
                     raise rt.RuntimeGateError("NO_OP_DELTA_CANONICAL_RERUN_FAILED")
                 result = rerun
-                _delta_from_output(out, target_cutoff, target_cutoff)
+                _delta_from_output(out, effective_cutoff, effective_cutoff)
 
             receipt = _read_obj(out / "prediction_receipt.json")
             if receipt is None:
                 raise rt.RuntimeGateError("prediction receipt missing after durable governance")
             _fallback_gate(receipt)
             final_loaded = rt.validate_bundle(state_root / "bundle")
+            final_state_cutoff = rt._parse_dt(
+                str(final_loaded["meta"]["historical_cutoff"]), "final state cutoff"
+            )
+            if final_state_cutoff != effective_cutoff:
+                raise rt.RuntimeGateError("FINAL_STATE_EFFECTIVE_CUTOFF_MISMATCH")
             cache = contract.cache_key(
                 fixture_identity={
                     "fixture_id": pre["fixture"]["fixture_id"],
@@ -210,7 +226,7 @@ def install(gateway_module) -> dict[str, Any]:
                     "away_team_id": pre["fixture"]["away_team_id"],
                     "kickoff": pre["fixture"]["kickoff"],
                 },
-                cutoff=target_cutoff.isoformat(),
+                cutoff=effective_cutoff.isoformat(),
                 base_state_sha=pre["base_state_sha"],
                 target_state_sha=final_loaded["manifest"]["state_sha256"],
                 delta_sha=transition["delta_sha"],
@@ -225,7 +241,10 @@ def install(gateway_module) -> dict[str, Any]:
             old_receipt_sha = receipt.pop("receipt_sha", None)
             receipt["artifact_created_at"] = pre["artifact_created_at"]
             receipt["base_state_cutoff"] = pre["base_cutoff"].isoformat()
-            receipt["target_cutoff"] = target_cutoff.isoformat()
+            receipt["requested_cutoff"] = requested_cutoff.isoformat()
+            receipt["effective_cutoff"] = effective_cutoff.isoformat()
+            receipt["target_cutoff"] = effective_cutoff.isoformat()
+            receipt["cutoff_clamped_to_live_waterline"] = clamped_future_cutoff
             receipt["max_source_observed_at"] = transition["max_source_observed_at"]
             receipt["state_transition_receipt_sha256"] = transition["transition_receipt_sha256"]
             receipt["durable_cache_key_sha256"] = cache["cache_key_sha256"]
@@ -240,12 +259,18 @@ def install(gateway_module) -> dict[str, Any]:
             result["transition_status"] = transition["transition_status"]
             result["artifact_created_at"] = pre["artifact_created_at"]
             result["base_state_cutoff"] = pre["base_cutoff"].isoformat()
-            result["target_cutoff"] = target_cutoff.isoformat()
+            result["requested_cutoff"] = requested_cutoff.isoformat()
+            result["effective_cutoff"] = effective_cutoff.isoformat()
+            result["target_cutoff"] = effective_cutoff.isoformat()
+            result["cutoff_clamped_to_live_waterline"] = clamped_future_cutoff
             result["max_source_observed_at"] = transition["max_source_observed_at"]
             _write(out / "durable_state_governance.json", {
                 "schema_version": SCHEMA,
                 "status": "PASS",
                 "selection_sha256": (pre["selection"] or {}).get("selection_sha256"),
+                "requested_cutoff": requested_cutoff.isoformat(),
+                "effective_cutoff": effective_cutoff.isoformat(),
+                "cutoff_clamped_to_live_waterline": clamped_future_cutoff,
                 "transition_receipt_sha256": transition["transition_receipt_sha256"],
                 "cache_key_sha256": cache["cache_key_sha256"],
                 "no_op_delta_full_rebuild_forbidden": True,
@@ -268,7 +293,12 @@ def install(gateway_module) -> dict[str, Any]:
         "schema_version": SCHEMA,
         "installed": True,
         "selector": "cutoff-aware state/PIT eligibility plus prematch artifact availability ceiling",
-        "separate_clocks": ["artifact_created_at", "base_state_cutoff", "target_cutoff", "max_source_observed_at"],
+        "separate_clocks": [
+            "artifact_created_at", "base_state_cutoff", "requested_cutoff",
+            "effective_cutoff", "max_source_observed_at"
+        ],
+        "requested_cutoff_is_ceiling_not_required_waterline": True,
+        "effective_cutoff_exact_binds_delta_state_and_cache": True,
         "transition_receipt_schema": contract.TRANSITION_SCHEMA,
         "zero_delta_status": contract.NO_OP_DELTA,
         "cache_key_schema": contract.CACHE_KEY_SCHEMA,
