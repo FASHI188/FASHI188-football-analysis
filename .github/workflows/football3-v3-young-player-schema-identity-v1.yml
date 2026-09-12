@@ -1,0 +1,53 @@
+name: Football3 V3 Young Player Schema Identity V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-young-player-schema-identity-v1.yml'
+      - 'governance/football3/v3_young_player_schema_identity_contract_v1.json'
+      - 'governance/football3/v3_young_player_object_allowlist_v1.json'
+      - 'governance/football3/validate_v3_young_player_schema_identity_v1.py'
+      - 'governance/football3/test_v3_young_player_schema_identity_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  freeze-object-hashes-zero-label:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+      - name: Exact candidate HEAD binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          printf '{"head":"%s","expected_head":"%s","event":"%s","github_sha":"%s"}\n' "$(git rev-parse HEAD)" "$EXPECTED_HEAD" "$GITHUB_EVENT_NAME" "$GITHUB_SHA" > head-binding.json
+      - name: Compile and permanent tests
+        run: |
+          python -m py_compile governance/football3/validate_v3_young_player_schema_identity_v1.py governance/football3/test_v3_young_player_schema_identity_v1.py
+          python governance/football3/test_v3_young_player_schema_identity_v1.py
+      - name: Descriptor-only exact object hash freeze
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          python governance/football3/validate_v3_young_player_schema_identity_v1.py --output artifact/object-hash-freeze-receipt.json
+          cp governance/football3/v3_young_player_schema_identity_contract_v1.json artifact/
+          cp governance/football3/v3_young_player_object_allowlist_v1.json artifact/
+          cp head-binding.json artifact/
+          python - <<'PY'
+          import json
+          p=json.load(open('artifact/object-hash-freeze-receipt.json'))
+          assert p['decision']=='READY_TO_FREEZE_EXACT_OBJECT_HASHES_NO_DATA_OBJECT_DOWNLOAD'
+          assert len(p['selected_objects'])==4
+          assert p['referenced_dvc_data_objects_downloaded']==0
+          assert p['labels_opened']==0 and p['result_or_goal_values_read']==0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-young-player-schema-identity-hash-freeze-${{ env.EXPECTED_HEAD }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
