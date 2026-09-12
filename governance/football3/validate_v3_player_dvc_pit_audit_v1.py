@@ -6,6 +6,11 @@ from urllib.error import HTTPError, URLError
 
 REMOTE = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/dvc/"
 MAX_DESCRIPTOR_BYTES = 2_000_000
+CURRENT_CANARY = {
+    "name": "transfermarkt-scraper-current-canary",
+    "dir_md5": "c9ec80fd8b18310f7bded68fe92b67d3.dir",
+    "declared_nfiles": 74,
+}
 SNAPSHOTS = [
     {
         "name": "transfermarkt-scraper-2023-12-12",
@@ -34,13 +39,16 @@ CATEGORY_TOKENS = {
 }
 RELEVANT_CATEGORIES = {"players", "clubs", "transfers", "valuations", "appearances", "games", "lineups"}
 
-def descriptor_url(dir_md5: str) -> str:
+def descriptor_urls(dir_md5: str):
     if not dir_md5.endswith(".dir"):
         raise ValueError("directory md5 must end in .dir")
     h = dir_md5[:-4]
     if len(h) != 32 or any(c not in "0123456789abcdef" for c in h):
         raise ValueError("invalid md5")
-    return f"{REMOTE}files/md5/{h[:2]}/{h[2:]}.dir"
+    return [
+        f"{REMOTE}files/md5/{h[:2]}/{h[2:]}.dir",
+        f"{REMOTE}{h[:2]}/{h[2:]}.dir",
+    ]
 
 def parse_descriptor_bytes(raw: bytes):
     if len(raw) > MAX_DESCRIPTOR_BYTES:
@@ -73,10 +81,10 @@ def categorize(relpaths):
                 out[cat].append(p)
     return {k: sorted(v) for k, v in out.items() if v}
 
-def fetch_descriptor(url):
-    if not url.startswith(REMOTE) or not url.endswith(".dir") or "/files/md5/" not in url:
+def fetch_one(url):
+    if not url.startswith(REMOTE) or not url.endswith(".dir"):
         raise ValueError("non-descriptor URL forbidden")
-    req = Request(url, headers={"User-Agent": "Football3-zero-label-DVC-audit/1.0"})
+    req = Request(url, headers={"User-Agent": "Football3-zero-label-DVC-audit/1.1"})
     try:
         with urlopen(req, timeout=30) as r:
             if getattr(r, "status", 200) != 200:
@@ -88,9 +96,44 @@ def fetch_descriptor(url):
         raise RuntimeError("descriptor exceeds byte cap")
     return raw
 
+def fetch_descriptor(dir_md5):
+    attempts = []
+    for url in descriptor_urls(dir_md5):
+        try:
+            return fetch_one(url), url, attempts
+        except Exception as e:
+            attempts.append({"url": url, "error": str(e)})
+    raise RuntimeError(json.dumps(attempts, sort_keys=True))
+
+def inspect_snapshot(s, network=True):
+    row = {k: s[k] for k in s if k != "declared_size"}
+    row["candidate_urls"] = descriptor_urls(s["dir_md5"])
+    if not network:
+        row["status"] = "NOT_FETCHED_SYNTHETIC"
+        return row, set(), False
+    try:
+        raw, resolved_url, prior_errors = fetch_descriptor(s["dir_md5"])
+        entries = parse_descriptor_bytes(raw)
+        cats = categorize([x["relpath"] for x in entries])
+        row.update({
+            "status": "PUBLIC_DESCRIPTOR_OK",
+            "resolved_url": resolved_url,
+            "prior_attempt_errors": prior_errors,
+            "descriptor_bytes": len(raw),
+            "descriptor_sha256": hashlib.sha256(raw).hexdigest(),
+            "entry_count": len(entries),
+            "declared_count_matches": len(entries) == s["declared_nfiles"],
+            "relpaths": sorted(x["relpath"] for x in entries),
+            "categories": cats,
+        })
+        return row, set(cats) & RELEVANT_CATEGORIES, len(entries) != s["declared_nfiles"]
+    except Exception as e:
+        row.update({"status": "DESCRIPTOR_UNAVAILABLE", "error": str(e)})
+        return row, set(), True
+
 def run(network=True):
     receipt = {
-        "schema_version": "football3-v3-player-dvc-pit-audit-receipt-v1",
+        "schema_version": "football3-v3-player-dvc-pit-audit-receipt-v1.1",
         "classification": "ZERO_LABEL_DVC_HISTORY_AVAILABILITY_AUDIT",
         "labels_opened": 0,
         "training": False,
@@ -98,36 +141,18 @@ def run(network=True):
         "downloaded_data_objects": 0,
         "snapshots": [],
     }
+    canary_row, _, canary_error = inspect_snapshot(CURRENT_CANARY, network=network)
+    receipt["current_canary"] = canary_row
     any_error = False
     relevant_union = set()
     for s in SNAPSHOTS:
-        url = descriptor_url(s["dir_md5"])
-        row = {k: s[k] for k in ("name", "git_commit", "committed_at", "dir_md5", "declared_nfiles")}
-        row["descriptor_url"] = url
-        if not network:
-            row["status"] = "NOT_FETCHED_SYNTHETIC"
-        else:
-            try:
-                raw = fetch_descriptor(url)
-                entries = parse_descriptor_bytes(raw)
-                cats = categorize([x["relpath"] for x in entries])
-                relevant_union.update(set(cats) & RELEVANT_CATEGORIES)
-                row.update({
-                    "status": "PUBLIC_DESCRIPTOR_OK",
-                    "descriptor_bytes": len(raw),
-                    "descriptor_sha256": hashlib.sha256(raw).hexdigest(),
-                    "entry_count": len(entries),
-                    "declared_count_matches": len(entries) == s["declared_nfiles"],
-                    "relpaths": sorted(x["relpath"] for x in entries),
-                    "categories": cats,
-                })
-                if len(entries) != s["declared_nfiles"]:
-                    any_error = True
-            except Exception as e:
-                row.update({"status": "DESCRIPTOR_UNAVAILABLE", "error": str(e)})
-                any_error = True
+        row, cats, error = inspect_snapshot(s, network=network)
+        relevant_union.update(cats)
+        any_error = any_error or error
         receipt["snapshots"].append(row)
-    if any_error:
+    if network and canary_error:
+        receipt["decision"] = "STOP_DATA_COVERAGE_DVC_REMOTE_CANARY_UNRESOLVED"
+    elif any_error:
         receipt["decision"] = "STOP_DATA_COVERAGE_DVC_OBJECT_UNAVAILABLE"
     elif not relevant_union:
         receipt["decision"] = "STOP_DATA_COVERAGE_PLAYER_ASSET_SURFACE"
