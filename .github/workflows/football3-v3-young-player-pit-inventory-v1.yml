@@ -17,14 +17,19 @@ permissions:
 jobs:
   zero-label-young-player-pit-inventory:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
 
-      - name: Exact HEAD binding
+      - name: Exact candidate HEAD binding
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          printf '{"head":"%s","event":"%s"}\n' "$(git rev-parse HEAD)" "${GITHUB_EVENT_NAME}" > head-binding.json
+          test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+          printf '{"head":"%s","expected_head":"%s","event":"%s","github_sha":"%s"}\n' \
+            "$(git rev-parse HEAD)" "${EXPECTED_HEAD}" "${GITHUB_EVENT_NAME}" "${GITHUB_SHA}" > head-binding.json
 
       - name: Compile and permanent tests
         run: |
@@ -66,7 +71,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: football3-v3-young-player-pit-inventory-v1-${{ github.sha }}
+          name: football3-v3-young-player-pit-inventory-v1-${{ env.EXPECTED_HEAD }}
           path: artifact/
           if-no-files-found: error
           retention-days: 90
