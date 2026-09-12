@@ -327,9 +327,65 @@ class GitHubAPI:
         return [a for a in artifacts if type(a) is dict]
 
     def download_artifact_zip(self, artifact_id: int) -> bytes:
-        status, raw = self.request("GET", f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip")
-        if status != 200:
-            _fail("AUTO_DISPATCH_FORMAL_RECEIPT_DOWNLOAD_FAILED")
+        api_url = f"https://api.github.com/repos/{self.repo}/actions/artifacts/{artifact_id}/zip"
+        api_request = urllib.request.Request(
+            api_url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "football3-gpt-auto-dispatch-bridge-v3",
+            },
+        )
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        location = None
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(api_request, timeout=30) as response:
+                status = int(response.status)
+                location = response.headers.get("Location")
+                if status not in {301, 302, 303, 307, 308}:
+                    _fail(f"AUTO_DISPATCH_ARTIFACT_REDIRECT_STATUS:{status}")
+        except urllib.error.HTTPError as exc:
+            if int(exc.code) not in {301, 302, 303, 307, 308}:
+                body = exc.read().decode("utf-8", "replace")
+                raise BridgeError(f"AUTO_DISPATCH_ARTIFACT_REDIRECT_ERROR:{exc.code}:{body[:240]}") from exc
+            location = exc.headers.get("Location")
+        except BridgeError:
+            raise
+        except Exception as exc:
+            raise BridgeError("AUTO_DISPATCH_ARTIFACT_REDIRECT_UNAVAILABLE") from exc
+
+        if not isinstance(location, str) or not location:
+            _fail("AUTO_DISPATCH_ARTIFACT_REDIRECT_LOCATION_MISSING")
+        parsed = urllib.parse.urlsplit(location)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            _fail("AUTO_DISPATCH_ARTIFACT_REDIRECT_INVALID")
+
+        download_request = urllib.request.Request(
+            location,
+            method="GET",
+            headers={"User-Agent": "football3-gpt-auto-dispatch-bridge-v3"},
+        )
+        try:
+            with urllib.request.urlopen(download_request, timeout=30) as response:
+                status = int(response.status)
+                if status != 200:
+                    _fail(f"AUTO_DISPATCH_ARTIFACT_DOWNLOAD_STATUS:{status}")
+                raw = response.read()
+        except BridgeError:
+            raise
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            raise BridgeError(f"AUTO_DISPATCH_ARTIFACT_DOWNLOAD_ERROR:{exc.code}:{body[:240]}") from exc
+        except Exception as exc:
+            raise BridgeError("AUTO_DISPATCH_ARTIFACT_DOWNLOAD_UNAVAILABLE") from exc
+        if not zipfile.is_zipfile(io.BytesIO(raw)):
+            _fail("AUTO_DISPATCH_ARTIFACT_ZIP_INVALID")
         return raw
 
 

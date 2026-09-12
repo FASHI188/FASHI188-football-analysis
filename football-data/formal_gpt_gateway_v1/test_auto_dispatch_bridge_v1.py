@@ -263,6 +263,56 @@ class BridgeContractSecurityTest(unittest.TestCase):
         runs = [{"id": 1, "event": "workflow_dispatch", "head_branch": bridge.CANONICAL_REF, "head_sha": head, "display_title": title}, {"id": 2, "event": "workflow_dispatch", "head_branch": bridge.CANONICAL_REF, "head_sha": head, "display_title": title}]
         self.assertEqual(bridge.select_new_formal_run({1}, runs, request_sha, head)["id"], 2)
 
+    def test_artifact_download_follows_trusted_redirect_without_forwarding_token(self) -> None:
+        buf = bridge.io.BytesIO()
+        with bridge.zipfile.ZipFile(buf, "w", compression=bridge.zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("ledger.json", "{}")
+        zip_bytes = buf.getvalue()
+        location = "https://artifact.example.invalid/archive.zip?sig=temporary"
+        captured = {}
+
+        class FakeOpener:
+            def open(self, request, timeout=30):
+                captured["api_request"] = request
+                raise bridge.urllib.error.HTTPError(request.full_url, 302, "Found", {"Location": location}, None)
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return zip_bytes
+
+        def fake_urlopen(request, timeout=30):
+            captured["download_request"] = request
+            return FakeResponse()
+
+        api = bridge.GitHubAPI("owner/repo", "secret-token")
+        with mock.patch.object(bridge.urllib.request, "build_opener", return_value=FakeOpener()), mock.patch.object(bridge.urllib.request, "urlopen", side_effect=fake_urlopen):
+            self.assertEqual(api.download_artifact_zip(123), zip_bytes)
+        self.assertEqual(captured["api_request"].get_header("Authorization"), "Bearer secret-token")
+        self.assertEqual(captured["download_request"].full_url, location)
+        self.assertIsNone(captured["download_request"].get_header("Authorization"))
+        self.assertEqual(captured["download_request"].get_header("User-agent"), "football3-gpt-auto-dispatch-bridge-v3")
+
+    def test_artifact_download_rejects_non_https_redirect(self) -> None:
+        location = "http://artifact.example.invalid/archive.zip"
+
+        class FakeOpener:
+            def open(self, request, timeout=30):
+                raise bridge.urllib.error.HTTPError(request.full_url, 302, "Found", {"Location": location}, None)
+
+        api = bridge.GitHubAPI("owner/repo", "secret-token")
+        with mock.patch.object(bridge.urllib.request, "build_opener", return_value=FakeOpener()), mock.patch.object(bridge.urllib.request, "urlopen") as redirected:
+            with self.assertRaisesRegex(bridge.BridgeError, "AUTO_DISPATCH_ARTIFACT_REDIRECT_INVALID"):
+                api.download_artifact_zip(123)
+        redirected.assert_not_called()
+
     def test_receiver_is_read_only_and_never_checks_out_carrier_code(self) -> None:
         text = RECEIVER_WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("pull_request_target:", text); self.assertNotIn("actions: write", text)
