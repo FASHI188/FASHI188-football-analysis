@@ -1,0 +1,140 @@
+name: Football3 V3 C2 Identity Lineage Closure V1
+on:
+  push:
+    branches: [football3/v3-c2-identity-lineage-closure-v1]
+    paths:
+      - '.github/workflows/football3-v3-c2-identity-lineage-closure-v1.yml'
+      - 'governance/football3/v3_c2_identity_lineage_closure_contract_v1.json'
+      - 'governance/football3/v3_c2_identity_source_inventory_v1.json'
+      - 'governance/football3/v3_c2_identity_lineage_materializer_v1.py'
+      - 'governance/football3/validate_v3_c2_identity_lineage_closure_v1.py'
+      - 'governance/football3/test_v3_c2_identity_lineage_closure_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-v3-c2-identity-lineage-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '99ed0876818dbbf833f21c4c45e4b9b343af6d0f'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_name: ${{ steps.seal.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact base and six-file scope
+        id: identity
+        env:
+          CANDIDATE_SHA: '${{ github.sha }}'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-c2-identity-lineage-closure-v1.yml',
+            'governance/football3/v3_c2_identity_lineage_closure_contract_v1.json',
+            'governance/football3/v3_c2_identity_source_inventory_v1.json',
+            'governance/football3/v3_c2_identity_lineage_materializer_v1.py',
+            'governance/football3/validate_v3_c2_identity_lineage_closure_v1.py',
+            'governance/football3/test_v3_c2_identity_lineage_closure_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','99ed0876818dbbf833f21c4c45e4b9b343af6d0f...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Identity-lineage validator and permanent tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/v3_c2_identity_lineage_materializer_v1.py governance/football3/validate_v3_c2_identity_lineage_closure_v1.py governance/football3/test_v3_c2_identity_lineage_closure_v1.py
+          python governance/football3/validate_v3_c2_identity_lineage_closure_v1.py --repo-root . | tee /tmp/validator.txt
+          python governance/football3/test_v3_c2_identity_lineage_closure_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 24 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Prior C2 data-foundation regressions
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python governance/football3/test_v3_c2_historical_cutoff_coverage_v1.py 2>&1 | tee /tmp/c2-cutoff.txt
+          grep -q 'Ran 28 tests' /tmp/c2-cutoff.txt && grep -q '^OK$' /tmp/c2-cutoff.txt
+          python governance/football3/test_v3_c2_free_snapshot_materialization_v1.py 2>&1 | tee /tmp/c2-snapshot.txt
+          grep -q 'Ran 26 tests' /tmp/c2-snapshot.txt && grep -q '^OK$' /tmp/c2-snapshot.txt
+          python governance/football3/test_v3_free_data_coverage_v1.py 2>&1 | tee /tmp/free-coverage.txt
+          grep -q 'Ran 40 tests' /tmp/free-coverage.txt && grep -q '^OK$' /tmp/free-coverage.txt
+      - name: Foundation and Formal V2 regressions
+        env:
+          PYTHONPATH: 'football-data:governance/football3:football-data/research'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt && grep -q '^OK$' /tmp/foundation.txt && ! grep -q 'skipped=' /tmp/foundation.txt
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal.txt
+          grep -q 'Ran 13 tests' /tmp/formal.txt && grep -q '^OK$' /tmp/formal.txt
+      - name: Seal STOP evidence
+        id: seal
+        env:
+          CANDIDATE_SHA: '${{ steps.identity.outputs.candidate_sha }}'
+        run: |
+          set -euo pipefail
+          rm -rf _seal; mkdir -p _seal/contract _seal/code _seal/evidence
+          cp governance/football3/v3_c2_identity_lineage_closure_contract_v1.json governance/football3/v3_c2_identity_source_inventory_v1.json _seal/contract/
+          cp governance/football3/v3_c2_identity_lineage_materializer_v1.py governance/football3/validate_v3_c2_identity_lineage_closure_v1.py governance/football3/test_v3_c2_identity_lineage_closure_v1.py _seal/code/
+          cp /tmp/validator.txt /tmp/tests.txt /tmp/c2-cutoff.txt /tmp/c2-snapshot.txt /tmp/free-coverage.txt /tmp/foundation.txt /tmp/formal.txt _seal/evidence/
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=Path('_seal/evidence')
+          receipt={'schema_version':'football3-v3-c2-identity-lineage-stop-receipt-v1','status':'STOP_DATA_COVERAGE_IDENTITY_LINEAGE','candidate_head':os.environ['CANDIDATE_SHA'],'exact_base':os.environ['EXACT_BASE'],'c2_data_ready':False,'candidate_status':'NOT_AVAILABLE','weight':0,'matrix_delta':0,'target_labels_read':False,'training_performed':False,'tuning_performed':False,'formal_changed':False,'first_authoritative_failure':'NO_HISTORICAL_CUTOFF_BOUND_STABLE_ID_MEMBERSHIP_SNAPSHOT_WITH_FULL_REQUIRED_SCOPE'}
+          (r/'receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+          artifact_name="football3-v3-c2-identity-lineage-${CANDIDATE_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.seal.outputs.artifact_name }}'
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: '${{ needs.validate-and-seal.outputs.artifact_name }}'
+          path: _readback
+      - name: Verify STOP receipt
+        env:
+          CANDIDATE_SHA: '${{ needs.validate-and-seal.outputs.candidate_sha }}'
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          x=json.loads(Path('_readback/evidence/receipt.json').read_text())
+          assert x['candidate_head']==os.environ['CANDIDATE_SHA']
+          assert x['status']=='STOP_DATA_COVERAGE_IDENTITY_LINEAGE'
+          assert x['c2_data_ready'] is False and x['candidate_status']=='NOT_AVAILABLE'
+          assert x['weight']==0 and x['matrix_delta']==0
+          assert not x['target_labels_read'] and not x['training_performed'] and not x['tuning_performed'] and not x['formal_changed']
+          print('C2_IDENTITY_LINEAGE_STOP_REMOTE_READBACK_PASS')
+          PY
