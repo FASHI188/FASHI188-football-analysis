@@ -11,6 +11,7 @@ import formal_durable_state_governance_v1 as durable
 import formal_future_fixture_identity_bridge_v1 as identity
 import runtime as rt
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
 ROOT = Path(__file__).resolve().parents[2]
 
 
