@@ -1,0 +1,103 @@
+name: Football3 V3 First-Batch Candidate3 Zero-Label V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - governance/football3/v3_firstbatch_candidate3_bounded_draw_residual_contract_v1.json
+      - governance/football3/v3_firstbatch_candidate3_coverage_audit_v1.json
+      - governance/football3/validate_v3_firstbatch_candidate3_v1.py
+      - governance/football3/test_v3_firstbatch_candidate3_v1.py
+      - .github/workflows/football3-v3-firstbatch-candidate3-zero-label-v1.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  validate-zero-label-prereg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Exact scope and base
+        run: |
+          set -euo pipefail
+          test "$(git merge-base 40b6f6e1871b90a66f42251310dfda04fc6d47ea HEAD)" = "40b6f6e1871b90a66f42251310dfda04fc6d47ea"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-firstbatch-candidate3-zero-label-v1.yml',
+            'governance/football3/v3_firstbatch_candidate3_bounded_draw_residual_contract_v1.json',
+            'governance/football3/v3_firstbatch_candidate3_coverage_audit_v1.json',
+            'governance/football3/validate_v3_firstbatch_candidate3_v1.py',
+            'governance/football3/test_v3_firstbatch_candidate3_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','40b6f6e1871b90a66f42251310dfda04fc6d47ea...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+      - name: Static and permanent tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_v3_firstbatch_candidate3_v1.py governance/football3/test_v3_firstbatch_candidate3_v1.py
+          python -m unittest -v governance.football3.test_v3_firstbatch_candidate3_v1
+          python governance/football3/validate_v3_firstbatch_candidate3_v1.py | tee /tmp/candidate3_validator.json
+      - name: NextGen foundation regression
+        env:
+          PYTHONPATH: 'football-data:governance/football3'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt
+          grep -q '^OK$' /tmp/foundation.txt
+          ! grep -q 'skipped=' /tmp/foundation.txt
+      - name: Formal V2 regression
+        env:
+          PYTHONPATH: 'football-data:football-data/research'
+        run: |
+          set -euo pipefail
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal_v2.txt
+          grep -q 'Ran 13 tests' /tmp/formal_v2.txt
+          grep -q '^OK$' /tmp/formal_v2.txt
+      - name: Seal zero-label evidence
+        run: |
+          set -euo pipefail
+          mkdir -p _seal
+          cp governance/football3/v3_firstbatch_candidate3_bounded_draw_residual_contract_v1.json _seal/
+          cp governance/football3/v3_firstbatch_candidate3_coverage_audit_v1.json _seal/
+          cp /tmp/candidate3_validator.json /tmp/foundation.txt /tmp/formal_v2.txt _seal/
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=Path('_seal')
+          files={}
+          for p in sorted(r.iterdir()):
+            if p.is_file():
+              b=p.read_bytes(); files[p.name]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          receipt={
+            'schema_version':'football3-v3-firstbatch-candidate3-zero-label-receipt-v1',
+            'status':'STOP_DATA_COVERAGE_PRE_DEVELOPMENT',
+            'candidate_head':os.environ['GITHUB_SHA'],
+            'exact_base':'40b6f6e1871b90a66f42251310dfda04fc6d47ea',
+            'labels_opened':0,
+            'training_performed':False,
+            'tuning_performed':False,
+            'formal_v2_changed':False,
+            'current_changed':False,
+            'formal_weights_changed':False,
+            'production_changed':False,
+            'files':files,
+          }
+          (r/'receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-firstbatch-candidate3-zero-label-${{ github.sha }}
+          path: _seal
+          if-no-files-found: error
