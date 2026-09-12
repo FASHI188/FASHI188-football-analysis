@@ -7,9 +7,23 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 REMOTE = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/dvc/"
-HISTORICAL_DIR_MD5 = "c829abceffc9d979752b46b5e1c947bc.dir"
-DECLARED_NFILES = 17
 MAX_DESCRIPTOR_BYTES = 2_000_000
+SNAPSHOTS = [
+    {
+        "name": "transfermarkt-scraper-2026-07-11",
+        "git_commit": "ee6d88e3f4c6f41ed5338aaf13f9c6bb52c733f8",
+        "committed_at_utc": "2026-07-11T12:35:29Z",
+        "dir_md5": "c9ec80fd8b18310f7bded68fe92b67d3.dir",
+        "declared_nfiles": 74,
+    },
+    {
+        "name": "transfermarkt-api-2026-07-11",
+        "git_commit": "59fa295c51fc23466f3a71542f8bf3d1335daa83",
+        "committed_at_utc": "2026-07-11T12:38:11Z",
+        "dir_md5": "c829abceffc9d979752b46b5e1c947bc.dir",
+        "declared_nfiles": 17,
+    },
+]
 
 CATEGORY_TOKENS = {
     "players": ("player",),
@@ -46,7 +60,7 @@ def dvc_descriptor_urls(dir_md5: str):
 def fetch_descriptor(url: str):
     if not url.startswith(REMOTE) or not url.endswith(".dir"):
         raise ValueError("only DVC .dir descriptor URLs allowed")
-    req = Request(url, headers={"User-Agent": "Football3-young-player-zero-label-audit/1.0"})
+    req = Request(url, headers={"User-Agent": "Football3-young-player-zero-label-audit/1.1"})
     try:
         with urlopen(req, timeout=30) as resp:
             if getattr(resp, "status", 200) != 200:
@@ -99,13 +113,8 @@ def run(network=True):
         "tuning": False,
         "result_or_goal_values_read": 0,
         "referenced_dvc_data_objects_downloaded": 0,
-        "historical_snapshot": {
-            "git_commit": "59fa295c51fc23466f3a71542f8bf3d1335daa83",
-            "committed_at_utc": "2026-07-11T12:38:11Z",
-            "dir_md5": HISTORICAL_DIR_MD5,
-            "declared_nfiles": DECLARED_NFILES,
-            "attempts": [],
-        },
+        "historical_snapshots": [],
+        "union_asset_categories": {},
         "confirmation_inventory_upper_bound": {
             "stage6_cutoff_utc": "2026-09-04T11:00:00Z",
             "per_competition": PRE_STAGE6_COUNTS,
@@ -125,38 +134,65 @@ def run(network=True):
         receipt["decision"] = "OFFLINE_SYNTHETIC_ONLY"
         return receipt
 
-    raw = None
-    used_url = None
-    for url in dvc_descriptor_urls(HISTORICAL_DIR_MD5):
-        try:
-            raw = fetch_descriptor(url)
-            used_url = url
-            receipt["historical_snapshot"]["attempts"].append({"url": url, "status": "PUBLIC_DESCRIPTOR_OK"})
-            break
-        except Exception as exc:
-            receipt["historical_snapshot"]["attempts"].append({"url": url, "status": "UNAVAILABLE", "error": str(exc)})
-    if raw is None:
-        receipt["decision"] = "STOP_DATA_COVERAGE_YOUNG_PLAYER_SNAPSHOT_UNAVAILABLE"
-        return receipt
+    any_unavailable = False
+    any_cardinality_drift = False
+    union_by_category = {k: set() for k in CATEGORY_TOKENS}
 
-    entries = parse_descriptor(raw)
-    relpaths = sorted(x["relpath"] for x in entries)
-    cats = categorize(relpaths)
-    receipt["historical_snapshot"].update({
-        "descriptor_url": used_url,
-        "descriptor_bytes": len(raw),
-        "descriptor_sha256": hashlib.sha256(raw).hexdigest(),
-        "entry_count": len(entries),
-        "declared_count_matches": len(entries) == DECLARED_NFILES,
-        "relpaths": relpaths,
-        "categories": cats,
-    })
-    present = set(cats)
+    for snapshot in SNAPSHOTS:
+        row = {
+            "name": snapshot["name"],
+            "git_commit": snapshot["git_commit"],
+            "committed_at_utc": snapshot["committed_at_utc"],
+            "dir_md5": snapshot["dir_md5"],
+            "declared_nfiles": snapshot["declared_nfiles"],
+            "attempts": [],
+        }
+        raw = None
+        used_url = None
+        for url in dvc_descriptor_urls(snapshot["dir_md5"]):
+            try:
+                raw = fetch_descriptor(url)
+                used_url = url
+                row["attempts"].append({"url": url, "status": "PUBLIC_DESCRIPTOR_OK"})
+                break
+            except Exception as exc:
+                row["attempts"].append({"url": url, "status": "UNAVAILABLE", "error": str(exc)})
+        if raw is None:
+            row["status"] = "DESCRIPTOR_UNAVAILABLE"
+            any_unavailable = True
+            receipt["historical_snapshots"].append(row)
+            continue
+
+        entries = parse_descriptor(raw)
+        relpaths = sorted(x["relpath"] for x in entries)
+        cats = categorize(relpaths)
+        cardinality_ok = len(entries) == snapshot["declared_nfiles"]
+        if not cardinality_ok:
+            any_cardinality_drift = True
+        for cat, paths in cats.items():
+            union_by_category[cat].update(paths)
+        row.update({
+            "status": "PUBLIC_DESCRIPTOR_OK",
+            "descriptor_url": used_url,
+            "descriptor_bytes": len(raw),
+            "descriptor_sha256": hashlib.sha256(raw).hexdigest(),
+            "entry_count": len(entries),
+            "declared_count_matches": cardinality_ok,
+            "relpaths": relpaths,
+            "categories": cats,
+        })
+        receipt["historical_snapshots"].append(row)
+
+    union_cats = {k: sorted(v) for k, v in union_by_category.items() if v}
+    receipt["union_asset_categories"] = union_cats
+    present = set(union_cats)
     missing = sorted(REQUIRED - present)
-    receipt["historical_snapshot"]["required_categories_present"] = sorted(REQUIRED & present)
-    receipt["historical_snapshot"]["required_categories_missing"] = missing
+    receipt["required_categories_present"] = sorted(REQUIRED & present)
+    receipt["required_categories_missing"] = missing
 
-    if len(entries) != DECLARED_NFILES:
+    if any_unavailable:
+        receipt["decision"] = "STOP_DATA_COVERAGE_YOUNG_PLAYER_SNAPSHOT_UNAVAILABLE"
+    elif any_cardinality_drift:
         receipt["decision"] = "STOP_DATA_COVERAGE_YOUNG_PLAYER_DESCRIPTOR_CARDINALITY_DRIFT"
     elif missing:
         receipt["decision"] = "STOP_DATA_COVERAGE_YOUNG_PLAYER_ASSET_SURFACE"
