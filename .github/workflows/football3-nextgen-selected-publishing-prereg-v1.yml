@@ -1,0 +1,155 @@
+name: Football3 NextGen Selected Publishing Preregistration
+on:
+  push:
+    branches: [football3/nextgen-selected-publishing-prereg-v1]
+    paths:
+      - 'governance/football3/nextgen_selected_publishing_prereg_contract_v1.json'
+      - 'governance/football3/validate_nextgen_selected_publishing_prereg_v1.py'
+      - 'governance/football3/test_validate_nextgen_selected_publishing_prereg_v1.py'
+      - '.github/workflows/football3-nextgen-selected-publishing-prereg-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-nextgen-selected-publishing-prereg-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '102c5cf6ff7b98bd0be0715643c7f936900a756a'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  FORMAL_V2_BLOB: 'a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871'
+  FORMAL_V2_TEST_BLOB: '61b25cd403fa1d9efa0dfcbc1643e0f17621944e'
+  FORMAL_POINTER_BLOB: 'f07743f9c873d415fad9612f3225f64c64b10542'
+  FORMAL_GATEWAY_ENTRY_BLOB: 'b41b0ede2db99c116b90270a32cd04dd240eb655'
+  FORMAL_RECEIPT_DISTRIBUTION_BLOB: '2c5be3fa953cc9848f331cf8a2bb3600f93b420e'
+  FOUNDATION_CONTRACT_BLOB: '897684e9655f7123dd2c338470a64c4837819639'
+  FOUNDATION_IMPL_BLOB: 'eebb4aa9747794923a91e26cd36ab6e63b744f6f'
+  FOUNDATION_TEST_BLOB: 'e063f42f3820beb23d6b6def1c66543246676567'
+  CURRENT_SHA256: '71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731'
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_name: ${{ steps.names.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, persist-credentials: false}
+      - name: Bind exact base and four-file scope
+        id: identity
+        env: {CANDIDATE_SHA: '${{ github.sha }}'}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={'.github/workflows/football3-nextgen-selected-publishing-prereg-v1.yml','governance/football3/nextgen_selected_publishing_prereg_contract_v1.json','governance/football3/validate_nextgen_selected_publishing_prereg_v1.py','governance/football3/test_validate_nextgen_selected_publishing_prereg_v1.py'}
+          got=set(subprocess.check_output(['git','diff','--name-only','102c5cf6ff7b98bd0be0715643c7f936900a756a...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+      - name: Prove formal foundation and receipt distribution surfaces immutable
+        run: |
+          set -euo pipefail
+          for spec in \
+            "football-data/new_engine_v1/formal_fusion_v2.py:$FORMAL_V2_BLOB" \
+            "football-data/new_engine_v1/test_formal_fusion_v2.py:$FORMAL_V2_TEST_BLOB" \
+            "football-data/config/formal_model_pointer_historical_xg_fusion_v2.json:$FORMAL_POINTER_BLOB" \
+            "football-data/formal_gpt_gateway_v1/entry.py:$FORMAL_GATEWAY_ENTRY_BLOB" \
+            "governance/football3/nextgen_current_v2_foundation_contract_v1.json:$FOUNDATION_CONTRACT_BLOB" \
+            "governance/football3/nextgen_current_v2_foundation_v1.py:$FOUNDATION_IMPL_BLOB" \
+            "governance/football3/test_nextgen_current_v2_foundation_v1.py:$FOUNDATION_TEST_BLOB"
+          do path="${spec%%:*}"; expected="${spec##*:}"; test "$(git rev-parse "$EXACT_BASE:$path")" = "$expected"; test "$(git hash-object "$path")" = "$expected"; done
+          git cat-file -e "${FORMAL_RECEIPT_DISTRIBUTION_BLOB}^{blob}"
+          git cat-file blob "$FORMAL_RECEIPT_DISTRIBUTION_BLOB" > /tmp/formal-receipt-distribution.py
+          grep -q 'football3-formal-receipt-distribution-contract-v1' /tmp/formal-receipt-distribution.py
+          grep -q 'prediction_sha_preserved' /tmp/formal-receipt-distribution.py
+          grep -q 'prediction_probability_object_changed' /tmp/formal-receipt-distribution.py
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.12'}
+      - name: Candidate8 static contract and permanent tests
+        env: {PYTHONPATH: governance/football3}
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_nextgen_selected_publishing_prereg_v1.py governance/football3/test_validate_nextgen_selected_publishing_prereg_v1.py
+          python governance/football3/validate_nextgen_selected_publishing_prereg_v1.py --repo-root . | tee /tmp/validator.txt
+          python governance/football3/test_validate_nextgen_selected_publishing_prereg_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 18 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Foundation permanent regression
+        env: {PYTHONPATH: 'football-data:governance/football3'}
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt
+          grep -q '^OK$' /tmp/foundation.txt
+          if grep -q 'skipped=' /tmp/foundation.txt; then
+            echo 'NEXTGEN_FOUNDATION_INTEGRATION_SKIP_FORBIDDEN' >&2
+            exit 2
+          fi
+      - name: Existing formal V2 permanent regression
+        env: {PYTHONPATH: 'football-data:football-data/research'}
+        run: |
+          set -euo pipefail
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal-v2.txt
+          grep -q 'Ran 13 tests' /tmp/formal-v2.txt
+          grep -q '^OK$' /tmp/formal-v2.txt
+      - name: Seal exact-HEAD baseline-only research publishing evidence
+        id: names
+        env: {CANDIDATE_SHA: '${{ steps.identity.outputs.candidate_sha }}'}
+        run: |
+          set -euo pipefail
+          rm -rf _seal; mkdir -p _seal/code _seal/contract _seal/evidence _seal/workflow
+          cp governance/football3/validate_nextgen_selected_publishing_prereg_v1.py governance/football3/test_validate_nextgen_selected_publishing_prereg_v1.py _seal/code/
+          cp governance/football3/nextgen_selected_publishing_prereg_contract_v1.json _seal/contract/
+          cp .github/workflows/football3-nextgen-selected-publishing-prereg-v1.yml _seal/workflow/
+          cp /tmp/validator.txt /tmp/tests.txt /tmp/foundation.txt /tmp/formal-v2.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=Path('_seal')
+          receipt={'schema_version':'football3-nextgen-selected-publishing-prereg-receipt-v1','status':'RESEARCH_INFRASTRUCTURE_READY_BASELINE_ONLY','candidate_id':'V3-C8-SELECTED-PUBLISHING-LAYER','candidate_head':os.environ['CANDIDATE_SHA'],'canonical_exact_base':os.environ['EXACT_BASE'],'formal_model_head':os.environ['FORMAL_HEAD'],'current_sha256':os.environ['CURRENT_SHA256'],'research_only':True,'is_expert':False,'candidate_status':'NOT_AVAILABLE','weight':0,'matrix_delta':0,'upstream_candidate_count':7,'active_expert_count':0,'selected_experts':[],'publication_mode':'BASELINE_ONLY_RESEARCH_NOOP','research_governance_receipt_allowed':True,'formal_production_publish_allowed':False,'formal_output_mutated':False,'production_chain_created':False,'new_target_labels_read':False,'legacy_sealed_labels_read':False,'training_performed':False,'tuning_performed':False,'formal_v2_unchanged':True,'current_changed':False,'formal_weights_changed':False,'production_changed':False}
+          (r/'evidence'/'candidate8_prereg_receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          files={}
+          for p in sorted(r.rglob('*')):
+            if p.is_file():
+              b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          m={'schema_version':'football3-nextgen-selected-publishing-prereg-artifact-v1','status':receipt['status'],'candidate_id':receipt['candidate_id'],'candidate_head':receipt['candidate_head'],'canonical_exact_base':receipt['canonical_exact_base'],'formal_model_head':receipt['formal_model_head'],'current_sha256':receipt['current_sha256'],'active_expert_count':0,'selected_experts':[],'formal_receipt_distribution_blob':os.environ['FORMAL_RECEIPT_DISTRIBUTION_BLOB'],'changed_file_count':4,'files':files}
+          (r/'artifact_manifest.json').write_text(json.dumps(m,sort_keys=True,indent=2)+'\n')
+          PY
+          artifact_name="football3-nextgen-selected-publishing-prereg-${CANDIDATE_SHA}-${GITHUB_RUN_ID}"; echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with: {name: '${{ steps.names.outputs.artifact_name }}', path: _seal, if-no-files-found: error, retention-days: 30}
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with: {name: '${{ needs.validate-and-seal.outputs.artifact_name }}', path: _readback}
+      - name: Verify sealed baseline-only publishing receipt
+        env: {CANDIDATE_SHA: '${{ needs.validate-and-seal.outputs.candidate_sha }}'}
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=Path('_readback'); m=json.loads((r/'artifact_manifest.json').read_text()); x=json.loads((r/'evidence'/'candidate8_prereg_receipt.json').read_text())
+          assert m['status']=='RESEARCH_INFRASTRUCTURE_READY_BASELINE_ONLY'
+          assert m['candidate_head']==os.environ['CANDIDATE_SHA'] and m['canonical_exact_base']==os.environ['EXACT_BASE']
+          assert x['candidate_status']=='NOT_AVAILABLE' and x['weight']==0 and x['matrix_delta']==0 and not x['is_expert']
+          assert x['active_expert_count']==0 and x['selected_experts']==[] and x['publication_mode']=='BASELINE_ONLY_RESEARCH_NOOP'
+          assert x['research_governance_receipt_allowed'] and not x['formal_production_publish_allowed'] and not x['formal_output_mutated'] and not x['production_chain_created']
+          assert not x['new_target_labels_read'] and not x['legacy_sealed_labels_read'] and not x['training_performed'] and not x['tuning_performed']
+          actual={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert actual==set(m['files'])
+          for rel,meta in m['files'].items():
+            b=(r/rel).read_bytes(); assert hashlib.sha256(b).hexdigest()==meta['sha256'] and len(b)==meta['bytes']
+          print('NEXTGEN_SELECTED_PUBLISHING_PREREG_REMOTE_READBACK_PASS')
+          PY
