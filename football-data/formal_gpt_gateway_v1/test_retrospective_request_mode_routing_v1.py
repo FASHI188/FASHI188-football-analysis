@@ -12,6 +12,8 @@ import request_contract_v1 as request_contract
 import historical_request_mode_guard_v1 as historical_guard
 import current_v2_retrospective_replay_v1 as current_v2_replay
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
+
 
 INCIDENT_MATCH = {
     "competition_id": "JPN_J1",
