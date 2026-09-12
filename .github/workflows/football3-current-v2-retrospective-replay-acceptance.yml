@@ -293,8 +293,17 @@ jobs:
           CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir -p acceptance_aggregate_evidence
-          if [ "$TARGETED_JOB" = "success" ] && [ "$BATCH_JOB" = "success" ] && [ "$BATCH_AGGREGATE" = "SUCCESS" ]; then result=success; else result=failure; fi
-          printf '{"candidate_exact_head":"%s","targeted_job":"%s","batch_job":"%s","batch_aggregate":"%s","aggregate_result":"%s"}\n' "$CANDIDATE_SHA" "$TARGETED_JOB" "$BATCH_JOB" "$BATCH_AGGREGATE" "$result" > acceptance_aggregate_evidence/aggregate_result.json
+          if [ "$TARGETED_JOB" = "skipped" ] && [ "$BATCH_JOB" = "skipped" ]; then
+            result=not_applicable_by_scope
+            scope_status=NOT_APPLICABLE_BY_SCOPE
+          elif [ "$TARGETED_JOB" = "success" ] && [ "$BATCH_JOB" = "success" ] && [ "$BATCH_AGGREGATE" = "SUCCESS" ]; then
+            result=success
+            scope_status=APPLICABLE_PASS
+          else
+            result=failure
+            scope_status=APPLICABLE_FAILURE
+          fi
+          printf '{"candidate_exact_head":"%s","targeted_job":"%s","batch_job":"%s","batch_aggregate":"%s","scope_status":"%s","aggregate_result":"%s"}\n' "$CANDIDATE_SHA" "$TARGETED_JOB" "$BATCH_JOB" "$BATCH_AGGREGATE" "$scope_status" "$result" > acceptance_aggregate_evidence/aggregate_result.json
           echo "aggregate_result=$result" >> "$GITHUB_OUTPUT"
       - name: Upload aggregate acceptance evidence
         if: ${{ always() }}
@@ -307,7 +316,8 @@ jobs:
         if: ${{ always() }}
         env:
           AGGREGATE_RESULT: ${{ steps.record-aggregate.outputs.aggregate_result }}
-        run: test "$AGGREGATE_RESULT" = "success"
+        run: |
+          test "$AGGREGATE_RESULT" = "success" || test "$AGGREGATE_RESULT" = "not_applicable_by_scope"
 
   acceptance-failure-evidence:
     needs: [targeted-adapter-contract, four-fixture-eight-domain, aggregate-acceptance-gate]
@@ -349,8 +359,9 @@ jobs:
           batch=os.environ.get('BATCH_RESULT') or 'unknown'
           aggregate=os.environ.get('AGGREGATE_RESULT') or 'unknown'
           batch_aggregate=os.environ.get('BATCH_AGGREGATE_RESULT') or 'NOT_REACHED'
+          not_applicable = targeted=='skipped' and batch=='skipped'
           authoritative=parse_json('FIRST_AUTHORITATIVE_FAILURE', {})
-          if not authoritative:
+          if not authoritative and not not_applicable:
               if targeted != 'success':
                   authoritative={'job':'targeted-adapter-contract','result':targeted}
               elif batch != 'success':
@@ -360,13 +371,14 @@ jobs:
           passed = targeted=='success' and batch=='success' and aggregate=='success' and batch_aggregate=='SUCCESS'
           evidence={
               'schema_version':'football3-current-v2-retrospective-acceptance-always-evidence-v2',
-              'status':'PASS' if passed else 'FAIL',
+              'status':'NOT_APPLICABLE_BY_SCOPE' if not_applicable else ('PASS' if passed else 'FAIL'),
               'candidate_exact_head':os.environ['CANDIDATE_SHA'],
               'workflow_run_id':int(os.environ['GITHUB_RUN_ID']),
               'targeted_result':targeted,
               'batch_result':batch,
               'aggregate_result':aggregate,
               'batch_aggregate_result':batch_aggregate,
+              'not_applicable_by_scope':not_applicable,
               'first_authoritative_failure':authoritative,
               'failed_domain':os.environ.get('FAILED_DOMAIN') or None,
               'failed_source':os.environ.get('FAILED_SOURCE') or None,
@@ -393,6 +405,10 @@ jobs:
       - name: Enforce upstream acceptance status after evidence upload
         if: ${{ always() }}
         run: |
+          if [ "$TARGETED_RESULT" = "skipped" ] && [ "$BATCH_RESULT" = "skipped" ]; then
+            test "$AGGREGATE_RESULT" = "success"
+            exit 0
+          fi
           test "$TARGETED_RESULT" = "success"
           test "$BATCH_RESULT" = "success"
           test "$AGGREGATE_RESULT" = "success"
