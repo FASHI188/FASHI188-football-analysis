@@ -1,0 +1,71 @@
+name: Football3 V3 Young Player PIT Inventory V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - '.github/workflows/football3-v3-young-player-pit-inventory-v1.yml'
+      - 'governance/football3/v3_young_player_pit_inventory_contract_v1.json'
+      - 'governance/football3/validate_v3_young_player_pit_inventory_v1.py'
+      - 'governance/football3/test_v3_young_player_pit_inventory_v1.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zero-label-young-player-pit-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Exact HEAD binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          printf '{"head":"%s","event":"%s"}\n' "$(git rev-parse HEAD)" "${GITHUB_EVENT_NAME}" > head-binding.json
+
+      - name: Compile and permanent tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_v3_young_player_pit_inventory_v1.py governance/football3/test_v3_young_player_pit_inventory_v1.py
+          python governance/football3/test_v3_young_player_pit_inventory_v1.py
+
+      - name: Audit historical player snapshot descriptor and frozen inventory upper bound
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          python governance/football3/validate_v3_young_player_pit_inventory_v1.py --output artifact/young-player-pit-inventory-receipt.json
+          cp governance/football3/v3_young_player_pit_inventory_contract_v1.json artifact/
+          cp head-binding.json artifact/
+
+      - name: Prove zero-label boundary
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p=json.load(open('artifact/young-player-pit-inventory-receipt.json'))
+          assert p['labels_opened'] == 0
+          assert p['training'] is False
+          assert p['tuning'] is False
+          assert p['result_or_goal_values_read'] == 0
+          assert p['referenced_dvc_data_objects_downloaded'] == 0
+          assert p['data_ready'] is False
+          assert p['confirmation_inventory_upper_bound']['max_n'] == 99
+          assert p['confirmation_inventory_upper_bound']['fresh_unconsumed_n'] is None
+          assert p['decision'] in {
+            'STOP_DATA_COVERAGE_YOUNG_PLAYER_SNAPSHOT_UNAVAILABLE',
+            'STOP_DATA_COVERAGE_YOUNG_PLAYER_DESCRIPTOR_CARDINALITY_DRIFT',
+            'STOP_DATA_COVERAGE_YOUNG_PLAYER_ASSET_SURFACE',
+            'PASS_YOUNG_PLAYER_SNAPSHOT_TRANSPORT_NEXT_SCHEMA_IDENTITY_AUDIT',
+          }
+          print(p['decision'])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-young-player-pit-inventory-v1-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
