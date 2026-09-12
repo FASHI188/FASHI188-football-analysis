@@ -13,6 +13,8 @@ sys.path.insert(0, str(HERE))
 
 import production_base_binding_v1 as binding
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
+
 
 class ProductionBaseBindingFailClosedTest(unittest.TestCase):
     HEAD = 'a' * 40
