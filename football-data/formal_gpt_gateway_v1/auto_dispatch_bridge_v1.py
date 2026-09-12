@@ -417,9 +417,63 @@ def prepare(args: argparse.Namespace) -> int:
         _append_output({"dispatch_required": "false", "result": "DUPLICATE_REQUEST_ID_SUPPRESSED", "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name})
         return 0
     if ledger_status == "RESERVATION_CONFLICT":
-        audit.update({"phase": "RESERVATION_CONFLICT_FAIL_CLOSED", "status": "FAIL_CLOSED", "reservation_artifact_ids": ledger_ids})
-        _write_json(args.audit_out, audit)
-        _fail("AUTO_DISPATCH_REQUEST_ID_RESERVATION_PRESENT")
+        by_id = {int(a["id"]): a for a in artifacts if type(a) is dict and a.get("id") is not None}
+        superseded: list[dict[str, Any]] = []
+        retry_allowed = True
+        for artifact_id in ledger_ids:
+            artifact = by_id.get(artifact_id)
+            if type(artifact) is not dict:
+                _fail("AUTO_DISPATCH_RESERVATION_LEDGER_ARTIFACT_MISSING")
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(api.download_artifact_zip(artifact_id)))
+            except Exception as exc:
+                raise BridgeError("AUTO_DISPATCH_RESERVATION_LEDGER_ZIP_INVALID") from exc
+            ledger, _ = _zip_json(zf, "ledger.json")
+            prior_head = ledger.get("canonical_execution_sha")
+            try:
+                prior_dispatcher_run_id = int(ledger.get("trusted_dispatcher_run_id") or 0)
+                artifact_dispatcher_run_id = int(((artifact.get("workflow_run") or {}).get("id")) or 0)
+            except (TypeError, ValueError) as exc:
+                raise BridgeError("AUTO_DISPATCH_RESERVATION_LEDGER_INVALID") from exc
+            if (
+                ledger.get("schema_version") != SCHEMA
+                or ledger.get("phase") != "PREPARED"
+                or ledger.get("status") != "READY"
+                or ledger.get("request_id") != request["request_id"]
+                or ledger.get("request_sha256") != request_sha
+                or not isinstance(prior_head, str)
+                or not SHA_RE.fullmatch(prior_head)
+                or prior_dispatcher_run_id <= 0
+                or prior_dispatcher_run_id != artifact_dispatcher_run_id
+            ):
+                _fail("AUTO_DISPATCH_RESERVATION_LEDGER_INVALID")
+            prior_run = api.json_value(f"/repos/{api.repo}/actions/runs/{prior_dispatcher_run_id}")
+            if (
+                type(prior_run) is not dict
+                or prior_run.get("event") != "workflow_run"
+                or prior_run.get("name") != TRUSTED_DISPATCHER_WORKFLOW_NAME
+                or prior_run.get("status") != "completed"
+            ):
+                _fail("AUTO_DISPATCH_RESERVATION_LEDGER_AUTHORITY_INVALID")
+            prior_conclusion = prior_run.get("conclusion")
+            same_canonical = prior_head == canonical_sha
+            if same_canonical or prior_conclusion != "failure":
+                retry_allowed = False
+            superseded.append({
+                "reservation_artifact_id": artifact_id,
+                "trusted_dispatcher_run_id": prior_dispatcher_run_id,
+                "canonical_execution_sha": prior_head,
+                "trusted_dispatcher_conclusion": prior_conclusion,
+                "same_canonical_execution_sha": same_canonical,
+            })
+        if not retry_allowed:
+            audit.update({"phase": "RESERVATION_CONFLICT_FAIL_CLOSED", "status": "FAIL_CLOSED", "reservation_artifact_ids": ledger_ids, "reservation_evidence": superseded})
+            _write_json(args.audit_out, audit)
+            _fail("AUTO_DISPATCH_REQUEST_ID_RESERVATION_PRESENT")
+        audit.update({
+            "reservation_retry_policy": "FAILED_PRIOR_DISPATCHER_DIFFERENT_CANONICAL_ONLY",
+            "superseded_failed_reservations": superseded,
+        })
     _write_json(args.audit_out, audit)
     _append_output({"dispatch_required": "true", "result": "PREPARED", "request_sha256": request_sha, "reservation_name": reservation_name, "completed_name": completed_name})
     return 0
