@@ -1,0 +1,93 @@
+name: Football R44L7 Setpiece Role Zero Label
+
+on:
+  push:
+    branches:
+      - research/r44l7-setpiece-role-zero-label
+    paths:
+      - 'football-data/research/r44l7_setpiece_role_zero_label/**'
+      - '.github/workflows/football-r44l7-setpiece-role-zero-label.yml'
+  pull_request:
+    paths:
+      - 'football-data/research/r44l7_setpiece_role_zero_label/**'
+      - '.github/workflows/football-r44l7-setpiece-role-zero-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r44l7-setpiece-zero-label-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  feasibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Audit frozen zero-label boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f football-data/research/r44l7_setpiece_role_zero_label/prereg_r44l7.md
+          python -m py_compile football-data/research/r44l7_setpiece_role_zero_label/run_zero_label_r44l7.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('football-data/research/r44l7_setpiece_role_zero_label/run_zero_label_r44l7.py')
+          s=p.read_text(encoding='utf-8')
+          forbidden=['home_'+'score','away_'+'score','winner','label_'+'draw','binary_'+'target','goal_'+'difference']
+          hits=[x for x in forbidden if x in s]
+          if hits: raise SystemExit(f'forbidden result token(s): {hits}')
+          assert 'event_path(target' not in s
+          assert 'DOMAINS = [' in s and '"competition_id": 2' in s and '"competition_id": 12' in s and '"competition_id": 7' in s
+          assert 'competition_id": 11' not in s
+          pre=Path('football-data/research/r44l7_setpiece_role_zero_label/prereg_r44l7.md').read_text(encoding='utf-8')
+          for t in ['目标比赛结果字段访问=0','目标比赛event访问=0','model_fits=0','La Liga 2015/16']:
+              assert t in pre, t
+          print('PASS_R44L7_STATIC_ZERO_LABEL_BOUNDARY')
+          PY
+      - name: Run frozen set-piece role feasibility
+        env:
+          R44L7_OUTPUT: ${{ runner.temp }}/r44l7
+        run: |
+          set -euo pipefail
+          rm -rf "$R44L7_OUTPUT"
+          python football-data/research/r44l7_setpiece_role_zero_label/run_zero_label_r44l7.py | tee "$RUNNER_TEMP/r44l7_stdout.txt"
+      - name: Verify receipt and repository immutability
+        env:
+          R44L7_OUTPUT: ${{ runner.temp }}/r44l7
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path(os.environ['R44L7_OUTPUT'])
+          raw=(root/'receipt.json').read_bytes(); r=json.loads(raw)
+          assert r['schema_version']=='V520-R44L7-SETPIECE-ZERO-LABEL-1.0'
+          assert r['terminal'] in {'PASS_R44L7_SETPIECE_ROLE_ZERO_LABEL_FEASIBILITY','STOP_R44L7_SETPIECE_ROLE_DATA_FEASIBILITY'}
+          assert r['research_only'] is True and r['formal_weight']==0
+          assert all(v==0 for v in r['hard_boundary_receipt'].values())
+          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert r['run_identity']['checked_out_head_sha']==head
+          assert (root/'receipt.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          print(json.dumps({'terminal':r['terminal'],'summary':r['summary'],'gates':r['gates'],'head':head},sort_keys=True))
+          PY
+          git diff --exit-code -- .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: football-r44l7-setpiece-zero-label-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/r44l7/
+            ${{ runner.temp }}/r44l7_stdout.txt
+            football-data/research/r44l7_setpiece_role_zero_label/prereg_r44l7.md
+          retention-days: 30
+          if-no-files-found: error
