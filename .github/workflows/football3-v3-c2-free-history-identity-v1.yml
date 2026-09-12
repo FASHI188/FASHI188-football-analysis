@@ -1,0 +1,240 @@
+name: Football3 V3 C2 Free History Identity
+on:
+  push:
+    branches: [football3/v3-c2-free-history-identity-v1]
+    paths:
+      - '.github/workflows/football3-v3-c2-free-history-identity-v1.yml'
+      - 'governance/football3/c2_free_history_identity_contract_v1.json'
+      - 'governance/football3/c2_openfootball_snapshot_manifest_v1.json'
+      - 'governance/football3/c2_openfootball_identity_lineage_v1.json'
+      - 'governance/football3/c2_free_history_identity_v1.py'
+      - 'governance/football3/validate_c2_free_history_identity_v1.py'
+      - 'governance/football3/test_c2_free_history_identity_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-v3-c2-free-history-identity-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '5c60aa6f94976f2cd6fc07a285b763e7fefc528b'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  CURRENT_SHA256: '71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731'
+  SHARED_GIT_ADAPTER_BLOB: '0ed11017f7335aced6064e3473e038b087e0bd74'
+  SHARED_PIT_INTERFACE_BLOB: '8b9bba7b548e61de7f3b79d96881ebe9c3a41b51'
+  SHARED_FREE_REGISTRY_BLOB: '0a7782620557be98e8a2882409ff8028f96a8d27'
+jobs:
+  deterministic-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact base and seven-file scope
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-c2-free-history-identity-v1.yml',
+            'governance/football3/c2_free_history_identity_contract_v1.json',
+            'governance/football3/c2_openfootball_snapshot_manifest_v1.json',
+            'governance/football3/c2_openfootball_identity_lineage_v1.json',
+            'governance/football3/c2_free_history_identity_v1.py',
+            'governance/football3/validate_c2_free_history_identity_v1.py',
+            'governance/football3/test_c2_free_history_identity_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','5c60aa6f94976f2cd6fc07a285b763e7fefc528b...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          test "$(git rev-parse "$EXACT_BASE:governance/football3/v3_git_snapshot_adapter_v1.py")" = "$SHARED_GIT_ADAPTER_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:governance/football3/v3_pit_data_provider_interface_v1.py")" = "$SHARED_PIT_INTERFACE_BLOB"
+          test "$(git rev-parse "$EXACT_BASE:governance/football3/v3_free_source_registry_v1.json")" = "$SHARED_FREE_REGISTRY_BLOB"
+          test "$(git hash-object governance/football3/v3_git_snapshot_adapter_v1.py)" = "$SHARED_GIT_ADAPTER_BLOB"
+          test "$(git hash-object governance/football3/v3_pit_data_provider_interface_v1.py)" = "$SHARED_PIT_INTERFACE_BLOB"
+          test "$(git hash-object governance/football3/v3_free_source_registry_v1.json)" = "$SHARED_FREE_REGISTRY_BLOB"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Static permanent and contract tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/c2_free_history_identity_v1.py governance/football3/validate_c2_free_history_identity_v1.py governance/football3/test_c2_free_history_identity_v1.py
+          python governance/football3/validate_c2_free_history_identity_v1.py --repo-root . | tee /tmp/c2-validator.txt
+          python governance/football3/test_c2_free_history_identity_v1.py 2>&1 | tee /tmp/c2-tests.txt
+          grep -q 'Ran 40 tests' /tmp/c2-tests.txt
+          grep -q '^OK$' /tmp/c2-tests.txt
+      - name: NextGen foundation permanent regression
+        env:
+          PYTHONPATH: 'football-data:governance/football3'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt
+          grep -q '^OK$' /tmp/foundation.txt
+          if grep -q 'skipped=' /tmp/foundation.txt; then exit 2; fi
+      - name: Formal V2 permanent regression
+        env:
+          PYTHONPATH: 'football-data:football-data/research'
+        run: |
+          set -euo pipefail
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal-v2.txt
+          grep -q 'Ran 13 tests' /tmp/formal-v2.txt
+          grep -q '^OK$' /tmp/formal-v2.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c2-deterministic-${{ github.sha }}
+          path: |
+            /tmp/c2-validator.txt
+            /tmp/c2-tests.txt
+            /tmp/foundation.txt
+            /tmp/formal-v2.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  live-public-materialization:
+    needs: deterministic-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      live_status: ${{ steps.live.outputs.live_status }}
+      binding_count: ${{ steps.live.outputs.binding_count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Materialize exact public snapshots and identity bridge
+        id: live
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          mkdir -p _live/evidence
+          python - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+          from datetime import datetime, timezone
+          from pathlib import Path
+          sys.path.insert(0,'governance/football3')
+          import c2_free_history_identity_v1 as m
+          manifest=json.loads(Path('governance/football3/c2_openfootball_snapshot_manifest_v1.json').read_text())
+          lineage=json.loads(Path('governance/football3/c2_openfootball_identity_lineage_v1.json').read_text())
+          observed=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+          result={'schema_version':'football3-v3-c2-free-history-identity-live-receipt-v1','candidate_head':'${{ github.sha }}','exact_base':os.environ['EXACT_BASE'],'status':'PASS','source_receipts':[],'promotion_lineage_count':0,'transfermarkt_binding':None,'external_failure':None,'new_target_labels_read':False,'training_performed':False,'tuning_performed':False,'formal_v2_changed':False,'current_changed':False,'formal_weights_changed':False,'production_changed':False}
+          raw_by_key={}; registries={}
+          def get(url):
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-research-audit/1.0'})
+              with urllib.request.urlopen(req,timeout=30) as r: return r.read()
+          try:
+              for src in manifest['season_snapshots']+manifest['club_registries']:
+                  url=f"https://raw.githubusercontent.com/{src['repository']}/{src['commit']}/{src['path']}"
+                  content=get(url)
+                  result['source_receipts'].append(m.source_receipt(src,content,observed))
+                  raw_by_key[(src.get('country'),src.get('tier','REGISTRY'))]=content.decode('utf-8-sig')
+                  if 'tier' not in src: registries[src['country']]=m.parse_openfootball_club_registry(content.decode('utf-8-sig'))
+              all_prom=[]
+              for cc in ('ENG','GER','ESP','ITA','FRA'):
+                  idx=m.build_exact_alias_index(registries[cc])
+                  prior=m.parse_fixture_team_names(raw_by_key[(cc,'SECOND')])
+                  current=m.parse_fixture_team_names(raw_by_key[(cc,'TOP')])
+                  all_prom.extend((cc,x) for x in m.derive_promotions(prior,current,idx))
+              expected={(x['country'],x['canonical_name']) for x in lineage['promotion_lineage']}; got=set(all_prom)
+              result['promotion_lineage_count']=len(got)
+              result['promotion_lineage']=sorted([{'country':c,'canonical_name':n} for c,n in got],key=lambda x:(x['country'],x['canonical_name']))
+              if got != expected:
+                  result['status']='STOP_DATA_COVERAGE'; result['lineage_mismatch']={'missing':sorted(expected-got),'unexpected':sorted(got-expected)}
+              tm=manifest['transfermarkt_public_capture']
+              clubs=get(tm['upstream_documented_clubs_url']); meta=get(tm['upstream_documented_metadata_url'])
+              tm_rows=m.read_transfermarkt_clubs_gz(clubs)
+              combined=[]
+              for cc in ('ENG','GER','ESP','ITA','FRA'): combined.extend(registries[cc])
+              binding=m.bind_canonical_to_transfermarkt(combined,tm_rows,[x['canonical_name'] for x in lineage['promotion_lineage']])
+              binding['clubs_csv_sha256']=m.sha256(clubs); binding['clubs_csv_bytes']=len(clubs)
+              binding['dataset_metadata_sha256']=m.sha256(meta); binding['dataset_metadata_bytes']=len(meta)
+              result['transfermarkt_binding']=binding
+              if binding['status']!='PASS': result['status']='STOP_DATA_COVERAGE'
+          except (urllib.error.URLError, TimeoutError, OSError) as e:
+              result['status']='EXTERNAL_DYNAMIC_DATA_FAILURE'; result['external_failure']=repr(e)
+          except Exception as e:
+              result['status']='CANDIDATE_CODE_OR_CONTRACT_FAILURE'; result['external_failure']=repr(e)
+          Path('_live/evidence/live_capture.json').write_text(json.dumps(result,sort_keys=True,indent=2,ensure_ascii=False)+'\n')
+          print(json.dumps({'status':result['status'],'promotion_lineage_count':result['promotion_lineage_count'],'binding_count':(result['transfermarkt_binding'] or {}).get('binding_count',0)},sort_keys=True))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"live_status={result['status']}\n"); f.write(f"binding_count={(result['transfermarkt_binding'] or {}).get('binding_count',0)}\n")
+          if result['status']=='CANDIDATE_CODE_OR_CONTRACT_FAILURE': raise SystemExit(2)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c2-live-materialization-${{ github.sha }}
+          path: _live/evidence/live_capture.json
+          if-no-files-found: error
+          retention-days: 30
+
+  seal-and-readback:
+    needs: [deterministic-core, live-public-materialization]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: c2-live-materialization-${{ github.sha }}
+          path: _seal/evidence
+      - name: Seal research artifact
+        run: |
+          set -euo pipefail
+          mkdir -p _seal/contract _seal/code _seal/workflow
+          cp governance/football3/c2_free_history_identity_contract_v1.json governance/football3/c2_openfootball_snapshot_manifest_v1.json governance/football3/c2_openfootball_identity_lineage_v1.json _seal/contract/
+          cp governance/football3/c2_free_history_identity_v1.py governance/football3/validate_c2_free_history_identity_v1.py governance/football3/test_c2_free_history_identity_v1.py _seal/code/
+          cp .github/workflows/football3-v3-c2-free-history-identity-v1.yml _seal/workflow/
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('_seal'); live=json.loads((r/'evidence/live_capture.json').read_text())
+          final={'schema_version':'football3-v3-c2-free-history-identity-artifact-v1','candidate_head':'${{ github.sha }}','exact_base':'5c60aa6f94976f2cd6fc07a285b763e7fefc528b','live_status':live['status'],'promotion_lineage_count':live.get('promotion_lineage_count',0),'transfermarkt_binding_count':(live.get('transfermarkt_binding') or {}).get('binding_count',0),'candidate_status':'NOT_AVAILABLE','weight':0,'matrix_delta':0,'new_target_labels_read':False,'training_performed':False,'tuning_performed':False,'formal_v2_changed':False,'current_changed':False,'formal_weights_changed':False,'production_changed':False,'files':{}}
+          for p in sorted(r.rglob('*')):
+              if p.is_file() and p.name!='artifact_manifest.json':
+                  b=p.read_bytes(); final['files'][p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          (r/'artifact_manifest.json').write_text(json.dumps(final,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: c2-free-history-identity-${{ github.sha }}-${{ github.run_id }}
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/download-artifact@v5
+        with:
+          name: c2-free-history-identity-${{ github.sha }}-${{ github.run_id }}
+          path: _readback
+      - name: Remote readback
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('_readback'); m=json.loads((r/'artifact_manifest.json').read_text()); live=json.loads((r/'evidence/live_capture.json').read_text())
+          assert m['candidate_head']=='${{ github.sha }}' and m['exact_base']=='5c60aa6f94976f2cd6fc07a285b763e7fefc528b'
+          assert m['candidate_status']=='NOT_AVAILABLE' and m['weight']==0 and m['matrix_delta']==0
+          assert not any(m[k] for k in ('new_target_labels_read','training_performed','tuning_performed','formal_v2_changed','current_changed','formal_weights_changed','production_changed'))
+          assert live['status'] in {'PASS','STOP_DATA_COVERAGE','EXTERNAL_DYNAMIC_DATA_FAILURE'}
+          for rel,meta in m['files'].items():
+              b=(r/rel).read_bytes(); assert hashlib.sha256(b).hexdigest()==meta['sha256'] and len(b)==meta['bytes']
+          print('C2_FREE_HISTORY_IDENTITY_REMOTE_READBACK_PASS',live['status'],m['promotion_lineage_count'],m['transfermarkt_binding_count'])
+          PY
