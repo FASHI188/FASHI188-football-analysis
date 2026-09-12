@@ -1,0 +1,155 @@
+name: Football3 V3 C2 Free Snapshot Materialization V1
+on:
+  push:
+    branches: [football3/v3-c2-free-snapshot-materialization-v1]
+    paths:
+      - '.github/workflows/football3-v3-c2-free-snapshot-materialization-v1.yml'
+      - 'governance/football3/v3_c2_free_snapshot_materialization_contract_v1.json'
+      - 'governance/football3/v3_c2_free_source_snapshot_manifest_v1.json'
+      - 'governance/football3/v3_c2_club_identity_bridge_contract_v1.json'
+      - 'governance/football3/v3_c2_free_snapshot_materializer_v1.py'
+      - 'governance/football3/validate_v3_c2_free_snapshot_materialization_v1.py'
+      - 'governance/football3/test_v3_c2_free_snapshot_materialization_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-v3-c2-free-snapshot-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '5c60aa6f94976f2cd6fc07a285b763e7fefc528b'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  CURRENT_SHA256: '71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731'
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_name: ${{ steps.seal.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact base and seven-file scope
+        id: identity
+        env:
+          CANDIDATE_SHA: '${{ github.sha }}'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-c2-free-snapshot-materialization-v1.yml',
+            'governance/football3/v3_c2_free_snapshot_materialization_contract_v1.json',
+            'governance/football3/v3_c2_free_source_snapshot_manifest_v1.json',
+            'governance/football3/v3_c2_club_identity_bridge_contract_v1.json',
+            'governance/football3/v3_c2_free_snapshot_materializer_v1.py',
+            'governance/football3/validate_v3_c2_free_snapshot_materialization_v1.py',
+            'governance/football3/test_v3_c2_free_snapshot_materialization_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','5c60aa6f94976f2cd6fc07a285b763e7fefc528b...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: C2 static validator and permanent tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/v3_c2_free_snapshot_materializer_v1.py governance/football3/validate_v3_c2_free_snapshot_materialization_v1.py governance/football3/test_v3_c2_free_snapshot_materialization_v1.py
+          python governance/football3/validate_v3_c2_free_snapshot_materialization_v1.py --repo-root . | tee /tmp/c2-validator.txt
+          python governance/football3/test_v3_c2_free_snapshot_materialization_v1.py 2>&1 | tee /tmp/c2-tests.txt
+          grep -q 'Ran 26 tests' /tmp/c2-tests.txt
+          grep -q '^OK$' /tmp/c2-tests.txt
+      - name: Previous free-data coverage regression
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python governance/football3/test_v3_free_data_coverage_v1.py 2>&1 | tee /tmp/free-coverage.txt
+          grep -q 'Ran 40 tests' /tmp/free-coverage.txt
+          grep -q '^OK$' /tmp/free-coverage.txt
+      - name: NextGen foundation regression
+        env:
+          PYTHONPATH: 'football-data:governance/football3'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt
+          grep -q '^OK$' /tmp/foundation.txt
+          ! grep -q 'skipped=' /tmp/foundation.txt
+      - name: Formal V2 regression
+        env:
+          PYTHONPATH: 'football-data:football-data/research'
+        run: |
+          set -euo pipefail
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal.txt
+          grep -q 'Ran 13 tests' /tmp/formal.txt
+          grep -q '^OK$' /tmp/formal.txt
+      - name: Seal receipt
+        id: seal
+        env:
+          CANDIDATE_SHA: '${{ steps.identity.outputs.candidate_sha }}'
+        run: |
+          set -euo pipefail
+          rm -rf _seal; mkdir -p _seal/contract _seal/code _seal/evidence _seal/workflow
+          cp governance/football3/v3_c2_free_snapshot_materialization_contract_v1.json governance/football3/v3_c2_free_source_snapshot_manifest_v1.json governance/football3/v3_c2_club_identity_bridge_contract_v1.json _seal/contract/
+          cp governance/football3/v3_c2_free_snapshot_materializer_v1.py governance/football3/validate_v3_c2_free_snapshot_materialization_v1.py governance/football3/test_v3_c2_free_snapshot_materialization_v1.py _seal/code/
+          cp .github/workflows/football3-v3-c2-free-snapshot-materialization-v1.yml _seal/workflow/
+          cp /tmp/c2-validator.txt /tmp/c2-tests.txt /tmp/free-coverage.txt /tmp/foundation.txt /tmp/formal.txt _seal/evidence/
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=Path('_seal')
+          receipt={'schema_version':'football3-v3-c2-free-snapshot-materialization-receipt-v1','status':'PARTIAL_DATA_FOUNDATION_READY_STOP_DATA_COVERAGE','candidate_head':os.environ['CANDIDATE_SHA'],'exact_base':os.environ['EXACT_BASE'],'formal_head':os.environ['FORMAL_HEAD'],'current_sha256':os.environ['CURRENT_SHA256'],'latest_pins':5,'historical_selector':'LATEST_EXACT_COMMIT_AT_OR_BEFORE_TARGET_CUTOFF','c2_data_ready':False,'training':False,'tuning':False,'target_labels_read':False,'activation':False,'formal_changed':False,'production_changed':False}
+          (r/'evidence'/'receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          files={}
+          for p in sorted(r.rglob('*')):
+            if p.is_file():
+              b=p.read_bytes(); files[p.relative_to(r).as_posix()]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          (r/'artifact_manifest.json').write_text(json.dumps({'schema_version':'football3-v3-c2-free-snapshot-artifact-v1','candidate_head':receipt['candidate_head'],'status':receipt['status'],'files':files},sort_keys=True,indent=2)+'\n')
+          PY
+          echo "artifact_name=football3-v3-c2-free-snapshot-${CANDIDATE_SHA}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.seal.outputs.artifact_name }}'
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: '${{ needs.validate-and-seal.outputs.artifact_name }}'
+          path: _readback
+      - name: Verify sealed receipt
+        env:
+          CANDIDATE_SHA: '${{ needs.validate-and-seal.outputs.candidate_sha }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          r=Path('_readback'); m=json.loads((r/'artifact_manifest.json').read_text()); x=json.loads((r/'evidence'/'receipt.json').read_text())
+          assert x['candidate_head']==os.environ['CANDIDATE_SHA']
+          assert x['status']=='PARTIAL_DATA_FOUNDATION_READY_STOP_DATA_COVERAGE'
+          assert x['latest_pins']==5 and not x['c2_data_ready']
+          assert not any(x[k] for k in ('training','tuning','target_labels_read','activation','formal_changed','production_changed'))
+          actual={p.relative_to(r).as_posix() for p in r.rglob('*') if p.is_file() and p.name!='artifact_manifest.json'}; assert actual==set(m['files'])
+          for rel,meta in m['files'].items():
+            b=(r/rel).read_bytes(); assert hashlib.sha256(b).hexdigest()==meta['sha256'] and len(b)==meta['bytes']
+          print('C2_FREE_SNAPSHOT_REMOTE_READBACK_PASS')
+          PY
