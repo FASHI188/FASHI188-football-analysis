@@ -22,6 +22,9 @@ class PrematchStateIdentityContractTest(unittest.TestCase):
         self.assertEqual(contract["formal_current_season"], "2026")
         self.assertEqual(contract["official_current_season"], "2026/27")
 
+    def test_other_natural_year_current_alias_uses_same_mechanical_rule(self) -> None:
+        self.assertEqual(identity._authority_season(ROOT, "KOR_KLeague1", "2026/27"), "2026")
+
     def test_historical_natural_year_request_is_not_promoted_to_current_authority(self) -> None:
         self.assertEqual(identity._authority_season(ROOT, "JPN_J1", "2025/26"), "2025/26")
 
