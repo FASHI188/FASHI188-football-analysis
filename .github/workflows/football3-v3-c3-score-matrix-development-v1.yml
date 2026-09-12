@@ -1,0 +1,185 @@
+name: Football3 V3 C3 Score Matrix Development V1
+on:
+  push:
+    branches: [football3/v3-c3-score-matrix-development-v1]
+    paths:
+      - '.github/workflows/football3-v3-c3-score-matrix-development-v1.yml'
+      - 'governance/football3/v3_c3_score_matrix_development_contract_v1.json'
+      - 'governance/football3/v3_c3_score_matrix_development_v1.py'
+      - 'governance/football3/test_v3_c3_score_matrix_development_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-v3-c3-score-matrix-development-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '6375e7854285f9a40335157dec3cc39da44606c0'
+  INTEGRATION_BASE: '241cd942df2c32b92962a6a7e232381426a21d53'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+  SOURCE_ARTIFACT_ID: '9798682425'
+  SOURCE_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  SOURCE_DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+jobs:
+  develop-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_name: ${{ steps.seal.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact prereg base and four-file scope
+        id: identity
+        env:
+          CANDIDATE_SHA: '${{ github.sha }}'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git rev-parse HEAD^)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/v3-c3-score-matrix-prereg-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$INTEGRATION_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-c3-score-matrix-development-v1.yml',
+            'governance/football3/v3_c3_score_matrix_development_contract_v1.json',
+            'governance/football3/v3_c3_score_matrix_development_v1.py',
+            'governance/football3/test_v3_c3_score_matrix_development_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','6375e7854285f9a40335157dec3cc39da44606c0...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Static and permanent development tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/v3_c3_score_matrix_development_v1.py governance/football3/test_v3_c3_score_matrix_development_v1.py
+          python governance/football3/test_v3_c3_score_matrix_development_v1.py 2>&1 | tee /tmp/c3-dev-tests.txt
+          grep -q 'Ran 28 tests' /tmp/c3-dev-tests.txt
+          grep -q '^OK$' /tmp/c3-dev-tests.txt
+      - name: Verify prereg and immutable Formal V2 baseline
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:governance/football3/v3_c3_score_matrix_prereg_contract_v1.json)" = 'c54072399451e99a6a67af6c613051fc528d1de5'
+          test "$(git rev-parse HEAD:football-data/new_engine_v1/formal_fusion_v2.py)" = 'a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871'
+          test "$(git rev-parse HEAD:football-data/new_engine_v1/test_formal_fusion_v2.py)" = '61b25cd403fa1d9efa0dfcbc1643e0f17621944e'
+          test "$(git rev-parse HEAD:football-data/config/formal_model_pointer_historical_xg_fusion_v2.json)" = 'f07743f9c873d415fad9612f3225f64c64b10542'
+          test "$(git rev-parse HEAD:football-data/formal_gpt_gateway_v1/entry.py)" = 'b41b0ede2db99c116b90270a32cd04dd240eb655'
+          test "$(git rev-parse HEAD:football-data/historical_xg_fusion_v2/data/XG_FUSION_V2_DATA_IDENTITY.json)" = '642b2a322e956b05c615ed5482d47479c1e88126'
+          python governance/football3/validate_v3_c3_score_matrix_prereg_v1.py --repo-root . | tee /tmp/c3-prereg-validator.txt
+      - name: Download only frozen POST_VIEW source database
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "$api" -o /tmp/source-meta.json
+          test "$(jq -r .expired /tmp/source-meta.json)" = 'false'
+          test "$(jq -r .digest /tmp/source-meta.json)" = "$SOURCE_ARTIFACT_DIGEST"
+          curl -fsSL -L -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "$api/zip" -o /tmp/source.zip
+          mkdir -p /tmp/c3-source
+          unzip -p /tmp/source.zip understat_frozen.db > /tmp/c3-source/understat_frozen.db
+          echo "${SOURCE_DB_SHA256}  /tmp/c3-source/understat_frozen.db" | sha256sum -c -
+          # Protected 2023 cohort files are never extracted or read by this workflow.
+      - name: Run frozen POST_VIEW development
+        env:
+          PYTHONPATH: 'football-data:governance/football3:football-data/research'
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/c3-development
+          python governance/football3/v3_c3_score_matrix_development_v1.py \
+            --contract governance/football3/v3_c3_score_matrix_development_contract_v1.json \
+            --source-db /tmp/c3-source/understat_frozen.db \
+            --output /tmp/c3-development | tee /tmp/c3-development-console.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/c3-development/development_receipt.json').read_text())
+          assert r['source']['max_source_season']==2022
+          assert r['source']['warmup_n']==5477 and r['source']['fit_n']==3551 and r['source']['development_eval_n']==5478
+          assert r['authorization']['post_view_labels_read'] is True
+          assert r['authorization']['fresh_labels_read'] is False and r['authorization']['fresh_confirmation_enrolled'] is False
+          assert r['inactive']=={'candidate_status':'NOT_AVAILABLE','weight':0,'matrix_delta':0,'data_ready':False}
+          assert r['engineering']['max_pt_abs_error'] <= 5e-12
+          assert r['engineering']['beta_zero_max_abs_error'] <= 1e-15
+          print('C3_POST_VIEW_DEVELOPMENT_RECEIPT_PASS')
+          PY
+      - name: Foundation and Formal V2 regressions
+        env:
+          PYTHONPATH: 'football-data:governance/football3:football-data/research'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt && grep -q '^OK$' /tmp/foundation.txt && ! grep -q 'skipped=' /tmp/foundation.txt
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal.txt
+          grep -q 'Ran 13 tests' /tmp/formal.txt && grep -q '^OK$' /tmp/formal.txt
+      - name: Seal development receipt
+        id: seal
+        env:
+          CANDIDATE_SHA: '${{ steps.identity.outputs.candidate_sha }}'
+        run: |
+          set -euo pipefail
+          rm -rf _seal; mkdir -p _seal/contract _seal/code _seal/evidence
+          cp governance/football3/v3_c3_score_matrix_development_contract_v1.json _seal/contract/
+          cp governance/football3/v3_c3_score_matrix_development_v1.py governance/football3/test_v3_c3_score_matrix_development_v1.py _seal/code/
+          cp /tmp/c3-dev-tests.txt /tmp/c3-prereg-validator.txt /tmp/c3-development-console.txt /tmp/foundation.txt /tmp/formal.txt _seal/evidence/
+          cp /tmp/c3-development/development_receipt.json /tmp/c3-development/development_summary.json _seal/evidence/
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('_seal/evidence/development_receipt.json'); r=json.loads(p.read_text())
+          r['candidate_head']=os.environ['CANDIDATE_SHA']; r['run_id']=os.environ['GITHUB_RUN_ID']
+          p.write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
+          PY
+          artifact_name="football3-v3-c3-score-matrix-development-${CANDIDATE_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.seal.outputs.artifact_name }}'
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+  remote-readback:
+    needs: develop-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: '${{ needs.develop-and-seal.outputs.artifact_name }}'
+          path: _readback
+      - name: Verify immutable development receipt
+        env:
+          CANDIDATE_SHA: '${{ needs.develop-and-seal.outputs.candidate_sha }}'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads(Path('_readback/evidence/development_receipt.json').read_text())
+          assert r['candidate_head']==os.environ['CANDIDATE_SHA']
+          assert r['exact_base']=='6375e7854285f9a40335157dec3cc39da44606c0'
+          assert r['source']['classification']=='POST_VIEW_DEVELOPMENT_ONLY' and r['source']['max_source_season']==2022
+          assert r['authorization']['post_view_labels_read'] is True and r['authorization']['fresh_labels_read'] is False
+          assert r['authorization']['fresh_confirmation_enrolled'] is False and r['authorization']['ready_or_merge'] is False
+          assert r['engineering']['formal_changed'] is False and r['engineering']['fresh_confirmation_consumed'] is False
+          assert r['inactive']=={'candidate_status':'NOT_AVAILABLE','weight':0,'matrix_delta':0,'data_ready':False}
+          assert r['status'] in {'DEVELOPMENT_PASS_FREEZE_REQUIRED_N','STOP_BETA_BOUNDARY_HIT','STOP_DEVELOPMENT_NO_GAIN','STOP_DEVELOPMENT_GUARDRAIL'}
+          print('C3_POST_VIEW_DEVELOPMENT_REMOTE_READBACK_PASS')
+          print(json.dumps({'status':r['status'],'beta':r['optimizer']['full_magnitude']['beta'],'primary_delta':r['development_eval']['candidate_delta']['conditional_nll'],'required_n':r['development_eval']['required_n']},sort_keys=True))
+          PY
