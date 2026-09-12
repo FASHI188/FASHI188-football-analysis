@@ -59,6 +59,18 @@ def parse_iso_date(v):
     try: return date.fromisoformat(v[:10])
     except ValueError: return None
 
+def dedupe_identity(rows, id_key, compare_keys):
+    by={}; duplicate_n=0; conflict_n=0
+    for row in rows:
+        key=row.get(id_key)
+        if key is None: continue
+        if key in by:
+            duplicate_n+=1
+            if any(by[key].get(k)!=row.get(k) for k in compare_keys): conflict_n+=1
+            continue
+        by[key]=row
+    return list(by.values()),duplicate_n,conflict_n
+
 def project_players(rows):
     out=[]
     for r in rows:
@@ -66,29 +78,43 @@ def project_players(rows):
         current=r.get('current_club') if isinstance(r.get('current_club'),dict) else {}
         club_href=current.get('href') if parent.get('type')=='national_team' else parent.get('href')
         out.append({'player_id':token_after(r.get('href'),'spieler'),'current_club_id':token_after(club_href,'verein'),'date_of_birth':parse_player_dob(r.get('date_of_birth')),'position':r.get('position'),'last_season':'2025'})
-    return out
+    return dedupe_identity(out,'player_id',('current_club_id','date_of_birth','position'))
 
 def project_clubs(rows):
     out=[]
     for r in rows:
         parent=r.get('parent') if isinstance(r.get('parent'),dict) else {}
         out.append({'club_id':token_after(r.get('href'),'verein'),'domestic_competition_id':token_after(parent.get('href'),'wettbewerb')})
-    return out
+    return dedupe_identity(out,'club_id',('domestic_competition_id',))
+
+def decode_nested_json(value):
+    if isinstance(value,(dict,list)): return value
+    if isinstance(value,str):
+        try: return json.loads(value)
+        except json.JSONDecodeError: return None
+    return None
 
 def project_transfers(rows):
-    out=[]; seen=set()
+    out=[]; seen=set(); decoded_response_n=0; null_response_n=0
     for r in rows:
-        pid=r.get('player_id'); response=r.get('response') if isinstance(r.get('response'),dict) else {}
-        ts=response.get('transfers') if isinstance(response.get('transfers'),list) else []
+        pid=r.get('player_id'); response=decode_nested_json(r.get('response'))
+        if response is None: null_response_n+=1; continue
+        decoded_response_n+=1
+        if isinstance(response,dict): ts=decode_nested_json(response.get('transfers'))
+        else: ts=response
+        if not isinstance(ts,list): continue
         for t in ts:
+            t=decode_nested_json(t)
             if not isinstance(t,dict): continue
             td=parse_iso_date(t.get('dateUnformatted'))
             if td is None: continue
-            fr=t.get('from') if isinstance(t.get('from'),dict) else {}; to=t.get('to') if isinstance(t.get('to'),dict) else {}
+            fr=decode_nested_json(t.get('from')) or {}; to=decode_nested_json(t.get('to')) or {}
+            if not isinstance(fr,dict): fr={}
+            if not isinstance(to,dict): to={}
             row={'player_id':pid,'transfer_date':td,'transfer_season':t.get('season'),'from_club_id':token_after(fr.get('href'),'verein'),'to_club_id':token_after(to.get('href'),'verein')}
             key=(str(row['player_id']),row['transfer_date'].isoformat(),str(row['from_club_id']),str(row['to_club_id']))
             if key not in seen: seen.add(key); out.append(row)
-    return out
+    return out,decoded_response_n,null_response_n
 
 def audit(network=True, allowlist_path=ALLOWLIST_PATH):
     receipt={'schema_version':'football3-v3-young-player-schema-identity-receipt-v1','phase':'SAFE_HASH_BOUND_RAW_TO_CURATED_IDENTITY_AUDIT','labels_opened':0,'training':False,'tuning':False,'target_result_or_goal_values_read':0,'stage6_touched':False,'data_ready':False,'formal_weight':0,'matrix_delta':0,'downloaded_objects':[],'blocked_objects':[],'upstream_adapter_blobs':{'players':'2f6225ff0def71884671ce55c28d77656b64c4c6','clubs':'d0e13b223af2cf70cbc847cb88caf521fca6ac6a','transfers':'10dcf53ce2e79d9e46ce2b615b3a2af98c114fd5'}}
@@ -96,28 +122,30 @@ def audit(network=True, allowlist_path=ALLOWLIST_PATH):
     for obj in allow['objects']:
         if not obj.get('download_allowed'): receipt['blocked_objects'].append({'relpath':obj['relpath'],'md5':obj['md5'],'reason':obj.get('reason')})
     if not network: receipt['decision']='OFFLINE_SYNTHETIC_ONLY'; return receipt
-    projected={}
+    projected={}; raw_meta={}
     for obj in allow['objects']:
         if not obj.get('download_allowed'): continue
         raw,url=fetch_exact(obj); raw_rows=decode_records(raw,obj['relpath']); table=Path(obj['relpath']).name.split('.')[0]
-        if table=='players': rows=project_players(raw_rows)
-        elif table=='clubs': rows=project_clubs(raw_rows)
-        elif table=='transfers': rows=project_transfers(raw_rows)
+        if table=='players': rows,dups,conflicts=project_players(raw_rows); raw_meta[table]={'duplicate_identity_rows':dups,'duplicate_identity_conflicts':conflicts}
+        elif table=='clubs': rows,dups,conflicts=project_clubs(raw_rows); raw_meta[table]={'duplicate_identity_rows':dups,'duplicate_identity_conflicts':conflicts}
+        elif table=='transfers': rows,decoded,nulls=project_transfers(raw_rows); raw_meta[table]={'decoded_response_n':decoded,'null_response_n':nulls}
         else: raise RuntimeError('unexpected table')
         projected[table]=rows
-        receipt['downloaded_objects'].append({'table':table,'relpath':obj['relpath'],'md5':obj['md5'],'size':obj['size'],'object_url':url,'raw_record_count':len(raw_rows),'projected_record_count':len(rows)})
+        receipt['downloaded_objects'].append({'table':table,'relpath':obj['relpath'],'md5':obj['md5'],'size':obj['size'],'object_url':url,'raw_record_count':len(raw_rows),'projected_record_count':len(rows),**raw_meta[table]})
     if set(projected)!={'players','clubs','transfers'}: receipt['decision']='STOP_SAFE_OBJECT_SET_INCOMPLETE'; return receipt
+    if raw_meta['players']['duplicate_identity_conflicts'] or raw_meta['clubs']['duplicate_identity_conflicts']: receipt['decision']='STOP_DUPLICATE_ID_CONFLICT'; return receipt
     players=projected['players']; clubs=projected['clubs']; transfers=projected['transfers']
     pids=[r['player_id'] for r in players if r['player_id'] is not None]; cids=[r['club_id'] for r in clubs if r['club_id'] is not None]
-    receipt['players']={'n':len(players),'id_nonnull_n':len(pids),'id_unique_n':len(set(pids)),'id_digest_sha256':hashlib.sha256('\n'.join(sorted(pids)).encode()).hexdigest(),'dob_parseable_n':sum(r['date_of_birth'] is not None for r in players),'dob_parseable_fraction':sum(r['date_of_birth'] is not None for r in players)/len(players),'current_club_nonnull_n':sum(r['current_club_id'] is not None for r in players)}
-    receipt['clubs']={'n':len(clubs),'id_nonnull_n':len(cids),'id_unique_n':len(set(cids)),'id_digest_sha256':hashlib.sha256('\n'.join(sorted(cids)).encode()).hexdigest(),'domestic_competition_nonnull_n':sum(r['domestic_competition_id'] is not None for r in clubs)}
+    receipt['players']={'n':len(players),'id_nonnull_n':len(pids),'id_unique_n':len(set(pids)),'id_digest_sha256':hashlib.sha256('\n'.join(sorted(pids)).encode()).hexdigest(),'dob_parseable_n':sum(r['date_of_birth'] is not None for r in players),'dob_parseable_fraction':sum(r['date_of_birth'] is not None for r in players)/len(players),'current_club_nonnull_n':sum(r['current_club_id'] is not None for r in players),'duplicate_identity_rows':raw_meta['players']['duplicate_identity_rows']}
+    receipt['clubs']={'n':len(clubs),'id_nonnull_n':len(cids),'id_unique_n':len(set(cids)),'id_digest_sha256':hashlib.sha256('\n'.join(sorted(cids)).encode()).hexdigest(),'domestic_competition_nonnull_n':sum(r['domestic_competition_id'] is not None for r in clubs),'duplicate_identity_rows':raw_meta['clubs']['duplicate_identity_rows']}
     req=('player_id','transfer_date','transfer_season','from_club_id','to_club_id')
-    receipt['transfers']={'n':len(transfers),**{f'{c}_nonnull_n':sum(r[c] is not None and r[c]!='' for r in transfers) for c in req},'transfer_date_min':min((r['transfer_date'] for r in transfers),default=None).isoformat() if transfers else None,'transfer_date_max':max((r['transfer_date'] for r in transfers),default=None).isoformat() if transfers else None,'future_dated_vs_snapshot_n':sum(r['transfer_date']>SNAPSHOT_DATE for r in transfers)}
+    receipt['transfers']={'n':len(transfers),**{f'{c}_nonnull_n':sum(r[c] is not None and r[c]!='' for r in transfers) for c in req},'transfer_date_min':min((r['transfer_date'] for r in transfers),default=None).isoformat() if transfers else None,'transfer_date_max':max((r['transfer_date'] for r in transfers),default=None).isoformat() if transfers else None,'future_dated_vs_snapshot_n':sum(r['transfer_date']>SNAPSHOT_DATE for r in transfers),'decoded_response_n':raw_meta['transfers']['decoded_response_n'],'null_response_n':raw_meta['transfers']['null_response_n']}
     if len(pids)!=len(players) or len(set(pids))!=len(players) or len(cids)!=len(clubs) or len(set(cids))!=len(clubs): receipt['decision']='STOP_STABLE_ID_INTEGRITY'; return receipt
     if receipt['players']['dob_parseable_fraction']<0.99: receipt['decision']='STOP_DOB_COVERAGE'; return receipt
-    if transfers and any(receipt['transfers'][f'{c}_nonnull_n']!=len(transfers) for c in req): receipt['decision']='STOP_TRANSFER_REQUIRED_NONNULL'; return receipt
+    if not transfers: receipt['decision']='STOP_TRANSFER_PAYLOAD_UNPARSED'; return receipt
+    if any(receipt['transfers'][f'{c}_nonnull_n']!=len(transfers) for c in req): receipt['decision']='STOP_TRANSFER_REQUIRED_NONNULL'; return receipt
     clubset=set(cids); playerset=set(pids); cc=[r['current_club_id'] for r in players if r['current_club_id'] is not None]
-    receipt['relationships']={'player_current_club_linked_n':sum(x in clubset for x in cc),'player_current_club_nonnull_n':len(cc),'player_current_club_link_fraction':sum(x in clubset for x in cc)/len(cc) if cc else None,'transfer_player_link_fraction':sum(str(r['player_id']) in playerset for r in transfers)/len(transfers) if transfers else None,'transfer_from_club_link_fraction':sum(r['from_club_id'] in clubset for r in transfers)/len(transfers) if transfers else None,'transfer_to_club_link_fraction':sum(r['to_club_id'] in clubset for r in transfers)/len(transfers) if transfers else None}
+    receipt['relationships']={'player_current_club_linked_n':sum(x in clubset for x in cc),'player_current_club_nonnull_n':len(cc),'player_current_club_link_fraction':sum(x in clubset for x in cc)/len(cc) if cc else None,'transfer_player_link_fraction':sum(str(r['player_id']) in playerset for r in transfers)/len(transfers),'transfer_from_club_link_fraction':sum(r['from_club_id'] in clubset for r in transfers)/len(transfers),'transfer_to_club_link_fraction':sum(r['to_club_id'] in clubset for r in transfers)/len(transfers)}
     receipt['referenced_dvc_data_objects_downloaded']=3
     receipt['decision']='PASS_SAFE_SCHEMA_IDENTITY_TIME_SEMANTICS_NEXT_TARGET_IDENTITY_AUDIT'
     return receipt
