@@ -55,6 +55,13 @@ FORMAL_STATE_INTEGRITY_COVERAGE_PATCH = formal_state_integrity_coverage_patch_v1
 import formal_durable_state_governance_v1
 FORMAL_DURABLE_STATE_GOVERNANCE = formal_durable_state_governance_v1.install(gateway)
 
+# Legacy historical mode adjudication must sit outside durable/live routing so
+# unsupported historical requests fail before any source acquisition starts.
+# The current-V2 replay wrapper is installed after this guard and therefore
+# remains the sole outer route for CURRENT_V2_RETROSPECTIVE_REPLAY.
+import historical_request_mode_guard_v1
+HISTORICAL_REQUEST_MODE_GUARD = historical_request_mode_guard_v1.install(gateway)
+
 # Research-only current-V2 replay is the sole bypass of historical observation-time
 # rejection. Its exact-history and xG-coverage adapters change only this replay
 # module; normal prospective and STRICT_PIT requests remain on the captured durable
@@ -125,6 +132,7 @@ def main() -> int:
             "formal_state_integrity_xg_history_count_fix_adapter.json": FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX,
             "formal_state_integrity_coverage_patch_adapter.json": FORMAL_STATE_INTEGRITY_COVERAGE_PATCH,
             "formal_durable_state_governance_adapter.json": FORMAL_DURABLE_STATE_GOVERNANCE,
+            "historical_request_mode_guard_adapter.json": HISTORICAL_REQUEST_MODE_GUARD,
             "current_v2_retrospective_exact_history_adapter.json": CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY,
             "current_v2_retrospective_utc_day_boundary_adapter.json": CURRENT_V2_RETROSPECTIVE_UTC_DAY_BOUNDARY,
             "current_v2_retrospective_xg_coverage_adapter.json": CURRENT_V2_RETROSPECTIVE_XG_COVERAGE,
@@ -161,6 +169,7 @@ def main() -> int:
             d["formal_state_integrity_xg_history_count_fix_adapter"] = FORMAL_STATE_INTEGRITY_XG_HISTORY_COUNT_FIX
             d["formal_state_integrity_coverage_patch_adapter"] = FORMAL_STATE_INTEGRITY_COVERAGE_PATCH
             d["formal_durable_state_governance_adapter"] = FORMAL_DURABLE_STATE_GOVERNANCE
+            d["historical_request_mode_guard_adapter"] = HISTORICAL_REQUEST_MODE_GUARD
             d["current_v2_retrospective_exact_history_adapter"] = CURRENT_V2_RETROSPECTIVE_EXACT_HISTORY
             d["current_v2_retrospective_utc_day_boundary_adapter"] = CURRENT_V2_RETROSPECTIVE_UTC_DAY_BOUNDARY
             d["current_v2_retrospective_xg_coverage_adapter"] = CURRENT_V2_RETROSPECTIVE_XG_COVERAGE

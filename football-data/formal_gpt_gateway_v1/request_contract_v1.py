@@ -206,8 +206,10 @@ def execution_request(request: dict[str, Any]) -> dict[str, Any]:
     result = dict(request)
     mode = result.get("mode")
     if mode in FORMAL_PREDICTION_MODES:
+        # The gateway CLI remains on its stable "predict" surface, but the
+        # canonical validated mode is always carried separately. Downstream
+        # routing must consume this trusted marker and must never infer mode
+        # from state, timestamps, predictions, or receipts.
         result["mode"] = "predict"
-    if mode == CURRENT_V2_RETROSPECTIVE_REPLAY:
-        # Keep gateway CLI compatibility while preserving an explicit isolated route marker.
-        result["request_mode"] = CURRENT_V2_RETROSPECTIVE_REPLAY
+        result["request_mode"] = mode
     return result
