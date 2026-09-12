@@ -46,6 +46,17 @@ class PrematchStateIdentityContractTest(unittest.TestCase):
         }
         (out / "runtime_input.json").write_text(json.dumps(payload), encoding="utf-8")
 
+    def test_exact_requested_cutoff_remains_legal(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            exact = "2026-09-12T12:30:00+00:00"
+            requested = rt._parse_dt(exact, "requested")
+            base = rt._parse_dt("2026-09-04T13:19:44+00:00", "base")
+            self._write_runtime_input(out, runtime_cutoff=exact, delta_from=exact, delta_to=exact)
+            _, _, _, dfrom, dto = durable._delta_from_output(out, base, requested)
+            self.assertEqual(dfrom, dto)
+            self.assertEqual(dto, requested)
+
     def test_clamped_effective_cutoff_is_legal_when_not_after_requested_ceiling(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
