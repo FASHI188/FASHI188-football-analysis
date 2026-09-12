@@ -35,10 +35,22 @@
     "club_domestic_competition_id": "clubs.parent.href /wettbewerb/<id>",
     "transfers": "unnest response.transfers; dateUnformatted, season, from.href /verein/<id>, to.href /verein/<id>"
   },
+  "deterministic_duplicate_semantics": {
+    "players_and_clubs": "mirror upstream row_number(partition by identity) collapse; duplicate raw rows are allowed only when frozen core identity fields agree",
+    "player_conflict_fields": ["current_club_id", "date_of_birth", "position"],
+    "club_conflict_fields": ["domestic_competition_id"],
+    "any_duplicate_core_conflict": "STOP_DUPLICATE_ID_CONFLICT"
+  },
+  "serialized_api_semantics": {
+    "response": "may be object/list or JSON-serialized string; decode exactly one JSON representation layer before reading transfers",
+    "response.transfers": "may be list or JSON-serialized list; decode before deterministic unnest",
+    "empty_or_unparsed_transfer_payload": "STOP_TRANSFER_PAYLOAD_UNPARSED"
+  },
   "frozen_schema_gates": {
-    "players_and_clubs_id_nonnull_unique": true,
+    "players_and_clubs_id_nonnull_unique_after_deterministic_collapse": true,
     "player_date_of_birth_parseable_fraction_min": 0.99,
-    "transfer_required_fields_nonnull_fraction": 1.0
+    "transfer_required_fields_nonnull_fraction": 1.0,
+    "duplicate_core_conflicts_max": 0
   },
   "target_inventory_upper_bound": 99,
   "fresh_unconsumed_n": null,
