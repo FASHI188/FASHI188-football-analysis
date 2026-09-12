@@ -16,6 +16,7 @@ import cross_season_authority_contract_v1 as cross_season_authority
 import formal_receipt_distribution_contract_v1 as receipt_distribution
 RECEIPT_DISTRIBUTION = receipt_distribution.install()
 
+FOOTBALL3_GOVERNED_PRODUCTION_RUNTIME_GOVERNANCE = "football3-formal-production-runtime-governance-v1"
 SCHEMA = "football3-formal-future-fixture-identity-bridge-v1"
 _BASE_RESOLVE_TEAM = identity_bridge.resolve_team
 _BASE_RESOLVE_FIXTURE = identity_bridge.resolve_fixture
