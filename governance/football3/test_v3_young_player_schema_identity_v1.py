@@ -9,11 +9,14 @@ class T(unittest.TestCase):
     def test_descriptor_only_urls(self):
         for md5,_ in v.DESCRIPTORS.values():
             u=v.descriptor_url(md5); self.assertTrue(u.endswith('.dir')); self.assertTrue(u.startswith(v.REMOTE))
-    def test_parse(self):
-        raw=json.dumps([{'relpath':'2025/players.json.gz','md5':'a'*32,'size':123}]).encode()
-        self.assertEqual(v.parse(raw)[0]['size'],123)
+    def test_object_url_is_hash_bound(self):
+        u=v.object_url('a'*32); self.assertEqual(u, v.REMOTE+'files/md5/aa/'+'a'*30); self.assertFalse(u.endswith('.dir'))
+        with self.assertRaises(ValueError): v.object_url('bad')
+    def test_parse_allows_missing_size_for_head_only_fallback(self):
+        raw=json.dumps([{'relpath':'2025/players.json.gz','md5':'a'*32}]).encode()
+        self.assertIsNone(v.parse(raw)[0]['size'])
     def test_offline_zero_label(self):
-        r=v.freeze(False); self.assertEqual(r['labels_opened'],0); self.assertEqual(r['referenced_dvc_data_objects_downloaded'],0); self.assertFalse(r['training']); self.assertFalse(r['tuning']); self.assertFalse(r['data_ready'])
+        r=v.freeze(False); self.assertEqual(r['labels_opened'],0); self.assertEqual(r['referenced_dvc_data_objects_downloaded'],0); self.assertEqual(r['object_get_requests'],0); self.assertFalse(r['training']); self.assertFalse(r['tuning']); self.assertFalse(r['data_ready'])
     def test_forbidden_surfaces_absent(self):
         flat=' '.join(x for xs in v.TARGETS.values() for x in xs); self.assertNotIn('game_lineups',flat); self.assertNotIn('game_events',flat)
 if __name__=='__main__': unittest.main()
