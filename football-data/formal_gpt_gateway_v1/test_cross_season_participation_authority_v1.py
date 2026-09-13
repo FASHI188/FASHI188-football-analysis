@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 import cross_season_participation_authority_v1 as participation
+import cross_season_team_state_binding_v1 as binding
 import runtime as rt
 
 REPO = Path(__file__).resolve().parents[2]
@@ -88,6 +90,76 @@ class ParticipationAuthorityTests(unittest.TestCase):
         for key, previous in expected.items():
             with self.subTest(key=key):
                 self.assertEqual(rows.get(key), previous)
+
+    def test_incomplete_exact_current_registry_uses_audited_current_only_continuity(self):
+        for team in ("Sevilla", "Mallorca"):
+            with self.subTest(team=team):
+                row, sources = binding._current_row(REPO, "ESP_LaLiga", "2026/27", team)
+                self.assertEqual(row["canonical_name"], team)
+                self.assertEqual(row["source_path"], binding.CONTINUITY_REGISTRY)
+                self.assertEqual(sources, [binding.CONTINUITY_REGISTRY])
+
+    def test_exact_current_registry_still_has_precedence(self):
+        row, sources = binding._current_row(REPO, "ESP_LaLiga", "2026/27", "Barcelona")
+        self.assertEqual(row["canonical_name"], "Barcelona")
+        self.assertEqual(row["source_path"], binding.EXACT_CURRENT_REGISTRY)
+        self.assertEqual(sources, [binding.EXACT_CURRENT_REGISTRY])
+
+    def test_unknown_current_identity_still_fails_closed(self):
+        with self.assertRaisesRegex(rt.RuntimeGateError, "cross-season current identity not unique"):
+            binding._current_row(REPO, "ESP_LaLiga", "2026/27", "Definitely Not A Club")
+
+    def test_current_only_continuity_fallback_rejects_invalid_governance(self):
+        row = {
+            "competition_id": "ESP_LaLiga",
+            "current_season": "2026/27",
+            "current_canonical_name": "Mallorca",
+            "current_exact_names": ["Mallorca"],
+            "current_identity_only": True,
+            "future_authority_only": True,
+            "historical_observation_forbidden": True,
+            "membership_status": "CURRENT_COMPETITION_MEMBERSHIP_PROVEN",
+            "identity_status": "VALID",
+            "use_policy": "CURRENT_IDENTITY_ONLY",
+            "conflict_status": "NONE",
+            "decision": "REJECT",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / binding.CONTINUITY_REGISTRY
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "schema_version": "football3-cross-season-identity-continuity-v1",
+                "rows": [row],
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(rt.RuntimeGateError, "continuity authority invalid"):
+                binding._current_identity_continuity_row(root, "ESP_LaLiga", "2026/27", "Mallorca")
+
+    def test_current_only_continuity_fallback_rejects_ambiguity(self):
+        row = {
+            "competition_id": "ESP_LaLiga",
+            "current_season": "2026/27",
+            "current_canonical_name": "Mallorca",
+            "current_exact_names": ["Mallorca"],
+            "current_identity_only": True,
+            "future_authority_only": True,
+            "historical_observation_forbidden": True,
+            "membership_status": "CURRENT_COMPETITION_MEMBERSHIP_PROVEN",
+            "identity_status": "VALID",
+            "use_policy": "CURRENT_IDENTITY_ONLY",
+            "conflict_status": "NONE",
+            "decision": "ACCEPT",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / binding.CONTINUITY_REGISTRY
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "schema_version": "football3-cross-season-identity-continuity-v1",
+                "rows": [row, dict(row)],
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(rt.RuntimeGateError, "continuity not unique"):
+                binding._current_identity_continuity_row(root, "ESP_LaLiga", "2026/27", "Mallorca")
 
 
 if __name__ == "__main__":
