@@ -22,63 +22,13 @@ jobs:
         run: |
           python -m py_compile governance/football3/validate_v3_transfer_roster_historical_object_v1.py governance/football3/test_v3_transfer_roster_historical_object_v1.py
           python governance/football3/test_v3_transfer_roster_historical_object_v1.py
-      - name: R2 dual-layout transport control
-        run: |
-          mkdir -p artifact
-          python - <<'PY'
-          import hashlib, json
-          from urllib.error import HTTPError, URLError
-          from urllib.request import Request, urlopen
-
-          root='https://pub-e682421888d945d684bcae8890b0ec20.r2.dev'
-          md5='3e2a95f72dfccad1d3f2f3677e661102'
-          urls={
-              'direct': f'{root}/dvc/{md5[:2]}/{md5[2:]}.dir',
-              'files_md5': f'{root}/dvc/files/md5/{md5[:2]}/{md5[2:]}.dir',
-              'public_data_control': f'{root}/data/dataset-metadata.json',
-          }
-          out={'purpose':'TRANSPORT_ONLY_NEVER_RESEARCH_INPUT','expected_current_dir_md5':md5,'checks':{},'labels_opened':0,'target_match_rows_read':0,'future_matches_allowed':False}
-          def read(url, limit):
-              try:
-                  req=Request(url,headers={'User-Agent':'Football3-r2-dual-layout-control/1.0'})
-                  with urlopen(req,timeout=90) as r:
-                      data=r.read(limit+1)
-                  return {'http_status':200,'bytes':len(data),'data':data}
-              except HTTPError as e:
-                  return {'http_status':e.code,'bytes':0,'error':f'HTTP_{e.code}'}
-              except URLError as e:
-                  return {'http_status':None,'bytes':0,'error':'NETWORK'}
-          data_check=read(urls['public_data_control'],2_000_000)
-          out['checks']['public_data_control']={k:v for k,v in data_check.items() if k!='data'}
-          for name in ('direct','files_md5'):
-              chk=read(urls[name],2_000_000)
-              rec={k:v for k,v in chk.items() if k!='data'}
-              if chk.get('http_status')==200:
-                  got=hashlib.md5(chk['data']).hexdigest()
-                  rec['actual_md5']=got
-                  rec['hash_match']=(got==md5)
-              else:
-                  rec['hash_match']=False
-              rec['url']=urls[name]
-              out['checks'][name]=rec
-          if out['checks']['files_md5'].get('hash_match'):
-              out['decision']='PASS_FILES_MD5_LAYOUT'
-          elif out['checks']['direct'].get('hash_match'):
-              out['decision']='PASS_DIRECT_LAYOUT'
-          elif out['checks']['public_data_control'].get('http_status')==200:
-              out['decision']='STOP_DVC_OBJECT_LAYOUT_OR_PUBLICATION'
-          else:
-              out['decision']='STOP_R2_PUBLIC_ENDPOINT_UNAVAILABLE'
-          open('artifact/mirror-transport-control.json','w').write(json.dumps(out,indent=2,sort_keys=True)+'\n')
-          print(json.dumps({'decision':out['decision'],'checks':out['checks']},sort_keys=True))
-          PY
       - name: Exact-hash object audit
         run: |
+          mkdir -p artifact
           python governance/football3/validate_v3_transfer_roster_historical_object_v1.py --output artifact/object-receipt.json
           cp governance/football3/v3_transfer_roster_historical_object_contract_v1.json artifact/
           python -c "import json; p=json.load(open('artifact/object-receipt.json')); assert p['labels_opened']==0 and p['target_match_rows_read']==0 and p['target_result_or_goal_values_read']==0 and p['training'] is False and p['tuning'] is False and p['future_matches_allowed'] is False"
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: football3-v3-transfer-roster-historical-object-${{ github.event.pull_request.head.sha }}
           path: artifact/
