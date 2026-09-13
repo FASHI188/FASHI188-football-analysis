@@ -30,7 +30,13 @@ def t_zero_guards():
     c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text()); r=v.base(c)
     assert r['labels_opened']==r['target_match_rows_read']==r['target_result_or_goal_values_read']==0
     assert not r['future_matches_allowed'] and not r['training'] and not r['tuning']
-T=[t_resolve_ok,t_dir_hash_stop,t_missing_stop,t_player_stop,t_future_excluded,t_zero_guards]
+def t_historical_remote_binding():
+    c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text())
+    assert c['source']['historical_dvc_config_blob_sha']=='3c0f733fe20089d44449e22cdfc707043c9f70cb'
+    assert c['source']['historical_dvc_remote_root']=='https://d1mj0i4rr3evqd.cloudfront.net/dvc/'
+    assert c['source']['dvc_remote_prefix']=='https://d1mj0i4rr3evqd.cloudfront.net/dvc/files/md5'
+    assert v.url(c['source']['dvc_remote_prefix'],'a'*32,True).endswith('/files/md5/aa/'+'a'*30+'.dir')
+T=[t_resolve_ok,t_dir_hash_stop,t_missing_stop,t_player_stop,t_future_excluded,t_zero_guards,t_historical_remote_binding]
 if __name__=='__main__':
     for f in T: f(); print('PASS',f.__name__)
     print(f'{len(T)}/{len(T)} PASS')
