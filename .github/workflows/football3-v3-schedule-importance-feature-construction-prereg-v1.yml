@@ -1,0 +1,85 @@
+name: Football3 V3 Schedule Importance Feature Construction Prereg V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-schedule-importance-feature-construction-prereg-v1.yml'
+      - 'governance/football3/v3_schedule_importance_feature_construction_contract_v1.json'
+      - 'governance/football3/validate_v3_schedule_importance_feature_construction_v1.py'
+      - 'governance/football3/test_v3_schedule_importance_feature_construction_v1.py'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Exact candidate HEAD
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Permanent feature-construction tests
+        run: |
+          python -m py_compile governance/football3/validate_v3_schedule_importance_feature_construction_v1.py governance/football3/test_v3_schedule_importance_feature_construction_v1.py
+          python governance/football3/test_v3_schedule_importance_feature_construction_v1.py
+      - name: Download exact parent sanitized artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-sanitized-schema-ee597cab98255d70789eacb6d06685666800e4a5
+          path: parent-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 34768150292
+      - name: Verify parent binding
+        run: |
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path('parent-artifact/sanitized-schedule.jsonl')
+          assert p.exists()
+          h=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert h=='652e619016c87940903e6ef6fad9784c99ea9f1bbf9b3f18bdbe7addd64a4ab4',h
+          r=json.loads(pathlib.Path('parent-artifact/sanitized-schema-receipt.json').read_text())
+          assert r['decision']=='PASS_SANITIZED_SCHEMA_OBJECT_AUDIT_NEXT_SCHEDULE_FEATURE_CONSTRUCTION_PREREG'
+          assert r['sanitized_rows_written']==30531
+          assert r['score_values_decoded']==0 and r['result_or_goal_values_decoded']==0 and r['result_or_goal_values_emitted']==0
+          assert r['future_matches_allowed'] is False and r['training'] is False and r['tuning'] is False
+          PY
+      - name: Build preregistered league-only schedule features
+        run: |
+          mkdir -p artifact
+          python governance/football3/validate_v3_schedule_importance_feature_construction_v1.py \
+            --input parent-artifact/sanitized-schedule.jsonl \
+            --output artifact/schedule-features.jsonl \
+            --receipt artifact/feature-construction-receipt.json
+          cp governance/football3/v3_schedule_importance_feature_construction_contract_v1.json artifact/
+          python - <<'PY'
+          import json,pathlib
+          p=json.loads(pathlib.Path('artifact/feature-construction-receipt.json').read_text())
+          assert p['decision']=='PASS_SCHEDULE_FEATURE_CONSTRUCTION_PREREG_NEXT_SCIENTIFIC_EVALUATION_PREREG'
+          assert p['input_rows']==30531 and p['output_rows']==30531
+          assert p['coverage_scope']=='LEAGUE_ONLY'
+          assert p['score_result_goal_values_read']==0
+          assert p['future_matches_allowed'] is False and p['stage6_touched'] is False
+          assert p['standings_pressure_used'] is False and p['travel_pressure_used'] is False and p['rotation_pressure_used'] is False
+          assert p['hour_level_rest_used'] is False and p['training'] is False and p['tuning'] is False
+          assert p['formal_weight']==0 and p['matrix_delta']==0
+          PY
+      - name: Head binding
+        run: |
+          python - <<'PY'
+          import json,os,pathlib
+          pathlib.Path('artifact/head-binding.json').write_text(json.dumps({
+            'candidate_head':os.environ['GITHUB_SHA'],
+            'parent_head':'ee597cab98255d70789eacb6d06685666800e4a5',
+            'parent_run_id':34768150292,
+            'parent_artifact_id':10321395143,
+            'parent_sanitized_sha256':'652e619016c87940903e6ef6fad9784c99ea9f1bbf9b3f18bdbe7addd64a4ab4'
+          },sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-feature-construction-${{ github.event.pull_request.head.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
