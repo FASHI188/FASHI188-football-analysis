@@ -189,10 +189,59 @@ def _registry_rows(repo_root: Path, comp: str, season: str) -> tuple[list[dict[s
     return [], []
 
 
+def _current_identity_continuity_row(repo_root: Path, comp: str, season: str, requested: str) -> tuple[dict[str, Any] | None, list[str]]:
+    path = repo_root / CONTINUITY_REGISTRY
+    if not path.is_file():
+        return None, []
+    obj = _load_json(path)
+    if obj.get("schema_version") != "football3-cross-season-identity-continuity-v1":
+        raise rt.RuntimeGateError("cross-season continuity registry schema mismatch")
+    rows = obj.get("rows")
+    if type(rows) is not list:
+        raise rt.RuntimeGateError("cross-season continuity registry rows missing")
+    token = rt._normalize_team(requested)
+    hits: list[dict[str, Any]] = []
+    for raw in rows:
+        if type(raw) is not dict:
+            continue
+        if str(raw.get("competition_id") or "") != comp or str(raw.get("current_season") or "") != season:
+            continue
+        accepted = [str(raw.get("current_canonical_name") or ""), *[str(x) for x in (raw.get("current_exact_names") or [])]]
+        if token not in {rt._normalize_team(x) for x in accepted if x}:
+            continue
+        governance_ok = (
+            raw.get("current_identity_only") is True
+            and raw.get("future_authority_only") is True
+            and raw.get("historical_observation_forbidden") is True
+            and str(raw.get("membership_status") or "") == "CURRENT_COMPETITION_MEMBERSHIP_PROVEN"
+            and str(raw.get("identity_status") or "") == "VALID"
+            and str(raw.get("use_policy") or "") == "CURRENT_IDENTITY_ONLY"
+            and str(raw.get("conflict_status") or "") == "NONE"
+            and str(raw.get("decision") or "") == "ACCEPT"
+        )
+        if not governance_ok:
+            raise rt.RuntimeGateError(f"cross-season current identity continuity authority invalid: {comp} {season} {requested}")
+        canonical = str(raw.get("current_canonical_name") or "").strip()
+        if not canonical:
+            raise rt.RuntimeGateError(f"cross-season current identity continuity canonical name missing: {comp} {season} {requested}")
+        accepted_names = list(dict.fromkeys(str(x).strip() for x in accepted if str(x or "").strip()))
+        hits.append({
+            "canonical_name": canonical,
+            "accepted_names": accepted_names,
+            "source_path": CONTINUITY_REGISTRY,
+            "registry_sources": [CONTINUITY_REGISTRY],
+            "registry_path": CONTINUITY_REGISTRY,
+            "registry_sha256": rt._sha_file(path),
+            "processed_latest_season_hint": None,
+            "registry_generated_at_utc": obj.get("generated_at_utc"),
+        })
+    if len(hits) > 1:
+        raise rt.RuntimeGateError(f"cross-season current identity continuity not unique: {comp} {season} {requested}")
+    return (hits[0] if hits else None), ([CONTINUITY_REGISTRY] if hits else [])
+
+
 def _current_row(repo_root: Path, comp: str, season: str, requested: str) -> tuple[dict[str, Any] | None, list[str]]:
     raw_rows, sources = _registry_rows(repo_root, comp, season)
-    if not raw_rows:
-        return None, sources
     meta = _full17_meta(repo_root, comp)
     rows: list[dict[str, Any]] = []
     for raw in raw_rows:
@@ -210,9 +259,14 @@ def _current_row(repo_root: Path, comp: str, season: str, requested: str) -> tup
         })
     token = rt._normalize_team(requested)
     matches = [r for r in rows if token in {rt._normalize_team(x) for x in r["accepted_names"]}]
-    if len(matches) != 1:
+    if len(matches) > 1:
         raise rt.RuntimeGateError(f"cross-season current identity not unique: {comp} {season} {requested}")
-    return matches[0], sources
+    if len(matches) == 1:
+        return matches[0], sources
+    continuity_row, continuity_sources = _current_identity_continuity_row(repo_root, comp, season, requested)
+    if continuity_row is not None:
+        return continuity_row, continuity_sources
+    raise rt.RuntimeGateError(f"cross-season current identity not unique: {comp} {season} {requested}")
 
 
 def _processed_roster(repo_root: Path, comp: str, season: str | None) -> set[str]:
