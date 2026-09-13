@@ -2,6 +2,7 @@
 import argparse, hashlib, json, re
 from datetime import date, datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 C=Path(__file__).with_name('v3_transfer_roster_historical_object_contract_v1.json')
 MD5=re.compile(r'^[0-9a-f]{32}$'); SHA=re.compile(r'^[0-9a-f]{40}$')
@@ -29,7 +30,12 @@ def url(prefix,h,dir_=False):
     if not MD5.fullmatch(str(h)): raise Stop('STOP_HASH_FORMAT')
     return f"{prefix}/{h[:2]}/{h[2:]}{'.dir' if dir_ else ''}"
 def get(u,limit):
-    with urlopen(Request(u,headers={'User-Agent':'Football3-transfer-object-audit/1.0'}),timeout=90) as r: b=r.read(limit+1)
+    try:
+        with urlopen(Request(u,headers={'User-Agent':'Football3-transfer-object-audit/1.0'}),timeout=90) as r: b=r.read(limit+1)
+    except HTTPError as e:
+        raise Stop(f'STOP_SOURCE_OBJECT_HTTP_{e.code}') from e
+    except URLError as e:
+        raise Stop('STOP_SOURCE_OBJECT_NETWORK') from e
     if len(b)>limit: raise Stop('STOP_OBJECT_TOO_LARGE')
     return b
 def resolve(manifest,dir_md5,target):
@@ -83,7 +89,7 @@ def project(xs,observed):
     digest=hashlib.sha256('\n'.join('|'.join(map(str,q)) for q in safe).encode()).hexdigest()
     return {'raw_top_level_rows':len(xs),'player_id_unique_n':len(set(pids)),'decoded_response_n':decoded,'null_response_n':nulls,'transfer_item_n':items,'pit_safe_usable_transfer_rows_n':len(safe),'pit_safe_transfer_digest_sha256':digest,'future_effective_transfer_rows_excluded_n':future,'unparseable_transfer_date_n':bad_date,'unresolved_club_endpoint_n':bad_end,'missing_transfer_season_n':bad_season}
 def base(c):
-    return {'schema_version':'football3-v3-transfer-roster-historical-object-receipt-v1','phase':'EXACT_HASH_HISTORICAL_TRANSFER_OBJECT_SCHEMA_IDENTITY_AUDIT','target_population':'COMPLETED_MATCHES_ONLY','future_matches_allowed':False,'existing_frozen_future_receipts_used':False,'stage6_1335_queue_used':False,'labels_opened':0,'target_match_rows_read':0,'target_result_or_goal_values_read':0,'games_payload_downloaded':False,'appearances_payload_downloaded':False,'lineups_payload_downloaded':False,'market_values_payload_downloaded':False,'training':False,'tuning':False,'stage6_touched':False,'formal_weight':0,'matrix_delta':0,'data_ready':False,'available_at_semantics':'snapshot_observed_at_lte_target_cutoff','roster_transition_semantics':'transfer_date_lte_target_cutoff','acquisition_adapter_blob_sha':c['source']['acquisition_adapter_blob_sha'],'dvc_dir_manifests_downloaded':0,'transfer_objects_downloaded':0,'snapshots':[]}
+    return {'schema_version':'football3-v3-transfer-roster-historical-object-receipt-v1','phase':'EXACT_HASH_HISTORICAL_TRANSFER_OBJECT_SCHEMA_IDENTITY_AUDIT','target_population':'COMPLETED_MATCHES_ONLY','future_matches_allowed':False,'existing_frozen_future_receipts_used':False,'stage6_1335_queue_used':False,'labels_opened':0,'target_match_rows_read':0,'target_result_or_goal_values_read':0,'games_payload_downloaded':False,'appearances_payload_downloaded':False,'lineups_payload_downloaded':False,'market_values_payload_downloaded':False,'training':False,'tuning':False,'stage6_touched':False,'formal_weight':0,'matrix_delta':0,'data_ready':False,'available_at_semantics':'snapshot_observed_at_lte_target_cutoff','roster_transition_semantics':'transfer_date_lte_target_cutoff','historical_dvc_config_blob_sha':c['source']['historical_dvc_config_blob_sha'],'historical_dvc_remote_root':c['source']['historical_dvc_remote_root'],'acquisition_adapter_blob_sha':c['source']['acquisition_adapter_blob_sha'],'dvc_dir_manifests_downloaded':0,'transfer_objects_downloaded':0,'snapshots':[]}
 def audit(c):
     r=base(c); prev=None; prefix=c['source']['dvc_remote_prefix']; target=c['source']['target_relpath']
     if len(c.get('snapshots',[]))!=10: r['decision']='STOP_SNAPSHOT_CONTRACT'; return r
