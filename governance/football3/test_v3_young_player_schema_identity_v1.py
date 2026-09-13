@@ -15,13 +15,13 @@ class T(unittest.TestCase):
         self.assertEqual(v.token_after('/abc/startseite/wettbewerb/GB1','wettbewerb'),'GB1')
     def test_player_projection(self):
         rows=[{'href':'/a/profil/spieler/12','parent':{'type':'club','href':'/x/startseite/verein/34'},'date_of_birth':'Jan 02, 2000','position':'Attack - Centre-Forward'}]
-        p=v.project_players(rows)[0]; self.assertEqual(p['player_id'],'12'); self.assertEqual(p['current_club_id'],'34'); self.assertEqual(p['date_of_birth'].isoformat(),'2000-01-02')
+        p=v.project_players(rows)[0][0]; self.assertEqual(p['player_id'],'12'); self.assertEqual(p['current_club_id'],'34'); self.assertEqual(p['date_of_birth'].isoformat(),'2000-01-02')
     def test_club_projection(self):
-        c=v.project_clubs([{'href':'/a/startseite/verein/34','parent':{'href':'/x/startseite/wettbewerb/GB1'}}])[0]
+        c=v.project_clubs([{'href':'/a/startseite/verein/34','parent':{'href':'/x/startseite/wettbewerb/GB1'}}])[0][0]
         self.assertEqual(c['club_id'],'34'); self.assertEqual(c['domestic_competition_id'],'GB1')
     def test_transfer_projection(self):
         rows=[{'player_id':12,'response':{'transfers':[{'dateUnformatted':'2025-07-01','season':'25/26','from':{'href':'/a/startseite/verein/1'},'to':{'href':'/b/startseite/verein/2'}}]}}]
-        t=v.project_transfers(rows)[0]; self.assertEqual(str(t['player_id']),'12'); self.assertEqual(t['from_club_id'],'1'); self.assertEqual(t['to_club_id'],'2'); self.assertEqual(t['transfer_date'].isoformat(),'2025-07-01')
+        t=v.project_transfers(rows)[0][0]; self.assertEqual(str(t['player_id']),'12'); self.assertEqual(t['from_club_id'],'1'); self.assertEqual(t['to_club_id'],'2'); self.assertEqual(t['transfer_date'].isoformat(),'2025-07-01')
     def test_offline_zero_label(self):
         r=v.audit(False); self.assertEqual(r['labels_opened'],0); self.assertEqual(r['target_result_or_goal_values_read'],0); self.assertFalse(r['training']); self.assertFalse(r['tuning']); self.assertFalse(r['data_ready']); self.assertEqual(r['decision'],'OFFLINE_SYNTHETIC_ONLY'); self.assertEqual([x['relpath'] for x in r['blocked_objects']],['2025/appearances.json.gz'])
 if __name__=='__main__': unittest.main()
