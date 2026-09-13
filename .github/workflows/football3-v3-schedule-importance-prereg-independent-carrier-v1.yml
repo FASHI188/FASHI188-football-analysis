@@ -1,0 +1,62 @@
+name: Football3 V3 Schedule Importance Prereg Independent Carrier V1
+on:
+  pull_request:
+    branches:
+      - football3/v3-schedule-importance-scientific-evaluation-prereg-v1
+    paths:
+      - '.github/workflows/football3-v3-schedule-importance-prereg-independent-carrier-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  prereg-independent-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Exact carrier and frozen prereg binding
+        env:
+          FROZEN_PREREG_HEAD: 836e985ced292fc6a13a12ac132075f8a83c5279
+          CARRIER_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CARRIER_HEAD"
+          git merge-base --is-ancestor "$FROZEN_PREREG_HEAD" "$CARRIER_HEAD"
+          test "$(git diff --name-only "$FROZEN_PREREG_HEAD" "$CARRIER_HEAD")" = ".github/workflows/football3-v3-schedule-importance-prereg-independent-carrier-v1.yml"
+      - name: Execute frozen prereg permanent tests and validator
+        run: |
+          python -m py_compile governance/football3/validate_v3_schedule_importance_scientific_evaluation_prereg_v1.py governance/football3/test_v3_schedule_importance_scientific_evaluation_prereg_v1.py
+          python governance/football3/test_v3_schedule_importance_scientific_evaluation_prereg_v1.py
+          mkdir -p artifact
+          python governance/football3/validate_v3_schedule_importance_scientific_evaluation_prereg_v1.py > artifact/self-validation.json
+          python - <<'PY'
+          import hashlib,json,pathlib
+          expected={
+          'governance/football3/v3_schedule_importance_scientific_evaluation_prereg_contract_v1.json':'3566044d6144bab6beacf7b68e4b5f303cc7d66353ff6a3c2ad14fd96da6026e',
+          'governance/football3/validate_v3_schedule_importance_scientific_evaluation_prereg_v1.py':'0b61345c667cd38ad9b283a95c06c3ddfe5bf8d4f62ec75ed01f9369cd984f37',
+          'governance/football3/test_v3_schedule_importance_scientific_evaluation_prereg_v1.py':'525215e5501726f88311c74011782df988450f714aa30254a515cc026a62e479',
+          'governance/football3/v3_schedule_importance_scientific_evaluation_prereg_receipt_v1.json':'193ac5cd386ac698133100966f6f855648edc190a7d303be79adf7ed50a74a9b'}
+          for name,want in expected.items(): assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==want
+          r=json.loads(pathlib.Path('artifact/self-validation.json').read_text())
+          assert r['decision']=='PASS_PREREG_CONTRACT_SELF_VALIDATION'
+          assert r['target_labels_opened'] is False and r['training'] is False and r['tuning'] is False and r['independent_acceptance'] is False
+          PY
+      - name: Emit independent prereg acceptance receipt
+        env:
+          CARRIER_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          sha=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          receipt={'schema_version':'football3-v3-schedule-importance-prereg-independent-acceptance-v1','decision':'PASS_INDEPENDENT_PREREG_EXECUTION_CARRIER_LABELS_REMAIN_CLOSED','independent_acceptance':True,'frozen_prereg_head':'836e985ced292fc6a13a12ac132075f8a83c5279','carrier_head':os.environ['CARRIER_HEAD'],'parent_feature_head':'ed165d4ea86e4be468728771ea70027ece696215','parent_run_id':34768984931,'parent_artifact_id':10321625746,'parent_artifact_digest_sha256':'6cd43d1df017ab2a0a1bb698de51e9112530e48ea81a8d5f1c699c012c545b5d','feature_rows':30531,'feature_sha256':'c9b14435062f59f1caaf4ffdbf83373d7aa50b858a48057f66b89cc0605ecea4','contract_sha256':sha('governance/football3/v3_schedule_importance_scientific_evaluation_prereg_contract_v1.json'),'validator_sha256':sha('governance/football3/validate_v3_schedule_importance_scientific_evaluation_prereg_v1.py'),'permanent_test_sha256':sha('governance/football3/test_v3_schedule_importance_scientific_evaluation_prereg_v1.py'),'repository_receipt_sha256':sha('governance/football3/v3_schedule_importance_scientific_evaluation_prereg_receipt_v1.json'),'target_labels_opened':0,'target_result_or_goal_values_read':0,'training':False,'tuning':False,'future_matches_used':False,'stage6_1335_used':False,'standings_pressure_used':False,'rotation_pressure_used':False,'travel_pressure_used':False,'formal_weight':0,'matrix_delta':0,'scientific_evaluation_executed':False,'target_label_opening_authorized_in_this_batch':False,'next_step':'SEPARATE_EXPLICIT_LABEL_OPENING_AND_SCIENTIFIC_EVALUATION_BATCH_MAY_NOW_BE_AUTHORIZED'}
+          pathlib.Path('artifact/independent-prereg-acceptance-receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          pathlib.Path('artifact/head-binding.json').write_text(json.dumps({'carrier_head':os.environ['CARRIER_HEAD'],'frozen_prereg_head':'836e985ced292fc6a13a12ac132075f8a83c5279','parent_feature_head':'ed165d4ea86e4be468728771ea70027ece696215'},sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-prereg-independent-${{ github.event.pull_request.head.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
