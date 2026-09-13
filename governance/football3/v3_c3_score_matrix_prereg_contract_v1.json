@@ -1,0 +1,134 @@
+{
+  "schema_version": "football3-v3-c3-score-matrix-prereg-contract-v1",
+  "project_id": "football3",
+  "status": "ZERO_LABEL_PREREG_FROZEN",
+  "research_line": "V3_C3_SCORE_MATRIX_ALLOCATION",
+  "objective": "Hold Formal V2 P(T) fixed and research only D(H,A|T): home/away goal allocation, goal difference, draw structure and exact-score allocation.",
+  "exact_base": "241cd942df2c32b92962a6a7e232381426a21d53",
+  "branch": "football3/v3-c3-score-matrix-prereg-v1",
+  "formal_baseline": {
+    "model": "Historical XG Fusion V2",
+    "branch": "football3/historical-xg-fusion-v2-formal-activation-v1",
+    "head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "xg_weight": 0.75,
+    "frozen_v1_weight": 0.25,
+    "entry_path": "football-data/new_engine_v1/formal_fusion_v2.py",
+    "entry_blob_sha": "a5ed26d5ffd4a2875cb9c658cfaa28665a8b7871",
+    "pointer_path": "football-data/config/formal_model_pointer_historical_xg_fusion_v2.json",
+    "pointer_blob_sha": "f07743f9c873d415fad9612f3225f64c64b10542",
+    "formal_test_path": "football-data/new_engine_v1/test_formal_fusion_v2.py",
+    "formal_test_blob_sha": "61b25cd403fa1d9efa0dfcbc1643e0f17621944e",
+    "gateway_path": "football-data/formal_gpt_gateway_v1/entry.py",
+    "gateway_blob_sha": "b41b0ede2db99c116b90270a32cd04dd240eb655"
+  },
+  "data_gate": {
+    "target_labels_read_in_this_batch": false,
+    "training_in_this_batch": false,
+    "tuning_in_this_batch": false,
+    "market_data_loading": false,
+    "new_provider_loading": false,
+    "component_source": "Formal V2 already-computed Frozen V1 and XG component score matrices from state.predict_batch(..., include_matrix=True)",
+    "component_identity_must_match": true,
+    "component_support_must_match": true,
+    "finite_nonnegative_probabilities_required": true,
+    "candidate_support_must_equal_formal_v2_support": true,
+    "new_score_cells_forbidden": true,
+    "tail_extrapolation_forbidden": true,
+    "ineligible_total_fallback": "EXACT_FORMAL_V2_CONDITIONAL",
+    "post_cutoff_inputs_forbidden": true
+  },
+  "candidate_family": {
+    "name": "COMPONENT_DISAGREEMENT_CONDITIONAL_TILT",
+    "parameters": ["beta"],
+    "parameter_count": 1,
+    "candidate_grid": null,
+    "draw_bonus": false,
+    "score_bonus": false,
+    "thresholds": [],
+    "signal_per_total": "s_T = E_XG[H-A | H+A=T] - E_V1[H-A | H+A=T]",
+    "baseline": "q(h,a) = 0.25*p_V1(h,a) + 0.75*p_XG(h,a)",
+    "candidate_conditional": "q_beta(h,a|T) proportional to q(h,a|T) * exp(beta * s_T * (h-a))",
+    "total_marginal_constraint": "P_beta(T) == P_FormalV2(T) for every represented T",
+    "beta_zero_identity": "beta=0 returns Formal V2 score matrix exactly",
+    "unsupported_or_ineligible_total": "return Formal V2 conditional exactly",
+    "support_rule": "No new (H,A) cell and no fabricated tail state; operate only on cells already present in Formal V2 component support."
+  },
+  "development_and_confirmation": {
+    "historical_development_class": "POST_VIEW_DEVELOPMENT_ONLY",
+    "known_consumed_identity_groups": [
+      "C072-I2",
+      "C072-K2",
+      "C077-B",
+      "STAGE6_1335"
+    ],
+    "known_consumed_groups_may_be_fresh_confirmation": false,
+    "historical_split": "strict chronological rolling-origin by kickoff; never random split",
+    "beta_fit": "single deterministic scalar minimization of mean conditional-score NLL on eligible development fixtures; no grid search; optimizer bounds and tolerance must be frozen before any fresh confirmation labels",
+    "ablation": [
+      "Formal V2 beta=0 baseline",
+      "sign-only component disagreement with the same single beta fit rule",
+      "full magnitude component disagreement prereg candidate"
+    ],
+    "fresh_confirmation": "prospective fixtures predicted only after final beta and code HEAD are frozen; labels remain sealed until cohort closes",
+    "required_n_rule": "Before fresh-label opening, compute paired development loss-difference standard deviation sigma_dev using only POST_VIEW_DEVELOPMENT identities; required_n=max(1000,ceil(((1.959964+0.841621)*sigma_dev/0.003)^2)); freeze required_n and cohort rule in an immutable receipt before enrollment.",
+    "fresh_identity_overlap_with_any_consumed_group": false
+  },
+  "metrics": {
+    "primary": "paired conditional exact-score negative log loss: -log P(H,A|T)",
+    "equivalence_note": "Because P(T) is fixed fixture-by-fixture, candidate-vs-baseline delta in conditional exact-score NLL equals delta in full joint-score NLL.",
+    "secondary": [
+      "full joint-score NLL",
+      "1X2 log loss",
+      "1X2 Brier",
+      "RPS",
+      "draw-class log loss",
+      "score-matrix entropy and top-cell concentration"
+    ]
+  },
+  "promotion_line": {
+    "engineering_preconditions": [
+      "exact-head gates pass",
+      "P(T) invariant max_abs_error <= 5e-12 on every fixture",
+      "beta=0 byte-equivalent matrix identity",
+      "support unchanged",
+      "no cutoff violation",
+      "no formal surface drift"
+    ],
+    "scientific_primary": "On the fresh confirmation cohort, mean(candidate conditional NLL - Formal V2 conditional NLL) <= -0.003 and the two-sided 95% paired confidence interval upper bound is < 0.",
+    "secondary_guardrails": [
+      "1X2 mean log-loss delta <= +0.001",
+      "1X2 Brier mean delta <= +0.001",
+      "RPS mean delta <= +0.001",
+      "no competition with >=100 fresh eligible fixtures may have conditional-NLL degradation > +0.01 unless multiplicity-adjusted evidence supports heterogeneity and a separately preregistered scope rule exists"
+    ],
+    "promotion_is_automatic": false,
+    "formal_activation_requires_new_authorization": true
+  },
+  "stop_conditions": [
+    "component matrices cannot be obtained without changing Formal V2 or production wiring",
+    "mechanical P(T) invariance cannot be guaranteed",
+    "candidate requires new labels before prereg freeze",
+    "candidate requires a second provider, market feed, fuzzy identity, or post-cutoff data",
+    "candidate requires more than the single preregistered beta parameter",
+    "candidate requires fabricated score support or tail mass",
+    "exact base or formal immutable blob identity drifts"
+  ],
+  "inactive_until_scientific_pass": {
+    "status": "NOT_AVAILABLE",
+    "weight": 0,
+    "matrix_delta": 0,
+    "data_ready": false
+  },
+  "forbidden_changes": {
+    "formal_v2": true,
+    "current": true,
+    "formal_pointer": true,
+    "formal_75_25_weights": true,
+    "production": true,
+    "selector": true,
+    "state": true,
+    "route": true,
+    "fallback": true,
+    "activation": true
+  }
+}

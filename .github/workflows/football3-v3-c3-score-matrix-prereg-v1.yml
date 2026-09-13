@@ -1,0 +1,141 @@
+name: Football3 V3 C3 Score Matrix Prereg V1
+on:
+  push:
+    branches: [football3/v3-c3-score-matrix-prereg-v1]
+    paths:
+      - '.github/workflows/football3-v3-c3-score-matrix-prereg-v1.yml'
+      - 'governance/football3/v3_c3_score_matrix_prereg_contract_v1.json'
+      - 'governance/football3/validate_v3_c3_score_matrix_prereg_v1.py'
+      - 'governance/football3/test_v3_c3_score_matrix_prereg_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: football3-v3-c3-score-matrix-prereg-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  EXACT_BASE: '241cd942df2c32b92962a6a7e232381426a21d53'
+  FORMAL_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+jobs:
+  validate-and-seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_name: ${{ steps.seal.outputs.artifact_name }}
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: '${{ github.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact base and four-file scope
+        id: identity
+        env:
+          CANDIDATE_SHA: '${{ github.sha }}'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git merge-base "$EXACT_BASE" HEAD)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/formal-gpt-runner-integration-v1 | cut -f1)" = "$EXACT_BASE"
+          test "$(git ls-remote origin refs/heads/football3/historical-xg-fusion-v2-formal-activation-v1 | cut -f1)" = "$FORMAL_HEAD"
+          python - <<'PY'
+          import subprocess
+          expected={
+            '.github/workflows/football3-v3-c3-score-matrix-prereg-v1.yml',
+            'governance/football3/v3_c3_score_matrix_prereg_contract_v1.json',
+            'governance/football3/validate_v3_c3_score_matrix_prereg_v1.py',
+            'governance/football3/test_v3_c3_score_matrix_prereg_v1.py',
+          }
+          got=set(subprocess.check_output(['git','diff','--name-only','241cd942df2c32b92962a6a7e232381426a21d53...HEAD'],text=True).splitlines())
+          assert got==expected,(sorted(got),sorted(expected))
+          PY
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Zero-label prereg validator and permanent tests
+        env:
+          PYTHONPATH: governance/football3
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_v3_c3_score_matrix_prereg_v1.py governance/football3/test_v3_c3_score_matrix_prereg_v1.py
+          python governance/football3/validate_v3_c3_score_matrix_prereg_v1.py --repo-root . | tee /tmp/validator.txt
+          python governance/football3/test_v3_c3_score_matrix_prereg_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 28 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+          grep -q '^C3_ZERO_LABEL_PREREG_VALIDATION_PASS$' /tmp/validator.txt
+      - name: Foundation and Formal V2 regressions
+        env:
+          PYTHONPATH: 'football-data:governance/football3:football-data/research'
+        run: |
+          set -euo pipefail
+          python governance/football3/test_nextgen_current_v2_foundation_v1.py 2>&1 | tee /tmp/foundation.txt
+          grep -q 'Ran 14 tests' /tmp/foundation.txt && grep -q '^OK$' /tmp/foundation.txt && ! grep -q 'skipped=' /tmp/foundation.txt
+          python football-data/new_engine_v1/test_formal_fusion_v2.py 2>&1 | tee /tmp/formal.txt
+          grep -q 'Ran 13 tests' /tmp/formal.txt && grep -q '^OK$' /tmp/formal.txt
+      - name: Seal prereg receipt
+        id: seal
+        env:
+          CANDIDATE_SHA: '${{ steps.identity.outputs.candidate_sha }}'
+        run: |
+          set -euo pipefail
+          rm -rf _seal; mkdir -p _seal/contract _seal/code _seal/evidence
+          cp governance/football3/v3_c3_score_matrix_prereg_contract_v1.json _seal/contract/
+          cp governance/football3/validate_v3_c3_score_matrix_prereg_v1.py governance/football3/test_v3_c3_score_matrix_prereg_v1.py _seal/code/
+          cp /tmp/validator.txt /tmp/tests.txt /tmp/foundation.txt /tmp/formal.txt _seal/evidence/
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          receipt={
+            'schema_version':'football3-v3-c3-score-matrix-prereg-receipt-v1',
+            'status':'ZERO_LABEL_PREREG_PASS',
+            'candidate_head':os.environ['CANDIDATE_SHA'],
+            'exact_base':os.environ['EXACT_BASE'],
+            'research_line':'V3_C3_SCORE_MATRIX_ALLOCATION',
+            'candidate_status':'NOT_AVAILABLE',
+            'weight':0,
+            'matrix_delta':0,
+            'data_ready':False,
+            'target_labels_read':False,
+            'training_performed':False,
+            'tuning_performed':False,
+            'formal_changed':False,
+            'pt_fixed':True,
+            'fresh_confirmation_consumed':False,
+          }
+          Path('_seal/evidence/receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n')
+          PY
+          artifact_name="football3-v3-c3-score-matrix-prereg-${CANDIDATE_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: '${{ steps.seal.outputs.artifact_name }}'
+          path: _seal
+          if-no-files-found: error
+          retention-days: 30
+  remote-readback:
+    needs: validate-and-seal
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: '${{ needs.validate-and-seal.outputs.artifact_name }}'
+          path: _readback
+      - name: Verify prereg receipt
+        env:
+          CANDIDATE_SHA: '${{ needs.validate-and-seal.outputs.candidate_sha }}'
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          x=json.loads(Path('_readback/evidence/receipt.json').read_text())
+          assert x['candidate_head']==os.environ['CANDIDATE_SHA']
+          assert x['status']=='ZERO_LABEL_PREREG_PASS'
+          assert x['candidate_status']=='NOT_AVAILABLE' and x['weight']==0 and x['matrix_delta']==0 and x['data_ready'] is False
+          assert x['pt_fixed'] is True and x['fresh_confirmation_consumed'] is False
+          assert not x['target_labels_read'] and not x['training_performed'] and not x['tuning_performed'] and not x['formal_changed']
+          print('C3_ZERO_LABEL_PREREG_REMOTE_READBACK_PASS')
+          PY
