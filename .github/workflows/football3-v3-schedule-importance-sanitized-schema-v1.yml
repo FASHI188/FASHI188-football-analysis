@@ -1,0 +1,90 @@
+name: Football3 V3 Schedule Importance Sanitized Schema V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-schedule-importance-sanitized-schema-v1.yml'
+      - 'governance/football3/v3_schedule_importance_sanitized_schema_contract_v1.json'
+      - 'governance/football3/validate_v3_schedule_importance_sanitized_schema_v1.py'
+      - 'governance/football3/test_v3_schedule_importance_sanitized_schema_v1.py'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Exact candidate HEAD
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Permanent sanitizer tests
+        run: |
+          python -m py_compile \
+            governance/football3/validate_v3_schedule_importance_sanitized_schema_v1.py \
+            governance/football3/test_v3_schedule_importance_sanitized_schema_v1.py
+          python governance/football3/test_v3_schedule_importance_sanitized_schema_v1.py
+      - name: Fetch exact frozen completed-history source
+        env:
+          SOURCE_REPO: https://github.com/openfootball/football.json.git
+          SOURCE_SHA: 41a6eb96ba816757ff892387da5cb111390a7f9c
+          SOURCE_TREE: 9f8b9cf475474301857f7b1de7382bd754b3b16b
+        run: |
+          rm -rf .source-openfootball
+          git init -q .source-openfootball
+          git -C .source-openfootball remote add origin "$SOURCE_REPO"
+          git -C .source-openfootball fetch --depth=1 origin "$SOURCE_SHA"
+          git -C .source-openfootball checkout -q --detach FETCH_HEAD
+          test "$(git -C .source-openfootball rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C .source-openfootball rev-parse 'HEAD^{tree}')" = "$SOURCE_TREE"
+      - name: Sanitized schema object audit
+        run: |
+          mkdir -p artifact
+          python governance/football3/validate_v3_schedule_importance_sanitized_schema_v1.py \
+            --source-repo .source-openfootball \
+            --output artifact/sanitized-schema-receipt.json \
+            --sanitized-output artifact/sanitized-schedule.jsonl \
+            --manifest-output artifact/sanitized-manifest.json
+          cp governance/football3/v3_schedule_importance_sanitized_schema_contract_v1.json artifact/
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          p=json.load(open('artifact/sanitized-schema-receipt.json'))
+          assert p['decision']=='PASS_SANITIZED_SCHEMA_OBJECT_AUDIT_NEXT_SCHEDULE_FEATURE_CONSTRUCTION_PREREG'
+          assert p['selected_file_count']==94
+          assert p['source_objects_opened']==94
+          assert p['source_blob_sha_verified']==94
+          assert p['inventory_sha256']=='7449306437db6f974f2209ce2389ba235a293f5334139390c4e2714929e0b72f'
+          assert p['sanitized_rows_written']>0
+          assert p['score_values_decoded']==0
+          assert p['result_or_goal_values_decoded']==0
+          assert p['result_or_goal_values_emitted']==0
+          assert p['future_matches_allowed'] is False
+          assert p['training'] is False and p['tuning'] is False
+          assert p['stage6_touched'] is False
+          allowed={'source_path','row_index','round','date','time','team1','team2'}
+          forbidden={'score','result','results','goals','goal','winner','ht','ft','penalties','penalty'}
+          rows=0
+          for line in Path('artifact/sanitized-schedule.jsonl').read_text().splitlines():
+              if not line.strip(): continue
+              x=json.loads(line)
+              assert set(x)==allowed
+              assert not (set(x)&forbidden)
+              assert x['source_path']!='2023-24/en.1.json'
+              rows += 1
+          assert rows==p['sanitized_rows_written']
+          binding={
+            'head_branch': os.environ['GITHUB_HEAD_REF'],
+            'candidate_head_sha': '${{ github.event.pull_request.head.sha }}',
+            'github_sha': os.environ['GITHUB_SHA'],
+            'event': os.environ['GITHUB_EVENT_NAME'],
+            'pr_number': ${{ github.event.pull_request.number }},
+          }
+          Path('artifact/head-binding.json').write_text(json.dumps(binding,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-sanitized-schema-${{ github.event.pull_request.head.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
