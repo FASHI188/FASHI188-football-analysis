@@ -30,13 +30,21 @@ def t_zero_guards():
     c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text()); r=v.base(c)
     assert r['labels_opened']==r['target_match_rows_read']==r['target_result_or_goal_values_read']==0
     assert not r['future_matches_allowed'] and not r['training'] and not r['tuning']
-def t_historical_remote_binding():
+def t_historical_provenance_retained():
     c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text())
     assert c['source']['historical_dvc_config_blob_sha']=='3c0f733fe20089d44449e22cdfc707043c9f70cb'
     assert c['source']['historical_dvc_remote_root']=='https://d1mj0i4rr3evqd.cloudfront.net/dvc/'
-    assert c['source']['dvc_remote_prefix']=='https://d1mj0i4rr3evqd.cloudfront.net/dvc/files/md5'
-    assert v.url(c['source']['dvc_remote_prefix'],'a'*32,True).endswith('/files/md5/aa/'+'a'*30+'.dir')
-T=[t_resolve_ok,t_dir_hash_stop,t_missing_stop,t_player_stop,t_future_excluded,t_zero_guards,t_historical_remote_binding]
+def t_r2_exact_hash_mirror_binding():
+    c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text()); s=c['source']
+    assert s['mirror_migration_commit_sha']=='0f247e4b13d8e2a619bc62854e62bb16c9759f7e'
+    assert s['mirror_migration_pr']==329
+    assert s['mirror_dvc_remote_root']=='https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/dvc/'
+    assert s['mirror_dvc_remote_prefix'].endswith('/dvc/files/md5')
+    assert v.url(s['mirror_dvc_remote_prefix'],'a'*32,True).endswith('/files/md5/aa/'+'a'*30+'.dir')
+def t_mirror_receipt_defaults_fail_closed():
+    c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text()); r=v.base(c)
+    assert r['mirror_equivalence_verified'] is False and r['mirror_dir_objects_verified']==0 and r['mirror_child_objects_verified']==0
+T=[t_resolve_ok,t_dir_hash_stop,t_missing_stop,t_player_stop,t_future_excluded,t_zero_guards,t_historical_provenance_retained,t_r2_exact_hash_mirror_binding,t_mirror_receipt_defaults_fail_closed]
 if __name__=='__main__':
     for f in T: f(); print('PASS',f.__name__)
     print(f'{len(T)}/{len(T)} PASS')
