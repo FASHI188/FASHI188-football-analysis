@@ -39,8 +39,8 @@ def t_r2_exact_hash_mirror_binding():
     assert s['mirror_migration_commit_sha']=='0f247e4b13d8e2a619bc62854e62bb16c9759f7e'
     assert s['mirror_migration_pr']==329
     assert s['mirror_dvc_remote_root']=='https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/dvc/'
-    assert s['mirror_dvc_remote_prefix'].endswith('/dvc/files/md5')
-    assert v.url(s['mirror_dvc_remote_prefix'],'a'*32,True).endswith('/files/md5/aa/'+'a'*30+'.dir')
+    assert s['mirror_dvc_remote_prefix']=='https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/dvc'
+    assert v.url(s['mirror_dvc_remote_prefix'],'a'*32,True).endswith('/dvc/aa/'+'a'*30+'.dir')
 def t_mirror_receipt_defaults_fail_closed():
     c=json.loads((H/'v3_transfer_roster_historical_object_contract_v1.json').read_text()); r=v.base(c)
     assert r['mirror_equivalence_verified'] is False and r['mirror_dir_objects_verified']==0 and r['mirror_child_objects_verified']==0
