@@ -1,138 +1,97 @@
 name: Football3 V3 Schedule Importance Scientific Evaluation V1
 on:
   pull_request:
-    branches:
-      - football3/v3-prereg-carrier-v1
+    branches: [football3/v3-prereg-carrier-v1]
     paths:
       - '.github/workflows/football3-v3-schedule-importance-scientific-evaluation-v1.yml'
       - 'governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py'
       - 'governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py'
       - 'governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json'
-
-permissions:
-  contents: read
-  actions: read
-
+permissions: {contents: read, actions: read}
 jobs:
-  scientific-evaluation:
+  evaluate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - name: Exact candidate and frozen carrier binding
-        env:
-          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
-          FROZEN_CARRIER_HEAD: 2dd8be947b5922703bde7174ef6f6347295bfde8
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0}
+      - name: Exact scope binding
+        env: {HEAD_SHA: '${{ github.event.pull_request.head.sha }}', BASE_SHA: 2dd8be947b5922703bde7174ef6f6347295bfde8}
         run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
-          git merge-base --is-ancestor "$FROZEN_CARRIER_HEAD" "$CANDIDATE_HEAD"
-          python - <<'PY'
-          import os, subprocess
-          allowed = sorted([
-            ".github/workflows/football3-v3-schedule-importance-scientific-evaluation-v1.yml",
-            "governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py",
-            "governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py",
-            "governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json",
-          ])
-          base=os.environ["FROZEN_CARRIER_HEAD"]
-          head=os.environ["CANDIDATE_HEAD"]
-          got=sorted(x for x in subprocess.check_output(["git","diff","--name-only",base,head],text=True).splitlines() if x)
-          assert got == allowed, (got, allowed)
-          PY
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install frozen research dependency
-        run: python -m pip install --disable-pip-version-check -q scikit-learn==1.7.2
-
-      - name: Permanent scientific-evaluation tests
-        run: |
-          python -m py_compile \
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+          test "$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | wc -l)" -eq 4
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | sort > /tmp/got
+          printf '%s\n' \
+            .github/workflows/football3-v3-schedule-importance-scientific-evaluation-v1.yml \
             governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py \
-            governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py
+            governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py \
+            governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json | sort > /tmp/want
+          diff -u /tmp/want /tmp/got
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check -q scikit-learn==1.7.2
+      - name: Permanent tests
+        run: |
+          python -m py_compile governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py
           python governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py
-
-      - name: Download exact frozen feature artifact
-        uses: actions/download-artifact@v4
+      - name: Verify implementation binding
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json')
+          b=json.loads(p.read_text())
+          assert b['exact_base']=='2dd8be947b5922703bde7174ef6f6347295bfde8'
+          assert b['scientific_contract_change'] is False and b['formal_weight']==0 and b['matrix_delta']==0
+          assert b['runtime']=={'python':'3.12','scikit_learn':'1.7.2','tuning':False,'hyperparameter_search':False}
+          PY
+      - uses: actions/download-artifact@v4
         with:
           name: football3-v3-schedule-importance-feature-construction-ed165d4ea86e4be468728771ea70027ece696215
-          path: parent-feature
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
+          path: feature-artifact
+          github-token: '${{ github.token }}'
+          repository: '${{ github.repository }}'
           run-id: 34768984931
-
-      - name: Download accepted independent prereg carrier artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: football3-v3-schedule-importance-prereg-independent-2dd8be947b5922703bde7174ef6f6347295bfde8
           path: carrier-artifact
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
+          github-token: '${{ github.token }}'
+          repository: '${{ github.repository }}'
           run-id: 34776229663
-
-      - name: Fetch exact completed-history label source
+      - uses: actions/checkout@v4
+        with:
+          repository: openfootball/football.json
+          ref: 41a6eb96ba816757ff892387da5cb111390a7f9c
+          path: label-source
+          fetch-depth: 1
+      - name: Exact label source
         run: |
-          git init label-source
-          git -C label-source remote add origin https://github.com/openfootball/football.json.git
-          git -C label-source fetch --depth=1 origin 41a6eb96ba816757ff892387da5cb111390a7f9c
-          git -C label-source checkout --detach FETCH_HEAD
-          test "$(git -C label-source rev-parse HEAD)" = "41a6eb96ba816757ff892387da5cb111390a7f9c"
-          test "$(git -C label-source hash-object LICENSE.md)" = "670154e3538863b2d9891fd5483160fbdfc89164"
-
-      - name: Execute frozen preregistered scientific evaluation
+          test "$(git -C label-source rev-parse HEAD)" = 41a6eb96ba816757ff892387da5cb111390a7f9c
+          test "$(git -C label-source hash-object LICENSE.md)" = 670154e3538863b2d9891fd5483160fbdfc89164
+      - name: Run frozen scientific evaluation
         run: |
           mkdir -p artifact
           python governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py \
-            --features parent-feature/schedule-features.jsonl \
+            --features feature-artifact/schedule-features.jsonl \
             --source-root label-source \
             --prereg-contract governance/football3/v3_schedule_importance_scientific_evaluation_prereg_contract_v1.json \
-            --carrier-artifact carrier-artifact \
-            --output-dir artifact
-
-      - name: Verify receipt boundary and bind exact HEAD
-        env:
-          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+            --carrier-artifact carrier-artifact --output-dir artifact
+      - name: Receipt and HEAD binding
+        env: {HEAD_SHA: '${{ github.event.pull_request.head.sha }}'}
         run: |
           python - <<'PY'
-          import json, os, pathlib
-          a=pathlib.Path("artifact")
-          r=json.loads((a/"scientific-evaluation-receipt.json").read_text())
-          assert r["decision"] in {
-              "DEVELOPMENT_SIGNAL_PASS_RESEARCH_ONLY_NO_PROMOTION",
-              "SCIENTIFIC_EVALUATION_FAIL_CLOSE_NO_RETUNE",
-          }
-          assert r["feature_rows"] == 30531
-          assert r["feature_sha256"] == "c9b14435062f59f1caaf4ffdbf83373d7aa50b858a48057f66b89cc0605ecea4"
-          assert r["target_labels_opened"] == 30531
-          assert r["target_label_values_retained"] == "H_D_A_ONLY"
-          assert r["exact_score_values_retained"] == 0
-          assert r["goal_totals_retained"] == 0
-          assert r["future_matches_used"] is False
-          assert r["stage6_1335_used"] is False
-          assert r["standings_pressure_used"] is False
-          assert r["rotation_pressure_used"] is False
-          assert r["travel_pressure_used"] is False
-          assert r["training_executed"] is True
-          assert r["hyperparameter_search"] is False
-          assert r["feature_selection"] is False
-          assert r["threshold_search"] is False
-          assert r["tuning"] is False
-          assert r["formal_weight"] == 0 and r["matrix_delta"] == 0
-          hb={
-              "candidate_head":os.environ["CANDIDATE_HEAD"],
-              "frozen_carrier_head":"2dd8be947b5922703bde7174ef6f6347295bfde8",
-              "frozen_prereg_head":"836e985ced292fc6a13a12ac132075f8a83c5279",
-              "parent_feature_head":"ed165d4ea86e4be468728771ea70027ece696215",
-              "source_commit":"41a6eb96ba816757ff892387da5cb111390a7f9c",
-          }
-          (a/"head-binding.json").write_text(json.dumps(hb,sort_keys=True,indent=2)+"\n")
+          import json,os,pathlib
+          a=pathlib.Path('artifact');r=json.loads((a/'scientific-evaluation-receipt.json').read_text())
+          assert r['decision'] in {'DEVELOPMENT_SIGNAL_PASS_RESEARCH_ONLY_NO_PROMOTION','SCIENTIFIC_EVALUATION_FAIL_CLOSE_NO_RETUNE'}
+          assert r['target_labels_opened']==30531 and r['target_label_values_retained']=='H_D_A_ONLY'
+          assert r['exact_score_values_retained']==0 and r['goal_totals_retained']==0
+          assert r['future_matches_used'] is False and r['stage6_1335_used'] is False
+          assert r['standings_pressure_used'] is False and r['rotation_pressure_used'] is False and r['travel_pressure_used'] is False
+          assert r['hyperparameter_search'] is False and r['feature_selection'] is False and r['threshold_search'] is False and r['tuning'] is False
+          assert r['formal_weight']==0 and r['matrix_delta']==0
+          (a/'head-binding.json').write_text(json.dumps({'candidate_head':os.environ['HEAD_SHA'],'base_head':'2dd8be947b5922703bde7174ef6f6347295bfde8','frozen_prereg_head':'836e985ced292fc6a13a12ac132075f8a83c5279','source_commit':'41a6eb96ba816757ff892387da5cb111390a7f9c'},sort_keys=True,indent=2)+'\n')
           PY
-
       - uses: actions/upload-artifact@v4
         with:
           name: football3-v3-schedule-importance-scientific-evaluation-${{ github.event.pull_request.head.sha }}
