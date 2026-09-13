@@ -1,0 +1,63 @@
+name: Football3 V3 Transfer Roster Completed History V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-transfer-roster-completed-history-v1.yml'
+      - 'governance/football3/v3_transfer_roster_completed_history_contract_v1.json'
+      - 'governance/football3/validate_v3_transfer_roster_completed_history_v1.py'
+      - 'governance/football3/test_v3_transfer_roster_completed_history_v1.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  completed-history-snapshot-transport-zero-label:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+      - name: Exact candidate HEAD binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          printf '{"head":"%s","expected_head":"%s","event":"%s","github_sha":"%s"}\n' "$(git rev-parse HEAD)" "$EXPECTED_HEAD" "$GITHUB_EVENT_NAME" "$GITHUB_SHA" > head-binding.json
+      - name: Compile and permanent tests
+        run: |
+          python -m py_compile governance/football3/validate_v3_transfer_roster_completed_history_v1.py governance/football3/test_v3_transfer_roster_completed_history_v1.py
+          PYTHONPATH=governance/football3 python governance/football3/test_v3_transfer_roster_completed_history_v1.py
+      - name: Descriptor-only completed-history transport audit
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          python governance/football3/validate_v3_transfer_roster_completed_history_v1.py --output artifact/transport-receipt.json
+          cp governance/football3/v3_transfer_roster_completed_history_contract_v1.json artifact/
+          cp head-binding.json artifact/
+          python - <<'PY'
+          import json
+          p=json.load(open('artifact/transport-receipt.json'))
+          assert p['decision'] in {
+            'PASS_HISTORICAL_SNAPSHOT_TRANSPORT_NEXT_EXACT_HASH_OBJECT_AUDIT',
+            'STOP_SOURCE_LICENSE_NOT_CC0','STOP_HISTORICAL_SNAPSHOT_UPDATE_COUNT',
+            'STOP_HISTORICAL_SNAPSHOT_MONTH_COVERAGE','STOP_HISTORICAL_SNAPSHOT_SPAN',
+            'STOP_HISTORICAL_SNAPSHOT_START_BOUND','STOP_HISTORICAL_SNAPSHOT_END_BOUND',
+            'STOP_DVC_DESCRIPTOR_INVALID','STOP_DVC_DESCRIPTOR_LINEAGE_NOT_DISTINCT'
+          }
+          assert p['target_population']=='COMPLETED_MATCHES_ONLY'
+          assert p['future_matches_allowed'] is False
+          assert p['existing_frozen_future_receipts_used'] is False
+          assert p['stage6_1335_queue_used'] is False
+          assert p['labels_opened']==0 and p['target_match_rows_read']==0 and p['target_result_or_goal_values_read']==0
+          assert p['referenced_dvc_data_objects_downloaded']==0
+          assert p['games_payload_downloaded'] is False and p['appearances_payload_downloaded'] is False and p['lineups_payload_downloaded'] is False
+          assert p['training'] is False and p['tuning'] is False and p['stage6_touched'] is False
+          assert p['formal_weight']==0 and p['matrix_delta']==0 and p['data_ready'] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-transfer-roster-completed-history-${{ env.EXPECTED_HEAD }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
