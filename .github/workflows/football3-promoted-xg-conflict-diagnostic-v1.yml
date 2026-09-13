@@ -1,0 +1,93 @@
+name: Football3 Promoted XG Conflict Diagnostic V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [reopened, synchronize]
+    paths:
+      - 'football-data/research/promoted_cold_start_v2_1/**'
+      - '.github/workflows/football3-promoted-xg-conflict-diagnostic-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PREREG_BLOB: '30c45da908540ad99aab51024729d554a7047c7a'
+  EVALUATOR_BLOB: '849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1'
+  RUNTIME_BLOB: '8994226369094908beb410ce454d19fd7272c3df'
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  CONFIRMATION_ARTIFACT_ID: '9827606506'
+
+jobs:
+  diagnose-formal-xg-result-conflict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind frozen evaluator and unchanged production runtime
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/evaluate.py)" = "$EVALUATOR_BLOB"
+          test "$(git hash-object football-data/formal_fast_runtime_v1/runtime.py)" = "$RUNTIME_BLOB"
+          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/diagnose_formal_xg_result_conflicts.py
+          mkdir -p diagnostic-output .runtime_sources/understat .runtime_sources/confirmation
+
+      - name: Acquire exact frozen formal source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          test -f .runtime_sources/understat/understat_frozen.db
+          test -f .runtime_sources/confirmation/confirmation_identity.jsonl
+          test -f .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl
+
+      - name: Enumerate formal XG result conflicts without candidate evaluation
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/research/promoted_cold_start_v2_1/diagnose_formal_xg_result_conflicts.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --out "$PWD/diagnostic-output/formal-xg-result-conflicts.json" \
+            | tee diagnostic-output/stdout.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('diagnostic-output/formal-xg-result-conflicts.json'))
+          assert d['diagnostic_only'] is True
+          assert d['candidate_metrics_computed'] is False
+          assert d['candidate_parameters_or_gates_modified'] is False
+          assert d['production_runtime_modified'] is False
+          print(json.dumps({'conflict_n':d['conflict_n'],'missing_n':d['missing_n'],'extra_n':d['extra_n'],'conflicts':d['conflicts']},ensure_ascii=False,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-promoted-xg-conflict-diagnostic-${{ github.event.pull_request.head.sha || github.sha }}
+          path: diagnostic-output
+          if-no-files-found: warn
+          retention-days: 30
