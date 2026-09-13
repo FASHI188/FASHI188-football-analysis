@@ -1,0 +1,36 @@
+name: Football3 V3 Transfer Roster Historical Object V1
+on:
+  pull_request:
+    branches: [football3/formal-gpt-runner-integration-v1]
+    paths:
+      - '.github/workflows/football3-v3-transfer-roster-historical-object-v1.yml'
+      - 'governance/football3/v3_transfer_roster_historical_object_contract_v1.json'
+      - 'governance/football3/validate_v3_transfer_roster_historical_object_v1.py'
+      - 'governance/football3/test_v3_transfer_roster_historical_object_v1.py'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Exact HEAD
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+      - name: Permanent tests
+        run: |
+          python -m py_compile governance/football3/validate_v3_transfer_roster_historical_object_v1.py governance/football3/test_v3_transfer_roster_historical_object_v1.py
+          python governance/football3/test_v3_transfer_roster_historical_object_v1.py
+      - name: Exact-hash object audit
+        run: |
+          mkdir -p artifact
+          python governance/football3/validate_v3_transfer_roster_historical_object_v1.py --output artifact/object-receipt.json
+          cp governance/football3/v3_transfer_roster_historical_object_contract_v1.json artifact/
+          python -c "import json; p=json.load(open('artifact/object-receipt.json')); assert p['labels_opened']==0 and p['target_match_rows_read']==0 and p['target_result_or_goal_values_read']==0 and p['training'] is False and p['tuning'] is False and p['future_matches_allowed'] is False"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-transfer-roster-historical-object-${{ github.event.pull_request.head.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
