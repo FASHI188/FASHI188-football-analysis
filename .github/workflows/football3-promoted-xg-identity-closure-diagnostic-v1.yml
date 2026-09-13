@@ -1,0 +1,104 @@
+name: Football3 Promoted XG Identity Closure Diagnostic V1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    types: [reopened, synchronize]
+    paths:
+      - 'football-data/research/promoted_cold_start_v2_1/**'
+      - '.github/workflows/football3-promoted-xg-identity-closure-diagnostic-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PREREG_BLOB: '30c45da908540ad99aab51024729d554a7047c7a'
+  EVALUATOR_BLOB: '849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1'
+  RUNTIME_BLOB: '8994226369094908beb410ce454d19fd7272c3df'
+  TEAM_ALIASES_BLOB: '6248028352308ceda6800794c0ee3f5ceca223a9'
+  IDENTITY_CLOSURE_BLOB: '87b43c4a45890828312a8a93b3868b7b2f471df3'
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  CONFIRMATION_ARTIFACT_ID: '9827606506'
+
+jobs:
+  diagnose-existing-identity-closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind frozen science runtime aliases and historical identity closure
+        run: |
+          set -euo pipefail
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/evaluate.py)" = "$EVALUATOR_BLOB"
+          test "$(git hash-object football-data/formal_fast_runtime_v1/runtime.py)" = "$RUNTIME_BLOB"
+          test "$(git hash-object football-data/config/team_aliases.json)" = "$TEAM_ALIASES_BLOB"
+          test "$(git hash-object football-data/manifests/v6_understat_alias_closure_v6188_status.json)" = "$IDENTITY_CLOSURE_BLOB"
+          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/diagnose_formal_xg_identity_closure.py
+          mkdir -p diagnostic-output .runtime_sources/understat .runtime_sources/confirmation
+
+      - name: Acquire exact frozen formal source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          test -f .runtime_sources/understat/understat_frozen.db
+          test -f .runtime_sources/confirmation/confirmation_identity.jsonl
+          test -f .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl
+
+      - name: Apply only pre-existing one-to-one Understat identity closure diagnostically
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1
+        run: |
+          set -euo pipefail
+          python3 football-data/research/promoted_cold_start_v2_1/diagnose_formal_xg_identity_closure.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --alias-closure "$PWD/football-data/manifests/v6_understat_alias_closure_v6188_status.json" \
+            --out "$PWD/diagnostic-output/formal-xg-existing-identity-closure.json" \
+            | tee diagnostic-output/stdout.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('diagnostic-output/formal-xg-existing-identity-closure.json'))
+          assert d['diagnostic_only'] is True
+          assert d['candidate_metrics_computed'] is False
+          assert d['candidate_parameters_or_gates_modified'] is False
+          assert d['scientific_source_semantics_modified'] is False
+          assert d['production_runtime_modified'] is False
+          assert d['team_aliases_json_modified'] is False
+          m=d['identity_bridge_source']
+          assert m['schema_version']=='V6.18.8-understat-iterative-schedule-anchor-alias-closure-r1'
+          assert m['classification']=='DATA_IDENTITY_CLOSURE_AUDIT_ONLY_NO_MODEL_FIT'
+          assert m['qualified_alias_count']==28
+          print(json.dumps({'joined_n':d['joined_n'],'missing_n':d['missing_n'],'extra_n':d['extra_n'],'conflict_n':d['conflict_n'],'missing_by_competition':d['missing_by_competition'],'extra_by_competition':d['extra_by_competition'],'conflicts':d['conflicts']},ensure_ascii=False,sort_keys=True))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-promoted-xg-identity-closure-diagnostic-${{ github.event.pull_request.head.sha || github.sha }}
+          path: diagnostic-output
+          if-no-files-found: warn
+          retention-days: 30

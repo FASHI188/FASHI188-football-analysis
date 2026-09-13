@@ -1,0 +1,130 @@
+name: Football3 Promoted Pre-Label Semantic Closure Diagnostic V2
+
+on:
+  push:
+    branches:
+      - football3/promoted-cold-start-v2-1-research-clean-v1
+    paths:
+      - 'football-data/research/promoted_cold_start_v2_1/run_prelabel_semantic_closure_v1.py'
+      - '.github/workflows/football3-promoted-prelabel-semantic-closure-diagnostic-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BASELINE_HEAD: 'd0e88bbb3198485e8918054a72c72b38a65f0639'
+  DIAGNOSTIC_BLOB: '1a5d03d4c6beb3cca315906708b113dbee050768'
+  PREREG_BLOB: '30c45da908540ad99aab51024729d554a7047c7a'
+  EVALUATOR_BLOB: '849e92d36b3f9838b3d931ad80c03ad3ce1eb8c1'
+  RUNTIME_BLOB: '8994226369094908beb410ce454d19fd7272c3df'
+  TEAM_ALIASES_BLOB: '6248028352308ceda6800794c0ee3f5ceca223a9'
+  V6188_CLOSURE_BLOB: '87b43c4a45890828312a8a93b3868b7b2f471df3'
+  V6187_DATE_RULE_BLOB: 'f0d2546bce183a92076bcca05b139be41106894d'
+  RESULT_MANIFEST_BLOB: 'a9d8c1ce964008ef6caefb169b444075f587e64f'
+  RESULT_ADJ_V1_BLOB: '86a1b745c698744818e4f936aea694743bae16db'
+  FROZEN_XG_ADJ_V1_BLOB: '4959d165c6bcced39da0b11a1a0eb0d990b52130'
+  FROZEN_XG_ADJ_V2_BLOB: '568cd28170b60430d57274ca8615b7a84132c3a8'
+  RESULT_ADJ_V2_BLOB: '356c882b54592bb61e35c3b5db5eab3a1f2f98a3'
+  RELEASE_ORDER_BLOB: '3ce4ce4e10b4944cb2268f1bd6355672d65bfeb0'
+  UNDERSTAT_ARTIFACT_ID: '9798682425'
+  CONFIRMATION_ARTIFACT_ID: '9827606506'
+
+jobs:
+  pre-label-semantic-closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bind unchanged science runtime and frozen adjudication inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git merge-base --is-ancestor "$BASELINE_HEAD" HEAD
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/prelabel_semantic_closure_v1.py)" = "$DIAGNOSTIC_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/PREREGISTRATION.json)" = "$PREREG_BLOB"
+          test "$(git hash-object football-data/research/promoted_cold_start_v2_1/evaluate.py)" = "$EVALUATOR_BLOB"
+          test "$(git hash-object football-data/formal_fast_runtime_v1/runtime.py)" = "$RUNTIME_BLOB"
+          test "$(git hash-object football-data/config/team_aliases.json)" = "$TEAM_ALIASES_BLOB"
+          test "$(git hash-object football-data/manifests/v6_understat_alias_closure_v6188_status.json)" = "$V6188_CLOSURE_BLOB"
+          test "$(git hash-object football-data/validation/v6_understat_alias_qualification_v6187.py)" = "$V6187_DATE_RULE_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/result_adjudications_v1.json)" = "$RESULT_MANIFEST_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_result_adjudication_v1.py)" = "$RESULT_ADJ_V1_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_frozen_xg_identity_adjudication_v1.py)" = "$FROZEN_XG_ADJ_V1_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_frozen_xg_identity_adjudication_v2.py)" = "$FROZEN_XG_ADJ_V2_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_result_adjudication_v2.py)" = "$RESULT_ADJ_V2_BLOB"
+          test "$(git hash-object football-data/formal_gpt_gateway_v1/formal_v1_release_order_replay_v1.py)" = "$RELEASE_ORDER_BLOB"
+          git diff --name-only "$BASELINE_HEAD"...HEAD | tee changed-files.txt
+          if grep -E '(^|/)(PREREGISTRATION\.json|evaluate\.py|CURRENT|formal_fusion_v2\.py|historical_xg_challenger\.py|pure_engine\.py|team_aliases\.json)$|formal_fast_runtime_v1/runtime\.py$|formal_gpt_gateway_v1/(entry|gateway)\.py$' changed-files.txt; then
+            echo 'protected science/runtime drift detected' >&2
+            exit 1
+          fi
+          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/prelabel_semantic_closure_v1.py
+          python3 -m py_compile football-data/research/promoted_cold_start_v2_1/run_prelabel_semantic_closure_v1.py
+          mkdir -p prelabel-output .runtime_sources/understat .runtime_sources/confirmation
+
+      - name: Acquire exact frozen formal source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${UNDERSTAT_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/understat.zip
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CONFIRMATION_ARTIFACT_ID}/zip" \
+            -o .runtime_sources/confirmation.zip
+          unzip -q .runtime_sources/understat.zip -d .runtime_sources/understat
+          unzip -q .runtime_sources/confirmation.zip -d .runtime_sources/confirmation
+          test -f .runtime_sources/understat/understat_frozen.db
+          test -f .runtime_sources/confirmation/confirmation_identity.jsonl
+          test -f .runtime_sources/confirmation/confirmation_xg_result_vault.jsonl
+
+      - name: Run frozen pre-label closure with assertion-only execution fix
+        env:
+          PYTHONPATH: ${{ github.workspace }}/football-data:${{ github.workspace }}/football-data/formal_fast_runtime_v1:${{ github.workspace }}/football-data/formal_gpt_gateway_v1:${{ github.workspace }}/football-data/validation
+        run: |
+          set -euo pipefail
+          python3 football-data/research/promoted_cold_start_v2_1/run_prelabel_semantic_closure_v1.py \
+            --repo-root "$PWD" \
+            --understat-db "$PWD/.runtime_sources/understat/understat_frozen.db" \
+            --confirmation-dir "$PWD/.runtime_sources/confirmation" \
+            --alias-closure "$PWD/football-data/manifests/v6_understat_alias_closure_v6188_status.json" \
+            --out "$PWD/prelabel-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json" \
+            | tee prelabel-output/stdout.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('prelabel-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json'))
+          assert d['status']=='PASS_PRE_LABEL_HARD_GATES'
+          assert d['candidate_metrics_computed'] is False and d['candidate_evaluator_invoked'] is False
+          assert d['candidate_parameters_or_gates_modified'] is False and d['candidate_sample_or_cohort_modified'] is False
+          assert d['preregistration_modified'] is False and d['evaluator_modified'] is False
+          assert d['production_runtime_modified'] is False and d['team_aliases_modified'] is False
+          assert d['hard_gates']=={'joined':5330,'expected_joined':5330,'missing':0,'extra':0,'ambiguous':0,'duplicate':0,'time_leakage':0,'pass':True}
+          assert d['v6188_pre_label_date_alignment']['date_drift_1_or_2_n']==7
+          u=d['special_semantics']['udinese_roma_resumed_same_fixture']
+          assert (u['source_process_date'],u['formal_completion_date'])==('2024-04-14','2024-04-25')
+          assert u['final_result_released_before_completion'] is False
+          b=d['special_semantics']['union_berlin_bochum_dual_semantics']
+          assert b['formal_result']==[0,2] and b['on_field_xg_result']==[1,1]
+          PY
+          sha256sum prelabel-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.json > prelabel-output/PRE_LABEL_SEMANTIC_CLOSURE_RECEIPT.sha256
+          find prelabel-output -type f -print0 | sort -z | xargs -0 sha256sum > prelabel-output/artifact-files.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-promoted-prelabel-semantic-closure-v2-${{ github.sha }}
+          path: prelabel-output
+          if-no-files-found: error
+          retention-days: 30
