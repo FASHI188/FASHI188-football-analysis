@@ -34,6 +34,8 @@ EXPECTED_LEAGUE_COUNTS = {
     "Serie A": 380,
 }
 TARGET_SEASON = 2024
+TARGET_START_DATE = "2024-08-15"
+TARGET_END_EXCLUSIVE = "2025-05-26"
 QUERY_COLUMNS = (
     "id", "date", "league", "season", "team_h", "team_a", "h_id", "a_id",
     "h_deep", "a_deep", "h_ppda", "a_ppda",
@@ -125,16 +127,18 @@ def extract_feature_rows(
         marks = ",".join("?" for _ in EXPECTED_LEAGUE_COUNTS)
         sql = (
             "select " + ",".join(q(x) for x in actual_cols) + " from " + q(table)
-            + f" where {q(cols['season'])}=? and {q(cols['league'])} in ({marks})"
+            + f" where substr({q(cols['date'])},1,10)>=? and substr({q(cols['date'])},1,10)<?"
+            + f" and {q(cols['league'])} in ({marks})"
             + f" order by {q(cols['date'])} asc, {q(cols['id'])} asc"
         )
-        params = [TARGET_SEASON] + list(EXPECTED_LEAGUE_COUNTS)
+        params = [TARGET_START_DATE, TARGET_END_EXCLUSIVE] + list(EXPECTED_LEAGUE_COUNTS)
         source_rows = list(con.execute(sql, params))
     finally:
         con.close()
 
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
+    source_season_keys: set[str] = set()
     for raw in source_rows:
         x = dict(zip(QUERY_COLUMNS, raw))
         fid = str(x["id"])
@@ -142,13 +146,14 @@ def extract_feature_rows(
             raise FeatureFreezeError(f"empty/duplicate fixture id: {fid!r}")
         seen.add(fid)
         league = str(x["league"])
+        source_season_keys.add(str(x["season"]))
         if league not in EXPECTED_LEAGUE_COUNTS:
             raise FeatureFreezeError(f"unexpected league: {league}")
         row = {
             "fixture_id": fid,
             "source_kickoff": str(x["date"]),
             "league": league,
-            "season_key": int(x["season"]),
+            "season_key": TARGET_SEASON,
             "home_team_id": str(x["h_id"]),
             "away_team_id": str(x["a_id"]),
             "home_team": str(x["team_h"]),
@@ -180,6 +185,8 @@ def extract_feature_rows(
         "xg_columns_read": False,
         "n": len(rows),
         "league_counts": counts,
+        "target_date_window": [TARGET_START_DATE, TARGET_END_EXCLUSIVE],
+        "source_season_keys": sorted(source_season_keys),
         "fixture_identity_set_sha256": got_sha,
     }
     return rows, audit
@@ -274,7 +281,9 @@ def main() -> int:
         "historical_completed_only": True,
         "requires_secret_or_api_key": False,
         "credentials_used": False,
-        "target_season_key": TARGET_SEASON,
+        "canonical_test_season_key": TARGET_SEASON,
+        "target_date_window": [TARGET_START_DATE, TARGET_END_EXCLUSIVE],
+        "source_season_key_not_used_for_selection": True,
         "locked_independent_test_artifact_id": EXPECTED_TEST_ARTIFACT_ID,
         "locked_fixture_identity_set_sha256": EXPECTED_TEST_FIXTURE_SET_SHA256,
         "archive_sha256": archive_sha,
