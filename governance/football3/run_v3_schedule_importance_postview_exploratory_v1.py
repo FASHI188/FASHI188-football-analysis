@@ -7,7 +7,8 @@ BASE_BLOB='62d10c76bc683269f01e0b5ba66dcf6a86d33223'
 FEATURE_SHA='c9b14435062f59f1caaf4ffdbf83373d7aa50b858a48057f66b89cc0605ecea4'
 FEATURE_N=30531; COMPLETED_N=30335; MISSING_N=196
 class Stop(RuntimeError): pass
-def sha(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def sha(p):
+ b=Path(p).read_bytes(); h=hashlib.sha1(); h.update(f'blob {len(b)}\0'.encode()); h.update(b); return h.hexdigest()
 def loadmod(p):
  s=importlib.util.spec_from_file_location('base_eval',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
 def completed(rows,root):
