@@ -26,8 +26,6 @@ jobs:
           mkdir -p tmp/r9/data receipt
           git fetch --no-tags origin c5e9d2f280c24002780fa8576c13e0aa4fff16be
           git show c5e9d2f280c24002780fa8576c13e0aa4fff16be:football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py > tmp/r9/run_experiment_r9b.py
-          git show c5e9d2f280c24002780fa8576c13e0aa4fff16be:football-data/experiments/top1_r9b_xg_hf/data/matches_r9b_xg_20000.csv > tmp/r9/data/matches_r9b_xg_20000.csv
-          echo '6ea5f6d98a6b43c1f34df58f08edfa52819415f79da88428947caae68d9170ba  tmp/r9/data/matches_r9b_xg_20000.csv' | sha256sum -c -
           python - <<'PY'
           import urllib.request
           for name in ('fixtures.parquet','match_stats.parquet'):
@@ -41,6 +39,16 @@ jobs:
           PY
           echo '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  tmp/fixtures.parquet' | sha256sum -c -
           echo '2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  tmp/match_stats.parquet' | sha256sum -c -
+          python - <<'PY'
+          import importlib.util, pathlib
+          p=pathlib.Path('tmp/r9/run_experiment_r9b.py')
+          spec=importlib.util.spec_from_file_location('r9frozen',p)
+          m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          m.FIX_URL=pathlib.Path('tmp/fixtures.parquet').resolve().as_uri()
+          m.STAT_URL=pathlib.Path('tmp/match_stats.parquet').resolve().as_uri()
+          m.freeze()
+          PY
+          echo '6ea5f6d98a6b43c1f34df58f08edfa52819415f79da88428947caae68d9170ba  tmp/r9/data/matches_r9b_xg_20000.csv' | sha256sum -c -
       - name: Fixed post-view evaluation
         run: |
           python governance/football3/run_v3_discipline_prior_postview_v1.py \
