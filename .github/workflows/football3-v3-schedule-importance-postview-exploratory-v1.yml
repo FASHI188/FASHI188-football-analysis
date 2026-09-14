@@ -1,0 +1,45 @@
+name: Football3 V3 Schedule Importance Postview Exploratory V1
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football3-v3-schedule-importance-postview-exploratory-v1.yml'
+      - 'governance/football3/run_v3_schedule_importance_postview_exploratory_v1.py'
+      - 'governance/football3/test_v3_schedule_importance_postview_exploratory_v1.py'
+      - 'governance/football3/v3_schedule_importance_postview_exploratory_contract_v1.json'
+permissions: {contents: read}
+jobs:
+  postview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install numpy==2.3.2 scikit-learn==1.7.2 pytest
+      - run: python -m pytest -q governance/football3/test_v3_schedule_importance_postview_exploratory_v1.py
+      - name: Rebuild frozen features from exact source
+        run: |
+          git clone -q --filter=blob:none --no-checkout https://github.com/openfootball/football.json.git source
+          git -C source sparse-checkout init --cone
+          git -C source sparse-checkout set 2010-11 2011-12 2012-13 2013-14 2014-15 2015-16 2016-17 2017-18 2018-19 2019-20 2020-21 2021-22 2022-23 2023-24 2024-25 LICENSE.md README.md
+          git -C source checkout -q 41a6eb96ba816757ff892387da5cb111390a7f9c
+          mkdir -p tmp/san tmp/feat receipt
+          git show ee597cab98255d70789eacb6d06685666800e4a5:governance/football3/validate_v3_schedule_importance_sanitized_schema_v1.py > tmp/san/validate_v3_schedule_importance_sanitized_schema_v1.py
+          git show ee597cab98255d70789eacb6d06685666800e4a5:governance/football3/v3_schedule_importance_sanitized_schema_contract_v1.json > tmp/san/v3_schedule_importance_sanitized_schema_contract_v1.json
+          python tmp/san/validate_v3_schedule_importance_sanitized_schema_v1.py --source-repo source --output tmp/san/receipt.json --sanitized-output tmp/sanitized.jsonl --manifest-output tmp/manifest.json
+          git show ed165d4ea86e4be468728771ea70027ece696215:governance/football3/validate_v3_schedule_importance_feature_construction_v1.py > tmp/feat/validate_v3_schedule_importance_feature_construction_v1.py
+          git show ed165d4ea86e4be468728771ea70027ece696215:governance/football3/v3_schedule_importance_feature_construction_contract_v1.json > tmp/feat/v3_schedule_importance_feature_construction_contract_v1.json
+          python tmp/feat/validate_v3_schedule_importance_feature_construction_v1.py --input tmp/sanitized.jsonl --output tmp/features.jsonl --receipt tmp/feat/receipt.json
+          echo 'c9b14435062f59f1caaf4ffdbf83373d7aa50b858a48057f66b89cc0605ecea4  tmp/features.jsonl' | sha256sum -c -
+          git show be83b54e82f8e2e70b8666cceabbccb55d5ace77:governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py > tmp/base_eval.py
+          test "$(git hash-object tmp/base_eval.py)" = 62d10c76bc683269f01e0b5ba66dcf6a86d33223
+      - name: Explore
+        run: |
+          python governance/football3/run_v3_schedule_importance_postview_exploratory_v1.py --features tmp/features.jsonl --source-root source --contract governance/football3/v3_schedule_importance_postview_exploratory_contract_v1.json --base-runner tmp/base_eval.py --output-dir receipt
+          python - <<'PY'
+          import json,os,pathlib
+          pathlib.Path('receipt/head-binding.json').write_text(json.dumps({'candidate_head':os.environ['GITHUB_SHA'],'post_view':True,'independent':False},sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: 'football3-v3-postview-${{ github.event.pull_request.head.sha }}', path: 'receipt/', if-no-files-found: error}
