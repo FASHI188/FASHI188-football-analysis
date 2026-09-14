@@ -53,6 +53,22 @@ def validate_contract(path: Path) -> dict[str, Any]:
         raise PrelabelGateError("candidate search budget drift")
     if c["legacy_signal"]["inherit_old_half_life_16"] is not False:
         raise PrelabelGateError("legacy half-life inheritance forbidden")
+    fv = c.get("feature_vector_contract") or {}
+    if fv.get("rolling_statistic") != "simple_mean_of_last_N_released_team_matches":
+        raise PrelabelGateError("rolling state mechanic drift")
+    if fv.get("release_lag_minutes") != 180:
+        raise PrelabelGateError("feature release lag drift")
+    if fv.get("minimum_released_matches_per_team") != 1:
+        raise PrelabelGateError("minimum history contract drift")
+    if "not an exponential half-life" not in str(fv.get("window_semantics", "")):
+        raise PrelabelGateError("legacy half-life mechanism must remain excluded")
+    opt = c.get("optimizer_contract") or {}
+    if opt.get("reference_class") != "A" or opt.get("free_logit_heads") != ["H", "D"]:
+        raise PrelabelGateError("residual identifiability contract drift")
+    if opt.get("algorithm") != "deterministic_full_batch_gradient_descent_with_armijo_backtracking":
+        raise PrelabelGateError("optimizer algorithm drift")
+    if opt.get("feature_coefficients_l2_strength") != 1.0 or opt.get("intercept_penalized") is not False:
+        raise PrelabelGateError("L2 contract drift")
     return c
 
 def audit_old_artifact(path: Path) -> dict[str, Any]:
@@ -60,7 +76,11 @@ def audit_old_artifact(path: Path) -> dict[str, Any]:
         raise PrelabelGateError("old universe artifact digest mismatch")
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
-        required = {"understat_freeze_receipt.json", "understat_frozen.db", "base_freeze_manifest.json"}
+        required = {
+            "understat_freeze_receipt.json",
+            "understat_frozen.db",
+            "base_freeze_manifest.json",
+        }
         if not required <= names:
             raise PrelabelGateError("old universe artifact members missing")
         receipt = read_json_member(z, "understat_freeze_receipt.json")
@@ -70,14 +90,25 @@ def audit_old_artifact(path: Path) -> dict[str, Any]:
             raise PrelabelGateError("old source freeze was not label-blind")
         if receipt.get("provider") != "Cody Tipton player stats per game - Understat":
             raise PrelabelGateError("old source provider mismatch")
-    return {"zip_sha256": OLD_ZIP_SHA256, "database_sha256": DB_SHA256, "safe_metadata_only": True, "database_rows_read": False, "target_labels_read": False}
+    return {
+        "zip_sha256": OLD_ZIP_SHA256,
+        "database_sha256": DB_SHA256,
+        "safe_metadata_only": True,
+        "database_rows_read": False,
+        "target_labels_read": False,
+    }
 
 def audit_test_artifact(path: Path) -> dict[str, Any]:
     if sha256_file(path) != TEST_ZIP_SHA256:
         raise PrelabelGateError("independent test source artifact digest mismatch")
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
-        required = {"artifact_manifest.json", "source_freeze_receipt.json", "confirmation_identity.jsonl", "confirmation_xg_result_vault.jsonl"}
+        required = {
+            "artifact_manifest.json",
+            "source_freeze_receipt.json",
+            "confirmation_identity.jsonl",
+            "confirmation_xg_result_vault.jsonl",
+        }
         if not required <= names:
             raise PrelabelGateError("test artifact members missing")
         manifest = read_json_member(z, "artifact_manifest.json")
@@ -94,7 +125,15 @@ def audit_test_artifact(path: Path) -> dict[str, Any]:
             raise PrelabelGateError("prospective queue forbidden")
         if receipt.get("identity_contains_result_or_xg") is not False:
             raise PrelabelGateError("test identity must remain label-free")
-    return {"zip_sha256": TEST_ZIP_SHA256, "identity_sha256": TEST_IDENTITY_SHA256, "fixture_identity_set_sha256": TEST_FIXTURE_SET_SHA256, "vault_sha256_declared_only": TEST_VAULT_SHA256, "vault_member_opened": False, "raw_pages_opened": False, "target_labels_read": False}
+    return {
+        "zip_sha256": TEST_ZIP_SHA256,
+        "identity_sha256": TEST_IDENTITY_SHA256,
+        "fixture_identity_set_sha256": TEST_FIXTURE_SET_SHA256,
+        "vault_sha256_declared_only": TEST_VAULT_SHA256,
+        "vault_member_opened": False,
+        "raw_pages_opened": False,
+        "target_labels_read": False,
+    }
 
 def main() -> int:
     p = argparse.ArgumentParser()
@@ -104,7 +143,13 @@ def main() -> int:
     p.add_argument("--receipt-out", type=Path)
     args = p.parse_args()
     validate_contract(args.contract)
-    receipt: dict[str, Any] = {"schema_version": "football3-nova-n1-prelabel-audit-v1", "status": "PASS_PRELABEL_ONLY", "target_labels_read": False, "database_rows_read": False, "test_vault_opened": False}
+    receipt: dict[str, Any] = {
+        "schema_version": "football3-nova-n1-prelabel-audit-v1",
+        "status": "PASS_PRELABEL_ONLY",
+        "target_labels_read": False,
+        "database_rows_read": False,
+        "test_vault_opened": False,
+    }
     if args.old_artifact:
         receipt["development_source"] = audit_old_artifact(args.old_artifact)
     if args.test_artifact:

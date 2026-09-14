@@ -24,7 +24,7 @@
       2022,
       2023
     ],
-    "bridge_state_use": "PAST_STATE_WARMUP_ONLY_AFTER_MODEL_SELECTION; NEVER PARAMETER_SELECTION_OR_SCORING",
+    "bridge_state_use": "PAST_STATE_WARMUP_ONLY_AFTER_MODEL_SELECTION; NEVER PARAMETER_SELECTION_OR SCORING",
     "development_selection_season_keys": [
       2018,
       2019
@@ -136,6 +136,35 @@
     },
     "updates_after_prediction_only": true
   },
+  "feature_vector_contract": {
+    "DPI_interactions": "After base-feature fit-only standardization, append exactly four products zD1*zP1, zD1*zP2, zD2*zP1, zD2*zP2; no second standardization.",
+    "base_matchup_features": {
+      "D": [
+        "home_deep_for_minus_away_deep_for",
+        "home_deep_allowed_minus_away_deep_allowed"
+      ],
+      "DP": [
+        "D_features_then_P_features"
+      ],
+      "P": [
+        "home_ppda_minus_away_ppda",
+        "home_opponent_ppda_minus_away_opponent_ppda"
+      ]
+    },
+    "minimum_released_matches_per_team": 1,
+    "missing_state_route": "FORMAL_V2_EXACT_FALLBACK_WITH_EXPERT_UNAVAILABLE; coverage denominator remains all fixtures",
+    "release_lag_minutes": 180,
+    "release_rule": "For each kickoff batch, apply only queued completed-match feature updates with release_at <= batch kickoff; predict the entire batch before reading any current-batch deep/PPDA values; queue current-batch updates at kickoff+180m.",
+    "rolling_statistic": "simple_mean_of_last_N_released_team_matches",
+    "standardization": "For each window/subroute, fit mean and population std on available 2014-2017 rows only; std<=1e-12 becomes 1.0. Apply unchanged to 2018-2019, bridge, and 2024 test.",
+    "team_channels": {
+      "deep_allowed": "log1p(opponent_deep)",
+      "deep_for": "log1p(team_deep)",
+      "opponent_ppda": "natural_log(opponent_ppda)",
+      "ppda": "natural_log(team_ppda)"
+    },
+    "window_semantics": "N is a hard trailing count cap, not an exponential half-life. The legacy half-life=16 mechanism is not used."
+  },
   "formal_baseline": {
     "frozen_v1_weight": 0.25,
     "head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
@@ -171,6 +200,31 @@
   },
   "nova_project": "N1_LAGGED_DEEP_PPDA_REVALIDATION",
   "objective": "Revalidate lagged deep + PPDA as a low-capacity matrix-consistent residual expert over the exact Formal V2 baseline without inheriting legacy V3 parameters, weights, code, or promotion conclusions.",
+  "optimizer_contract": {
+    "algorithm": "deterministic_full_batch_gradient_descent_with_armijo_backtracking",
+    "armijo_c": 0.0001,
+    "backtrack_factor": 0.5,
+    "classes": [
+      "H",
+      "D",
+      "A"
+    ],
+    "failure_rule": "If finite loss/gradient, Armijo step, or convergence contract fails, mark that configuration FAIL_CURRENT_IMPLEMENTATION; do not alter optimizer from test feedback.",
+    "feature_coefficients_l2_strength": 1.0,
+    "free_logit_heads": [
+      "H",
+      "D"
+    ],
+    "gradient_infinity_norm_tolerance": 1e-08,
+    "initial_parameters": "all_zero",
+    "initial_step": 1.0,
+    "intercept_penalized": false,
+    "max_backtracks_per_iteration": 40,
+    "max_iterations": 500,
+    "objective": "sum_multinomial_negative_log_likelihood + 0.5*L2*sum(feature_coefficients^2)",
+    "offset": "natural_log(Formal_V2_probability_clipped_to_[1e-12,1])",
+    "reference_class": "A"
+  },
   "outcome_classes": [
     "POSITIVE_SIGNAL",
     "RESEARCH_CANDIDATE",
