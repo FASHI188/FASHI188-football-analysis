@@ -1,0 +1,142 @@
+name: Football3 V3 Schedule Importance Scientific Evaluation V1
+on:
+  pull_request:
+    branches: [football3/v3-prereg-carrier-v1]
+    paths:
+      - '.github/workflows/football3-v3-schedule-importance-scientific-evaluation-v1.yml'
+      - 'governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py'
+      - 'governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py'
+      - 'governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json'
+permissions: {contents: read, actions: read}
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0}
+      - name: Exact scope binding
+        env: {HEAD_SHA: '${{ github.event.pull_request.head.sha }}', BASE_SHA: 2dd8be947b5922703bde7174ef6f6347295bfde8}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+          test "$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | wc -l)" -eq 4
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | sort > /tmp/got
+          printf '%s\n' \
+            .github/workflows/football3-v3-schedule-importance-scientific-evaluation-v1.yml \
+            governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py \
+            governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py \
+            governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json | sort > /tmp/want
+          diff -u /tmp/want /tmp/got
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - name: Install frozen dependency
+        run: python -m pip install --disable-pip-version-check -q scikit-learn==1.7.2
+      - name: Permanent tests
+        run: |
+          python -m py_compile governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py
+          python governance/football3/test_v3_schedule_importance_scientific_evaluation_v1.py
+      - name: Verify implementation binding
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('governance/football3/v3_schedule_importance_scientific_evaluation_implementation_binding_v1.json')
+          b=json.loads(p.read_text())
+          assert b['exact_base']=='2dd8be947b5922703bde7174ef6f6347295bfde8'
+          assert b['scientific_contract_change'] is False and b['formal_weight']==0 and b['matrix_delta']==0
+          assert b['runtime']=={'python':'3.12','scikit_learn':'1.7.2','tuning':False,'hyperparameter_search':False}
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-feature-construction-ed165d4ea86e4be468728771ea70027ece696215
+          path: feature-artifact
+          github-token: '${{ github.token }}'
+          repository: '${{ github.repository }}'
+          run-id: 34768984931
+      - uses: actions/download-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-prereg-independent-2dd8be947b5922703bde7174ef6f6347295bfde8
+          path: carrier-artifact
+          github-token: '${{ github.token }}'
+          repository: '${{ github.repository }}'
+          run-id: 34776229663
+      - uses: actions/checkout@v4
+        with:
+          repository: openfootball/football.json
+          ref: 41a6eb96ba816757ff892387da5cb111390a7f9c
+          path: label-source
+          fetch-depth: 1
+      - name: Exact label source
+        run: |
+          test "$(git -C label-source rev-parse HEAD)" = 41a6eb96ba816757ff892387da5cb111390a7f9c
+          test "$(git -C label-source hash-object LICENSE.md)" = 670154e3538863b2d9891fd5483160fbdfc89164
+      - name: Diagnose label FT structures
+        run: |
+          mkdir -p artifact
+          python - <<'PY'
+          import collections,json,os,pathlib
+          rows=[json.loads(x) for x in pathlib.Path('feature-artifact/schedule-features.jsonl').read_text(encoding='utf-8').splitlines() if x]
+          by=collections.defaultdict(list)
+          for r in rows: by[r['source_path']].append(r)
+          shapes=collections.Counter(); examples=[]; bad=0
+          for pth,rs in sorted(by.items()):
+              ms=json.loads((pathlib.Path('label-source')/pth).read_text(encoding='utf-8')).get('matches')
+              for r in rs:
+                  i=int(r['row_index']); m=ms[i]; score=m.get('score'); ft=(score or {}).get('ft')
+                  if isinstance(ft,list) and len(ft)==2 and all(type(x) is int for x in ft):
+                      continue
+                  bad+=1
+                  shape={'ft_type':type(ft).__name__,'len':len(ft) if isinstance(ft,list) else None,'elem_types':[type(x).__name__ for x in ft] if isinstance(ft,list) else None,'score_keys':sorted(score.keys()) if isinstance(score,dict) else []}
+                  shapes[json.dumps(shape,sort_keys=True)]+=1
+                  if len(examples)<20: examples.append({'source_path':pth,'row_index':i,**shape})
+          diag={'schema_version':'football3-v3-schedule-importance-label-coverage-diagnostic-v1','source_rows_checked':len(rows),'valid_ft_rows':len(rows)-bad,'missing_or_invalid_ft_rows':bad,'bad_shapes':[{**json.loads(k),'count':v} for k,v in sorted(shapes.items())],'examples':examples,'score_values_retained':0,'goal_totals_retained':0}
+          pathlib.Path('artifact/label-coverage-diagnostic.json').write_text(json.dumps(diag,sort_keys=True,indent=2)+'\n')
+          print('FT_BAD_COUNT='+str(bad))
+          print('FT_BAD_SHAPES='+json.dumps(diag['bad_shapes'],sort_keys=True))
+          print('FT_BAD_EXAMPLES='+json.dumps(examples,sort_keys=True))
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('FT_BAD_COUNT='+str(bad)+'\n')
+          PY
+      - name: Controlled missing-label STOP receipt
+        if: env.FT_BAD_COUNT != '0'
+        run: |
+          python - <<'PY'
+          import hashlib,json,pathlib
+          a=pathlib.Path('artifact'); d=json.loads((a/'label-coverage-diagnostic.json').read_text())
+          def sha(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
+          r={'schema_version':'football3-v3-schedule-importance-scientific-evaluation-receipt-v1','decision':'STOP_MISSING_TARGET_LABELS_COMPLETED_ONLY_COHORT_VIOLATION','failure_class':'STOP_DATA_COVERAGE','prereg_stop_rule':'duplicate_or_missing_label_join_stop','feature_rows':30531,'feature_sha256':'c9b14435062f59f1caaf4ffdbf83373d7aa50b858a48057f66b89cc0605ecea4','source_commit':'41a6eb96ba816757ff892387da5cb111390a7f9c','source_files_read':94,'label_source_rows_checked':d['source_rows_checked'],'valid_ft_rows':d['valid_ft_rows'],'missing_ft_rows':d['missing_or_invalid_ft_rows'],'target_labels_materialized':0,'target_label_values_retained':0,'exact_score_values_retained':0,'goal_totals_retained':0,'model_fit_executed':False,'scientific_metrics_computed':False,'training_executed':False,'hyperparameter_search':False,'feature_selection':False,'threshold_search':False,'tuning':False,'future_matches_used':False,'stage6_1335_used':False,'standings_pressure_used':False,'rotation_pressure_used':False,'travel_pressure_used':False,'row_drop_or_backfill_used':False,'formal_weight':0,'matrix_delta':0,'label_coverage_diagnostic_sha256':sha(a/'label-coverage-diagnostic.json')}
+          (a/'scientific-evaluation-receipt.json').write_text(json.dumps(r,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Run frozen scientific evaluation
+        if: env.FT_BAD_COUNT == '0'
+        run: |
+          python governance/football3/run_v3_schedule_importance_scientific_evaluation_v1.py \
+            --features feature-artifact/schedule-features.jsonl \
+            --source-root label-source \
+            --prereg-contract governance/football3/v3_schedule_importance_scientific_evaluation_prereg_contract_v1.json \
+            --carrier-artifact carrier-artifact --output-dir artifact
+      - name: Receipt and HEAD binding
+        env: {HEAD_SHA: '${{ github.event.pull_request.head.sha }}'}
+        run: |
+          python - <<'PY'
+          import json,os,pathlib
+          a=pathlib.Path('artifact');r=json.loads((a/'scientific-evaluation-receipt.json').read_text());d=r['decision']
+          allowed={'DEVELOPMENT_SIGNAL_PASS_RESEARCH_ONLY_NO_PROMOTION','SCIENTIFIC_EVALUATION_FAIL_CLOSE_NO_RETUNE','STOP_MISSING_TARGET_LABELS_COMPLETED_ONLY_COHORT_VIOLATION'}
+          assert d in allowed
+          if d=='STOP_MISSING_TARGET_LABELS_COMPLETED_ONLY_COHORT_VIOLATION':
+              assert r['failure_class']=='STOP_DATA_COVERAGE' and r['missing_ft_rows']>0
+              assert r['model_fit_executed'] is False and r['scientific_metrics_computed'] is False and r['row_drop_or_backfill_used'] is False
+              assert r['target_labels_materialized']==0 and r['target_label_values_retained']==0
+          else:
+              assert r['target_labels_opened']==30531 and r['target_label_values_retained']=='H_D_A_ONLY'
+              assert r['hyperparameter_search'] is False and r['feature_selection'] is False and r['threshold_search'] is False and r['tuning'] is False
+          assert r['exact_score_values_retained']==0 and r['goal_totals_retained']==0
+          assert r['future_matches_used'] is False and r['stage6_1335_used'] is False
+          assert r['standings_pressure_used'] is False and r['rotation_pressure_used'] is False and r['travel_pressure_used'] is False
+          assert r['formal_weight']==0 and r['matrix_delta']==0
+          (a/'head-binding.json').write_text(json.dumps({'candidate_head':os.environ['HEAD_SHA'],'base_head':'2dd8be947b5922703bde7174ef6f6347295bfde8','frozen_prereg_head':'836e985ced292fc6a13a12ac132075f8a83c5279','source_commit':'41a6eb96ba816757ff892387da5cb111390a7f9c','decision':d},sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-v3-schedule-importance-scientific-evaluation-${{ github.event.pull_request.head.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
