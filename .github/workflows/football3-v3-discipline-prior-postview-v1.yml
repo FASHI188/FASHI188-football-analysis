@@ -61,15 +61,22 @@ jobs:
           feat_k1=_m.feat_k1
           decorate=_m.decorate
           PY
-      - name: Fixed post-view evaluation
+      - name: Fixed post-view evaluation diagnostic
+        id: evaluation
+        continue-on-error: true
         run: |
+          set +e
           python governance/football3/run_v3_discipline_prior_postview_v1.py \
             --r9-csv tmp/r9/data/matches_r9b_xg_20000.csv \
             --r9-runner tmp/r9/r9_loader.py \
             --fixtures tmp/fixtures.parquet \
             --match-stats tmp/match_stats.parquet \
             --contract governance/football3/v3_discipline_prior_postview_contract_v1.json \
-            --output receipt/discipline-prior-receipt.json
+            --output receipt/discipline-prior-receipt.json \
+            > >(tee receipt/evaluation.stdout.log) \
+            2> >(tee receipt/evaluation.stderr.log >&2)
+          rc=$?
+          echo "$rc" > receipt/evaluation-exit-code.txt
           python - <<'PY'
           import json,os,pathlib
           pathlib.Path('receipt/head-binding.json').write_text(json.dumps({
@@ -78,10 +85,17 @@ jobs:
             'post_view':True,'independent':False,'promotion':False
           },sort_keys=True)+'\n')
           PY
+          exit "$rc"
         env:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: football3-v3-discipline-prior-${{ github.event.pull_request.head.sha }}
           path: receipt/
           if-no-files-found: error
+      - name: Enforce evaluation success
+        if: always()
+        run: |
+          test -f receipt/evaluation-exit-code.txt
+          test "$(cat receipt/evaluation-exit-code.txt)" = "0"
