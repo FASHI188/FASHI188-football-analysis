@@ -66,15 +66,33 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          python governance/football3/run_v3_discipline_prior_postview_v1.py \
-            --r9-csv tmp/r9/data/matches_r9b_xg_20000.csv \
-            --r9-runner tmp/r9/r9_loader.py \
-            --fixtures tmp/fixtures.parquet \
-            --match-stats tmp/match_stats.parquet \
-            --contract governance/football3/v3_discipline_prior_postview_contract_v1.json \
-            --output receipt/discipline-prior-receipt.json \
+          python - <<'PY' \
             > >(tee receipt/evaluation.stdout.log) \
             2> >(tee receipt/evaluation.stderr.log >&2)
+          import json, numpy as np, runpy, sys
+          _json_dumps=json.dumps
+          def _numpy_safe_dumps(obj,*args,**kwargs):
+              prior=kwargs.get('default')
+              def _default(value):
+                  if isinstance(value,np.generic):
+                      return value.item()
+                  if prior is not None:
+                      return prior(value)
+                  raise TypeError(f'Object of type {type(value).__name__} is not JSON serializable')
+              kwargs['default']=_default
+              return _json_dumps(obj,*args,**kwargs)
+          json.dumps=_numpy_safe_dumps
+          sys.argv=[
+              'run_v3_discipline_prior_postview_v1.py',
+              '--r9-csv','tmp/r9/data/matches_r9b_xg_20000.csv',
+              '--r9-runner','tmp/r9/r9_loader.py',
+              '--fixtures','tmp/fixtures.parquet',
+              '--match-stats','tmp/match_stats.parquet',
+              '--contract','governance/football3/v3_discipline_prior_postview_contract_v1.json',
+              '--output','receipt/discipline-prior-receipt.json',
+          ]
+          runpy.run_path('governance/football3/run_v3_discipline_prior_postview_v1.py',run_name='__main__')
+          PY
           rc=$?
           echo "$rc" > receipt/evaluation-exit-code.txt
           python - <<'PY'
