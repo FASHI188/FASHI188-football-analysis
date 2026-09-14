@@ -5,6 +5,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - 'governance/football3/nova_n1_2024_feature_source_freeze_v1.py'
+      - 'governance/football3/nova_n1_2024_feature_inventory_v1.py'
       - 'governance/football3/test_nova_n1_2024_feature_source_freeze_v1.py'
       - '.github/workflows/football3-nova-n1-2024-feature-source-freeze.yml'
 
@@ -34,9 +35,24 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           python -m py_compile \
             governance/football3/nova_n1_2024_feature_source_freeze_v1.py \
+            governance/football3/nova_n1_2024_feature_inventory_v1.py \
             governance/football3/test_nova_n1_2024_feature_source_freeze_v1.py
           cd governance/football3
           python test_nova_n1_2024_feature_source_freeze_v1.py -v
+
+      - name: Audit anonymous MIT source coverage without labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_2024_feature_inventory_v1.py --out n1_2024_feature_inventory
+
+      - name: Upload feature-only source inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-2024-feature-inventory-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_2024_feature_inventory/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Freeze anonymous MIT feature-only source
         env:
