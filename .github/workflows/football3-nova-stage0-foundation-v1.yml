@@ -1,0 +1,171 @@
+name: Football3 Nova Stage0 Foundation v1
+
+on:
+  pull_request:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - governance/football3/nova_stage0_foundation_v1.py
+      - governance/football3/nova_stage0_contract_v1.json
+      - governance/football3/nova_research_registry_v1.json
+      - governance/football3/nova_t60_replay_contract_v1.json
+      - governance/football3/test_nova_stage0_foundation_v1.py
+      - .github/workflows/football3-nova-stage0-foundation-v1.yml
+  push:
+    branches:
+      - football3/formal-gpt-runner-integration-v1
+    paths:
+      - governance/football3/nova_stage0_foundation_v1.py
+      - governance/football3/nova_stage0_contract_v1.json
+      - governance/football3/nova_research_registry_v1.json
+      - governance/football3/nova_t60_replay_contract_v1.json
+      - governance/football3/test_nova_stage0_foundation_v1.py
+      - .github/workflows/football3-nova-stage0-foundation-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nova-stage0-foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXACT_BASE_REF: football3/formal-gpt-runner-integration-v1
+      EXACT_BASE_HEAD: 475dedfd177b02208f550fe97a89bbd1efa52125
+      FORMAL_V2_HEAD: e12f5d1193be5d81f60301cf34ab2140e11712a9
+      FORMAL_POINTER_BLOB_SHA: f07743f9c873d415fad9612f3225f64c64b10542
+      CURRENT_SHA256: 71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Bind candidate exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CANDIDATE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Verify exact integration base has not drifted
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${EXACT_BASE_REF}"
+          live="$(git rev-parse FETCH_HEAD)"
+          test "${live}" = "${EXACT_BASE_HEAD}" || {
+            echo "INTEGRATION_HEAD_DRIFT expected=${EXACT_BASE_HEAD} actual=${live}" >&2
+            exit 41
+          }
+
+      - name: Enforce Stage0 allowlist and protected formal paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "${EXACT_BASE_HEAD}...HEAD")
+          printf '%s\n' "${changed[@]}" | sort > /tmp/changed.txt
+          cat > /tmp/allowed.txt <<'EOF'
+          .github/workflows/football3-nova-stage0-foundation-v1.yml
+          governance/football3/nova_research_registry_v1.json
+          governance/football3/nova_stage0_contract_v1.json
+          governance/football3/nova_stage0_foundation_v1.py
+          governance/football3/nova_t60_replay_contract_v1.json
+          governance/football3/test_nova_stage0_foundation_v1.py
+          EOF
+          sort -o /tmp/allowed.txt /tmp/allowed.txt
+          extra="$(comm -23 /tmp/changed.txt /tmp/allowed.txt)"
+          test -z "${extra}" || {
+            echo "STAGE0_ALLOWLIST_VIOLATION" >&2
+            printf '%s\n' "${extra}" >&2
+            exit 42
+          }
+          for protected in \
+            football-data/config/formal_model_pointer_historical_xg_fusion_v2.json \
+            football-data/new_engine_v1/formal_fusion_v2.py; do
+            if grep -Fxq "${protected}" /tmp/changed.txt; then
+              echo "PROTECTED_FORMAL_PATH_CHANGED ${protected}" >&2
+              exit 43
+            fi
+          done
+
+      - name: Verify formal V2 pointer remains exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "HEAD:football-data/config/formal_model_pointer_historical_xg_fusion_v2.json")" = "${FORMAL_POINTER_BLOB_SHA}"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('football-data/config/formal_model_pointer_historical_xg_fusion_v2.json').read_text())
+          assert p['branch']=='football3/historical-xg-fusion-v2-formal-activation-v1'
+          assert p['model']['name']=='Historical XG Fusion V2'
+          assert p['model']['xg_weight']==0.75
+          assert p['model']['frozen_v1_weight']==0.25
+          assert p['model']['xg_insufficient']=='FROZEN_V1_EXACT_FALLBACK'
+          required={'ENG_PremierLeague','ESP_LaLiga','GER_Bundesliga','ITA_SerieA','FRA_Ligue1','JPN_J1','KOR_KLeague1'}
+          assert required <= set(p['formal_scope'])
+          PY
+
+      - name: Static checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            governance/football3/nova_stage0_foundation_v1.py \
+            governance/football3/test_nova_stage0_foundation_v1.py
+          python3 -m json.tool governance/football3/nova_stage0_contract_v1.json >/dev/null
+          python3 -m json.tool governance/football3/nova_research_registry_v1.json >/dev/null
+          python3 -m json.tool governance/football3/nova_t60_replay_contract_v1.json >/dev/null
+
+      - name: Module and contract tests
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python3 governance/football3/test_nova_stage0_foundation_v1.py 2>&1 | tee artifacts/nova-stage0-tests.log
+
+      - name: Build mechanically verifiable Stage0 receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          files = [
+            'governance/football3/nova_stage0_foundation_v1.py',
+            'governance/football3/nova_stage0_contract_v1.json',
+            'governance/football3/nova_research_registry_v1.json',
+            'governance/football3/nova_t60_replay_contract_v1.json',
+            'governance/football3/test_nova_stage0_foundation_v1.py',
+            '.github/workflows/football3-nova-stage0-foundation-v1.yml',
+          ]
+          hashes = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files}
+          receipt = {
+            'schema_version': 'football3-nova-stage0-acceptance-receipt-v1',
+            'status': 'EVIDENCE_ONLY_CHECK_JOB_CONCLUSION_SEPARATE',
+            'execution_head': os.environ['CANDIDATE_HEAD'],
+            'exact_base_ref': os.environ['EXACT_BASE_REF'],
+            'exact_base_head': os.environ['EXACT_BASE_HEAD'],
+            'formal_v2_head': os.environ['FORMAL_V2_HEAD'],
+            'formal_pointer_blob_sha': os.environ['FORMAL_POINTER_BLOB_SHA'],
+            'current_sha256': os.environ['CURRENT_SHA256'],
+            'replay_coverage_start_at': None,
+            'training_performed': False,
+            'new_labels_read': False,
+            'model_activated': False,
+            'file_sha256': hashes,
+          }
+          Path('artifacts/nova-stage0-acceptance-receipt.json').write_text(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)+'\n', encoding='utf-8'
+          )
+          PY
+
+      - name: Upload Stage0 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-stage0-${{ github.run_id }}-${{ env.CANDIDATE_HEAD }}
+          path: artifacts/
+          if-no-files-found: error

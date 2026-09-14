@@ -1,0 +1,102 @@
+{
+  "schema_version": "football3-nova-t60-replay-contract-v1",
+  "status": "FOUNDATION_CONTRACT_ONLY_NOT_ACTIVATED",
+  "route": "NOVA_T60_FORMAL_REPLAY",
+  "authoritative_cutoff": "kickoff_minus_60_minutes",
+  "replay_coverage_start_at": null,
+  "coverage_start_rule": "SET_ONCE_WHEN_REAL_FORWARD_CAPTURE_IS_ENABLED;NO_RETROACTIVE_GUARANTEE",
+  "target_adapters": ["ENG_PREMIER_LEAGUE", "ESP_LALIGA", "DEU_BUNDESLIGA", "ITA_SERIE_A", "FRA_LIGUE_1", "JPN_J1", "KOR_K1"],
+  "formal_baseline_capability": {
+    "ENG_PREMIER_LEAGUE": "FORMAL_V2_AVAILABLE",
+    "ESP_LALIGA": "FORMAL_V2_AVAILABLE",
+    "DEU_BUNDESLIGA": "FORMAL_V2_AVAILABLE",
+    "ITA_SERIE_A": "FORMAL_V2_AVAILABLE",
+    "FRA_LIGUE_1": "FORMAL_V2_AVAILABLE",
+    "JPN_J1": "FORMAL_V2_AVAILABLE",
+    "KOR_K1": "FORMAL_V2_AVAILABLE"
+  },
+  "fixture_registry": {
+    "required_fields": [
+      "competition_adapter", "season", "fixture_id", "home_team_identity", "away_team_identity",
+      "kickoff", "timezone", "kickoff_revision_id", "previous_kickoff_revision_id", "fixture_status"
+    ],
+    "simultaneous_fixtures_must_coexist": true,
+    "kickoff_revision_lineage_required": true,
+    "postponed_old_revision_retained": true
+  },
+  "capture_schedule": {
+    "auxiliary": ["T_MINUS_24H", "T_MINUS_6H"],
+    "authoritative": "T_MINUS_60M",
+    "continuous_capture_before_cutoff": true
+  },
+  "observation_contract": {
+    "required_fields": [
+      "fixture_id", "kickoff_revision_id", "observed_at", "available_at", "ingested_at",
+      "source", "source_license_ref", "content_sha256", "schema_version"
+    ],
+    "authoritative_eligibility": "available_at <= cutoff",
+    "post_cutoff_observation_forbidden_in_seal": true
+  },
+  "sealed_state": {
+    "immutable": true,
+    "required_fields": [
+      "fixture_id", "competition_adapter", "season", "kickoff", "kickoff_revision_id", "cutoff",
+      "input_manifest", "data_quality", "missingness", "formal_v2_state", "nova_expert_states",
+      "model_head", "current_sha256", "state_sha256", "input_sha256", "capture_receipt"
+    ],
+    "live_acquisition_after_cutoff_forbidden": true,
+    "prospective_rebuild_after_cutoff_forbidden": true,
+    "posthoc_backfill_as_authoritative_state_forbidden": true
+  },
+  "replay_flow": [
+    "RESOLVE_UNIQUE_FIXTURE_IDENTITY",
+    "SELECT_KICKOFF_REVISION",
+    "LOAD_T60_SEALED_STATE",
+    "VERIFY_STATE_INPUT_MODEL_SHA",
+    "RUN_FROZEN_MODEL_DETERMINISTICALLY",
+    "SEAL_PREDICTION_RECEIPT",
+    "ONLY_THEN_ALLOW_INDEPENDENT_EVALUATOR_LABEL_JOIN"
+  ],
+  "score_blind_runner": {
+    "required": true,
+    "forbidden_before_prediction_receipt": [
+      "final_score", "match_result", "winner", "in_match_events", "postmatch_ratings", "final_lineup"
+    ],
+    "label_join_component": "INDEPENDENT_EVALUATOR_ONLY"
+  },
+  "prediction_receipt": {
+    "required_fields": [
+      "request_id", "fixture_id", "competition", "season", "kickoff", "cutoff", "request_sha256",
+      "state_sha256", "input_sha256", "model_head", "current_sha256", "nova_candidate_version",
+      "expert_status_weight_matrix_delta", "route", "fallback", "prediction_sha256",
+      "full_1x2", "full_score_matrix", "score_blind"
+    ]
+  },
+  "idempotency": {
+    "reservation_ledger_required": true,
+    "completed_ledger_required": true,
+    "key_fields": ["fixture_id", "kickoff_revision_id", "cutoff", "model_head", "state_sha256", "input_sha256"],
+    "same_key_same_prediction_required": true
+  },
+  "coverage_monitor": {
+    "future_fixture_registration_check": true,
+    "t60_job_queue_check": true,
+    "source_completeness_check": true,
+    "pre_kickoff_alert_required": true,
+    "external_source_failure_requires_gap_receipt": true,
+    "posthoc_state_fabrication_forbidden": true,
+    "engineering_target": "100_PERCENT_REGISTERED_AND_T60_SEALED_EXCEPT_GOVERNED_GAP_RECEIPTS"
+  },
+  "acceptance_tests": [
+    "ALL_SEVEN_ADAPTERS_REGISTERED",
+    "PAST_CUTOFF_NEVER_CALLS_LIVE_ACQUISITION",
+    "STATE_AND_MODEL_SHA_BOUND",
+    "IDENTICAL_REQUEST_IS_DETERMINISTIC",
+    "KICKOFF_REVISION_SELECTS_CORRECT_STATE",
+    "SIMULTANEOUS_FIXTURES_DO_NOT_CONFLICT",
+    "MISSING_EXPERT_IS_NOT_AVAILABLE_ZERO_ZERO",
+    "UNKNOWN_OR_OUTSIDE_FORMAL_SCOPE_ADAPTER_FAILS_CLOSED",
+    "RESULT_FIELDS_INACCESSIBLE_BEFORE_PREDICTION_SEAL",
+    "PREDICTION_STATE_AND_RECEIPT_MECHANICALLY_VERIFIABLE"
+  ]
+}
