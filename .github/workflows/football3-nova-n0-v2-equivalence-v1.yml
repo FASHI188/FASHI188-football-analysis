@@ -1,0 +1,68 @@
+name: Football3 Nova N0 V2 Equivalence v1
+
+on:
+  pull_request:
+    branches:
+      - football3/nova-stage0-foundation-v1
+    paths:
+      - governance/football3/nova_n0_v2_equivalence_v1.py
+      - governance/football3/nova_n0_contract_v1.json
+      - governance/football3/test_nova_n0_v2_equivalence_v1.py
+      - .github/workflows/football3-nova-n0-v2-equivalence-v1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  nova-n0-v2-equivalence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Static and contract checks
+        run: |
+          python3 -m py_compile governance/football3/nova_n0_v2_equivalence_v1.py governance/football3/test_nova_n0_v2_equivalence_v1.py
+          python3 -m json.tool governance/football3/nova_n0_contract_v1.json >/dev/null
+      - name: N0 tests
+        run: |
+          mkdir -p artifacts
+          python3 governance/football3/test_nova_n0_v2_equivalence_v1.py 2>&1 | tee artifacts/nova-n0-tests.log
+      - name: Stage0 regression
+        run: |
+          python3 governance/football3/test_nova_stage0_foundation_v1.py 2>&1 | tee artifacts/nova-stage0-regression.log
+      - name: Build receipt
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          files = [
+            'governance/football3/nova_n0_v2_equivalence_v1.py',
+            'governance/football3/nova_n0_contract_v1.json',
+            'governance/football3/test_nova_n0_v2_equivalence_v1.py',
+            '.github/workflows/football3-nova-n0-v2-equivalence-v1.yml'
+          ]
+          receipt = {
+            'schema_version': 'football3-nova-n0-acceptance-receipt-v1',
+            'execution_head': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
+            'exact_stage0_base_head': '681aa6f686d6642ba251e6163820881dc6efd560',
+            'parent_integration_head': '475dedfd177b02208f550fe97a89bbd1efa52125',
+            'formal_v2_head': 'e12f5d1193be5d81f60301cf34ab2140e11712a9',
+            'current_sha256': '71d54a6fd227ad2bbdddea9d0e42b88cea2022efef8faf26c7483cd99d5b8731',
+            'training_performed': False,
+            'new_labels_read': False,
+            'model_activated': False,
+            'production_changed': False,
+            'file_sha256': {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files}
+          }
+          Path('artifacts/nova-n0-acceptance-receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True)+'\n')
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n0-evidence
+          path: artifacts/
+          if-no-files-found: error
