@@ -157,7 +157,7 @@ def build_replay(con: sqlite3.Connection, seasons: set[int]) -> tuple[list[Repla
                 if tid in updates:
                     raise N1Error("team appears twice in same exact-kickoff batch")
                 updates[tid] = val
-            b = baseline_pack(pred)
+            b = baseline_pack(pred["prediction"])
             baseline_prediction_sha.update(json.dumps({"fid": r.fid, "p": b["p"], "matrix": b["matrix"]}, separators=(",",":"), sort_keys=True).encode())
             rows.append(ReplayRow(fid=r.fid, kickoff=r.kickoff, competition_id=r.competition_id, league=r.league, season_key=r.season_key, home=r.home, away=r.away, baseline=b, raw_features=snap, y=outcome(pp["h_goals"], pp["a_goals"])))
         seq += 1
