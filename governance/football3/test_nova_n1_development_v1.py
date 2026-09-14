@@ -22,6 +22,19 @@ class NovaN1DevelopmentTests(unittest.TestCase):
         self.assertTrue(fit["converged"])
         self.assertEqual(fit["iterations"],0)
         self.assertLessEqual(fit["grad_inf"],c.GRAD_TOL)
+    def test_stable_armijo_delta_matches_objective_change(self):
+        samples=[]
+        for y,n in enumerate((51,29,20)):
+            samples += [([0.25],[.5,.3,.2],y)]*n
+        theta=[0.02,-0.03,-0.01,0.04]
+        _,g=m.objective_grad(samples,theta)
+        cand=[v-1e-6*gg for v,gg in zip(theta,g)]
+        loss,_=m.objective_grad(samples,theta)
+        closs,_=m.objective_grad(samples,cand)
+        delta=m.armijo_objective_delta(samples,theta,cand)
+        self.assertAlmostEqual(delta,closs-loss,places=11)
+        self.assertLess(delta,0.0)
+
     def test_matrix_projection_identity(self):
         mat=[(0,0,.3),(1,0,.4),(0,1,.3)]
         out=m.project_matrix(mat,[0.0,0.0,0.0])
