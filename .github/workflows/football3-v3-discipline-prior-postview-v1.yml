@@ -1,0 +1,119 @@
+name: Football3 V3 Discipline Prior Postview V1
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football3-v3-discipline-prior-postview-v1.yml'
+      - 'governance/football3/run_v3_discipline_prior_postview_v1.py'
+      - 'governance/football3/test_v3_discipline_prior_postview_v1.py'
+      - 'governance/football3/v3_discipline_prior_postview_contract_v1.json'
+permissions: {contents: read}
+jobs:
+  discipline-prior:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install fixed runtime
+        run: pip install numpy==2.3.2 pandas==2.2.3 pyarrow scikit-learn==1.7.2 pytest
+      - name: Permanent tests
+        run: python -m pytest -q governance/football3/test_v3_discipline_prior_postview_v1.py
+      - name: Restore exact R9 evidence and provider objects
+        run: |
+          mkdir -p tmp/r9/data receipt
+          git fetch --no-tags origin c5e9d2f280c24002780fa8576c13e0aa4fff16be
+          git show c5e9d2f280c24002780fa8576c13e0aa4fff16be:football-data/experiments/top1_r9b_xg_hf/run_experiment_r9b.py > tmp/r9/run_experiment_r9b.py
+          python - <<'PY'
+          import urllib.request
+          for name in ('fixtures.parquet','match_stats.parquet'):
+              url='https://huggingface.co/datasets/eatpizzanot/soccer-dataset/resolve/main/'+name+'?download=true'
+              req=urllib.request.Request(url,headers={'User-Agent':'football3-v3-discipline-prior/1.0'})
+              with urllib.request.urlopen(req,timeout=300) as r, open('tmp/'+name,'wb') as f:
+                  while True:
+                      b=r.read(1<<20)
+                      if not b: break
+                      f.write(b)
+          PY
+          echo '7ba90661dbed29eb940daf5ea385c7d76d5751d16be86bd9063293a982abc7b7  tmp/fixtures.parquet' | sha256sum -c -
+          echo '2fb85b14b4428e1a36efe6d651de4ca8f7a6169ecfa3edb9cda49cb5e58d97e9  tmp/match_stats.parquet' | sha256sum -c -
+          python - <<'PY'
+          import importlib.util, pathlib, sys
+          p=pathlib.Path('tmp/r9/run_experiment_r9b.py')
+          spec=importlib.util.spec_from_file_location('r9frozen_actual',p)
+          m=importlib.util.module_from_spec(spec); sys.modules[spec.name]=m; spec.loader.exec_module(m)
+          m.FIX_URL=pathlib.Path('tmp/fixtures.parquet').resolve().as_uri()
+          m.STAT_URL=pathlib.Path('tmp/match_stats.parquet').resolve().as_uri()
+          m.freeze()
+          PY
+          echo '6ea5f6d98a6b43c1f34df58f08edfa52819415f79da88428947caae68d9170ba  tmp/r9/data/matches_r9b_xg_20000.csv' | sha256sum -c -
+          cat > tmp/r9/r9_loader.py <<'PY'
+          import importlib.util, sys
+          from pathlib import Path
+          _p=Path(__file__).with_name('run_experiment_r9b.py')
+          _spec=importlib.util.spec_from_file_location('r9frozen_actual_eval',_p)
+          _m=importlib.util.module_from_spec(_spec); sys.modules[_spec.name]=_m; _spec.loader.exec_module(_m)
+          S=_m.S
+          actual=_m.actual
+          boundary=_m.boundary
+          feat_k1=_m.feat_k1
+          decorate=_m.decorate
+          PY
+      - name: Fixed post-view evaluation diagnostic
+        id: evaluation
+        continue-on-error: true
+        run: |
+          set +e
+          python - <<'PY' \
+            > >(tee receipt/evaluation.stdout.log) \
+            2> >(tee receipt/evaluation.stderr.log >&2)
+          import json, numpy as np, runpy, sys
+          _json_dumps=json.dumps
+          def _numpy_safe_dumps(obj,*args,**kwargs):
+              prior=kwargs.get('default')
+              def _default(value):
+                  if isinstance(value,np.generic):
+                      return value.item()
+                  if prior is not None:
+                      return prior(value)
+                  raise TypeError(f'Object of type {type(value).__name__} is not JSON serializable')
+              kwargs['default']=_default
+              return _json_dumps(obj,*args,**kwargs)
+          json.dumps=_numpy_safe_dumps
+          sys.argv=[
+              'run_v3_discipline_prior_postview_v1.py',
+              '--r9-csv','tmp/r9/data/matches_r9b_xg_20000.csv',
+              '--r9-runner','tmp/r9/r9_loader.py',
+              '--fixtures','tmp/fixtures.parquet',
+              '--match-stats','tmp/match_stats.parquet',
+              '--contract','governance/football3/v3_discipline_prior_postview_contract_v1.json',
+              '--output','receipt/discipline-prior-receipt.json',
+          ]
+          runpy.run_path('governance/football3/run_v3_discipline_prior_postview_v1.py',run_name='__main__')
+          PY
+          rc=$?
+          echo "$rc" > receipt/evaluation-exit-code.txt
+          python - <<'PY'
+          import json,os,pathlib
+          pathlib.Path('receipt/head-binding.json').write_text(json.dumps({
+            'candidate_head':os.environ['PR_HEAD'],
+            'run_sha':os.environ['GITHUB_SHA'],
+            'post_view':True,'independent':False,'promotion':False
+          },sort_keys=True)+'\n')
+          PY
+          exit "$rc"
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: football3-v3-discipline-prior-${{ github.event.pull_request.head.sha }}
+          path: receipt/
+          if-no-files-found: error
+      - name: Enforce evaluation success
+        if: always()
+        run: |
+          test -f receipt/evaluation-exit-code.txt
+          test "$(cat receipt/evaluation-exit-code.txt)" = "0"
