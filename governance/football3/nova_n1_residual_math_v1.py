@@ -60,6 +60,37 @@ def objective_grad(samples: list[tuple[list[float],list[float],int]], theta: lis
             idx=off+1+j; loss += 0.5*L2*theta[idx]*theta[idx]; g[idx] += L2*theta[idx]
     return loss,g
 
+def armijo_objective_delta(samples: list[tuple[list[float],list[float],int]], theta: list[float], cand: list[float]) -> float:
+    if not samples: raise N1Error("empty optimizer samples")
+    d=len(samples[0][0]); stride=d+1
+    if len(theta)!=2*stride or len(cand)!=len(theta): raise N1Error("theta dimension")
+    dt=[b-a for a,b in zip(theta,cand)]
+    terms=[]
+    for x,p,y in samples:
+        q,_=softmax_offset(p,x,theta)
+        dd=[]
+        for c in (0,1):
+            off=c*stride
+            dd.append(dt[off]+math.fsum(dt[off+1+j]*x[j] for j in range(d)))
+        dd.append(0.0)
+        # Exact identity: LSE(z+dd)-LSE(z) = log(sum_c q_c * exp(dd_c)).
+        # Use log1p/expm1 near zero to avoid catastrophic cancellation, and
+        # shifted log-sum-exp for large trial steps to avoid overflow.
+        if max(abs(v) for v in dd) < 0.5:
+            u=math.fsum(q[c]*math.expm1(dd[c]) for c in range(3))
+            lse_delta=math.log1p(u)
+        else:
+            mx=max(dd)
+            lse_delta=mx+math.log(math.fsum(q[c]*math.exp(dd[c]-mx) for c in range(3)))
+        terms.append(lse_delta-dd[y])
+    penalties=[]
+    for c in (0,1):
+        off=c*stride
+        for j in range(d):
+            idx=off+1+j
+            penalties.append(0.5*L2*(cand[idx]-theta[idx])*(cand[idx]+theta[idx]))
+    return math.fsum(terms)+math.fsum(penalties)
+
 def fit_residual(samples: list[tuple[list[float],list[float],int]]) -> dict[str,Any]:
     d=len(samples[0][0]); theta=[0.0]*(2*(d+1)); loss,g=objective_grad(samples,theta); initial_loss=loss
     for it in range(1,MAX_ITER+1):
@@ -68,9 +99,12 @@ def fit_residual(samples: list[tuple[list[float],list[float],int]]) -> dict[str,
         if gin <= GRAD_TOL: return {"theta":theta,"iterations":it-1,"loss":loss,"initial_loss":initial_loss,"grad_inf":gin,"converged":True}
         norm2=math.fsum(v*v for v in g); step=1.0; accepted=False
         for _ in range(MAX_BACKTRACKS):
-            cand=[t-step*gg for t,gg in zip(theta,g)]; closs,cg=objective_grad(samples,cand)
-            if math.isfinite(closs) and closs <= loss - ARMIJO_C*step*norm2:
-                theta,loss,g=cand,closs,cg; accepted=True; break
+            cand=[t-step*gg for t,gg in zip(theta,g)]
+            delta_loss=armijo_objective_delta(samples,theta,cand)
+            if math.isfinite(delta_loss) and delta_loss <= -ARMIJO_C*step*norm2:
+                closs,cg=objective_grad(samples,cand)
+                if math.isfinite(closs) and all(math.isfinite(v) for v in cg):
+                    theta,loss,g=cand,loss+delta_loss,cg; accepted=True; break
             step*=BACKTRACK
         if not accepted: raise N1Error("NO_ARMIJO_STEP")
     gin=max(abs(v) for v in g)
