@@ -69,6 +69,28 @@ jobs:
         run: |
           test "$(git -C label-source rev-parse HEAD)" = 41a6eb96ba816757ff892387da5cb111390a7f9c
           test "$(git -C label-source hash-object LICENSE.md)" = 670154e3538863b2d9891fd5483160fbdfc89164
+      - name: Diagnose label FT structures
+        run: |
+          python - <<'PY'
+          import collections,json,pathlib
+          rows=[json.loads(x) for x in pathlib.Path('feature-artifact/schedule-features.jsonl').read_text(encoding='utf-8').splitlines() if x]
+          by=collections.defaultdict(list)
+          for r in rows: by[r['source_path']].append(r)
+          shapes=collections.Counter(); examples=[]; bad=0
+          for pth,rs in sorted(by.items()):
+              ms=json.loads((pathlib.Path('label-source')/pth).read_text(encoding='utf-8')).get('matches')
+              for r in rs:
+                  i=int(r['row_index']); m=ms[i]; score=m.get('score'); ft=(score or {}).get('ft')
+                  if isinstance(ft,list) and len(ft)==2 and all(type(x) is int for x in ft):
+                      continue
+                  bad+=1
+                  shape={'ft_type':type(ft).__name__,'len':len(ft) if isinstance(ft,list) else None,'elem_types':[type(x).__name__ for x in ft] if isinstance(ft,list) else None,'score_keys':sorted(score.keys()) if isinstance(score,dict) else []}
+                  shapes[json.dumps(shape,sort_keys=True)]+=1
+                  if len(examples)<20: examples.append({'source_path':pth,'row_index':i,**shape})
+          print('FT_BAD_COUNT='+str(bad))
+          print('FT_BAD_SHAPES='+json.dumps([{**json.loads(k),'count':v} for k,v in sorted(shapes.items())],sort_keys=True))
+          print('FT_BAD_EXAMPLES='+json.dumps(examples,sort_keys=True))
+          PY
       - name: Run frozen scientific evaluation
         run: |
           mkdir -p artifact
