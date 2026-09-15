@@ -1,0 +1,131 @@
+name: football3-nova-n1-cody-big3-coverage-audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'governance/football3/nova_n1_cody_big3_coverage_audit_v1.py'
+      - 'governance/football3/test_nova_n1_cody_big3_coverage_audit_v1.py'
+      - '.github/workflows/football3-nova-n1-cody-big3-coverage-audit.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-cody-big3-coverage-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  coverage_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch and unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python -m py_compile \
+            governance/football3/nova_n1_smartplay_epl_coverage_audit_v1.py \
+            governance/football3/nova_n1_cody_big3_coverage_audit_v1.py \
+            governance/football3/test_nova_n1_cody_big3_coverage_audit_v1.py
+          cd governance/football3
+          python test_nova_n1_cody_big3_coverage_audit_v1.py -v
+
+      - name: Extract locked confirmation identity only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_url='https://api.github.com/repos/${{ github.repository }}/actions/artifacts/9827606506/zip'
+          curl -fsSL --retry 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "${artifact_url}" -o n1_locked_test_artifact.zip
+          python - <<'PY'
+          import hashlib, pathlib, zipfile
+          expected='c861032ea523cb921eebc7455941e2a71ecb2f3ecc3a8df6858eef0b7aaf8d95'
+          p=pathlib.Path('n1_locked_test_artifact.zip')
+          with zipfile.ZipFile(p) as z:
+              names=set(z.namelist())
+              assert 'confirmation_identity.jsonl' in names
+              identity=z.read('confirmation_identity.jsonl')
+          got=hashlib.sha256(identity).hexdigest()
+          assert got==expected, (got,expected)
+          pathlib.Path('n1_locked_confirmation_identity.jsonl').write_bytes(identity)
+          p.unlink()
+          print({'identity_sha256':got,'result_vault_opened':False,'raw_pages_opened':False})
+          PY
+
+      - name: Audit Cody Big3 feature-only identity coverage without labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_cody_big3_coverage_audit_v1.py \
+            --identity n1_locked_confirmation_identity.jsonl \
+            --out n1_cody_big3_coverage
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.load(open('n1_cody_big3_coverage/cody_big3_coverage_audit.json',encoding='utf-8'))
+          assert p['declared_license']=='MIT'
+          assert p['archive_sha256']=='2d77fa250bdac756bdb15cc14bb1b6c2e3a8f925acd32f120318fb015245c4c0'
+          assert p['locked_test_identity']['target_n']==992
+          assert p['source_audit']['forbidden_value_columns_decoded']==0
+          assert p['source_audit']['result_or_label_values_decoded']==0
+          assert p['source_audit']['xg_or_probability_values_decoded']==0
+          assert p['source_audit']['raw_archive_persisted'] is False
+          assert p['source_audit']['raw_archive_uploaded'] is False
+          assert p['test_result_vault_opened'] is False and p['test_raw_pages_opened'] is False
+          assert p['test_labels_read'] is False
+          assert p['external_result_or_label_values_decoded']==0
+          assert p['external_xg_or_probability_values_decoded']==0
+          assert p['formal_v2_modified'] is False and p['current_modified'] is False and p['production_modified'] is False
+          if p['status']=='IDENTITY_COVERAGE_QUALIFIED':
+              assert p['coverage']['target_n']==992
+              assert p['coverage']['source_n']==992
+              assert p['coverage']['matched_n']==992
+              assert p['coverage']['missing_n']==0 and p['coverage']['extra_n']==0
+              assert p['coverage']['feature_complete_n']==992
+              assert p['coverage']['per_league']['Bundesliga']['matched_n']==306
+              assert p['coverage']['per_league']['Serie A']['matched_n']==380
+              assert p['coverage']['per_league']['Ligue 1']['matched_n']==306
+              rows=[json.loads(x) for x in open('n1_cody_big3_coverage/cody_big3_feature_projection.jsonl',encoding='utf-8') if x.strip()]
+              allowed={'fixture_id','kickoff','league','season','home_team_id','away_team_id','home_team','away_team','h_deep','a_deep','h_ppda','a_ppda'}
+              assert len(rows)==992
+              assert all(set(x)==allowed for x in rows)
+          else:
+              assert not Path('n1_cody_big3_coverage/cody_big3_feature_projection.jsonl').exists()
+          Path('n1_locked_confirmation_identity.jsonl').unlink()
+          print(json.dumps({
+              'status':p['status'],
+              'target_n':p['coverage']['target_n'],
+              'source_n':p['coverage']['source_n'],
+              'matched_n':p['coverage']['matched_n'],
+              'missing_n':p['coverage']['missing_n'],
+              'extra_n':p['coverage']['extra_n'],
+              'feature_complete_n':p['coverage']['feature_complete_n'],
+              'per_league':{k:v['status'] for k,v in p['coverage']['per_league'].items()},
+              'unknown_team_value_n':p['source_audit']['unknown_team_value_n'],
+              'projection_sha256':p['safe_feature_projection_sha256'],
+              'test_labels_read':p['test_labels_read'],
+          },sort_keys=True))
+          PY
+
+      - name: Upload Cody Big3 coverage receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-cody-big3-coverage-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_cody_big3_coverage/
+          if-no-files-found: error
+          retention-days: 90

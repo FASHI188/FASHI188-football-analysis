@@ -1,0 +1,78 @@
+name: football3-nova-n1-smartplay-epl-header-audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'governance/football3/nova_n1_smartplay_epl_header_audit_v1.py'
+      - 'governance/football3/test_nova_n1_smartplay_epl_header_audit_v1.py'
+      - '.github/workflows/football3-nova-n1-smartplay-epl-header-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n1-smartplay-epl-header-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  smartplay_epl_header_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch and unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python -m py_compile \
+            governance/football3/nova_n1_smartplay_epl_header_audit_v1.py \
+            governance/football3/test_nova_n1_smartplay_epl_header_audit_v1.py
+          cd governance/football3
+          python test_nova_n1_smartplay_epl_header_audit_v1.py -v
+
+      - name: Audit SmartPlay EPL redistributed dataset header only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_smartplay_epl_header_audit_v1.py --out n1_smartplay_epl_header_audit
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_smartplay_epl_header_audit/smartplay_epl_header_audit.json',encoding='utf-8'))
+          assert p['candidate_id']=='SMARTPLAYFPL_HF_EPL_2020_2026'
+          assert p['target_league']=='EPL'
+          assert p['declared_license']=='CC BY-NC 4.0'
+          assert p['source_project_commit']=='3f1b252da271cc031ed4de4ff7cbd736e57f5e45'
+          assert p['source_license_blob_sha']=='09e163799efe14f8e2d4f2a723ed3804ca35dc6e'
+          assert p['data_rows_parsed']==0
+          assert p['label_values_read']==0 and p['result_values_read']==0
+          assert p['raw_dataset_persisted'] is False
+          assert p['test_identity_opened'] is False
+          assert p['test_result_vault_opened'] is False and p['test_labels_read'] is False
+          assert p['formal_v2_modified'] is False and p['current_modified'] is False and p['production_modified'] is False
+          print(json.dumps({
+              'candidate':p['candidate_id'],
+              'status':p['status'],
+              'columns':p.get('header_audit',{}).get('columns',[]),
+              'missing':p.get('header_audit',{}).get('missing_required_roles',[]),
+              'ambiguous':p.get('header_audit',{}).get('ambiguous_required_roles',[]),
+              'forbidden_columns_present_names_only':p.get('header_audit',{}).get('forbidden_result_or_label_columns_present_in_dataset',[]),
+              'data_rows_parsed':p['data_rows_parsed'],
+              'test_labels_read':p['test_labels_read'],
+          },sort_keys=True))
+          PY
+
+      - name: Upload SmartPlay EPL header-only receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-smartplay-epl-header-audit-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_smartplay_epl_header_audit/
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,65 @@
+name: football3-nova-n1-external-source-header-audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'governance/football3/nova_n1_external_archive_header_audit_v1.py'
+      - 'governance/football3/test_nova_n1_external_archive_header_audit_v1.py'
+      - '.github/workflows/football3-nova-n1-external-source-header-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n1-external-source-header-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  header_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch and unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python -m py_compile \
+            governance/football3/nova_n1_external_archive_header_audit_v1.py \
+            governance/football3/test_nova_n1_external_archive_header_audit_v1.py
+          cd governance/football3
+          python test_nova_n1_external_archive_header_audit_v1.py -v
+
+      - name: Audit licensed historical archives without opening data rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_external_archive_header_audit_v1.py --out n1_external_header_audit
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_external_header_audit/external_source_header_audit.json',encoding='utf-8'))
+          assert p['test_labels_read'] is False and p['data_rows_opened']==0
+          assert len(p['reports'])>=5
+          for r in p['reports']:
+              assert r['archive_data_rows_opened']==0 and r['archive_label_values_read']==0
+              assert r['test_result_vault_opened'] is False and r['test_labels_read'] is False
+              assert r['formal_v2_modified'] is False and r['current_modified'] is False and r['production_modified'] is False
+          summary={r['candidate']['candidate_id']:{'league':r['candidate']['target_league'],'license':r['candidate']['declared_license'],'status':r['status'],'schema_files':r['locked_schema_candidate_files']} for r in p['reports']}
+          print(json.dumps(summary,sort_keys=True))
+          PY
+
+      - name: Upload header-only audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-external-source-header-audit-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_external_header_audit/
+          if-no-files-found: error
+          retention-days: 90

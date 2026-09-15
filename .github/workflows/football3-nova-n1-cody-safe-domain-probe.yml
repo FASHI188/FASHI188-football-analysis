@@ -1,0 +1,95 @@
+name: football3-nova-n1-cody-safe-domain-probe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football3-nova-n1-cody-safe-domain-probe.yml'
+      - 'governance/football3/nova_n1_cody_big3_coverage_audit_v1.py'
+      - 'governance/football3/nova_n1_smartplay_epl_coverage_audit_v1.py'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-cody-safe-domain-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  safe_domain_probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Probe only safe league and season values
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, io, json, pathlib, sys, urllib.request, zipfile
+          from collections import Counter
+          sys.path.insert(0, 'governance/football3')
+          import nova_n1_smartplay_epl_coverage_audit_v1 as common
+
+          url='https://www.kaggle.com/api/v1/datasets/download/codytipton/player-stats-per-game-understat'
+          expected='2d77fa250bdac756bdb15cc14bb1b6c2e3a8f925acd32f120318fb015245c4c0'
+          req=urllib.request.Request(url, headers={'User-Agent':'Football3-Nova-N1-Cody-safe-domain/1.0','Accept':'application/zip,application/octet-stream;q=0.9,*/*;q=0.1','Accept-Encoding':'identity'})
+          with urllib.request.urlopen(req, timeout=300) as resp:
+              raw=resp.read()
+          got=hashlib.sha256(raw).hexdigest()
+          assert got==expected, (got, expected)
+          z=zipfile.ZipFile(io.BytesIO(raw))
+          member='general_game_stats.csv'
+          assert member in z.namelist()
+          counts=Counter(); leagues=Counter(); seasons=Counter(); n=0
+          with z.open(member) as f:
+              header=[common.decode_safe(x).lstrip('\ufeff') for x in common.split_csv_record_raw(f.readline())]
+              pos={x.casefold():i for i,x in enumerate(header)}
+              li=pos['league']; si=pos['season']
+              for line in f:
+                  if not line.strip():
+                      continue
+                  fields=common.split_csv_record_raw(line)
+                  league=common.decode_safe(fields[li])
+                  season=common.decode_safe(fields[si])
+                  counts[(league,season)]+=1; leagues[league]+=1; seasons[season]+=1; n+=1
+          out={
+              'schema_version':'football3-nova-n1-cody-safe-domain-probe-v1',
+              'archive_sha256':got,
+              'member':member,
+              'physical_rows_scanned':n,
+              'decoded_columns':['league','season'],
+              'league_season_counts':[{'league':k[0],'season':k[1],'n':v} for k,v in sorted(counts.items())],
+              'league_counts':dict(sorted(leagues.items())),
+              'season_counts':dict(sorted(seasons.items())),
+              'forbidden_value_columns_decoded':0,
+              'result_or_label_values_decoded':0,
+              'xg_or_probability_values_decoded':0,
+              'test_result_vault_opened':False,
+              'test_labels_read':False,
+          }
+          pathlib.Path('n1_cody_safe_domain').mkdir(exist_ok=True)
+          pathlib.Path('n1_cody_safe_domain/cody_safe_domain_probe.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps({'rows':n,'league_counts':out['league_counts'],'season_counts':out['season_counts'],'labels_read':False},sort_keys=True))
+          PY
+
+      - name: Upload safe-domain receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-cody-safe-domain-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_cody_safe_domain/
+          if-no-files-found: error
+          retention-days: 90

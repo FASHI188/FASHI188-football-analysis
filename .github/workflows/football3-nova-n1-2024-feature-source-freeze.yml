@@ -1,0 +1,101 @@
+name: football3-nova-n1-2024-feature-source-freeze
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'governance/football3/nova_n1_2024_feature_source_freeze_v1.py'
+      - 'governance/football3/nova_n1_2024_feature_inventory_v1.py'
+      - 'governance/football3/test_nova_n1_2024_feature_source_freeze_v1.py'
+      - '.github/workflows/football3-nova-n1-2024-feature-source-freeze.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n1-2024-feature-source-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  freeze_feature_source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch and compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python -m py_compile \
+            governance/football3/nova_n1_2024_feature_source_freeze_v1.py \
+            governance/football3/nova_n1_2024_feature_inventory_v1.py \
+            governance/football3/test_nova_n1_2024_feature_source_freeze_v1.py
+          cd governance/football3
+          python test_nova_n1_2024_feature_source_freeze_v1.py -v
+
+      - name: Audit anonymous MIT source coverage without labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_2024_feature_inventory_v1.py --out n1_2024_feature_inventory
+
+      - name: Upload feature-only source inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-2024-feature-inventory-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_2024_feature_inventory/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Freeze anonymous MIT feature-only source
+        env:
+          NOVA_N1_EXECUTION_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_2024_feature_source_freeze_v1.py --out n1_2024_feature_source
+
+      - name: Verify no labels or raw database persisted
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f n1_2024_feature_source/feature_updates_2024.jsonl
+          test -f n1_2024_feature_source/feature_source_receipt.json
+          test -f n1_2024_feature_source/artifact_manifest.json
+          test "$(find n1_2024_feature_source -type f | wc -l)" -eq 3
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('n1_2024_feature_source')
+          receipt=json.load(open(root/'feature_source_receipt.json',encoding='utf-8'))
+          manifest=json.load(open(root/'artifact_manifest.json',encoding='utf-8'))
+          assert receipt['status']=='FEATURE_SOURCE_FROZEN'
+          assert receipt['execution_head']=='${{ github.event.pull_request.head.sha }}'
+          assert receipt['n']==1752
+          assert receipt['fixture_identity_set_sha256']=='0f156c22df1976b929d0db24135830e8b3fac8546130e7bf5e08673918f22bc6'
+          assert receipt['league_counts']=={'Bundesliga':306,'EPL':380,'La liga':380,'Ligue 1':306,'Serie A':380}
+          assert receipt['labels_read']==0 and receipt['score_or_result_columns_read'] is False and receipt['xg_columns_read'] is False
+          assert receipt['test_result_vault_opened'] is False and receipt['test_labels_read'] is False
+          assert receipt['requires_secret_or_api_key'] is False and receipt['credentials_used'] is False
+          assert receipt['raw_archive_persisted'] is False and receipt['raw_database_persisted'] is False
+          assert manifest['labels_read']==0 and manifest['test_result_vault_opened'] is False
+          allowed={'fixture_id','source_kickoff','league','season_key','home_team_id','away_team_id','home_team','away_team','h_deep','a_deep','h_ppda','a_ppda'}
+          rows=[json.loads(x) for x in open(root/'feature_updates_2024.jsonl',encoding='utf-8') if x.strip()]
+          assert len(rows)==1752
+          assert all(set(x)==allowed for x in rows)
+          PY
+
+      - name: Upload frozen feature source
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-2024-feature-source-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_2024_feature_source/
+          if-no-files-found: error
+          retention-days: 90
