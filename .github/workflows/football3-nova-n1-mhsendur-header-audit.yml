@@ -1,0 +1,83 @@
+name: football3-nova-n1-mhsendur-understat-header-audit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - football3/nova-n1-free-deep-ppda-reusable-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n1-mhsendur-header-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  header-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_mhsendur_understat_header_audit_v1.py \
+            governance/football3/test_nova_mhsendur_understat_header_audit_v1.py
+      - name: Contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_mhsendur_understat_header_audit_v1.py -v
+      - name: Verify pinned permission statement
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request
+          from pathlib import Path
+          lock=json.loads(Path('governance/football3/nova_mhsendur_understat_header_lock_v1.json').read_text())
+          rev=lock['source']['revision']
+          url=f"https://raw.githubusercontent.com/mhsendur/understat-football-data-2014-2023/{rev}/README.md"
+          req=urllib.request.Request(url,headers={'User-Agent':'Football3-Nova-N1-Permission-Audit/1.0'})
+          with urllib.request.urlopen(req,timeout=60) as r:
+              text=r.read().decode('utf-8')
+          for phrase in lock['permission']['readme_required_phrases']:
+              assert phrase in text, phrase
+          assert lock['permission']['production_eligible'] is False
+          PY
+      - name: Header-only audit of pinned archive
+        run: |
+          set -euo pipefail
+          mkdir -p mhsendur_header_audit_receipt
+          python governance/football3/nova_mhsendur_understat_header_audit_v1.py \
+            --lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --out mhsendur_header_audit_receipt/receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_header_audit_receipt/receipt.json'))
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['data_rows_read']==0
+          assert p['result_values_read']==0
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          assert p['status'] in {'HEADER_SCHEMA_QUALIFIED','HEADER_SCHEMA_NOT_QUALIFIED'}
+          PY
+      - name: Upload immutable audit receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-mhsendur-header-${{ github.sha }}-${{ github.run_id }}
+          path: mhsendur_header_audit_receipt/receipt.json
+          if-no-files-found: error
+          retention-days: 90
