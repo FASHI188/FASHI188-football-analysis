@@ -24,15 +24,27 @@ class Tests(unittest.TestCase):
         self.assertEqual(x['label_values_read'], 0)
         self.assertEqual(x['result_values_read'], 0)
 
-    def test_aliases_allow_us_opponent_and_kickoff(self):
+    def test_redundant_aliases_choose_preferred_deterministically(self):
         header = [
-            'season','fixture','team_name','us_opponent','is_home','kickoff_time',
+            'season','fixture','team_name','us_opponent','opponent_team','is_home','match_date','kickoff_time',
+            'us_ppda','us_opp_ppda','us_deep','us_deep_allowed'
+        ]
+        x = audit.classify_header(header)
+        self.assertTrue(x['locked_feature_schema_complete'])
+        self.assertEqual(x['bindings']['opponent']['column'], 'opponent_team')
+        self.assertEqual(x['bindings']['match_time']['column'], 'kickoff_time')
+        self.assertEqual(x['redundant_aliases_present']['opponent'], ['us_opponent'])
+        self.assertEqual(x['redundant_aliases_present']['match_time'], ['match_date'])
+
+    def test_alias_fallback_when_preferred_missing(self):
+        header = [
+            'season','fixture','team_name','us_opponent','is_home','match_date',
             'us_ppda','us_opp_ppda','us_deep','us_deep_allowed'
         ]
         x = audit.classify_header(header)
         self.assertTrue(x['locked_feature_schema_complete'])
         self.assertEqual(x['bindings']['opponent']['column'], 'us_opponent')
-        self.assertEqual(x['bindings']['match_time']['column'], 'kickoff_time')
+        self.assertEqual(x['bindings']['match_time']['column'], 'match_date')
 
     def test_missing_feature_fails_closed(self):
         header = ['season','fixture','team_name','opponent_team','is_home','match_date','us_ppda','us_deep']
@@ -40,14 +52,14 @@ class Tests(unittest.TestCase):
         self.assertFalse(x['locked_feature_schema_complete'])
         self.assertEqual(set(x['missing_required_roles']), {'opponent_ppda','opponent_deep'})
 
-    def test_ambiguous_aliases_fail_closed(self):
+    def test_duplicate_selected_alias_fails_closed(self):
         header = [
-            'season','fixture','team_name','opponent_team','us_opponent','is_home','match_date','kickoff_time',
+            'season','fixture','team_name','opponent_team','opponent_team','is_home','kickoff_time',
             'us_ppda','us_opp_ppda','us_deep','us_deep_allowed'
         ]
         x = audit.classify_header(header)
         self.assertFalse(x['locked_feature_schema_complete'])
-        self.assertEqual(set(x['ambiguous_required_roles']), {'opponent','match_time'})
+        self.assertEqual(x['ambiguous_required_roles'], ['opponent'])
 
     def test_parse_first_record_only(self):
         raw = (

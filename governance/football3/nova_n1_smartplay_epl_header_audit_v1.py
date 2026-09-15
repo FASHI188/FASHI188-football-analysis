@@ -32,17 +32,20 @@ UA = {
     "Range": f"bytes=0-{MAX_PREFIX_BYTES - 1}",
 }
 
+# Aliases are ordered by deterministic preference. Multiple different aliases are
+# redundant columns, not an ambiguity. Duplicate occurrences of the same selected
+# alias fail closed.
 ROLE_ALIASES = {
-    "season": {"season"},
-    "fixture": {"fixture"},
-    "team_name": {"team_name"},
-    "opponent": {"opponent_team", "us_opponent"},
-    "is_home": {"is_home"},
-    "match_time": {"match_date", "kickoff_time"},
-    "team_ppda": {"us_ppda"},
-    "opponent_ppda": {"us_opp_ppda"},
-    "team_deep": {"us_deep"},
-    "opponent_deep": {"us_deep_allowed"},
+    "season": ("season",),
+    "fixture": ("fixture",),
+    "team_name": ("team_name",),
+    "opponent": ("opponent_team", "us_opponent"),
+    "is_home": ("is_home",),
+    "match_time": ("kickoff_time", "match_date"),
+    "team_ppda": ("us_ppda",),
+    "opponent_ppda": ("us_opp_ppda",),
+    "team_deep": ("us_deep",),
+    "opponent_deep": ("us_deep_allowed",),
 }
 FORBIDDEN_RESULT_OR_LABEL_COLUMNS = {
     "total_points", "goals_scored", "assists", "clean_sheets", "goals_conceded",
@@ -91,26 +94,39 @@ def classify_header(header: list[str]) -> dict[str, Any]:
     for idx, name in enumerate(normalized):
         positions.setdefault(name, []).append(idx)
     bindings: dict[str, dict[str, Any] | None] = {}
+    redundant_aliases: dict[str, list[str]] = {}
     ambiguous: list[str] = []
     missing: list[str] = []
     for role, aliases in ROLE_ALIASES.items():
-        hits: list[tuple[str, int]] = []
-        for alias in sorted(aliases):
-            hits.extend((alias, idx) for idx in positions.get(alias, []))
-        if len(hits) == 1:
-            alias, idx = hits[0]
-            bindings[role] = {"column": header[idx], "normalized": alias, "index": idx}
-        else:
-            bindings[role] = None
-            if not hits:
-                missing.append(role)
-            else:
+        present = [alias for alias in aliases if positions.get(alias)]
+        selected: tuple[str, int] | None = None
+        for alias in aliases:
+            idxs = positions.get(alias, [])
+            if len(idxs) > 1:
                 ambiguous.append(role)
+                selected = None
+                break
+            if len(idxs) == 1:
+                selected = (alias, idxs[0])
+                break
+        if role in ambiguous:
+            bindings[role] = None
+            continue
+        if selected is None:
+            bindings[role] = None
+            missing.append(role)
+            continue
+        alias, idx = selected
+        bindings[role] = {"column": header[idx], "normalized": alias, "index": idx}
+        alternates = [x for x in present if x != alias]
+        if alternates:
+            redundant_aliases[role] = alternates
     forbidden_present = sorted(set(normalized) & {x.casefold() for x in FORBIDDEN_RESULT_OR_LABEL_COLUMNS})
     return {
         "column_n": len(header),
         "columns": header,
         "bindings": bindings,
+        "redundant_aliases_present": redundant_aliases,
         "missing_required_roles": missing,
         "ambiguous_required_roles": ambiguous,
         "locked_feature_schema_complete": not missing and not ambiguous,
