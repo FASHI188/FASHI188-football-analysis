@@ -36,15 +36,18 @@ class SourcePrecheckTests(unittest.TestCase):
         b=dict(a); b["kickoffdate"]="y"
         self.assertEqual(m.stable_j1_id(a),m.stable_j1_id(b))
 
-    def test_k1_uses_id_event_and_ignores_scores(self):
-        raw=json.dumps({"events":[{"idEvent":"999","idLeague":"4689","strSeason":"2026","idHomeTeam":"138115","idAwayTeam":"138111","strHomeTeam":"FC Seoul","strAwayTeam":"Jeonbuk","strTimestamp":"2026-10-04T10:00:00Z","intHomeScore":"99","intAwayScore":"99","strStatus":"Match Finished"}]}).encode()
-        xs=m.parse_k1_response(raw,expected_team_id="138115",league_id="4689",season="2026",observed_at=OBS)
-        self.assertEqual(xs[0]["fixture_id"],"thesportsdb:999"); self.assertNotIn("intHomeScore",xs[0]); self.assertNotIn("strStatus",xs[0])
+    def test_k1_ics_uid_identity_ignores_description_and_kickoff_revision(self):
+        aliases=["Bucheon 1995","Sangju Sangmu"]
+        def feed(kickoff):
+            return ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:k1-abc@example\r\nDTSTART;TZID=Asia/Seoul:"+kickoff+"\r\nSUMMARY:Bucheon 1995 - Sangju Sangmu\r\nDESCRIPTION:POISON SCORE 9-9\r\nLOCATION:Bucheon Stadium\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n").encode()
+        a=m.parse_k1_ics(feed("20260919T163000"),season="2026",default_timezone="Asia/Seoul",observed_at=OBS,team_aliases=aliases)[0]
+        b=m.parse_k1_ics(feed("20260919T170000"),season="2026",default_timezone="Asia/Seoul",observed_at=OBS,team_aliases=aliases)[0]
+        self.assertEqual(a["fixture_id"],b["fixture_id"]); self.assertEqual(a["source_uid"],"k1-abc@example"); self.assertNotIn("description",a); self.assertNotEqual(a["kickoff"],b["kickoff"])
 
-    def test_k1_accepts_polled_team_as_away(self):
-        raw=json.dumps({"events":[{"idEvent":"999","idLeague":"4689","idHomeTeam":"139783","idAwayTeam":"138113","strHomeTeam":"Bucheon","strAwayTeam":"Gimcheon","strTimestamp":"2026-10-04T10:00:00Z"}]}).encode()
-        xs=m.parse_k1_response(raw,expected_team_id="138113",league_id="4689",season="2026",observed_at=OBS)
-        self.assertEqual(xs[0]["away_team_id"],"138113")
+    def test_k1_ics_rejects_unknown_team_alias(self):
+        raw=("BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:x\nDTSTART:20261001T100000Z\nSUMMARY:Unknown FC - Ulsan\nEND:VEVENT\nEND:VCALENDAR\n").encode()
+        with self.assertRaises(m.PrecheckError):
+            m.parse_k1_ics(raw,season="2026",default_timezone="Asia/Seoul",observed_at=OBS,team_aliases=["Ulsan"])
 
     def test_unique_fixture_guard(self):
         with self.assertRaises(m.PrecheckError): m.require_unique([{"fixture_id":"x"},{"fixture_id":"x"}],"x")
