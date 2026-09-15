@@ -11,8 +11,8 @@ class ExtensionTests(unittest.TestCase):
     def test_catalog_passes(self):
         r = validate(CATALOG)
         self.assertEqual(r["status"], "PASS")
-        self.assertEqual(r["qualified_reusable_source_count"], 4)
-        self.assertEqual(r["qualified_tracking_source_count"], 2)
+        self.assertEqual(r["qualified_reusable_source_count"], 5)
+        self.assertEqual(r["qualified_tracking_source_count"], 3)
         self.assertEqual(r["qualified_identity_result_backbone_count"], 1)
         self.assertEqual(r["n1_big3_status"], "STOP_DATA_COVERAGE")
         self.assertEqual(r["labels_opened"], 0)
@@ -37,6 +37,13 @@ class ExtensionTests(unittest.TestCase):
         gated = next(x for x in data["sources"] if x["source_id"] == "PEGGY44_SKILLCORNER_EPL_2024_25")
         self.assertTrue(gated["registration_required"])
         self.assertEqual(gated["license_id"], "CC-BY-NC-4.0")
+
+    def test_bodypose_open_source_is_separate_from_n1(self):
+        data = json.loads(CATALOG.read_text(encoding="utf-8"))
+        bodypose = next(x for x in data["sources"] if x["source_id"] == "SKILLCORNER_BODYPOSE_2024_25_ALEAGUE")
+        self.assertTrue(bodypose["historical_library_eligible"])
+        self.assertEqual(bodypose["license_id"], "MIT")
+        self.assertFalse(bodypose["n1_exact_feature_eligible"])
 
 if __name__ == "__main__":
     unittest.main()
