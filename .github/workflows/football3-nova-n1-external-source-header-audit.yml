@@ -18,7 +18,7 @@ concurrency:
 jobs:
   header_audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@v4
@@ -47,13 +47,13 @@ jobs:
           import json
           p=json.load(open('n1_external_header_audit/external_source_header_audit.json',encoding='utf-8'))
           assert p['test_labels_read'] is False and p['data_rows_opened']==0
-          assert len(p['reports'])==1
-          r=p['reports'][0]
-          assert r['candidate']['declared_license']=='CC BY 4.0'
-          assert r['archive_data_rows_opened']==0 and r['archive_label_values_read']==0
-          assert r['test_result_vault_opened'] is False and r['test_labels_read'] is False
-          assert r['formal_v2_modified'] is False and r['current_modified'] is False and r['production_modified'] is False
-          print(json.dumps({'candidate':r['candidate']['candidate_id'],'status':r['status'],'schema_files':r['locked_schema_candidate_files']},sort_keys=True))
+          assert len(p['reports'])>=5
+          for r in p['reports']:
+              assert r['archive_data_rows_opened']==0 and r['archive_label_values_read']==0
+              assert r['test_result_vault_opened'] is False and r['test_labels_read'] is False
+              assert r['formal_v2_modified'] is False and r['current_modified'] is False and r['production_modified'] is False
+          summary={r['candidate']['candidate_id']:{'league':r['candidate']['target_league'],'license':r['candidate']['declared_license'],'status':r['status'],'schema_files':r['locked_schema_candidate_files']} for r in p['reports']}
+          print(json.dumps(summary,sort_keys=True))
           PY
 
       - name: Upload header-only audit

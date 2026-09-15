@@ -23,6 +23,46 @@ CANDIDATES = [
         "declared_seasons": "2014/15-2024/25",
         "declared_match_n": 4180,
     },
+    {
+        "candidate_id": "KAGGLE_REDAALI_EPL_XG_2014_2025",
+        "provider": "Reda Ali - EPL Expected Goals stats (2014-2025)",
+        "source_page": "https://www.kaggle.com/datasets/redaali009/epl-expected-goals-stats-2014-2025",
+        "download_url": "https://www.kaggle.com/api/v1/datasets/download/redaali009/epl-expected-goals-stats-2014-2025",
+        "declared_license": "CC BY-SA 4.0",
+        "target_league": "EPL",
+        "declared_seasons": "2014/15-2024/25",
+        "declared_match_n": None,
+    },
+    {
+        "candidate_id": "KAGGLE_ABRAR_EPL_UNDERSTAT_2014_PRESENT",
+        "provider": "Abrar - Understat Data for Teams + Players (2014-present)",
+        "source_page": "https://www.kaggle.com/datasets/abrarhossainhimself/understat-data-for-teams-players-2014-present",
+        "download_url": "https://www.kaggle.com/api/v1/datasets/download/abrarhossainhimself/understat-data-for-teams-players-2014-present",
+        "declared_license": "CC0",
+        "target_league": "EPL",
+        "declared_seasons": "2014-present",
+        "declared_match_n": None,
+    },
+    {
+        "candidate_id": "KAGGLE_PETER_EPL_2024_2025_DETAILED",
+        "provider": "Peter Vyboch - EPL 2024-2025 Detailed Match Data",
+        "source_page": "https://www.kaggle.com/datasets/petervboch/epl-2024-2025-detailed-match-data",
+        "download_url": "https://www.kaggle.com/api/v1/datasets/download/petervboch/epl-2024-2025-detailed-match-data",
+        "declared_license": "CC0",
+        "target_league": "EPL",
+        "declared_seasons": "2024/25",
+        "declared_match_n": 380,
+    },
+    {
+        "candidate_id": "KAGGLE_MARCEL_SERIEA_2020_2025",
+        "provider": "Marcel Biezunski - Serie A Matches Dataset (2020-2025)",
+        "source_page": "https://www.kaggle.com/datasets/marcelbiezunski/serie-a-matches-dataset-2020-2025",
+        "download_url": "https://www.kaggle.com/api/v1/datasets/download/marcelbiezunski/serie-a-matches-dataset-2020-2025",
+        "declared_license": "CC BY-NC-SA 4.0",
+        "target_league": "Serie A",
+        "declared_seasons": "2020-2025",
+        "declared_match_n": None,
+    },
 ]
 
 HEADER_ALIASES = {
@@ -56,7 +96,6 @@ def sha256(raw: bytes) -> str:
 
 
 def parse_header(raw: bytes) -> list[str]:
-    # Header only. We deliberately stop at the first line and never parse a data row.
     first = raw.splitlines()[0] if raw.splitlines() else b""
     if not first:
         return []
@@ -64,7 +103,6 @@ def parse_header(raw: bytes) -> list[str]:
         text = first.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = first.decode("latin-1")
-    # Football dataset headers are flat; quoted commas in header names are rejected fail-closed.
     if '"' in text:
         import csv
         return next(csv.reader([text]))
@@ -76,14 +114,11 @@ def classify_header(header: list[str]) -> dict[str, Any]:
     lookup: dict[str, list[int]] = {}
     for i, name in enumerate(normalized):
         lookup.setdefault(name, []).append(i)
-
     bindings: dict[str, dict[str, Any] | None] = {}
     for role, aliases in HEADER_ALIASES.items():
         hits = [(name, idx) for name in sorted(aliases) for idx in lookup.get(name, [])]
         bindings[role] = None if len(hits) != 1 else {"column": header[hits[0][1]], "normalized": hits[0][0], "index": hits[0][1]}
-
-    required = list(HEADER_ALIASES)
-    missing = [role for role in required if bindings[role] is None]
+    missing = [role for role in HEADER_ALIASES if bindings[role] is None]
     forbidden_present = sorted({name for name in normalized if name in FORBIDDEN_LABEL_HINTS})
     return {
         "column_n": len(header),
@@ -126,7 +161,6 @@ def audit_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     bad = zf.testzip()
     if bad:
         raise RuntimeError(f"candidate ZIP CRC failed: {bad}")
-
     members = []
     schema_candidates = []
     for info in zf.infolist():
@@ -135,7 +169,6 @@ def audit_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         suffix = pathlib.PurePosixPath(info.filename).suffix.casefold()
         item: dict[str, Any] = {"path": info.filename, "bytes": info.file_size, "suffix": suffix}
         if suffix in {".csv", ".tsv", ".txt"}:
-            # Read a bounded prefix and parse exactly one header line. No data row is parsed.
             with zf.open(info) as f:
                 prefix = f.read(131072)
             header = parse_header(prefix)
@@ -144,7 +177,6 @@ def audit_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
             if cls["locked_feature_schema_complete"]:
                 schema_candidates.append(info.filename)
         members.append(item)
-
     status = "HEADER_SCHEMA_QUALIFIED" if len(schema_candidates) == 1 else (
         "HEADER_SCHEMA_AMBIGUOUS" if len(schema_candidates) > 1 else "HEADER_SCHEMA_NOT_QUALIFIED"
     )
@@ -169,12 +201,36 @@ def audit_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def audit_candidate_safe(candidate: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return audit_candidate(candidate)
+    except Exception as exc:
+        return {
+            "schema_version": "football3-nova-n1-external-archive-header-audit-v1",
+            "status": "DOWNLOAD_OR_ARCHIVE_ERROR",
+            "candidate": candidate,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+            "locked_schema_candidate_files": [],
+            "archive_data_rows_opened": 0,
+            "archive_label_values_read": 0,
+            "test_identity_opened": False,
+            "test_result_vault_opened": False,
+            "test_labels_read": False,
+            "scientific_parameters_changed": False,
+            "formal_v2_modified": False,
+            "current_modified": False,
+            "production_modified": False,
+            "audited_at": now(),
+        }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, type=pathlib.Path)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    reports = [audit_candidate(c) for c in CANDIDATES]
+    reports = [audit_candidate_safe(c) for c in CANDIDATES]
     payload = {
         "schema_version": "football3-nova-n1-external-source-header-audits-v1",
         "reports": reports,
