@@ -1,0 +1,74 @@
+name: football3-nova-openfootball-big5-history-ingest
+
+on:
+  pull_request:
+  push:
+    branches:
+      - football3/nova-history-openfootball-ingest-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-openfootball-big5-history-ingest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openfootball-history-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_openfootball_big5_2024_25_ingest_v1.py \
+            governance/football3/test_nova_openfootball_big5_2024_25_ingest_v1.py
+      - name: Contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_openfootball_big5_2024_25_ingest_v1.py -v
+      - name: Materialize pinned OpenFootball Big5 history
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_openfootball_big5_2024_25_ingest_v1.py \
+            --lock governance/football3/nova_openfootball_big5_2024_25_source_lock_v1.json \
+            --out-dir openfootball_history_receipt \
+            --require-frozen
+          python - <<'PY'
+          import json
+          p = json.load(open("openfootball_history_receipt/receipt.json", encoding="utf-8"))
+          assert p["status"] == "PASS"
+          assert p["license_id"] == "CC0-1.0"
+          assert p["competition_count"] == 5
+          assert p["match_count"] == 1752
+          assert p["published_results_exposed"] == 1752
+          assert p["result_value_present_count"] == 1732
+          assert p["result_value_missing_count"] == 20
+          assert p["normalized_set_sha256"] == "90f75d704aff3a6dce964b811339c1277a62b59eeb190dd404069b5500589ea7"
+          assert p["missing_result_values_fabricated"] is False
+          expected_missing = {"ENG_PREMIER_LEAGUE": 0, "DE_BUNDESLIGA": 0, "ES_LALIGA": 10, "IT_SERIE_A": 10, "FR_LIGUE_1": 0}
+          assert {x["competition_id"]: x["result_value_missing_count"] for x in p["file_receipts"]} == expected_missing
+          assert p["fresh_confirmation_eligible_count"] == 0
+          assert p["candidate_roles_assigned"] == 0
+          assert p["formal_v2_changed"] is False
+          assert p["current_changed"] is False
+          assert p["production_changed"] is False
+          PY
+      - name: Upload immutable ingest receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-openfootball-big5-history-${{ github.sha }}-${{ github.run_id }}
+          path: openfootball_history_receipt/
+          if-no-files-found: error
+          retention-days: 90
