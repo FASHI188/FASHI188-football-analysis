@@ -1,0 +1,65 @@
+name: football3-nova-free-history-source-extension
+
+on:
+  pull_request:
+  push:
+    branches:
+      - football3/nova-free-history-source-discovery-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-free-history-source-extension-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Compile
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/validate_nova_free_history_source_extension_v1.py governance/football3/test_nova_free_history_source_extension_v1.py
+      - name: Contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_free_history_source_extension_v1.py -v
+      - name: Emit receipt
+        run: |
+          set -euo pipefail
+          mkdir -p free_history_source_extension_receipt
+          python governance/football3/validate_nova_free_history_source_extension_v1.py \
+            --catalog governance/football3/nova_free_history_source_extension_open_tracking_v1.json \
+            --receipt free_history_source_extension_receipt/receipt.json
+          python - <<'PY'
+          import json
+          p = json.load(open('free_history_source_extension_receipt/receipt.json', encoding='utf-8'))
+          assert p['status'] == 'PASS'
+          assert p['qualified_reusable_source_count'] == 4
+          assert p['qualified_tracking_source_count'] == 2
+          assert p['qualified_identity_result_backbone_count'] == 1
+          assert p['n1_big3_status'] == 'STOP_DATA_COVERAGE'
+          assert p['labels_opened'] == 0
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Upload receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-free-history-source-extension-${{ github.sha }}-${{ github.run_id }}
+          path: free_history_source_extension_receipt/
+          if-no-files-found: error
+          retention-days: 90
