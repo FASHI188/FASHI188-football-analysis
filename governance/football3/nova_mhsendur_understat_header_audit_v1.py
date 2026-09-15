@@ -39,14 +39,16 @@ def audit(lock:dict,archive:bytes)->dict:
     if observed_blob != expected_blob: raise AuditError(f"archive blob SHA drift: {observed_blob}")
     required=set(lock["locked_feature_roles"])
     with zipfile.ZipFile(io.BytesIO(archive),"r") as zf:
-        csv_members=sorted(n for n in zf.namelist() if not n.endswith("/") and n.lower().endswith(".csv"))
-        if not csv_members: raise AuditError("archive contains no CSV members")
+        all_csv_members=sorted(n for n in zf.namelist() if not n.endswith("/") and n.lower().endswith(".csv"))
+        ignored_packaging_members=[n for n in all_csv_members if n.startswith("__MACOSX/") or "/._" in n or n.rsplit("/",1)[-1].startswith("._")]
+        csv_members=[n for n in all_csv_members if n not in ignored_packaging_members]
+        if not csv_members: raise AuditError("archive contains no logical CSV data members")
         member_receipts=[]; qualified=0
         for member in csv_members:
             fields, encoding = header_fields(zf,member); normalized=[x.strip().lower() for x in fields]; missing=sorted(required.difference(normalized)); ok=not missing; qualified += int(ok)
             member_receipts.append({"member":member,"header":fields,"header_encoding":encoding,"missing_locked_roles":missing,"header_schema_qualified":ok})
-    status="HEADER_SCHEMA_QUALIFIED" if qualified>0 else "HEADER_SCHEMA_NOT_QUALIFIED"
-    return {"status":status,"source_repository":lock["source"]["repository"],"source_revision":lock["source"]["revision"],"archive_path":lock["source"]["archive_path"],"archive_blob_sha1":observed_blob,"permission_class":lock["permission"]["class"],"production_eligible":False,"csv_member_count":len(member_receipts),"header_schema_qualified_member_count":qualified,"header_schema_not_qualified_member_count":len(member_receipts)-qualified,"locked_feature_roles":lock["locked_feature_roles"],"members":member_receipts,"data_rows_read":0,"result_values_read":0,"candidate_confirmation_allowed":False,"formal_v2_changed":False,"current_changed":False,"production_changed":False}
+    status="HEADER_SCHEMA_QUALIFIED" if qualified==len(member_receipts) and qualified>0 else "HEADER_SCHEMA_NOT_QUALIFIED"
+    return {"status":status,"source_repository":lock["source"]["repository"],"source_revision":lock["source"]["revision"],"archive_path":lock["source"]["archive_path"],"archive_blob_sha1":observed_blob,"permission_class":lock["permission"]["class"],"production_eligible":False,"csv_member_count":len(member_receipts),"ignored_packaging_member_count":len(ignored_packaging_members),"ignored_packaging_members":ignored_packaging_members,"header_schema_qualified_member_count":qualified,"header_schema_not_qualified_member_count":len(member_receipts)-qualified,"locked_feature_roles":lock["locked_feature_roles"],"members":member_receipts,"data_rows_read":0,"result_values_read":0,"candidate_confirmation_allowed":False,"formal_v2_changed":False,"current_changed":False,"production_changed":False}
 def main()->None:
     ap=argparse.ArgumentParser(); ap.add_argument("--lock",required=True); ap.add_argument("--out",required=True); args=ap.parse_args(); lock=json.loads(Path(args.lock).read_text(encoding="utf-8")); archive=fetch_bytes(lock["source"]["raw_url"]); receipt=audit(lock,archive); Path(args.out).write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n",encoding="utf-8")
 if __name__=="__main__": main()

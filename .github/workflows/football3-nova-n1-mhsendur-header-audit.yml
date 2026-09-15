@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: football3-nova-n1-mhsendur-header-${{ github.ref }}
+  group: football3-nova-n1-mhsendur-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  header-audit:
+  source-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -32,12 +32,15 @@ jobs:
           set -euo pipefail
           python -m py_compile \
             governance/football3/nova_mhsendur_understat_header_audit_v1.py \
-            governance/football3/test_nova_mhsendur_understat_header_audit_v1.py
+            governance/football3/test_nova_mhsendur_understat_header_audit_v1.py \
+            governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
+            governance/football3/test_nova_mhsendur_understat_zero_label_coverage_v1.py
       - name: Contract tests
         run: |
           set -euo pipefail
           cd governance/football3
           python test_nova_mhsendur_understat_header_audit_v1.py -v
+          python test_nova_mhsendur_understat_zero_label_coverage_v1.py -v
       - name: Verify pinned permission statement
         run: |
           set -euo pipefail
@@ -57,27 +60,51 @@ jobs:
       - name: Header-only audit of pinned archive
         run: |
           set -euo pipefail
-          mkdir -p mhsendur_header_audit_receipt
+          mkdir -p mhsendur_audit_receipt
           python governance/football3/nova_mhsendur_understat_header_audit_v1.py \
             --lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
-            --out mhsendur_header_audit_receipt/receipt.json
+            --out mhsendur_audit_receipt/header_receipt.json
           python - <<'PY'
           import json
-          p=json.load(open('mhsendur_header_audit_receipt/receipt.json'))
+          p=json.load(open('mhsendur_audit_receipt/header_receipt.json'))
+          assert p['status']=='HEADER_SCHEMA_QUALIFIED'
           assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
           assert p['production_eligible'] is False
+          assert p['header_schema_not_qualified_member_count']==0
+          assert p['ignored_packaging_member_count']==3
           assert p['data_rows_read']==0
           assert p['result_values_read']==0
           assert p['candidate_confirmation_allowed'] is False
           assert p['formal_v2_changed'] is False
           assert p['current_changed'] is False
           assert p['production_changed'] is False
-          assert p['status'] in {'HEADER_SCHEMA_QUALIFIED','HEADER_SCHEMA_NOT_QUALIFIED'}
+          PY
+      - name: Zero-result-value identity and coverage audit
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
+            --lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --out mhsendur_audit_receipt/coverage_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/coverage_receipt.json'))
+          assert p['status'] in {'ZERO_LABEL_COVERAGE_QUALIFIED','ZERO_LABEL_COVERAGE_PARTIAL'}
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['result_values_used']==0
+          assert p['score_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['forbidden_columns_used_for_identity_or_coverage']==[]
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['allowed_research_roles']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
           PY
       - name: Upload immutable audit receipt
         uses: actions/upload-artifact@v4
         with:
-          name: football3-nova-n1-mhsendur-header-${{ github.sha }}-${{ github.run_id }}
-          path: mhsendur_header_audit_receipt/receipt.json
+          name: football3-nova-n1-mhsendur-audit-${{ github.sha }}-${{ github.run_id }}
+          path: mhsendur_audit_receipt/
           if-no-files-found: error
           retention-days: 90
