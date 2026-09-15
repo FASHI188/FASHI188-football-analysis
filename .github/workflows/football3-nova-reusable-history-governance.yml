@@ -1,0 +1,74 @@
+name: football3-nova-reusable-history-governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - football3/nova-reusable-history-governance-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-reusable-history-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reusable-history-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Verify branch and compile governance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_reusable_history_governance_v1.py \
+            governance/football3/test_nova_reusable_history_governance_v1.py
+
+      - name: Run reusable-history contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_reusable_history_governance_v1.py -v
+
+      - name: Emit machine-readable governance receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reusable_history_governance_receipt
+          python governance/football3/nova_reusable_history_governance_v1.py \
+            --contract governance/football3/nova_reusable_history_contract_v1.json \
+            --receipt reusable_history_governance_receipt/receipt.json
+          python - <<'PY'
+          import json
+          p = json.load(open("reusable_history_governance_receipt/receipt.json", encoding="utf-8"))
+          assert p["status"] == "PASS"
+          assert p["historical_rows_are_permanent"] is True
+          assert p["confirmation_demotes_to_reusable_benchmark"] is True
+          assert p["reported_benchmark_requires_oof"] is True
+          assert p["ensemble_requires_component_oof"] is True
+          assert p["formal_v2_changed"] is False
+          assert p["current_changed"] is False
+          assert p["production_changed"] is False
+          PY
+
+      - name: Upload governance receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-reusable-history-governance-${{ github.sha }}-${{ github.run_id }}
+          path: reusable_history_governance_receipt/
+          if-no-files-found: error
+          retention-days: 90
