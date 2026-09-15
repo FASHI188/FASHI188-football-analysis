@@ -1,0 +1,153 @@
+name: football3-nova-n1-deep-ppda-prelabel-gate
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n1_deep_ppda_preregistration_v1.json'
+      - 'governance/football3/nova_n1_deep_ppda_prelabel_gate_v1.py'
+      - 'governance/football3/test_nova_n1_deep_ppda_prelabel_gate_v1.py'
+      - '.github/workflows/football3-nova-n1-deep-ppda-prelabel-gate-v1.yml'
+  push:
+    branches: ['football3/nova-n1-deep-ppda-oof-v1']
+    paths:
+      - 'governance/football3/nova_n1_deep_ppda_preregistration_v1.json'
+      - 'governance/football3/nova_n1_deep_ppda_prelabel_gate_v1.py'
+      - 'governance/football3/test_nova_n1_deep_ppda_prelabel_gate_v1.py'
+      - '.github/workflows/football3-nova-n1-deep-ppda-prelabel-gate-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-deep-ppda-prelabel-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prelabel-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n1_deep_ppda_prelabel_gate_v1.py \
+            governance/football3/test_nova_n1_deep_ppda_prelabel_gate_v1.py
+
+      - name: Prelabel gate contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_n1_deep_ppda_prelabel_gate_v1.py -v 2>&1 | tee /tmp/prelabel_tests.txt
+          grep -q 'Ran 5 tests' /tmp/prelabel_tests.txt
+          grep -q '^OK$' /tmp/prelabel_tests.txt
+
+      - name: Download pinned immutable evidence artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pinned/source pinned/data pinned/stress
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts"
+
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/10403007303" > /tmp/source_meta.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/source_meta.json'))
+          assert p['id']==10403007303
+          assert p['name']=='football3-nova-n1-deep-ppda-source-precheck-fb0bba18c5f46436eea7d91fda0e4f1c95328c70-34984565958'
+          assert p['digest']=='sha256:eee04f2e79b36c3f40c6836178a9b7ab55e3a6f073ee0c6ca35d6dfc6094db54'
+          assert p['expired'] is False
+          assert p['workflow_run']['head_sha']=='fb0bba18c5f46436eea7d91fda0e4f1c95328c70'
+          PY
+
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/9876641831" > /tmp/data_meta.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/data_meta.json'))
+          assert p['id']==9876641831
+          assert p['digest']=='sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c'
+          assert p['expired'] is False
+          PY
+
+          for spec in \
+            "10403007303 source" \
+            "9876641831 data" \
+            "9876751277 stress"
+          do
+            set -- $spec
+            artifact_id="$1"
+            out="$2"
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api/$artifact_id/zip" > "/tmp/$out.zip"
+            unzip -q "/tmp/$out.zip" -d "pinned/$out"
+          done
+
+      - name: Verify prelabel identity and Formal V2 baseline binding
+        run: |
+          set -euo pipefail
+          rm -rf n1_prelabel_gate && mkdir -p n1_prelabel_gate
+          python governance/football3/nova_n1_deep_ppda_prelabel_gate_v1.py \
+            --prereg governance/football3/nova_n1_deep_ppda_preregistration_v1.json \
+            --source-dir pinned/source \
+            --data-dir pinned/data \
+            --stress-dir pinned/stress \
+            --formal-out n1_prelabel_gate/formal_v2_baseline_projection.jsonl \
+            --receipt-out n1_prelabel_gate/receipt.json \
+            2>&1 | tee n1_prelabel_gate/gate_stdout.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_prelabel_gate/receipt.json'))
+          assert p['status']=='N1_DEEP_PPDA_PRELABEL_GATE_PASS'
+          assert p['fixture_n']==3504
+          assert p['fixture_identity_sha256']=='60f14c0960b231b0e4fb0f90a0000e9c82e64f6e33c6b06e417f6902dc1ad13e'
+          assert p['development_n']==1752 and p['isolated_test_n']==1752
+          assert p['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert p['source_payload_sha_match_complete'] is True
+          assert p['baseline_matrix_integrity_complete'] is True
+          assert p['label_vault_opened'] is False
+          assert p['label_values_read']==0 and p['result_values_used']==0
+          assert p['score_values_used']==0 and p['xg_values_used']==0
+          assert p['candidate_fit_performed'] is False
+          assert p['candidate_probabilities_generated'] is False
+          assert p['old_v3_candidate_fields_used']==0
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['isolated_test_opened'] is False
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          assert p['allowed_next_phase']=='IMPLEMENTING'
+          PY
+          cp /tmp/prelabel_tests.txt n1_prelabel_gate/
+
+      - name: Upload immutable prelabel gate receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-deep-ppda-prelabel-gate-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: n1_prelabel_gate/
+          if-no-files-found: error
+          retention-days: 90
