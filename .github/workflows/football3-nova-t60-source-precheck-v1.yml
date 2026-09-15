@@ -1,0 +1,75 @@
+name: football3-nova-t60-source-precheck
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_t60_source_routes_v1.json'
+      - 'governance/football3/nova_t60_source_precheck_v1.py'
+      - 'governance/football3/test_nova_t60_source_precheck_v1.py'
+      - '.github/workflows/football3-nova-t60-source-precheck-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-t60-source-precheck-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  source-precheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_t60_source_precheck_v1.py governance/football3/test_nova_t60_source_precheck_v1.py
+      - name: Source-route contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_t60_source_precheck_v1.py -v 2>&1 | tee /tmp/t60_source_tests.txt
+          grep -q 'Ran 8 tests' /tmp/t60_source_tests.txt
+          grep -q '^OK$' /tmp/t60_source_tests.txt
+      - name: Live zero-result source precheck
+        run: |
+          set -euo pipefail
+          rm -rf t60_source_precheck && mkdir -p t60_source_precheck
+          OBSERVED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python governance/football3/nova_t60_source_precheck_v1.py \
+            --routes governance/football3/nova_t60_source_routes_v1.json \
+            --out-dir t60_source_precheck \
+            --observed-at "$OBSERVED_AT" \
+            2>&1 | tee t60_source_precheck/stdout.txt
+          cp /tmp/t60_source_tests.txt t60_source_precheck/
+          python - <<'PY'
+          import json
+          p=json.load(open('t60_source_precheck/receipt.json',encoding='utf-8'))
+          assert p['status']=='T60_SOURCE_PRECHECK_PASS'
+          assert p['competition_count']==7
+          assert set(p['competitions'])=={'EPL','La_liga','Bundesliga','Serie_A','Ligue_1','J1','K1'}
+          assert p['result_fields_read']==0
+          assert p['secret_required'] is False
+          assert p['external_api_keys']=={'TheSportsDB':'public_123'}
+          assert p['replay_enabled'] is False and p['replay_coverage_start_at'] is None
+          assert p['coverage_guarantee_active'] is False
+          assert p['retroactive_coverage_fabrication'] is False
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          PY
+      - name: Upload immutable source-precheck receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-t60-source-precheck-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: t60_source_precheck/
+          if-no-files-found: error
+          retention-days: 90
