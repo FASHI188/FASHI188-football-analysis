@@ -116,6 +116,30 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(receipt["result_values_used"], 0)
         self.assertEqual(receipt["xg_values_used"], 0)
 
+    def test_zero_denominator_ppda_mapping_matches_existing_understat_semantics(self):
+        raw = build_archive(mapping_ppda=True)
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as source:
+            files = {name: source.read(name) for name in source.namelist()}
+        for name in (
+            "football_data_csv/EPL_2022_Alpha.csv",
+            "football_data_csv/EPL_2022_Beta.csv",
+        ):
+            text = files[name].decode("utf-8")
+            text = text.replace(
+                "\"{'att': 21, 'def': 2}\"",
+                "\"{'att': 0, 'def': 0}\"",
+                1,
+            )
+            files[name] = text.encode("utf-8")
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+            for name, payload in files.items():
+                target.writestr(name, payload)
+        receipt = self.run_audit(out.getvalue())
+        self.assertEqual(receipt["status"], "ZERO_LABEL_COVERAGE_QUALIFIED")
+        self.assertEqual(receipt["paired_match_count"], 1)
+        self.assertEqual(receipt["result_values_used"], 0)
+
     def test_result_and_xg_mutation_do_not_change_projection(self):
         first = self.run_audit(build_archive("w", "l", mapping_ppda=True))
         second = self.run_audit(build_archive("l", "w", mapping_ppda=True))

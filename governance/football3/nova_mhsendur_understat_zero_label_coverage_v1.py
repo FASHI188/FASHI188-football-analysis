@@ -96,7 +96,7 @@ def ppda_value(value) -> tuple[str, bool]:
         att = decimal_value(obj.get("att"), field="PPDA att")
         deff = decimal_value(obj.get("def"), field="PPDA def")
         if deff <= 0:
-            raise CoverageError(f"invalid PPDA denominator {text!r}")
+            return "0", True
         with localcontext() as ctx:
             ctx.prec = 28
             ratio = att / deff
