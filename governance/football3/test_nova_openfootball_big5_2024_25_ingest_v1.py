@@ -10,6 +10,7 @@ from nova_openfootball_big5_2024_25_ingest_v1 import IngestError, git_blob_sha1,
 
 HERE = Path(__file__).resolve().parent
 LOCK_PATH = HERE / "nova_openfootball_big5_2024_25_source_lock_v1.json"
+FREEZE_RECEIPT_PATH = HERE / "nova_openfootball_big5_2024_25_freeze_receipt_v1.json"
 
 def payload(name, n):
     matches = []
@@ -41,6 +42,28 @@ class OpenFootballIngestTests(unittest.TestCase):
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}", c["raw_sha256"]) for c in self.lock["competitions"]))
         self.assertEqual(sum(c["observed_result_value_missing_count"] for c in self.lock["competitions"]), 20)
         self.assertFalse(self.lock["governance"]["fresh_confirmation_eligible_by_default"])
+
+    def test_freeze_receipt_matches_lock(self):
+        receipt = json.loads(FREEZE_RECEIPT_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["schema_version"], "football3-nova-openfootball-big5-2024-25-freeze-receipt-v1")
+        self.assertEqual(receipt["source_revision"], self.lock["source"]["revision"])
+        self.assertEqual(receipt["license_id"], self.lock["source"]["license_id"])
+        self.assertEqual(receipt["match_count"], self.lock["expected_total_matches"])
+        self.assertEqual(receipt["result_value_present_count"], self.lock["observed_result_value_present_count"])
+        self.assertEqual(receipt["result_value_missing_count"], self.lock["observed_result_value_missing_count"])
+        self.assertEqual(receipt["normalized_set_sha256"], self.lock["normalized_set_sha256"])
+        self.assertFalse(receipt["missing_result_values_fabricated"])
+        self.assertEqual(receipt["fresh_confirmation_eligible_count"], 0)
+        self.assertEqual(receipt["candidate_roles_assigned"], 0)
+        expected_missing = {c["competition_id"]: c["observed_result_value_missing_count"] for c in self.lock["competitions"]}
+        self.assertEqual(receipt["per_competition_missing"], expected_missing)
+        self.assertTrue(re.fullmatch(r"[0-9a-f]{40}", receipt["binding_evidence_head_sha"]))
+        self.assertGreater(receipt["binding_evidence_run_id"], 0)
+        self.assertGreater(receipt["binding_evidence_artifact_id"], 0)
+        self.assertRegex(receipt["binding_evidence_artifact_digest"], r"^sha256:[0-9a-f]{64}$")
+        self.assertFalse(receipt["formal_v2_changed"])
+        self.assertFalse(receipt["current_changed"])
+        self.assertFalse(receipt["production_changed"])
 
     def build_payloads(self, lock):
         payloads = {}
