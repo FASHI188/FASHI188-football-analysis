@@ -102,10 +102,23 @@ class CanonicalBindingTests(unittest.TestCase):
         )
         self.assertEqual(len(bound), 1)
         self.assertEqual(bound[0]["match_id"], "openfootball:one")
+        self.assertEqual(bound[0]["binding_mode"], "EXACT_KICKOFF_TEAM")
         self.assertEqual(receipt["status"], "CANONICAL_MATCH_ID_BINDING_PASS")
         self.assertTrue(receipt["canonical_match_id_binding_complete"])
         self.assertEqual(receipt["candidate_roles_assigned"], 0)
         self.assertEqual(receipt["score_values_used"], 0)
+
+    def test_unique_date_team_fallback_passes_when_source_time_drifts(self):
+        source_kickoff = kickoff_utc("2014-08-22", "20:45", "Europe/Berlin")
+        bound, receipt = bind_projection(
+            [feat("Bayern Munich", "Wolfsburg")],
+            [source_row("openfootball:one", "Bayern München", "VfL Wolfsburg", source_kickoff)],
+            CONFIG,
+        )
+        self.assertEqual(len(bound), 1)
+        self.assertEqual(bound[0]["binding_mode"], "UNIQUE_DATE_TEAM_FALLBACK")
+        self.assertNotEqual(bound[0]["kickoff"], bound[0]["feature_kickoff"])
+        self.assertEqual(receipt["binding_mode_counts"], {"UNIQUE_DATE_TEAM_FALLBACK": 1})
 
     def test_ambiguous_binding_fails_closed(self):
         kickoff = kickoff_utc("2014-08-22", "20:30", "Europe/Berlin")
@@ -116,9 +129,9 @@ class CanonicalBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(BindingError, "fail-closed"):
             bind_projection([feat("Bayern Munich", "Wolfsburg")], rows, CONFIG)
 
-    def test_unmatched_binding_fails_closed_with_same_kickoff_context(self):
+    def test_unmatched_binding_fails_closed_with_same_date_context(self):
         kickoff = kickoff_utc("2014-08-22", "20:30", "Europe/Berlin")
-        with self.assertRaisesRegex(BindingError, "same_kickoff_source_pairs"):
+        with self.assertRaisesRegex(BindingError, "same_date_source_pairs"):
             bind_projection(
                 [feat("Bayern Munich", "Wolfsburg")],
                 [source_row("openfootball:one", "Borussia Dortmund", "Bayer Leverkusen", kickoff)],
