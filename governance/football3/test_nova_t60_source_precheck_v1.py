@@ -38,12 +38,13 @@ class SourcePrecheckTests(unittest.TestCase):
 
     def test_k1_uses_id_event_and_ignores_scores(self):
         raw=json.dumps({"events":[{"idEvent":"999","idLeague":"4689","strSeason":"2026","idHomeTeam":"138115","idAwayTeam":"138111","strHomeTeam":"FC Seoul","strAwayTeam":"Jeonbuk","strTimestamp":"2026-10-04T10:00:00Z","intHomeScore":"99","intAwayScore":"99","strStatus":"Match Finished"}]}).encode()
-        xs=m.parse_k1_response(raw,expected_home_team_id="138115",league_id="4689",season="2026",observed_at=OBS)
+        xs=m.parse_k1_response(raw,expected_team_id="138115",league_id="4689",season="2026",observed_at=OBS)
         self.assertEqual(xs[0]["fixture_id"],"thesportsdb:999"); self.assertNotIn("intHomeScore",xs[0]); self.assertNotIn("strStatus",xs[0])
 
-    def test_k1_rejects_wrong_home_identity(self):
-        raw=json.dumps({"events":[{"idEvent":"999","idLeague":"4689","idHomeTeam":"x","idAwayTeam":"y","strHomeTeam":"H","strAwayTeam":"A","strTimestamp":"2026-10-04T10:00:00Z"}]}).encode()
-        with self.assertRaises(m.PrecheckError): m.parse_k1_response(raw,expected_home_team_id="138115",league_id="4689",season="2026",observed_at=OBS)
+    def test_k1_accepts_polled_team_as_away(self):
+        raw=json.dumps({"events":[{"idEvent":"999","idLeague":"4689","idHomeTeam":"139783","idAwayTeam":"138113","strHomeTeam":"Bucheon","strAwayTeam":"Gimcheon","strTimestamp":"2026-10-04T10:00:00Z"}]}).encode()
+        xs=m.parse_k1_response(raw,expected_team_id="138113",league_id="4689",season="2026",observed_at=OBS)
+        self.assertEqual(xs[0]["away_team_id"],"138113")
 
     def test_unique_fixture_guard(self):
         with self.assertRaises(m.PrecheckError): m.require_unique([{"fixture_id":"x"},{"fixture_id":"x"}],"x")
