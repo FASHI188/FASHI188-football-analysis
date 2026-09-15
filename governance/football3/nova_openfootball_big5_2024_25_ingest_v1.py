@@ -41,8 +41,18 @@ def normalize_match(match: dict, comp: dict, raw_sha256: str, revision: str) -> 
     for key in ("date", "time", "team1", "team2", "score"):
         if key not in match:
             raise IngestError(f"{comp['competition_id']}: match missing {key}")
-    ft = match["score"].get("ft") if isinstance(match["score"], dict) else None
-    if not (isinstance(ft, list) and len(ft) == 2 and all(isinstance(x, int) and x >= 0 for x in ft)):
+    score = match["score"]
+    if not isinstance(score, dict):
+        raise IngestError(f"{comp['competition_id']}: score must be object")
+    ft = score.get("ft")
+    if ft is None:
+        hg = ag = result = None
+        result_value_present = False
+    elif isinstance(ft, list) and len(ft) == 2 and all(isinstance(x, int) and x >= 0 for x in ft):
+        hg, ag = ft
+        result = "H" if hg > ag else "A" if hg < ag else "D"
+        result_value_present = True
+    else:
         raise IngestError(f"{comp['competition_id']}: invalid ft score")
     home, away = match["team1"].strip(), match["team2"].strip()
     if home == away:
@@ -60,8 +70,6 @@ def normalize_match(match: dict, comp: dict, raw_sha256: str, revision: str) -> 
         "away_team": away,
     }
     match_id = f"openfootball:{sha256_hex(canonical(identity_basis))}"
-    hg, ag = ft
-    result = "H" if hg > ag else "A" if hg < ag else "D"
     return {
         "match_id": match_id,
         "competition_id": comp["competition_id"],
@@ -79,6 +87,7 @@ def normalize_match(match: dict, comp: dict, raw_sha256: str, revision: str) -> 
         "home_goals": hg,
         "away_goals": ag,
         "result_1x2": result,
+        "result_value_present": result_value_present,
         "research_label_exposed_before_assignment": True,
         "fresh_candidate_confirmation_eligible": False,
     }
@@ -142,12 +151,15 @@ def ingest(lock: dict, payloads: dict[str, bytes], require_frozen: bool) -> tupl
             raise IngestError(f"{path}: expected {comp['expected_matches']} matches, got {len(matches)}")
         comp_rows = [normalize_match(m, comp, raw_sha, revision) for m in matches]
         rows.extend(comp_rows)
+        present = sum(1 for r in comp_rows if r["result_value_present"])
         file_receipts.append({
             "competition_id": comp["competition_id"],
             "path": path,
             "source_blob_sha1": blob,
             "raw_sha256": raw_sha,
             "match_count": len(comp_rows),
+            "result_value_present_count": present,
+            "result_value_missing_count": len(comp_rows) - present,
         })
     ids = [r["match_id"] for r in rows]
     if len(ids) != len(set(ids)):
@@ -160,6 +172,7 @@ def ingest(lock: dict, payloads: dict[str, bytes], require_frozen: bool) -> tupl
         expected = lock.get("normalized_set_sha256")
         if not expected or set_sha != expected:
             raise IngestError("frozen normalized_set_sha256 mismatch")
+    present_total = sum(1 for r in rows if r["result_value_present"])
     receipt = {
         "status": "PASS",
         "source_id": SOURCE_ID,
@@ -172,6 +185,9 @@ def ingest(lock: dict, payloads: dict[str, bytes], require_frozen: bool) -> tupl
         "file_receipts": file_receipts,
         "normalized_set_sha256": set_sha,
         "published_results_exposed": len(rows),
+        "result_value_present_count": present_total,
+        "result_value_missing_count": len(rows) - present_total,
+        "missing_result_values_fabricated": False,
         "fresh_confirmation_eligible_count": 0,
         "candidate_roles_assigned": 0,
         "formal_v2_changed": False,

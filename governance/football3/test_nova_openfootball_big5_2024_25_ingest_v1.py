@@ -36,21 +36,63 @@ class OpenFootballIngestTests(unittest.TestCase):
         self.assertEqual(self.lock["expected_total_matches"], 1752)
         self.assertFalse(self.lock["governance"]["fresh_confirmation_eligible_by_default"])
 
-    def test_synthetic_ingest_and_exposure_guard(self):
-        lock = copy.deepcopy(self.lock)
+    def build_payloads(self, lock):
         payloads = {}
         for c in lock["competitions"]:
             raw = payload(c["competition_id"], c["expected_matches"])
             c["source_blob_sha1"] = git_blob_sha1(raw)
             c["raw_sha256"] = hashlib.sha256(raw).hexdigest()
             payloads[c["path"]] = raw
+        return payloads
+
+    def test_synthetic_ingest_and_exposure_guard(self):
+        lock = copy.deepcopy(self.lock)
+        payloads = self.build_payloads(lock)
         _, receipt = ingest(lock, payloads, False)
         lock["normalized_set_sha256"] = receipt["normalized_set_sha256"]
         rows2, receipt2 = ingest(lock, payloads, True)
         self.assertEqual(len(rows2), 1752)
+        self.assertEqual(receipt2["result_value_present_count"], 1752)
+        self.assertEqual(receipt2["result_value_missing_count"], 0)
+        self.assertFalse(receipt2["missing_result_values_fabricated"])
         self.assertEqual(receipt2["fresh_confirmation_eligible_count"], 0)
         self.assertTrue(all(r["research_label_exposed_before_assignment"] for r in rows2))
         self.assertTrue(all(not r["fresh_candidate_confirmation_eligible"] for r in rows2))
+
+    def test_missing_result_value_preserves_identity_without_fabrication(self):
+        lock = copy.deepcopy(self.lock)
+        payloads = self.build_payloads(lock)
+        first = lock["competitions"][0]
+        obj = json.loads(payloads[first["path"]].decode("utf-8"))
+        obj["matches"][0]["score"] = {}
+        raw = (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+        first["source_blob_sha1"] = git_blob_sha1(raw)
+        first["raw_sha256"] = hashlib.sha256(raw).hexdigest()
+        payloads[first["path"]] = raw
+        rows, receipt = ingest(lock, payloads, False)
+        missing = [r for r in rows if not r["result_value_present"]]
+        self.assertEqual(len(rows), 1752)
+        self.assertEqual(receipt["result_value_present_count"], 1751)
+        self.assertEqual(receipt["result_value_missing_count"], 1)
+        self.assertFalse(receipt["missing_result_values_fabricated"])
+        self.assertEqual(len(missing), 1)
+        self.assertIsNone(missing[0]["home_goals"])
+        self.assertIsNone(missing[0]["away_goals"])
+        self.assertIsNone(missing[0]["result_1x2"])
+        self.assertTrue(missing[0]["research_label_exposed_before_assignment"])
+        self.assertFalse(missing[0]["fresh_candidate_confirmation_eligible"])
+
+    def test_malformed_present_score_still_fails(self):
+        lock = copy.deepcopy(self.lock)
+        payloads = self.build_payloads(lock)
+        first = lock["competitions"][0]
+        obj = json.loads(payloads[first["path"]].decode("utf-8"))
+        obj["matches"][0]["score"] = {"ft": [1]}
+        raw = (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+        first["source_blob_sha1"] = git_blob_sha1(raw)
+        payloads[first["path"]] = raw
+        with self.assertRaises(IngestError):
+            ingest(lock, payloads, False)
 
     def test_blob_drift_fails(self):
         lock = copy.deepcopy(self.lock)
