@@ -319,8 +319,14 @@ def bind_projection(projection: list[dict], source_rows: list[dict], binding: di
             candidates = exact_candidates
             mode = "EXACT_KICKOFF_TEAM"
         else:
-            candidates = date_team_index.get((comp["competition_id"], season, feature_date, home_key, away_key), [])
-            if len(candidates) == 1:
+            date_candidates = date_team_index.get(
+                (comp["competition_id"], season, feature_date, home_key, away_key), []
+            )
+            if len(date_candidates) > 1:
+                candidates = date_candidates
+                mode = "AMBIGUOUS_DATE_TEAM"
+            elif len(date_candidates) == 1:
+                candidates = date_candidates
                 mode = "UNIQUE_DATE_TEAM_FALLBACK"
             else:
                 nearby = [
@@ -331,12 +337,22 @@ def bind_projection(projection: list[dict], source_rows: list[dict], binding: di
                         (datetime.fromisoformat(str(row["source_date"])).date() - feature_date_obj).days
                     ) <= 1
                 ]
-                candidates = nearby
-                mode = (
-                    "UNIQUE_ADJACENT_DATE_TEAM_FALLBACK"
-                    if len(candidates) == 1
-                    else "UNMATCHED_OR_AMBIGUOUS_ADJACENT_DATE_TEAM"
-                )
+                if len(nearby) > 1:
+                    candidates = nearby
+                    mode = "AMBIGUOUS_ADJACENT_DATE_TEAM"
+                elif len(nearby) == 1:
+                    candidates = nearby
+                    mode = "UNIQUE_ADJACENT_DATE_TEAM_FALLBACK"
+                else:
+                    season_candidates = season_team_index.get(
+                        (comp["competition_id"], season, home_key, away_key), []
+                    )
+                    candidates = season_candidates
+                    mode = (
+                        "UNIQUE_SEASON_TEAM_FALLBACK"
+                        if len(candidates) == 1
+                        else "UNMATCHED_OR_AMBIGUOUS_SEASON_TEAM"
+                    )
         if len(candidates) != 1:
             same_date = source_by_date.get((comp["competition_id"], season, feature_date), [])
             failures.append({
@@ -422,7 +438,7 @@ def bind_projection(projection: list[dict], source_rows: list[dict], binding: di
             "competition",
             "season",
             "predeclared_team_alias",
-            "exact_kickoff_or_unique_calendar_date_or_unique_adjacent_calendar_date",
+            "exact_kickoff_or_unique_calendar_date_or_unique_adjacent_calendar_date_or_unique_ordered_season_team_pair",
         ],
         "ambiguity_policy": "FAIL_CLOSED",
         "unmatched_count": 0,
