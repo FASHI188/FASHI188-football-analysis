@@ -34,13 +34,16 @@ jobs:
             governance/football3/nova_mhsendur_understat_header_audit_v1.py \
             governance/football3/test_nova_mhsendur_understat_header_audit_v1.py \
             governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
-            governance/football3/test_nova_mhsendur_understat_zero_label_coverage_v1.py
+            governance/football3/test_nova_mhsendur_understat_zero_label_coverage_v1.py \
+            governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            governance/football3/test_nova_mhsendur_understat_reusable_feature_freeze_v1.py
       - name: Contract tests
         run: |
           set -euo pipefail
           cd governance/football3
           python test_nova_mhsendur_understat_header_audit_v1.py -v
           python test_nova_mhsendur_understat_zero_label_coverage_v1.py -v
+          python test_nova_mhsendur_understat_reusable_feature_freeze_v1.py -v
       - name: Verify pinned permission statement
         run: |
           set -euo pipefail
@@ -97,6 +100,40 @@ jobs:
           assert p['forbidden_columns_used_for_identity_or_coverage']==[]
           assert p['candidate_confirmation_allowed'] is False
           assert p['allowed_research_roles']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Freeze reusable 2014-2022 feature layer
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            --source-lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --freeze governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.json \
+            --projection-out mhsendur_audit_receipt/reusable_feature_projection.jsonl \
+            --receipt-out mhsendur_audit_receipt/reusable_feature_freeze_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/reusable_feature_freeze_receipt.json'))
+          assert p['status']=='REUSABLE_FEATURE_LAYER_FROZEN_PENDING_CANONICAL_ID_BINDING'
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['qualified_match_count']==16333
+          assert p['qualified_match_counts']=={
+              'Bundesliga':2754,
+              'EPL':3420,
+              'La_liga':3420,
+              'Ligue_1':3319,
+              'Serie_A':3420,
+          }
+          assert p['source_local_match_key_unique_count']==16333
+          assert p['result_values_used']==0
+          assert p['score_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['canonical_match_id_binding_complete'] is False
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['allowed_roles_after_canonical_binding']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['reported_benchmark_predictions_must_be_oof'] is True
           assert p['formal_v2_changed'] is False
           assert p['current_changed'] is False
           assert p['production_changed'] is False
