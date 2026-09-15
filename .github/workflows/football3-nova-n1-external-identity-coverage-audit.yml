@@ -1,0 +1,108 @@
+name: football3-nova-n1-external-identity-coverage-audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'governance/football3/nova_n1_external_identity_coverage_audit_v1.py'
+      - 'governance/football3/test_nova_n1_external_identity_coverage_audit_v1.py'
+      - '.github/workflows/football3-nova-n1-external-identity-coverage-audit.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-external-identity-coverage-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  identity_coverage_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch and unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python -m py_compile \
+            governance/football3/nova_n1_external_identity_coverage_audit_v1.py \
+            governance/football3/test_nova_n1_external_identity_coverage_audit_v1.py
+          cd governance/football3
+          python test_nova_n1_external_identity_coverage_audit_v1.py -v
+
+      - name: Extract locked identity only from independent test artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, io, os, pathlib, urllib.request, zipfile
+          artifact_id=9827606506
+          expected_identity_sha='c861032ea523cb921eebc7455941e2a71ecb2f3ecc3a8df6858eef0b7aaf8d95'
+          url=f'https://api.github.com/repos/${{ github.repository }}/actions/artifacts/{artifact_id}/zip'
+          req=urllib.request.Request(url,headers={
+              'Authorization':f'Bearer {os.environ["GH_TOKEN"]}',
+              'Accept':'application/vnd.github+json',
+              'X-GitHub-Api-Version':'2022-11-28',
+              'User-Agent':'Football3-Nova-N1-identity-only-extractor/1.0',
+          })
+          with urllib.request.urlopen(req,timeout=120) as r:
+              raw=r.read()
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+              names=set(z.namelist())
+              assert 'confirmation_identity.jsonl' in names
+              # Never open confirmation_xg_result_vault.jsonl or raw_pages/* in this audit.
+              identity=z.read('confirmation_identity.jsonl')
+          got=hashlib.sha256(identity).hexdigest()
+          assert got==expected_identity_sha, (got,expected_identity_sha)
+          pathlib.Path('n1_locked_confirmation_identity.jsonl').write_bytes(identity)
+          print({'artifact_id':artifact_id,'identity_sha256':got,'result_vault_opened':False,'raw_pages_opened':False})
+          PY
+
+      - name: Run La Liga identity and feature coverage audit without test labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_external_identity_coverage_audit_v1.py \
+            --identity n1_locked_confirmation_identity.jsonl \
+            --out n1_external_identity_coverage
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.load(open('n1_external_identity_coverage/external_identity_coverage_audit.json',encoding='utf-8'))
+          assert p['status']=='IDENTITY_COVERAGE_QUALIFIED'
+          assert p['declared_license']=='CC BY 4.0'
+          assert p['coverage']['target_n']==380
+          assert p['coverage']['matched_n']==380
+          assert p['coverage']['missing_n']==0 and p['coverage']['extra_n']==0
+          assert p['coverage']['feature_complete_n']==380
+          assert p['source_audit']['external_forbidden_value_fields_decoded']==0
+          assert p['source_audit']['external_goal_or_xg_values_persisted'] is False
+          assert p['test_result_vault_opened'] is False and p['test_raw_pages_opened'] is False
+          assert p['test_labels_read'] is False
+          assert p['formal_v2_modified'] is False and p['current_modified'] is False and p['production_modified'] is False
+          rows=[json.loads(x) for x in open('n1_external_identity_coverage/external_laliga_feature_projection.jsonl',encoding='utf-8') if x.strip()]
+          allowed={'fixture_id','date','league','season','home_team_id','away_team_id','home_team','away_team','home_deep','away_deep','home_ppda','away_ppda'}
+          assert len(rows)==380
+          assert all(set(x)==allowed for x in rows)
+          # The downloaded locked identity file is input-only and must not be uploaded.
+          Path('n1_locked_confirmation_identity.jsonl').unlink()
+          PY
+
+      - name: Upload identity and coverage receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-external-identity-coverage-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_external_identity_coverage/
+          if-no-files-found: error
+          retention-days: 90
