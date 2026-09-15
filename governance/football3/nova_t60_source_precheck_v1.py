@@ -83,7 +83,7 @@ def parse_openfootball_payload(raw: bytes, *, competition: str, season: str, tim
     tz = ZoneInfo(timezone_name)
     for row in rows:
         require(isinstance(row, dict), f"OPENFOOTBALL_ROW:{competition}")
-        # Deliberately consume only allowlisted fixture fields. Score/result values are never accessed.
+        # Deliberately consume only the allowlisted fixture fields. Score/result values are never accessed.
         d = str(row.get("date") or "").strip()
         t = str(row.get("time") or "00:00").strip()
         h = str(row.get("team1") or "").strip()
@@ -137,12 +137,12 @@ def parse_j1_csv(raw: bytes, *, observed_at: datetime) -> list[dict[str, Any]]:
         })
     return out
 
-def parse_k1_response(raw: bytes, *, expected_home_team_id: str, league_id: str, season: str, observed_at: datetime) -> list[dict[str, Any]]:
+def parse_k1_response(raw: bytes, *, expected_team_id: str, league_id: str, season: str, observed_at: datetime) -> list[dict[str, Any]]:
     data = json.loads(raw.decode("utf-8"))
     events = data.get("events")
     if events is None:
         return []
-    require(isinstance(events, list), f"K1_EVENTS_SCHEMA:{expected_home_team_id}")
+    require(isinstance(events, list), f"K1_EVENTS_SCHEMA:{expected_team_id}")
     out = []
     for event in events:
         require(isinstance(event, dict), "K1_EVENT_ROW")
@@ -151,12 +151,12 @@ def parse_k1_response(raw: bytes, *, expected_home_team_id: str, league_id: str,
         hid = str(event.get("idHomeTeam") or "")
         if lid != str(league_id):
             continue
-        require(hid == str(expected_home_team_id), f"K1_NOT_HOME_EVENT:{expected_home_team_id}:{hid}")
+        aid = str(event.get("idAwayTeam") or "")
+        require(str(expected_team_id) in {hid, aid}, f"K1_POLLED_TEAM_NOT_IN_EVENT:{expected_team_id}:{hid}:{aid}")
         eid = str(event.get("idEvent") or "").strip()
-        aid = str(event.get("idAwayTeam") or "").strip()
         hname = str(event.get("strHomeTeam") or "").strip()
         aname = str(event.get("strAwayTeam") or "").strip()
-        require(eid and aid and hname and aname, f"K1_IDENTITY_MISSING:{expected_home_team_id}")
+        require(eid and aid and hname and aname, f"K1_IDENTITY_MISSING:{expected_team_id}")
         ts = str(event.get("strTimestamp") or "").strip()
         if ts:
             k = dt(ts)
@@ -217,22 +217,28 @@ def precheck(routes_path: Path, out_dir: Path, observed_at_raw: str) -> dict[str
     source_receipts.append({"source_id": j1["source_id"], "competition": "J1", "path": j1["path"], "payload_sha256": sha_bytes(raw), "source_commit_sha": commit["commit_sha"], "source_commit_at": commit["commit_at"], "future_fixture_n": len(jfixtures), "result_fields_read": 0})
 
     k1 = c["routes"]["k1_thesportsdb"]
-    kfixtures: list[dict[str, Any]] = []
-    no_k1_home = []
+    kfixture_by_id: dict[str, dict[str, Any]] = {}
+    no_k1_next = []
     for i, team_id in enumerate(k1["home_team_ids"]):
         if i:
             time.sleep(0.05)
         url = f"{k1['base_url']}/" + k1["endpoint"].format(team_id=team_id)
         raw, _ = http_get(url, accept="application/json")
-        xs = parse_k1_response(raw, expected_home_team_id=team_id, league_id=k1["league_id"], season=k1["season"], observed_at=observed_at)
+        xs = parse_k1_response(raw, expected_team_id=team_id, league_id=k1["league_id"], season=k1["season"], observed_at=observed_at)
         if not xs:
-            no_k1_home.append(team_id)
-        kfixtures.extend(xs)
-    require(not no_k1_home, "K1_NEXT_HOME_NOT_EXPOSED:" + ",".join(no_k1_home))
-    require(len(kfixtures) == len(k1["home_team_ids"]), f"K1_HOME_ROUTE_COUNT:{len(kfixtures)}")
+            no_k1_next.append(team_id)
+        for x in xs:
+            old = kfixture_by_id.get(x["fixture_id"])
+            require(old is None or old == x, f"K1_DUPLICATE_EVENT_CONFLICT:{x['fixture_id']}")
+            kfixture_by_id[x["fixture_id"]] = x
+    require(not no_k1_next, "K1_NEXT_EVENT_NOT_EXPOSED:" + ",".join(no_k1_next))
+    kfixtures = list(kfixture_by_id.values())
+    covered = {str(x["home_team_id"]) for x in kfixtures} | {str(x["away_team_id"]) for x in kfixtures}
+    expected = set(k1["home_team_ids"])
+    require(expected.issubset(covered), "K1_TEAM_COVERAGE_MISSING:" + ",".join(sorted(expected-covered)))
     require_unique(kfixtures, "K1")
     normalized.extend(kfixtures)
-    source_receipts.append({"source_id": k1["source_id"], "competition": "K1", "endpoint": k1["endpoint"], "team_poll_n": len(k1["home_team_ids"]), "future_fixture_n": len(kfixtures), "public_free_key": k1["public_free_key"], "secret_required": False, "result_fields_read": 0})
+    source_receipts.append({"source_id": k1["source_id"], "competition": "K1", "endpoint": k1["endpoint"], "team_poll_n": len(k1["home_team_ids"]), "unique_future_fixture_n": len(kfixtures), "covered_team_n": len(expected & covered), "public_free_key": k1["public_free_key"], "secret_required": False, "result_fields_read": 0})
 
     require_unique(normalized, "ALL")
     per_comp: dict[str, int] = {}
