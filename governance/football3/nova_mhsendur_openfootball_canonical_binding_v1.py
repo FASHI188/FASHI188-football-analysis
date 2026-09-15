@@ -180,6 +180,7 @@ def normalize_openfootball_match(match: dict, comp: dict, season_start: int, pat
         "match_id": f"openfootball:{sha256_hex(canonical(identity_basis))}",
         "competition_id": comp["competition_id"],
         "season": season_label(season_start),
+        "source_date": str(match["date"]),
         "kickoff": kickoff,
         "home_team_id": stable_team_id(home),
         "away_team_id": stable_team_id(away),
@@ -281,65 +282,89 @@ def verify_projection(projection: list[dict], freeze_receipt: dict, binding: dic
 def bind_projection(projection: list[dict], source_rows: list[dict], binding: dict) -> tuple[list[dict], dict]:
     alias_maps = build_alias_maps(binding)
     comp_by_league = binding["competitions"]
-    source_index: dict[tuple[str, str, str, str], list[dict]] = defaultdict(list)
-    source_by_kickoff: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    exact_index: dict[tuple[str, str, str, str, str], list[dict]] = defaultdict(list)
+    date_team_index: dict[tuple[str, str, str, str, str], list[dict]] = defaultdict(list)
+    source_by_date: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for row in source_rows:
-        key = (
-            row["competition_id"], row["kickoff"],
-            team_key(row["home_team_name"], "openfootball", alias_maps),
-            team_key(row["away_team_name"], "openfootball", alias_maps),
-        )
-        source_index[key].append(row)
-        source_by_kickoff[(row["competition_id"], row["kickoff"])].append(row)
+        season = row["season"]
+        source_date = row.get("source_date") or str(row["kickoff"])[:10]
+        home_key = team_key(row["home_team_name"], "openfootball", alias_maps)
+        away_key = team_key(row["away_team_name"], "openfootball", alias_maps)
+        exact_index[(row["competition_id"], season, row["kickoff"], home_key, away_key)].append(row)
+        date_team_index[(row["competition_id"], season, source_date, home_key, away_key)].append(row)
+        source_by_date[(row["competition_id"], season, source_date)].append(row)
 
     bound: list[dict] = []
     failures: list[dict] = []
     used_match_ids: set[str] = set()
+    binding_modes: Counter[str] = Counter()
     for feat in projection:
         league = feat["league"]
         comp = comp_by_league.get(league)
         if comp is None:
             raise BindingError(f"unsupported feature league {league!r}")
-        kickoff = mhsendur_kickoff_utc(feat["date"], binding["mhsendur_timezone"])
+        season = season_label(int(feat["season_start"]))
+        feature_date = str(feat["date"])[:10]
+        feature_kickoff = mhsendur_kickoff_utc(feat["date"], binding["mhsendur_timezone"])
         home_key = team_key(feat["home_team"], "mhsendur", alias_maps)
         away_key = team_key(feat["away_team"], "mhsendur", alias_maps)
-        key = (comp["competition_id"], kickoff, home_key, away_key)
-        candidates = source_index.get(key, [])
+        exact_candidates = exact_index.get((comp["competition_id"], season, feature_kickoff, home_key, away_key), [])
+        if len(exact_candidates) > 1:
+            candidates = exact_candidates
+            mode = "AMBIGUOUS_EXACT_KICKOFF"
+        elif len(exact_candidates) == 1:
+            candidates = exact_candidates
+            mode = "EXACT_KICKOFF_TEAM"
+        else:
+            candidates = date_team_index.get((comp["competition_id"], season, feature_date, home_key, away_key), [])
+            mode = "UNIQUE_DATE_TEAM_FALLBACK" if len(candidates) == 1 else "UNMATCHED_OR_AMBIGUOUS_DATE_TEAM"
         if len(candidates) != 1:
-            same_time = source_by_kickoff.get((comp["competition_id"], kickoff), [])
+            same_date = source_by_date.get((comp["competition_id"], season, feature_date), [])
             failures.append({
                 "league": league,
                 "season_start": feat["season_start"],
                 "date": feat["date"],
+                "feature_kickoff": feature_kickoff,
                 "home_team": feat["home_team"],
                 "away_team": feat["away_team"],
                 "home_key": home_key,
                 "away_key": away_key,
                 "candidate_count": len(candidates),
-                "same_kickoff_source_pairs": [
+                "binding_mode": mode,
+                "same_date_source_pairs": [
                     {
+                        "kickoff": r["kickoff"],
                         "home_team": r["home_team_name"],
                         "away_team": r["away_team_name"],
                         "home_key": team_key(r["home_team_name"], "openfootball", alias_maps),
                         "away_key": team_key(r["away_team_name"], "openfootball", alias_maps),
                     }
-                    for r in same_time[:20]
+                    for r in same_date[:20]
                 ],
             })
             continue
         src = candidates[0]
         if src["match_id"] in used_match_ids:
             failures.append({
-                "league": league, "date": feat["date"], "home_team": feat["home_team"], "away_team": feat["away_team"],
-                "candidate_count": 1, "reason": "canonical match_id reused by multiple feature rows", "match_id": src["match_id"],
+                "league": league,
+                "date": feat["date"],
+                "home_team": feat["home_team"],
+                "away_team": feat["away_team"],
+                "candidate_count": 1,
+                "binding_mode": mode,
+                "reason": "canonical match_id reused by multiple feature rows",
+                "match_id": src["match_id"],
             })
             continue
         used_match_ids.add(src["match_id"])
+        binding_modes[mode] += 1
         bound.append({
             "match_id": src["match_id"],
             "competition_id": src["competition_id"],
             "season": src["season"],
             "kickoff": src["kickoff"],
+            "feature_kickoff": feature_kickoff,
+            "binding_mode": mode,
             "home_team_id": src["home_team_id"],
             "away_team_id": src["away_team_id"],
             "source_id": src["source_id"],
@@ -363,7 +388,7 @@ def bind_projection(projection: list[dict], source_rows: list[dict], binding: di
         )
     if len(bound) != len(projection) or len(used_match_ids) != len(projection):
         raise BindingError("canonical binding is not one-to-one complete")
-    bound.sort(key=lambda row: (row["kickoff"], row["competition_id"], row["match_id"]))
+    bound.sort(key=lambda row: (row["feature_kickoff"], row["competition_id"], row["match_id"]))
     jsonl = b"\n".join(canonical(row) for row in bound) + b"\n"
     counts = Counter(row["competition_id"] for row in bound)
     receipt = {
@@ -373,7 +398,8 @@ def bind_projection(projection: list[dict], source_rows: list[dict], binding: di
         "bound_match_id_unique_count": len(used_match_ids),
         "binding_projection_sha256": sha256_hex(jsonl),
         "per_competition_bound_match_counts": dict(sorted(counts.items())),
-        "binding_basis": ["competition", "kickoff_utc", "predeclared_team_alias"],
+        "binding_mode_counts": dict(sorted(binding_modes.items())),
+        "binding_basis": ["competition", "season", "predeclared_team_alias", "exact_kickoff_or_unique_calendar_date"],
         "ambiguity_policy": "FAIL_CLOSED",
         "unmatched_count": 0,
         "ambiguous_count": 0,
