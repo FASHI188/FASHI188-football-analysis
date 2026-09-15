@@ -1,0 +1,131 @@
+{
+  "schema_version": "football3-nova-reusable-history-contract-v1",
+  "project": "Football3 Nova",
+  "purpose": "Permanent reusable historical-match library and candidate-specific research-role governance.",
+  "match_roles": [
+    "TRAIN",
+    "DEVELOPMENT",
+    "REUSABLE_BENCHMARK",
+    "CANDIDATE_CONFIRMATION"
+  ],
+  "invariants": {
+    "historical_rows_are_permanent": true,
+    "raw_match_identity_is_immutable": true,
+    "candidate_roles_are_candidate_specific": true,
+    "role_ledger_is_append_only": true,
+    "confirmation_is_not_a_data-deletion_event": true,
+    "confirmation_after_scoring_demotes_to_reusable_benchmark": true,
+    "opened_labels_may_be_reused_for_train_development_and_benchmark": true,
+    "opened_labels_must_not_be_represented_as_fresh_confirmation": true,
+    "formal_promotion_requires_candidate_specific_confirmation": true,
+    "research_positive_signals_may_use_reusable_benchmark": true,
+    "all_reported_candidate_scores_require_oof_or_confirmation_oos_predictions": true,
+    "combined_experts_must_use_component_oof_predictions": true,
+    "in_sample_fitted_predictions_must_not_be_used_to_claim_gain": true
+  },
+  "role_semantics": {
+    "TRAIN": {
+      "label_access": "allowed",
+      "parameter_fit": true,
+      "hyperparameter_selection": false,
+      "reported_primary_score": false,
+      "fresh_confirmation": false
+    },
+    "DEVELOPMENT": {
+      "label_access": "allowed",
+      "parameter_fit": false,
+      "hyperparameter_selection": true,
+      "reported_primary_score": false,
+      "fresh_confirmation": false
+    },
+    "REUSABLE_BENCHMARK": {
+      "label_access": "allowed",
+      "parameter_fit": false,
+      "hyperparameter_selection": false,
+      "reported_primary_score": true,
+      "fresh_confirmation": false,
+      "repeated_unified_comparison": true
+    },
+    "CANDIDATE_CONFIRMATION": {
+      "label_access_before_scoring": "sealed",
+      "parameter_fit": false,
+      "hyperparameter_selection": false,
+      "reported_primary_score": true,
+      "fresh_confirmation": true,
+      "one_time_for_candidate": true,
+      "after_scoring_transition": "REUSABLE_BENCHMARK"
+    }
+  },
+  "time_validation": {
+    "outer_protocol": "rolling_chronological",
+    "inner_protocol": "nested_chronological",
+    "outer_score_rows_must_be_after_outer_train_rows": true,
+    "inner_tuning_rows_must_be_inside_outer_training_window": true,
+    "no_future_data_in_fit_or_tuning": true,
+    "reported_benchmark_prediction_origin": "OOF",
+    "reported_confirmation_prediction_origin": "CONFIRMATION_OOS"
+  },
+  "combination_policy": {
+    "component_predictions": "OOF_ONLY",
+    "meta_model_training_inputs": "OOF_ONLY",
+    "fitted_in_sample_component_predictions": "FORBIDDEN",
+    "same_match_component_alignment_required": true,
+    "component_model_sha_required": true,
+    "component_fold_id_required": true
+  },
+  "result_library_policy": {
+    "eligible_evidence_roles": [
+      "REUSABLE_BENCHMARK"
+    ],
+    "small_stable_positive_gain_is_preserved": true,
+    "minimum_gain_pp": 0.0,
+    "requires_oof": true,
+    "requires_stability_evidence": true,
+    "research_candidate_does_not_equal_formal_promotion": true,
+    "formal_promotion_requires_confirmation": true
+  },
+  "required_match_identity_fields": [
+    "match_id",
+    "competition_id",
+    "season",
+    "kickoff",
+    "home_team_id",
+    "away_team_id",
+    "source_id",
+    "source_revision",
+    "input_sha256"
+  ],
+  "required_role_ledger_fields": [
+    "candidate_id",
+    "match_id",
+    "role",
+    "assigned_at",
+    "event_seq",
+    "research_label_exposed_before_assignment"
+  ],
+  "required_oof_prediction_fields": [
+    "candidate_id",
+    "match_id",
+    "model_sha",
+    "fold_id",
+    "prediction_origin",
+    "prediction_sha256",
+    "outer_train_end",
+    "outer_score_start"
+  ],
+  "allowed_role_transitions": {
+    "TRAIN": [],
+    "DEVELOPMENT": [],
+    "REUSABLE_BENCHMARK": [],
+    "CANDIDATE_CONFIRMATION": [
+      "REUSABLE_BENCHMARK"
+    ]
+  },
+  "forbidden_claims": [
+    "relabel an already exposed benchmark as fresh candidate confirmation",
+    "delete historical data because a candidate consumed it",
+    "report in-sample fitted predictions as OOF",
+    "train an ensemble on component fitted values and claim independent gain",
+    "reuse a scored confirmation set as a second fresh confirmation"
+  ]
+}
