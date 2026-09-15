@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import math
@@ -214,8 +215,10 @@ def fetch_json(url: str, *, referer: str, tries: int = 4) -> tuple[dict[str, Any
             with urllib.request.urlopen(req, timeout=60) as response:
                 if getattr(response, "status", 200) != 200:
                     raise SourcePrecheckError(f"HTTP_STATUS:{response.status}")
-                body = response.read()
-            payload = json.loads(body)
+                wire = response.read()
+                content_encoding = str(response.headers.get("Content-Encoding") or "").strip().lower()
+            body = gzip.decompress(wire) if content_encoding == "gzip" or wire[:2] == b"\x1f\x8b" else wire
+            payload = json.loads(body.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise SourcePrecheckError("PAYLOAD_ROOT_NOT_OBJECT")
             return payload, {"sha256": _sha256(body), "bytes": len(body)}

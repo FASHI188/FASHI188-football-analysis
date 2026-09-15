@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import gzip
 import hashlib
 import json
 import unittest
@@ -52,6 +53,25 @@ class SourcePrecheckTests(unittest.TestCase):
         p=payload(); p["teams"]["1"]["history"][0]["ppda"]={"att":"24","def":"0"}; p["teams"]["2"]["history"][0]["ppda_allowed"]={"att":"24","def":"0"}
         rows=m.project_payload(p,league="EPL",season=2024,expected_matches=1,release_delay_hours=3)
         self.assertEqual(rows[0]["home_ppda"],0.0)
+
+    def test_fetch_json_accepts_gzip_transport(self) -> None:
+        raw=json.dumps(payload(),sort_keys=True,separators=(",",":")).encode("utf-8")
+        wire=gzip.compress(raw)
+        class FakeResponse:
+            status=200
+            headers={"Content-Encoding":"gzip"}
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self): return wire
+        original=m.urllib.request.urlopen
+        m.urllib.request.urlopen=lambda *args,**kwargs: FakeResponse()
+        try:
+            got,meta=m.fetch_json("https://example.invalid/data",referer="https://example.invalid",tries=1)
+        finally:
+            m.urllib.request.urlopen=original
+        self.assertEqual(got,payload())
+        self.assertEqual(meta["sha256"],hashlib.sha256(raw).hexdigest())
+        self.assertEqual(meta["bytes"],len(raw))
 
     def test_config_is_prelabel_and_research_only(self) -> None:
         config=json.loads(Path("nova_n1_deep_ppda_source_precheck_v1.json").read_text())
