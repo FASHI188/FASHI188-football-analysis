@@ -1,0 +1,161 @@
+name: football3-nova-n1-deep-ppda-isolated-test
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n1_deep_ppda_preregistration_v1.json'
+      - 'governance/football3/nova_n1_deep_ppda_isolated_test_v1.py'
+      - 'governance/football3/test_nova_n1_deep_ppda_isolated_test_v1.py'
+      - '.github/workflows/football3-nova-n1-deep-ppda-isolated-test-v1.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-deep-ppda-isolated-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-test-one-shot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n1_deep_ppda_isolated_test_v1.py \
+            governance/football3/test_nova_n1_deep_ppda_isolated_test_v1.py
+
+      - name: Isolated-test contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_n1_deep_ppda_isolated_test_v1.py -v 2>&1 | tee /tmp/isolated_tests.txt
+          grep -q 'Ran 6 tests' /tmp/isolated_tests.txt
+          grep -q '^OK$' /tmp/isolated_tests.txt
+
+      - name: Download pinned immutable evidence artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pinned/source pinned/prelabel pinned/data pinned/development
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts"
+          cat > /tmp/specs.txt <<'EOF'
+          10403007303|source|sha256:eee04f2e79b36c3f40c6836178a9b7ab55e3a6f073ee0c6ca35d6dfc6094db54|fb0bba18c5f46436eea7d91fda0e4f1c95328c70
+          10404020569|prelabel|sha256:868651b2a602a31dbf97d971945f9370d3d8e7f7c7a8ddd9266723f9678a6ce2|b23b6203005a5efc47856dac117329c5c3fd1125
+          9876641831|data|sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c|
+          10404064926|development|sha256:842772933f8ddec8f2d424969ec1aadd5122107bce6e68c47b3c4323d5e21f52|c4e5f9ce80329bf416c396207a981a37835ed69c
+          EOF
+          while IFS='|' read -r artifact_id out expected_digest expected_head; do
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api/$artifact_id" > "/tmp/$out-meta.json"
+            ARTIFACT_ID="$artifact_id" EXPECTED_DIGEST="$expected_digest" EXPECTED_HEAD="$expected_head" OUT="$out" python - <<'PY'
+          import json, os
+          p=json.load(open(f"/tmp/{os.environ['OUT']}-meta.json"))
+          assert p['id']==int(os.environ['ARTIFACT_ID'])
+          assert p['digest']==os.environ['EXPECTED_DIGEST']
+          assert p['expired'] is False
+          if os.environ['EXPECTED_HEAD']:
+              assert p['workflow_run']['head_sha']==os.environ['EXPECTED_HEAD']
+          PY
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api/$artifact_id/zip" > "/tmp/$out.zip"
+            unzip -q "/tmp/$out.zip" -d "pinned/$out"
+          done < /tmp/specs.txt
+
+      - name: Seal 2025 isolated predictions before label open
+        run: |
+          set -euo pipefail
+          rm -rf n1_isolated_test && mkdir -p n1_isolated_test
+          python governance/football3/nova_n1_deep_ppda_isolated_test_v1.py predict \
+            --prereg governance/football3/nova_n1_deep_ppda_preregistration_v1.json \
+            --source-dir pinned/source \
+            --prelabel-dir pinned/prelabel \
+            --development-dir pinned/development \
+            --data-dir pinned/data \
+            --predictions-out n1_isolated_test/isolated_predictions.jsonl \
+            --seal-out n1_isolated_test/prediction_seal.json \
+            2>&1 | tee n1_isolated_test/predict_stdout.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_isolated_test/prediction_seal.json'))
+          assert p['status']=='N1_DEEP_PPDA_ISOLATED_PREDICTIONS_SEALED'
+          assert p['selected_route']=='R2_W10'
+          assert p['development_label_rows_read']==1752
+          assert p['isolated_label_rows_read']==0
+          assert p['isolated_test_opened'] is False
+          assert p['isolated_predictions_sealed_before_label_open'] is True
+          assert p['prediction_n']==1752
+          assert p['predictions_sha256']=='d5605b43d9c1ff3d652ed8888de84fe61c5e5df2f31bde3a16c7b53dc55ce9f1'
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          PY
+
+      - name: Upload immutable pre-label isolated prediction seal
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-deep-ppda-isolated-prediction-seal-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: |
+            n1_isolated_test/isolated_predictions.jsonl
+            n1_isolated_test/prediction_seal.json
+            n1_isolated_test/predict_stdout.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Open isolated labels once and score frozen R2
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n1_deep_ppda_isolated_test_v1.py score \
+            --prereg governance/football3/nova_n1_deep_ppda_preregistration_v1.json \
+            --development-dir pinned/development \
+            --data-dir pinned/data \
+            --predictions n1_isolated_test/isolated_predictions.jsonl \
+            --seal n1_isolated_test/prediction_seal.json \
+            --receipt-out n1_isolated_test/receipt.json \
+            2>&1 | tee n1_isolated_test/score_stdout.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_isolated_test/receipt.json'))
+          assert p['status']=='N1_DEEP_PPDA_ISOLATED_TEST_SCORED'
+          assert p['classification'] in {'RESEARCH_CANDIDATE','POSITIVE_SIGNAL','FAIL_CURRENT_IMPLEMENTATION'}
+          assert p['selected_route']=='R2_W10'
+          assert p['selected_route_frozen_before_test_open'] is True
+          assert p['isolated_test_n']==1752 and p['isolated_label_rows_read']==1752
+          assert p['isolated_test_opened'] is True and p['isolated_test_open_count']==1
+          assert p['isolated_predictions_sealed_before_label_open'] is True
+          assert p['coverage']>=0.99
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['candidate_activation_allowed'] is False and p['promotion_allowed'] is False
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          assert p['experiment_budget_exhausted'] is True and p['second_chance_route_allowed'] is False
+          assert p['terminal_scientific_result'] is True
+          PY
+          cp /tmp/isolated_tests.txt n1_isolated_test/
+
+      - name: Upload immutable isolated test receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-deep-ppda-isolated-test-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_isolated_test/
+          if-no-files-found: error
+          retention-days: 90
