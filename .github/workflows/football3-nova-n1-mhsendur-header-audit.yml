@@ -16,7 +16,7 @@ concurrency:
 jobs:
   source-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout exact head
         uses: actions/checkout@v7
@@ -36,7 +36,9 @@ jobs:
             governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
             governance/football3/test_nova_mhsendur_understat_zero_label_coverage_v1.py \
             governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.py \
-            governance/football3/test_nova_mhsendur_understat_reusable_feature_freeze_v1.py
+            governance/football3/test_nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.py \
+            governance/football3/test_nova_mhsendur_openfootball_canonical_binding_v1.py
       - name: Contract tests
         run: |
           set -euo pipefail
@@ -44,6 +46,7 @@ jobs:
           python test_nova_mhsendur_understat_header_audit_v1.py -v
           python test_nova_mhsendur_understat_zero_label_coverage_v1.py -v
           python test_nova_mhsendur_understat_reusable_feature_freeze_v1.py -v
+          python test_nova_mhsendur_openfootball_canonical_binding_v1.py -v
       - name: Verify pinned permission statement
         run: |
           set -euo pipefail
@@ -115,6 +118,7 @@ jobs:
           python - <<'PY'
           import json
           p=json.load(open('mhsendur_audit_receipt/reusable_feature_freeze_receipt.json'))
+          frozen=json.load(open('governance/football3/nova_mhsendur_understat_reusable_feature_freeze_receipt_v1.json'))
           assert p['status']=='REUSABLE_FEATURE_LAYER_FROZEN_PENDING_CANONICAL_ID_BINDING'
           assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
           assert p['production_eligible'] is False
@@ -127,12 +131,48 @@ jobs:
               'Serie_A':3420,
           }
           assert p['source_local_match_key_unique_count']==16333
+          assert p['feature_projection_sha256']==frozen['qualified_projection']['feature_projection_sha256']
           assert p['result_values_used']==0
           assert p['score_values_used']==0
           assert p['xg_values_used']==0
           assert p['canonical_match_id_binding_complete'] is False
           assert p['candidate_confirmation_allowed'] is False
           assert p['allowed_roles_after_canonical_binding']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['reported_benchmark_predictions_must_be_oof'] is True
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Bind reusable projection to OpenFootball canonical match IDs
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.py \
+            --openfootball-lock governance/football3/nova_openfootball_big5_2024_25_source_lock_v1.json \
+            --freeze governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.json \
+            --freeze-receipt mhsendur_audit_receipt/reusable_feature_freeze_receipt.json \
+            --binding governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.json \
+            --projection mhsendur_audit_receipt/reusable_feature_projection.jsonl \
+            --binding-out mhsendur_audit_receipt/canonical_binding.jsonl \
+            --receipt-out mhsendur_audit_receipt/canonical_binding_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/canonical_binding_receipt.json'))
+          assert p['status']=='CANONICAL_MATCH_ID_BINDING_PASS'
+          assert p['canonical_match_id_binding_complete'] is True
+          assert p['bound_match_count']==16333
+          assert p['bound_match_id_unique_count']==16333
+          assert p['openfootball_file_count']==45
+          assert p['openfootball_match_count']==16333
+          assert p['openfootball_source_revision']=='41a6eb96ba816757ff892387da5cb111390a7f9c'
+          assert p['openfootball_license_id']=='CC0-1.0'
+          assert p['unmatched_count']==0
+          assert p['ambiguous_count']==0
+          assert p['score_values_used']==0
+          assert p['result_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['candidate_roles_assigned']==0
+          assert p['allowed_roles_after_canonical_binding']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['candidate_confirmation_allowed'] is False
           assert p['reported_benchmark_predictions_must_be_oof'] is True
           assert p['formal_v2_changed'] is False
           assert p['current_changed'] is False
