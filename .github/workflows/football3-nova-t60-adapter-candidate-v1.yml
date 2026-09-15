@@ -1,0 +1,40 @@
+name: football3-nova-t60-adapter-candidate
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_t60_source_routes_v1.json'
+      - 'governance/football3/nova_t60_source_precheck_v1.py'
+      - 'governance/football3/test_nova_t60_source_precheck_v1.py'
+      - '.github/workflows/football3-nova-t60-source-precheck-v1.yml'
+      - '.github/workflows/football3-nova-t60-adapter-candidate-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  activation-boundary:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Prove adapter batch remains candidate-only
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_t60_source_routes_v1.json',encoding='utf-8'))
+          assert p['activation']['enabled'] is False
+          assert p['activation']['replay_coverage_start_at'] is None
+          assert p['activation']['activation_requires_explicit_authorization'] is True
+          assert p['global_contract']['result_fields_read']==0
+          assert p['global_contract']['secret_required'] is False
+          assert p['global_contract']['formal_v2_changed'] is False
+          assert p['global_contract']['current_changed'] is False
+          assert p['global_contract']['production_changed'] is False
+          assert p['global_contract']['candidate_weight']==0
+          assert p['global_contract']['matrix_delta']==0
+          print('T60_ADAPTER_CANDIDATE_BOUNDARY_PASS')
+          PY
