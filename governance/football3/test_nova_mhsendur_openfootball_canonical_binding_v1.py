@@ -27,6 +27,7 @@ def source_row(match_id: str, home: str, away: str, kickoff: str, comp: str = "D
         "match_id": match_id,
         "competition_id": comp,
         "season": "2014/15",
+        "source_date": kickoff[:10],
         "kickoff": kickoff,
         "home_team_id": "h",
         "away_team_id": "a",
@@ -79,6 +80,8 @@ class CanonicalBindingTests(unittest.TestCase):
             ("Paris Saint Germain", "Paris Saint-Germain"),
             ("Verona", "Hellas Verona"),
             ("Parma Calcio 1913", "Parma FC"),
+            ("Alaves", "CD Alavés"),
+            ("Pescara", "Delfino Pescara"),
         ]
         for mh, of in pairs:
             self.assertEqual(team_key(mh, "mhsendur", maps), team_key(of, "openfootball", maps), (mh, of))
@@ -119,6 +122,47 @@ class CanonicalBindingTests(unittest.TestCase):
         self.assertEqual(bound[0]["binding_mode"], "UNIQUE_DATE_TEAM_FALLBACK")
         self.assertNotEqual(bound[0]["kickoff"], bound[0]["feature_kickoff"])
         self.assertEqual(receipt["binding_mode_counts"], {"UNIQUE_DATE_TEAM_FALLBACK": 1})
+
+    def test_unique_adjacent_date_team_fallback_passes_cross_midnight(self):
+        source_kickoff = kickoff_utc("2014-08-23", "20:30", "Europe/Berlin")
+        bound, receipt = bind_projection(
+            [feat("Bayern Munich", "Wolfsburg")],
+            [source_row("openfootball:one", "Bayern München", "VfL Wolfsburg", source_kickoff)],
+            CONFIG,
+        )
+        self.assertEqual(bound[0]["binding_mode"], "UNIQUE_ADJACENT_DATE_TEAM_FALLBACK")
+        self.assertEqual(receipt["binding_mode_counts"], {"UNIQUE_ADJACENT_DATE_TEAM_FALLBACK": 1})
+
+    def test_unique_season_team_fallback_passes_postponed_fixture(self):
+        source_kickoff = kickoff_utc("2014-09-05", "20:30", "Europe/Berlin")
+        bound, receipt = bind_projection(
+            [feat("Bayern Munich", "Wolfsburg")],
+            [source_row("openfootball:one", "Bayern München", "VfL Wolfsburg", source_kickoff)],
+            CONFIG,
+        )
+        self.assertEqual(bound[0]["binding_mode"], "UNIQUE_SEASON_TEAM_FALLBACK")
+        self.assertEqual(receipt["binding_mode_counts"], {"UNIQUE_SEASON_TEAM_FALLBACK": 1})
+        self.assertEqual(receipt["score_values_used"], 0)
+        self.assertEqual(receipt["result_values_used"], 0)
+        self.assertEqual(receipt["xg_values_used"], 0)
+
+    def test_ambiguous_season_team_fallback_fails_closed(self):
+        rows = [
+            source_row(
+                "openfootball:one",
+                "Bayern München",
+                "VfL Wolfsburg",
+                kickoff_utc("2014-09-05", "20:30", "Europe/Berlin"),
+            ),
+            source_row(
+                "openfootball:two",
+                "Bayern München",
+                "VfL Wolfsburg",
+                kickoff_utc("2014-10-05", "20:30", "Europe/Berlin"),
+            ),
+        ]
+        with self.assertRaisesRegex(BindingError, "fail-closed"):
+            bind_projection([feat("Bayern Munich", "Wolfsburg")], rows, CONFIG)
 
     def test_ambiguous_binding_fails_closed(self):
         kickoff = kickoff_utc("2014-08-22", "20:30", "Europe/Berlin")
