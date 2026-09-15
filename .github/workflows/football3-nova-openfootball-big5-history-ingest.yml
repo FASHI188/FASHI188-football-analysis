@@ -43,7 +43,8 @@ jobs:
           set -euo pipefail
           python governance/football3/nova_openfootball_big5_2024_25_ingest_v1.py \
             --lock governance/football3/nova_openfootball_big5_2024_25_source_lock_v1.json \
-            --out-dir openfootball_history_receipt
+            --out-dir openfootball_history_receipt \
+            --require-frozen
           python - <<'PY'
           import json
           p = json.load(open("openfootball_history_receipt/receipt.json", encoding="utf-8"))
@@ -52,8 +53,12 @@ jobs:
           assert p["competition_count"] == 5
           assert p["match_count"] == 1752
           assert p["published_results_exposed"] == 1752
-          assert p["result_value_present_count"] + p["result_value_missing_count"] == 1752
+          assert p["result_value_present_count"] == 1732
+          assert p["result_value_missing_count"] == 20
+          assert p["normalized_set_sha256"] == "90f75d704aff3a6dce964b811339c1277a62b59eeb190dd404069b5500589ea7"
           assert p["missing_result_values_fabricated"] is False
+          expected_missing = {"ENG_PREMIER_LEAGUE": 0, "DE_BUNDESLIGA": 0, "ES_LALIGA": 10, "IT_SERIE_A": 10, "FR_LIGUE_1": 0}
+          assert {x["competition_id"]: x["result_value_missing_count"] for x in p["file_receipts"]} == expected_missing
           assert p["fresh_confirmation_eligible_count"] == 0
           assert p["candidate_roles_assigned"] == 0
           assert p["formal_v2_changed"] is False

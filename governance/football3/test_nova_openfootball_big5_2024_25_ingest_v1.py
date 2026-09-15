@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import unittest
 from pathlib import Path
 from nova_openfootball_big5_2024_25_ingest_v1 import IngestError, git_blob_sha1, ingest, validate_lock
@@ -34,6 +35,11 @@ class OpenFootballIngestTests(unittest.TestCase):
     def test_lock_contract(self):
         validate_lock(self.lock)
         self.assertEqual(self.lock["expected_total_matches"], 1752)
+        self.assertEqual(self.lock["observed_result_value_present_count"], 1732)
+        self.assertEqual(self.lock["observed_result_value_missing_count"], 20)
+        self.assertRegex(self.lock["normalized_set_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}", c["raw_sha256"]) for c in self.lock["competitions"]))
+        self.assertEqual(sum(c["observed_result_value_missing_count"] for c in self.lock["competitions"]), 20)
         self.assertFalse(self.lock["governance"]["fresh_confirmation_eligible_by_default"])
 
     def build_payloads(self, lock):
