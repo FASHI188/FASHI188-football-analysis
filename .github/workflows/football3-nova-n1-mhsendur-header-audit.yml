@@ -185,3 +185,76 @@ jobs:
           path: mhsendur_audit_receipt/
           if-no-files-found: error
           retention-days: 90
+
+  n1-deep-ppda-source-precheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n1_deep_ppda_source_precheck_v1.py \
+            governance/football3/test_nova_n1_deep_ppda_source_precheck_v1.py
+      - name: Prelabel contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_n1_deep_ppda_source_precheck_v1.py -v 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 8 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Verify pinned noncommercial research-use evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request
+          from pathlib import Path
+          c=json.loads(Path('governance/football3/nova_n1_deep_ppda_source_precheck_v1.json').read_text())
+          e=c['source']['permission_evidence']
+          url=f"https://raw.githubusercontent.com/{e['repository']}/{e['revision']}/{e['path']}"
+          req=urllib.request.Request(url,headers={'User-Agent':'Football3-Nova-N1-Permission-Audit/1.0'})
+          with urllib.request.urlopen(req,timeout=60) as r:
+              text=r.read().decode('utf-8')
+          for phrase in e['required_phrases']:
+              assert phrase in text, phrase
+          assert c['source']['permission_class']=='SECONDARY_NONCOMMERCIAL_SUPPORT_STATEMENT_NOT_FORMAL_DATA_LICENSE'
+          assert c['source']['production_eligible'] is False
+          assert c['research_only'] is True
+          PY
+      - name: Zero-label deep+PPDA source coverage precheck
+        run: |
+          set -euo pipefail
+          rm -rf n1_deep_ppda_precheck && mkdir -p n1_deep_ppda_precheck
+          python governance/football3/nova_n1_deep_ppda_source_precheck_v1.py \
+            --config governance/football3/nova_n1_deep_ppda_source_precheck_v1.json \
+            --projection-out n1_deep_ppda_precheck/state_projection.jsonl \
+            --receipt-out n1_deep_ppda_precheck/receipt.json \
+            2>&1 | tee /tmp/source_precheck.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('n1_deep_ppda_precheck/receipt.json'))
+          assert p['status']=='N1_DEEP_PPDA_SOURCE_PRECHECK_PASS'
+          assert p['match_count']==3504 and p['fixture_id_unique_count']==3504
+          assert p['label_values_read']==0 and p['result_values_used']==0
+          assert p['score_values_used']==0 and p['xg_values_used']==0
+          assert p['training_performed'] is False
+          assert p['candidate_probabilities_generated'] is False
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          PY
+          cp /tmp/tests.txt /tmp/source_precheck.txt n1_deep_ppda_precheck/
+      - name: Upload immutable N1 source precheck receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-deep-ppda-source-precheck-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: n1_deep_ppda_precheck/
+          if-no-files-found: error
