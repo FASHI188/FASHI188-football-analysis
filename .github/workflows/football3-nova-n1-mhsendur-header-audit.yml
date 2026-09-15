@@ -1,0 +1,187 @@
+name: football3-nova-n1-mhsendur-understat-header-audit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - football3/nova-n1-free-deep-ppda-reusable-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n1-mhsendur-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_mhsendur_understat_header_audit_v1.py \
+            governance/football3/test_nova_mhsendur_understat_header_audit_v1.py \
+            governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
+            governance/football3/test_nova_mhsendur_understat_zero_label_coverage_v1.py \
+            governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            governance/football3/test_nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.py \
+            governance/football3/test_nova_mhsendur_openfootball_canonical_binding_v1.py
+      - name: Contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_mhsendur_understat_header_audit_v1.py -v
+          python test_nova_mhsendur_understat_zero_label_coverage_v1.py -v
+          python test_nova_mhsendur_understat_reusable_feature_freeze_v1.py -v
+          python test_nova_mhsendur_openfootball_canonical_binding_v1.py -v
+      - name: Verify pinned permission statement
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request
+          from pathlib import Path
+          lock=json.loads(Path('governance/football3/nova_mhsendur_understat_header_lock_v1.json').read_text())
+          rev=lock['source']['revision']
+          url=f"https://raw.githubusercontent.com/mhsendur/understat-football-data-2014-2023/{rev}/README.md"
+          req=urllib.request.Request(url,headers={'User-Agent':'Football3-Nova-N1-Permission-Audit/1.0'})
+          with urllib.request.urlopen(req,timeout=60) as r:
+              text=r.read().decode('utf-8')
+          for phrase in lock['permission']['readme_required_phrases']:
+              assert phrase in text, phrase
+          assert lock['permission']['production_eligible'] is False
+          PY
+      - name: Header-only audit of pinned archive
+        run: |
+          set -euo pipefail
+          mkdir -p mhsendur_audit_receipt
+          python governance/football3/nova_mhsendur_understat_header_audit_v1.py \
+            --lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --out mhsendur_audit_receipt/header_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/header_receipt.json'))
+          assert p['status']=='HEADER_SCHEMA_QUALIFIED'
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['header_schema_not_qualified_member_count']==0
+          assert p['ignored_packaging_member_count']==3
+          assert p['data_rows_read']==0
+          assert p['result_values_read']==0
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Zero-result-value identity and coverage audit
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_understat_zero_label_coverage_v1.py \
+            --lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --out mhsendur_audit_receipt/coverage_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/coverage_receipt.json'))
+          assert p['status'] in {'ZERO_LABEL_COVERAGE_QUALIFIED','ZERO_LABEL_COVERAGE_PARTIAL'}
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['result_values_used']==0
+          assert p['score_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['forbidden_columns_used_for_identity_or_coverage']==[]
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['allowed_research_roles']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Freeze reusable 2014-2022 feature layer
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.py \
+            --source-lock governance/football3/nova_mhsendur_understat_header_lock_v1.json \
+            --freeze governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.json \
+            --projection-out mhsendur_audit_receipt/reusable_feature_projection.jsonl \
+            --receipt-out mhsendur_audit_receipt/reusable_feature_freeze_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/reusable_feature_freeze_receipt.json'))
+          frozen=json.load(open('governance/football3/nova_mhsendur_understat_reusable_feature_freeze_receipt_v1.json'))
+          assert p['status']=='REUSABLE_FEATURE_LAYER_FROZEN_PENDING_CANONICAL_ID_BINDING'
+          assert p['permission_class']=='RESEARCH_ONLY_EXPLICIT_REUSE'
+          assert p['production_eligible'] is False
+          assert p['qualified_match_count']==16333
+          assert p['qualified_match_counts']=={
+              'Bundesliga':2754,
+              'EPL':3420,
+              'La_liga':3420,
+              'Ligue_1':3319,
+              'Serie_A':3420,
+          }
+          assert p['source_local_match_key_unique_count']==16333
+          assert p['feature_projection_sha256']==frozen['qualified_projection']['feature_projection_sha256']
+          assert p['result_values_used']==0
+          assert p['score_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['canonical_match_id_binding_complete'] is False
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['allowed_roles_after_canonical_binding']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['reported_benchmark_predictions_must_be_oof'] is True
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Bind reusable projection to OpenFootball canonical match IDs
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.py \
+            --openfootball-lock governance/football3/nova_openfootball_big5_2024_25_source_lock_v1.json \
+            --freeze governance/football3/nova_mhsendur_understat_reusable_feature_freeze_v1.json \
+            --freeze-receipt mhsendur_audit_receipt/reusable_feature_freeze_receipt.json \
+            --binding governance/football3/nova_mhsendur_openfootball_canonical_binding_v1.json \
+            --projection mhsendur_audit_receipt/reusable_feature_projection.jsonl \
+            --binding-out mhsendur_audit_receipt/canonical_binding.jsonl \
+            --receipt-out mhsendur_audit_receipt/canonical_binding_receipt.json
+          python - <<'PY'
+          import json
+          p=json.load(open('mhsendur_audit_receipt/canonical_binding_receipt.json'))
+          assert p['status']=='CANONICAL_MATCH_ID_BINDING_PASS'
+          assert p['canonical_match_id_binding_complete'] is True
+          assert p['bound_match_count']==16333
+          assert p['bound_match_id_unique_count']==16333
+          assert p['openfootball_file_count']==45
+          assert p['openfootball_match_count']==16333
+          assert p['openfootball_source_revision']=='41a6eb96ba816757ff892387da5cb111390a7f9c'
+          assert p['openfootball_license_id']=='CC0-1.0'
+          assert p['unmatched_count']==0
+          assert p['ambiguous_count']==0
+          assert p['score_values_used']==0
+          assert p['result_values_used']==0
+          assert p['xg_values_used']==0
+          assert p['candidate_roles_assigned']==0
+          assert p['allowed_roles_after_canonical_binding']==['TRAIN','DEVELOPMENT','REUSABLE_BENCHMARK']
+          assert p['candidate_confirmation_allowed'] is False
+          assert p['reported_benchmark_predictions_must_be_oof'] is True
+          assert p['formal_v2_changed'] is False
+          assert p['current_changed'] is False
+          assert p['production_changed'] is False
+          PY
+      - name: Upload immutable audit receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-mhsendur-audit-${{ github.sha }}-${{ github.run_id }}
+          path: mhsendur_audit_receipt/
+          if-no-files-found: error
+          retention-days: 90
