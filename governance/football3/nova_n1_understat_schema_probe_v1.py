@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import pathlib
@@ -17,6 +18,7 @@ UA = {
     "User-Agent": "Football3-Nova-N1-schema-only-probe/1.0",
     "X-Requested-With": "XMLHttpRequest",
     "Accept": "application/json,text/plain;q=0.9,*/*;q=0.1",
+    "Accept-Encoding": "gzip, identity",
 }
 REQUIRED_FEATURE_KEYS = {"deep", "ppda", "date"}
 FORBIDDEN_RESULT_KEYS = {"result", "scored", "missed", "goals", "h_goals", "a_goals", "xG", "xGA"}
@@ -32,6 +34,22 @@ def sha256(raw: bytes) -> str:
 
 def _decode_json_string_token(token: bytes) -> str:
     return json.loads(token.decode("utf-8"))
+
+
+def decode_transport(raw: bytes, content_encoding: str | None) -> bytes:
+    encoding = (content_encoding or "identity").strip().casefold()
+    if encoding in {"", "identity"}:
+        body = raw
+    elif encoding == "gzip":
+        body = gzip.decompress(raw)
+    else:
+        raise RuntimeError(f"unsupported content encoding: {content_encoding!r}")
+    if len(body) < 1000:
+        raise RuntimeError(f"decoded response too small ({len(body)})")
+    first = body.lstrip()[:1]
+    if first not in {b"{", b"["}:
+        raise RuntimeError(f"decoded response is not JSON-like: first={first!r}")
+    return body
 
 
 def scan_object_keys_only(raw: bytes) -> Counter[str]:
@@ -77,25 +95,28 @@ def fetch(league: str) -> tuple[bytes, dict[str, Any]]:
     url = BASE_URL.format(league=league, season=SEASON)
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=120) as resp:
-        raw = resp.read()
+        wire = resp.read()
+        content_encoding = resp.headers.get("Content-Encoding")
+        body = decode_transport(wire, content_encoding)
         meta = {
             "league": league,
             "url": url,
             "http_status": getattr(resp, "status", None),
             "content_type": resp.headers.get("Content-Type"),
-            "content_encoding": resp.headers.get("Content-Encoding"),
-            "bytes": len(raw),
-            "sha256": sha256(raw),
+            "content_encoding": content_encoding,
+            "wire_bytes": len(wire),
+            "wire_sha256": sha256(wire),
+            "decoded_bytes": len(body),
+            "decoded_sha256": sha256(body),
+            "transport_decoded": (content_encoding or "identity").strip().casefold() not in {"", "identity"},
             "retrieved_at": now(),
         }
-    if len(raw) < 1000:
-        raise RuntimeError(f"{league}: response too small ({len(raw)})")
-    return raw, meta
+    return body, meta
 
 
 def probe(league: str) -> dict[str, Any]:
-    raw, meta = fetch(league)
-    counts = scan_object_keys_only(raw)
+    body, meta = fetch(league)
+    counts = scan_object_keys_only(body)
     keys = sorted(counts)
     required_present = sorted(REQUIRED_FEATURE_KEYS & set(keys))
     result_keys_present = sorted(FORBIDDEN_RESULT_KEYS & set(keys))

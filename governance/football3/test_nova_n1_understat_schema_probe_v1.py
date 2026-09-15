@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import gzip
 import importlib.util
 import pathlib
 import unittest
@@ -35,5 +36,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(probe.REQUIRED_FEATURE_KEYS, {'deep','ppda','date'})
         self.assertIn('result', probe.FORBIDDEN_RESULT_KEYS)
         self.assertIn('xG', probe.FORBIDDEN_RESULT_KEYS)
+
+    def test_gzip_transport_decode(self):
+        body=(b'{"deep":1,"ppda":2,"date":"2024-08-17"}' + b' ' * 1200)
+        wire=gzip.compress(body)
+        self.assertEqual(probe.decode_transport(wire, 'gzip'), body)
+
+    def test_identity_transport_decode(self):
+        body=(b'{"deep":1,"ppda":2,"date":"2024-08-17"}' + b' ' * 1200)
+        self.assertEqual(probe.decode_transport(body, None), body)
+        self.assertEqual(probe.decode_transport(body, 'identity'), body)
+
+    def test_unknown_transport_encoding_fails_closed(self):
+        with self.assertRaises(RuntimeError):
+            probe.decode_transport(b'x' * 1200, 'br')
 
 if __name__=='__main__': unittest.main()
