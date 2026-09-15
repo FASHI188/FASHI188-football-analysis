@@ -1,0 +1,135 @@
+name: football3-nova-n1-deep-ppda-development-oof
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n1_deep_ppda_preregistration_v1.json'
+      - 'governance/football3/nova_n1_deep_ppda_development_oof_v1.py'
+      - 'governance/football3/test_nova_n1_deep_ppda_development_oof_v1.py'
+      - '.github/workflows/football3-nova-n1-deep-ppda-development-oof-v1.yml'
+  push:
+    branches: ['football3/nova-n1-deep-ppda-oof-v1']
+    paths:
+      - 'governance/football3/nova_n1_deep_ppda_preregistration_v1.json'
+      - 'governance/football3/nova_n1_deep_ppda_development_oof_v1.py'
+      - 'governance/football3/test_nova_n1_deep_ppda_development_oof_v1.py'
+      - '.github/workflows/football3-nova-n1-deep-ppda-development-oof-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-deep-ppda-development-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  development-oof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n1_deep_ppda_development_oof_v1.py \
+            governance/football3/test_nova_n1_deep_ppda_development_oof_v1.py
+
+      - name: Development OOF contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_n1_deep_ppda_development_oof_v1.py -v 2>&1 | tee /tmp/development_tests.txt
+          grep -q 'Ran 6 tests' /tmp/development_tests.txt
+          grep -q '^OK$' /tmp/development_tests.txt
+
+      - name: Download pinned immutable evidence artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pinned/source pinned/prelabel pinned/data
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts"
+          cat > /tmp/specs.txt <<'EOF'
+          10403007303|source|sha256:eee04f2e79b36c3f40c6836178a9b7ab55e3a6f073ee0c6ca35d6dfc6094db54|fb0bba18c5f46436eea7d91fda0e4f1c95328c70
+          10404020569|prelabel|sha256:868651b2a602a31dbf97d971945f9370d3d8e7f7c7a8ddd9266723f9678a6ce2|b23b6203005a5efc47856dac117329c5c3fd1125
+          9876641831|data|sha256:2422a1e4746452614032e5af8c6afcc7172eb0b644d237791fc038c0a6d3547c|
+          EOF
+          while IFS='|' read -r artifact_id out expected_digest expected_head; do
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api/$artifact_id" > "/tmp/$out-meta.json"
+            ARTIFACT_ID="$artifact_id" EXPECTED_DIGEST="$expected_digest" EXPECTED_HEAD="$expected_head" OUT="$out" python - <<'PY'
+          import json, os
+          p=json.load(open(f"/tmp/{os.environ['OUT']}-meta.json"))
+          assert p['id']==int(os.environ['ARTIFACT_ID'])
+          assert p['digest']==os.environ['EXPECTED_DIGEST']
+          assert p['expired'] is False
+          if os.environ['EXPECTED_HEAD']:
+              assert p['workflow_run']['head_sha']==os.environ['EXPECTED_HEAD']
+          PY
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api/$artifact_id/zip" > "/tmp/$out.zip"
+            unzip -q "/tmp/$out.zip" -d "pinned/$out"
+          done < /tmp/specs.txt
+
+      - name: Run development-only chronological OOF scan
+        run: |
+          set -euo pipefail
+          rm -rf n1_development_oof && mkdir -p n1_development_oof
+          python governance/football3/nova_n1_deep_ppda_development_oof_v1.py \
+            --prereg governance/football3/nova_n1_deep_ppda_preregistration_v1.json \
+            --source-dir pinned/source \
+            --prelabel-dir pinned/prelabel \
+            --data-dir pinned/data \
+            --predictions-out n1_development_oof/selected_oof_predictions.jsonl \
+            --receipt-out n1_development_oof/receipt.json \
+            2>&1 | tee n1_development_oof/development_stdout.txt
+          python - <<'PY'
+          import json, math
+          p=json.load(open('n1_development_oof/receipt.json'))
+          assert p['status']=='N1_DEEP_PPDA_DEVELOPMENT_OOF_PASS'
+          assert p['classification']=='POSITIVE_SIGNAL_DEVELOPMENT_PASS'
+          assert p['phase']=='CANDIDATE_FROZEN'
+          assert p['development_n']==1752
+          assert p['development_label_rows_read']==1752
+          assert p['isolated_test_label_rows_read']==0
+          assert p['isolated_test_opened'] is False
+          assert p['oof_warmup_n']==351 and p['oof_prediction_n']==1401
+          assert p['qualifying_routes']==['R1_W5','R2_W10','R4_W5_W10_STACK']
+          assert p['selected_route']=='R2_W10' and p['selected_route_frozen'] is True
+          r=p['routes']['R2_W10']
+          assert math.isclose(r['formal_minus_candidate_logloss_gain'],0.0015063882206676205,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(r['delta_candidate_minus_formal']['brier'],-0.0011264516734206254,rel_tol=0,abs_tol=1e-12)
+          assert math.isclose(r['delta_candidate_minus_formal']['rps'],-0.0011054933960041036,rel_tol=0,abs_tol=1e-12)
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          assert p['candidate_activation_allowed'] is False and p['promotion_allowed'] is False
+          assert p['allowed_next_phase']=='ISOLATED_TEST_ONE_SHOT'
+          PY
+          cp /tmp/development_tests.txt n1_development_oof/
+
+      - name: Upload immutable development OOF receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-deep-ppda-development-oof-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
+          path: n1_development_oof/
+          if-no-files-found: error
+          retention-days: 90
