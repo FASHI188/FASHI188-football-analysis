@@ -157,7 +157,7 @@ def download_openfootball_payloads(openfootball_lock: dict, binding: dict) -> di
 
 def normalize_openfootball_match(match: dict, comp: dict, season_start: int, path: str, revision: str, raw_sha: str) -> dict:
     required = ("date", "time", "team1", "team2")
-    missing = [k for k in required if k not in match]
+    missing = [k for k in required if k not in match or not str(match.get(k, "")).strip()]
     if missing:
         raise BindingError(f"{path}: OpenFootball match missing identity fields {missing}")
     home = str(match["team1"]).strip()
@@ -192,6 +192,13 @@ def normalize_openfootball_match(match: dict, comp: dict, season_start: int, pat
     }
 
 
+def incomplete_identity_fields(match: dict) -> list[str]:
+    return [
+        field for field in ("date", "time", "team1", "team2")
+        if field not in match or not str(match.get(field, "")).strip()
+    ]
+
+
 def build_openfootball_catalog(openfootball_lock: dict, binding: dict, payloads: dict[str, bytes]) -> tuple[list[dict], list[dict]]:
     revision = openfootball_lock["source"]["revision"]
     rows: list[dict] = []
@@ -207,7 +214,21 @@ def build_openfootball_catalog(openfootball_lock: dict, binding: dict, payloads:
             matches = obj.get("matches")
             if not isinstance(matches, list):
                 raise BindingError(f"{path}: matches must be list")
-            file_rows = [normalize_openfootball_match(m, comp, start, path, revision, raw_sha) for m in matches]
+            file_rows: list[dict] = []
+            excluded_incomplete: list[dict] = []
+            for match in matches:
+                missing = incomplete_identity_fields(match)
+                if missing:
+                    if missing != ["time"]:
+                        raise BindingError(f"{path}: OpenFootball match missing identity fields {missing}")
+                    excluded_incomplete.append({
+                        "date": str(match.get("date", "")),
+                        "team1": str(match.get("team1", "")),
+                        "team2": str(match.get("team2", "")),
+                        "missing_identity_fields": missing,
+                    })
+                    continue
+                file_rows.append(normalize_openfootball_match(match, comp, start, path, revision, raw_sha))
             rows.extend(file_rows)
             receipts.append({
                 "league": league,
@@ -215,7 +236,10 @@ def build_openfootball_catalog(openfootball_lock: dict, binding: dict, payloads:
                 "path": path,
                 "source_blob_sha1": git_blob_sha1(raw),
                 "input_sha256": raw_sha,
+                "source_match_object_count": len(matches),
                 "match_count": len(file_rows),
+                "identity_incomplete_excluded_count": len(excluded_incomplete),
+                "identity_incomplete_excluded_sample": excluded_incomplete[:20],
             })
     ids = [row["match_id"] for row in rows]
     if len(ids) != len(set(ids)):
@@ -413,6 +437,9 @@ def main() -> None:
         "openfootball_license_id": openfootball_lock["source"]["license_id"],
         "openfootball_file_count": len(file_receipts),
         "openfootball_match_count": len(source_rows),
+        "openfootball_identity_incomplete_excluded_count": sum(
+            int(item.get("identity_incomplete_excluded_count", 0)) for item in file_receipts
+        ),
         "openfootball_file_receipts": file_receipts,
         "feature_projection_sha256": freeze_receipt["feature_projection_sha256"],
         "feature_source_revision": freeze_receipt["source_revision"],
