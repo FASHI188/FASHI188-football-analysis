@@ -1,0 +1,116 @@
+name: football3-nova-n1-aloobun-understat-header-audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/football3-nova-n1-aloobun-understat-header-audit.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n1-aloobun-understat-header-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  header_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.head.ref }}" = 'football3/nova-n1-lagged-deep-ppda-v1'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+
+      - name: Audit MIT dataset metadata and Understat CSV header only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, io, json, pathlib, re, urllib.parse, urllib.request
+
+          dataset='aloobun/fbref_understat_combined'
+          member='data/understat_xg/understat_xg_data.csv'
+          api=f'https://huggingface.co/api/datasets/{dataset}'
+          ua={'User-Agent':'Football3-Nova-N1-Aloobun-header-audit/1.0','Accept-Encoding':'identity'}
+
+          with urllib.request.urlopen(urllib.request.Request(api,headers=ua),timeout=60) as resp:
+              meta=json.load(resp)
+          license_value=str((meta.get('cardData') or {}).get('license') or '').strip().casefold()
+          assert license_value == 'mit', license_value
+          revision=str(meta.get('sha') or '').strip()
+          assert re.fullmatch(r'[0-9a-f]{40}',revision), revision
+          siblings={str(x.get('rfilename')) for x in (meta.get('siblings') or [])}
+          assert member in siblings, member
+
+          url=f'https://huggingface.co/datasets/{dataset}/resolve/{revision}/'+urllib.parse.quote(member,safe='/')
+          req=urllib.request.Request(url,headers={**ua,'Accept':'text/csv,text/plain;q=0.9,*/*;q=0.1'})
+          with urllib.request.urlopen(req,timeout=120) as resp:
+              line=resp.readline(262144)
+              final_url=resp.geturl()
+              content_type=resp.headers.get('Content-Type')
+              etag=resp.headers.get('ETag')
+          assert line and b'\n' in line, 'missing or oversized first CSV line'
+          text=line.decode('utf-8-sig').rstrip('\r\n')
+          header=next(csv.reader([text]))
+          norm=[re.sub(r'[^a-z0-9]+','_',x.strip().casefold()).strip('_') for x in header]
+
+          role_aliases={
+              'date': {'date','match_date','datetime','kickoff','kickoff_date'},
+              'home_team': {'home_team','hometeam','team_h','home','homeclub'},
+              'away_team': {'away_team','awayteam','team_a','away','awayclub'},
+              'home_deep': {'h_deep','home_deep','deep_home','homedeep','deep_h'},
+              'away_deep': {'a_deep','away_deep','deep_away','awaydeep','deep_a'},
+              'home_ppda': {'h_ppda','home_ppda','ppda_home','homeppda','ppda_h'},
+              'away_ppda': {'a_ppda','away_ppda','ppda_away','awayppda','ppda_a'},
+          }
+          bindings={role:[header[i] for i,x in enumerate(norm) if x in aliases] for role,aliases in role_aliases.items()}
+          missing=[role for role,hits in bindings.items() if len(hits)!=1]
+          result_like=sorted({x for x in norm if x in {'result','outcome','winner','home_goals','away_goals','h_goals','a_goals','score','fthg','ftag'}})
+          payload={
+              'schema_version':'football3-nova-n1-aloobun-understat-header-audit-v1',
+              'status':'HEADER_SCHEMA_QUALIFIED' if not missing else 'HEADER_SCHEMA_NOT_QUALIFIED',
+              'dataset':dataset,
+              'declared_license':'MIT',
+              'dataset_revision':revision,
+              'member':member,
+              'final_url':final_url,
+              'content_type':content_type,
+              'etag':etag,
+              'columns':header,
+              'normalized_columns':norm,
+              'bindings':bindings,
+              'missing_locked_roles':missing,
+              'result_like_columns_present_in_header':result_like,
+              'data_rows_opened':0,
+              'label_values_read':0,
+              'test_identity_opened':False,
+              'test_result_vault_opened':False,
+              'test_labels_read':False,
+              'formal_v2_modified':False,
+              'current_modified':False,
+              'production_modified':False,
+          }
+          out=pathlib.Path('n1_aloobun_understat_header')
+          out.mkdir(exist_ok=True)
+          (out/'aloobun_understat_header_audit.json').write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps({'status':payload['status'],'revision':revision,'missing_locked_roles':missing,'columns':header,'labels_read':False},ensure_ascii=False,sort_keys=True))
+          PY
+
+      - name: Upload header-only receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n1-aloobun-understat-header-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: n1_aloobun_understat_header/
+          if-no-files-found: error
+          retention-days: 90
