@@ -1,0 +1,56 @@
+name: football3-nova-n2-npxg-source-precheck
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n2_npxg_source_precheck_v1.json'
+      - 'governance/football3/nova_n2_npxg_source_precheck_v1.py'
+      - 'governance/football3/test_nova_n2_npxg_source_precheck_v1.py'
+      - 'governance/football3/nova_n2_npxg_preregistration_v1.json'
+      - '.github/workflows/football3-nova-n2-npxg-source-precheck-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  precheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Static and module tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n2_npxg_source_precheck_v1.py governance/football3/test_nova_n2_npxg_source_precheck_v1.py
+          python governance/football3/test_nova_n2_npxg_source_precheck_v1.py -v 2>&1 | tee n2-source-tests.txt
+          grep -q 'Ran 4 tests' n2-source-tests.txt
+          grep -q '^OK$' n2-source-tests.txt
+      - name: Live completed-history source precheck
+        run: |
+          set -euo pipefail
+          mkdir -p n2_source
+          python governance/football3/nova_n2_npxg_source_precheck_v1.py \
+            --config governance/football3/nova_n2_npxg_source_precheck_v1.json \
+            --projection-out n2_source/projection.jsonl \
+            --receipt-out n2_source/receipt.json | tee n2-source-stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('n2_source/receipt.json'))
+          assert r['status']=='N2_NPXG_SOURCE_PRECHECK_PASS'
+          assert r['match_count']==3578
+          assert r['development_2022_n']==1826
+          assert r['isolated_2023_n']==1752
+          assert r['result_labels_read']==0 and r['score_values_used']==0 and r['market_values_used']==0
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n2-npxg-source-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            n2_source/
+            n2-source-tests.txt
+            n2-source-stdout.txt
+          if-no-files-found: error
+          retention-days: 90

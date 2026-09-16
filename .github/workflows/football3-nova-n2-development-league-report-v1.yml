@@ -1,0 +1,128 @@
+name: football3-nova-n2-development-league-report
+
+on:
+  push:
+    branches: ['football3/nova-n2-lagged-npxg-oof-v1']
+    paths:
+      - 'governance/football3/nova_n2_development_league_report_v1.py'
+      - 'governance/football3/test_nova_n2_development_league_report_v1.py'
+      - '.github/workflows/football3-nova-n2-development-league-report-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n2-development-report-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  N2_SOURCE_ARTIFACT_ID: '10445052466'
+  N2_SOURCE_ARTIFACT_DIGEST: 'sha256:d9f766204151200309c6cec661d8b5f2aeb8e32ebc5dfa82159d2c72542fa5fa'
+  N2_BASELINE_ARTIFACT_ID: '10447180675'
+  N2_BASELINE_ARTIFACT_DIGEST: 'sha256:729e61784247904f25a2a23995325ac0b6e8c9ce82cd9181f2a93045764af3e6'
+  N2_DEVELOPMENT_ARTIFACT_ID: '10446419104'
+  N2_DEVELOPMENT_ARTIFACT_DIGEST: 'sha256:dd355e492761c5cbf6f244b3ec1039ab2e6b9761c36a94ee048c5b9001c98073'
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static and contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n2_npxg_development_oof_v1.py \
+            governance/football3/nova_n2_development_league_report_v1.py \
+            governance/football3/test_nova_n2_development_league_report_v1.py
+          python governance/football3/test_nova_n2_development_league_report_v1.py 2>&1 | tee /tmp/report_tests.txt
+          grep -q 'Ran 3 tests' /tmp/report_tests.txt
+          grep -q '^OK$' /tmp/report_tests.txt
+
+      - name: Download immutable N2 evidence only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _report && mkdir -p _inputs/{source,baseline,development} _report
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$N2_SOURCE_ARTIFACT_ID" "$N2_SOURCE_ARTIFACT_DIGEST" /tmp/source.zip _inputs/source
+          verify_one "$N2_BASELINE_ARTIFACT_ID" "$N2_BASELINE_ARTIFACT_DIGEST" /tmp/baseline.zip _inputs/baseline
+          verify_one "$N2_DEVELOPMENT_ARTIFACT_ID" "$N2_DEVELOPMENT_ARTIFACT_DIGEST" /tmp/development.zip _inputs/development
+          SOURCE="$(find _inputs/source -name projection.jsonl -print -quit)"
+          BASELINE="$(find _inputs/baseline -name formal_v2_baseline_2022_label_free.jsonl -print -quit)"
+          LABELS="$(find _inputs/development -name development_2022_labels.jsonl -print -quit)"
+          FROZEN="$(find _inputs/development -name development_oof_result.json -print -quit)"
+          test -n "$SOURCE" && test -n "$BASELINE" && test -n "$LABELS" && test -n "$FROZEN"
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = '24708125d92c134903cd48dd08aabf6f55ccc84ed628cf9d147ccdcbdc773bca'
+          test "$(sha256sum "$BASELINE" | awk '{print $1}')" = '1bfa3ff8721b75d6a2e1167da788e1712bdb74508623bb03c96a81c4186f4695'
+          test "$(sha256sum "$LABELS" | awk '{print $1}')" = 'e71a70e34ef9c4079c9c5d62dbee0c759fbf8cb2db73c0076992849868d7f646'
+          printf '%s\n%s\n%s\n%s\n' "$SOURCE" "$BASELINE" "$LABELS" "$FROZEN" > /tmp/report_paths.txt
+
+      - name: Reproduce frozen OOF and emit league report without isolated labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t P < /tmp/report_paths.txt
+          python governance/football3/nova_n2_development_league_report_v1.py \
+            --source "${P[0]}" \
+            --baseline "${P[1]}" \
+            --labels "${P[2]}" \
+            --frozen-result "${P[3]}" \
+            --out _report/development_league_report.json 2>&1 | tee /tmp/report_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_report/development_league_report.json'))
+          assert r['status']=='N2_DEVELOPMENT_LEAGUE_REPORT_PASS'
+          assert r['classification']=='FAIL_RESEARCH_DIRECTION'
+          assert r['selected_route'] is None and r['best_signal_route']=='R3_EWMA035'
+          assert r['development_source_n']==1826 and r['development_oof_n']==1460
+          assert r['isolated_2023_labels_read']==0
+          assert set(r['source_counts'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A'}
+          assert r['j1']['status']=='NOT_AVAILABLE' and r['j1']['n']==0 and r['j1']['weight']==0
+          assert r['k1']['status']=='NOT_AVAILABLE' and r['k1']['n']==0 and r['k1']['weight']==0
+          assert r['score_matrix']['formal_v2_matrix_unchanged'] is True
+          assert r['score_matrix']['candidate_matrix_delta']==0
+          assert len(r['routes'])==4
+          for route in r['routes'].values():
+              assert set(route['groups'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A','J1','K1'}
+              for league in ('EPL','Bundesliga','La_liga','Ligue_1','Serie_A'):
+                  g=route['groups'][league]
+                  assert g['status']=='AVAILABLE' and g['n']>0 and 0.0<g['coverage']<=1.0
+                  assert g['weight']==0 and g['matrix_delta']==0
+                  assert g['formal']['n']==g['candidate']['n']==g['n']
+                  assert len(g['paired_bootstrap_95ci'])==2
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n2-development-report-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            _report/development_league_report.json
+            /tmp/report_tests.txt
+            /tmp/report_stdout.txt
+          retention-days: 90
