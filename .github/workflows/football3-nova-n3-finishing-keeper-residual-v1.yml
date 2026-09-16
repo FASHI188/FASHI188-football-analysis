@@ -1,0 +1,280 @@
+name: football3-nova-n3-finishing-keeper-residual
+
+on:
+  push:
+    branches: ['football3/nova-n3-finishing-keeper-residual-oof-v1']
+    paths:
+      - 'governance/football3/nova_n3_finishing_keeper_preregistration_v1.json'
+      - 'governance/football3/nova_n3_finishing_keeper_residual_v1.py'
+      - 'governance/football3/nova_n3_identity_bind_v1.py'
+      - 'governance/football3/test_nova_n3_finishing_keeper_residual_v1.py'
+      - '.github/workflows/football3-nova-n3-finishing-keeper-residual-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n3-finishing-keeper-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: 'sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb'
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: 'sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e'
+
+jobs:
+  n3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static module and contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n3_finishing_keeper_residual_v1.py \
+            governance/football3/nova_n3_identity_bind_v1.py \
+            governance/football3/test_nova_n3_finishing_keeper_residual_v1.py
+          python governance/football3/nova_n3_identity_bind_v1.py self-test 2>&1 | tee /tmp/identity_selftest.txt
+          grep -q 'N3_IDENTITY_BIND_SELFTEST_PASS' /tmp/identity_selftest.txt
+          python governance/football3/test_nova_n3_finishing_keeper_residual_v1.py 2>&1 | tee /tmp/n3_tests.txt
+          grep -q 'Ran 6 tests' /tmp/n3_tests.txt
+          grep -q '^OK$' /tmp/n3_tests.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n3_finishing_keeper_preregistration_v1.json'))
+          assert p['status']=='PRECHECK_LOCKED_NO_LABEL_FIT'
+          assert p['cohort']['development']=={'season_start':2020,'expected_n':1826,'role':'DEVELOPMENT_OOF_ONLY'}
+          assert p['cohort']['isolated_test']=={'season_start':2021,'expected_n':1826,'role':'ISOLATED_OPEN_ONCE_AFTER_ROUTE_FREEZE'}
+          assert [r['id'] for r in p['subroutes']]==['R1_W5','R2_W10','R3_EWMA035','R4_W5_W10_STACK']
+          assert p['experiment_budget']['maximum_batches']==2
+          assert p['model']['candidate_weight']==0 and p['model']['matrix_delta']==0
+          assert p['formal_v2']['head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          PY
+
+      - name: Download and verify immutable Formal V2 parents
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _out && mkdir -p _inputs/{v2,xg} _out
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          test "$(sha256sum _inputs/v2/evidence/development_predictions_label_free.jsonl | awk '{print $1}')" = 'd6a22ef46fab6b1712f0142f0ea45282b7628afb87e1842e80cae00058f1b93a'
+          test "$(sha256sum _inputs/xg/evidence/frozen_predictions.jsonl | awk '{print $1}')" = '826f87c940750a564990b1624db66395c921ebfb38a99c7232bdfff35664783a'
+
+      - name: Development source precheck without target labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py source-precheck \
+            --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
+            --season 2020 --out _out/source_dev 2>&1 | tee /tmp/source_dev.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/source_dev/source_receipt_2020.json'))
+          assert r['status']=='N3_SOURCE_PRECHECK_PASS' and r['match_count']==1826
+          assert r['target_label_extracted'] is False and r['current_match_feature_use'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - name: Seal label-free Formal V2 baselines before development labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py baseline-seal \
+            --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
+            --v2-final _inputs/v2/evidence/final_status.json \
+            --v2-development _inputs/v2/evidence/development_predictions_label_free.jsonl \
+            --xg-frozen _inputs/xg/evidence/frozen_predictions.jsonl \
+            --out _out/baseline 2>&1 | tee /tmp/baseline.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/baseline/baseline_seal_receipt.json'))
+          assert r['status']=='N3_FORMAL_V2_BASELINE_LABEL_FREE_SEAL_PASS'
+          assert r['counts']=={'2020':1826,'2021':1826}
+          assert r['max_abs_2022_formal_reproduction_diff'] <= 1e-12
+          assert r['result_labels_read']==0 and r['isolated_labels_read']==0
+          PY
+
+      - name: Bind development source to baseline with zero-label identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_identity_bind_v1.py bind-source \
+            --source _out/source_dev/source_projection_2020.jsonl \
+            --baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
+            --out _out/dev_bind 2>&1 | tee /tmp/dev_bind.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/dev_bind/identity_bind_receipt.json'))
+          assert r['status']=='N3_ZERO_LABEL_IDENTITY_BIND_PASS' and r['bound_n']==1826
+          assert r['target_label_read'] is False and r['result_value_read'] is False and r['score_value_read'] is False
+          assert r['fallback_identity_match_n'] > 0
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - name: Open 2020 development labels only after baseline and identity seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f _out/baseline/baseline_seal_receipt.json
+          test -f _out/dev_bind/source_to_baseline_fixture_map.json
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py label-vault \
+            --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
+            --season 2020 --out _out/dev_labels 2>&1 | tee /tmp/dev_labels.txt
+          python governance/football3/nova_n3_identity_bind_v1.py bind-labels \
+            --labels _out/dev_labels/labels_2020.jsonl \
+            --map _out/dev_bind/source_to_baseline_fixture_map.json \
+            --out _out/dev_label_bind 2>&1 | tee /tmp/dev_label_bind.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/dev_label_bind/label_bind_receipt.json'))
+          assert r['status']=='N3_LABEL_IDENTITY_BIND_PASS' and r['label_n']==1826
+          assert r['binding_map_preexisted_before_label_open'] is True and r['binding_uses_outcome'] is False
+          PY
+
+      - name: Run single preregistered 2020 chronological development OOF
+        id: development
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py development-oof \
+            --source _out/dev_bind/source_projection_bound.jsonl \
+            --baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
+            --labels _out/dev_label_bind/labels_bound.jsonl \
+            --out _out/development 2>&1 | tee /tmp/development.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/development/development_oof_result.json'))
+          assert r['status']=='N3_DEVELOPMENT_OOF_COMPLETE'
+          assert len(r['routes'])==4 and r['oof_evaluation_n']>0
+          assert r['isolated_2021_labels_read']==0
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          for route in r['routes']:
+            assert set(route['league_report'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A'}
+          PY
+          OPEN="$(python - <<'PY'
+          import json
+          print('true' if json.load(open('_out/development/route_freeze.json'))['isolated_open_allowed'] else 'false')
+          PY
+          )"
+          echo "open=${OPEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch and bind 2021 isolated state only after route freeze
+        if: steps.development.outputs.open == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/development/route_freeze.json'))
+          assert r['status']=='N3_ROUTE_FROZEN' and r['isolated_open_allowed'] is True
+          assert r['isolated_2021_labels_read']==0
+          PY
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py source-precheck \
+            --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
+            --season 2021 --out _out/source_iso 2>&1 | tee /tmp/source_iso.txt
+          python governance/football3/nova_n3_identity_bind_v1.py bind-source \
+            --source _out/source_iso/source_projection_2021.jsonl \
+            --baseline _out/baseline/formal_v2_baseline_2021_label_free.jsonl \
+            --out _out/iso_bind 2>&1 | tee /tmp/iso_bind.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/iso_bind/identity_bind_receipt.json'))
+          assert r['status']=='N3_ZERO_LABEL_IDENTITY_BIND_PASS' and r['bound_n']==1826
+          assert r['target_label_read'] is False and r['result_value_read'] is False and r['score_value_read'] is False
+          PY
+
+      - name: Open and bind 2021 isolated labels exactly once
+        if: steps.development.outputs.open == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f _out/iso_bind/source_to_baseline_fixture_map.json
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py label-vault \
+            --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
+            --season 2021 --out _out/iso_labels 2>&1 | tee /tmp/iso_labels.txt
+          python governance/football3/nova_n3_identity_bind_v1.py bind-labels \
+            --labels _out/iso_labels/labels_2021.jsonl \
+            --map _out/iso_bind/source_to_baseline_fixture_map.json \
+            --out _out/iso_label_bind 2>&1 | tee /tmp/iso_label_bind.txt
+
+      - name: Evaluate frozen route once on 2021 isolated test
+        if: steps.development.outputs.open == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py isolated-eval \
+            --dev-source _out/dev_bind/source_projection_bound.jsonl \
+            --iso-source _out/iso_bind/source_projection_bound.jsonl \
+            --dev-baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
+            --iso-baseline _out/baseline/formal_v2_baseline_2021_label_free.jsonl \
+            --dev-labels _out/dev_label_bind/labels_bound.jsonl \
+            --iso-labels _out/iso_label_bind/labels_bound.jsonl \
+            --route-freeze _out/development/route_freeze.json \
+            --out _out/isolated 2>&1 | tee /tmp/isolated.txt
+
+      - name: Finalize terminal scientific receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_finishing_keeper_residual_v1.py finalize \
+            --development-result _out/development/development_oof_result.json \
+            --isolated-result _out/isolated/isolated_result.json \
+            --out _out/final 2>&1 | tee /tmp/final.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/final/final_receipt.json'))
+          assert r['status']=='N3_TERMINAL'
+          assert r['classification'] in {'POSITIVE_SIGNAL','RESEARCH_CANDIDATE','FAIL_CURRENT_IMPLEMENTATION','FAIL_RESEARCH_DIRECTION'}
+          assert r['candidate_activation_allowed'] is False and r['promotion_allowed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n3-finishing-keeper-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            _out/
+            /tmp/identity_selftest.txt
+            /tmp/n3_tests.txt
+            /tmp/source_dev.txt
+            /tmp/baseline.txt
+            /tmp/dev_bind.txt
+            /tmp/dev_labels.txt
+            /tmp/dev_label_bind.txt
+            /tmp/development.txt
+            /tmp/source_iso.txt
+            /tmp/iso_bind.txt
+            /tmp/iso_labels.txt
+            /tmp/iso_label_bind.txt
+            /tmp/isolated.txt
+            /tmp/final.txt
+          if-no-files-found: ignore
+          retention-days: 90

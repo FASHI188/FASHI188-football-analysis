@@ -1,0 +1,105 @@
+{
+  "schema_version": "football3-nova-n3-finishing-keeper-preregistration-v1",
+  "project_id": "football3",
+  "status": "PRECHECK_LOCKED_NO_LABEL_FIT",
+  "research_only": true,
+  "research_question": "Does lagged finishing overperformance and keeper/defensive shot-stopping residual state add reproducible 1X2 information beyond frozen Formal V2 on completed Big-5 matches, using only prior released matches?",
+  "cohort": {
+    "completed_only": true,
+    "competitions": ["EPL", "Bundesliga", "La_liga", "Ligue_1", "Serie_A"],
+    "development": {"season_start": 2020, "expected_n": 1826, "role": "DEVELOPMENT_OOF_ONLY"},
+    "isolated_test": {"season_start": 2021, "expected_n": 1826, "role": "ISOLATED_OPEN_ONCE_AFTER_ROUTE_FREEZE"},
+    "forbidden_prior_test_reuse": [2023, 2025],
+    "j1": {"status": "NOT_AVAILABLE", "n": 0, "coverage": 0.0, "weight": 0, "matrix_delta": 0},
+    "k1": {"status": "NOT_AVAILABLE", "n": 0, "coverage": 0.0, "weight": 0, "matrix_delta": 0}
+  },
+  "source": {
+    "provider": "UNDERSTAT_PUBLIC_AJAX_RESEARCH_ONLY",
+    "permission_class": "SECONDARY_NONCOMMERCIAL_SUPPORT_STATEMENT_NOT_FORMAL_DATA_LICENSE",
+    "production_eligible": false,
+    "development_state_fields": ["scored", "missed", "npxG", "npxGA"],
+    "derived_state_fields": ["finishing_residual=scored-npxG", "keeper_residual=npxGA-missed"],
+    "release_delay_hours": 3
+  },
+  "pit": {
+    "team_history": "prior released matches only",
+    "feature_update_eligible_only_if": "release_at <= target_kickoff",
+    "same_kickoff_atomic": true,
+    "current_match_residual_feature_use": false,
+    "future_feature_use": false,
+    "market_feature_use": false,
+    "isolated_2021_source_or_labels_before_route_freeze": false,
+    "development_labels_before_label_free_baseline_seal": false,
+    "test_preprocessing": "fit on development only"
+  },
+  "model": {
+    "family": "multinomial logistic residual over frozen Formal V2 logits",
+    "task": "1X2 residual expert",
+    "regularization": "L2 ridge",
+    "candidate_weight": 0,
+    "matrix_delta": 0,
+    "score_matrix_policy": "retain exact Formal V2 score matrix during N3 research"
+  },
+  "subroutes": [
+    {"id": "R1_W5", "state": "mean last 5 prior released finishing+keeper residuals", "ridge_c": 0.25},
+    {"id": "R2_W10", "state": "mean last 10 prior released finishing+keeper residuals", "ridge_c": 0.25},
+    {"id": "R3_EWMA035", "state": "EWMA prior released finishing+keeper residuals", "alpha": 0.35, "ridge_c": 0.25},
+    {"id": "R4_W5_W10_STACK", "state": "concatenate W5 and W10 finishing+keeper residual states", "ridge_c": 0.10}
+  ],
+  "development_protocol": {
+    "chronological_only": true,
+    "same_kickoff_atomic": true,
+    "oof_blocks": 5,
+    "warmup_fraction": 0.2,
+    "selection_primary": "largest positive FormalV2-minus-candidate 1X2 LogLoss gain",
+    "qualification": {
+      "logloss_gain_gt": 0.0,
+      "candidate_minus_formal_brier_lte": 0.0005,
+      "candidate_minus_formal_rps_lte": 0.0005,
+      "candidate_minus_formal_ece_lte": 0.005
+    },
+    "small_positive_policy": "If pooled LogLoss gain is positive but secondary qualification fails, preserve POSITIVE_SIGNAL and do not open isolated labels."
+  },
+  "isolated_test_protocol": {
+    "open_once": true,
+    "coverage_min": 0.99,
+    "logloss_gain_gt": 0.0,
+    "positive_test_leagues_min": 3,
+    "worst_league_logloss_degradation_lte": 0.01,
+    "candidate_minus_formal_brier_lte": 0.0005,
+    "candidate_minus_formal_rps_lte": 0.0005,
+    "candidate_minus_formal_ece_lte": 0.005,
+    "pass_classification": "RESEARCH_CANDIDATE",
+    "positive_but_stability_fail_classification": "POSITIVE_SIGNAL",
+    "nonpositive_pooled_test_classification": "FAIL_CURRENT_IMPLEMENTATION"
+  },
+  "metrics": {
+    "primary": "1x2_logloss",
+    "secondary": ["brier", "rps", "top1", "ece", "coverage", "paired_effect"],
+    "group_report": ["EPL", "Bundesliga", "La_liga", "Ligue_1", "Serie_A", "J1", "K1"],
+    "uncertainty": {"method": "paired bootstrap", "repetitions": 5000, "seed": 730301},
+    "score_matrix": "unchanged Formal V2 matrix; candidate matrix_delta=0"
+  },
+  "experiment_budget": {
+    "maximum_batches": 2,
+    "batch_1": "2020 development chronological OOF over exactly R1-R4",
+    "batch_2": "single frozen route on 2021 isolated test opened once only if batch_1 qualifies",
+    "test_second_chance_route_after_open": false
+  },
+  "formal_v2": {
+    "head": "e12f5d1193be5d81f60301cf34ab2140e11712a9",
+    "sole_baseline": true,
+    "must_remain_unchanged": true,
+    "baseline_projection_for_2020_2021": "MUST_BE_SEALED_LABEL_FREE_BEFORE_ANY_N3 DEVELOPMENT LABEL FIT",
+    "audit_reproduction": "Recompute 2022 frozen Formal V2 from immutable parent artifacts and require max_abs_diff <= 1e-12 before using 2020/2021 projections."
+  },
+  "completion": {
+    "allowed_terminal": ["POSITIVE_SIGNAL", "RESEARCH_CANDIDATE", "FAIL_CURRENT_IMPLEMENTATION", "STOP_DATA_COVERAGE", "FAIL_RESEARCH_DIRECTION"],
+    "candidate_activation_allowed": false,
+    "formal_v2_change_allowed": false,
+    "current_change_allowed": false,
+    "production_change_allowed": false,
+    "promotion_allowed": false,
+    "must_persist_quantified_result": true
+  }
+}
