@@ -1,0 +1,143 @@
+name: football3-nova-t60-adapter-dry-run
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_t60_adapter_candidate_v1.json'
+      - 'governance/football3/nova_t60_adapter_candidate_v1.py'
+      - 'governance/football3/test_nova_t60_adapter_candidate_v1.py'
+      - '.github/workflows/football3-nova-t60-adapter-dry-run-v1.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-t60-adapter-dry-run-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  adapter-dry-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Static compile
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_t60_adapter_candidate_v1.py \
+            governance/football3/test_nova_t60_adapter_candidate_v1.py
+
+      - name: Adapter contract tests
+        run: |
+          set -euo pipefail
+          cd governance/football3
+          python test_nova_t60_adapter_candidate_v1.py -v
+
+      - name: Verify immutable artifact bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p bound/source bound/foundation
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/10409176055" \
+            -o bound/source-meta.json
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/10405948511" \
+            -o bound/foundation-meta.json
+          python - <<'PY'
+          import json
+          s=json.load(open('bound/source-meta.json',encoding='utf-8'))
+          f=json.load(open('bound/foundation-meta.json',encoding='utf-8'))
+          assert s['id']==10409176055
+          assert s['digest']=='sha256:be496530b80b54c6e8ff544c2353f11feff4c87a60977d949ed848e77a047bdf'
+          assert s['expired'] is False
+          assert s['workflow_run']['head_sha']=='e1f712e02043b445a5ce2b094fe5aed9c9dd9371'
+          assert f['id']==10405948511
+          assert f['digest']=='sha256:f2c44de713b3dc5b40c9dad80929a3f1e255ff02e0a362651452c9fa8235d28f'
+          assert f['expired'] is False
+          assert f['workflow_run']['head_sha']=='2a6b1279eb483d2ccf9e6bd4f3b05dadb77805f4'
+          PY
+
+      - name: Download immutable bound artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/10409176055/zip" \
+            -o bound/source.zip
+          curl -fsSL -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/10405948511/zip" \
+            -o bound/foundation.zip
+          unzip -q bound/source.zip -d bound/source
+          unzip -q bound/foundation.zip -d bound/foundation
+
+      - name: Dry-run registration and capture plan
+        run: |
+          set -euo pipefail
+          rm -rf t60_adapter_candidate && mkdir -p t60_adapter_candidate
+          python governance/football3/nova_t60_adapter_candidate_v1.py \
+            --config governance/football3/nova_t60_adapter_candidate_v1.json \
+            --source-dir bound/source \
+            --foundation-dir bound/foundation \
+            --out-dir t60_adapter_candidate \
+            --implementation-head "${{ github.event.pull_request.head.sha }}" \
+            | tee t60_adapter_candidate/stdout.txt
+
+      - name: Frozen regression assertions
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p=json.load(open('t60_adapter_candidate/receipt.json',encoding='utf-8'))
+          assert p['status']=='T60_ADAPTER_CANDIDATE_DRY_RUN_PASS'
+          assert p['implementation_head']=='${{ github.event.pull_request.head.sha }}'
+          assert p['source_artifact_id']==10409176055
+          assert p['foundation_artifact_id']==10405948511
+          assert p['fixture_n']==1892
+          assert p['fixture_n_by_competition']=={'Bundesliga':279,'EPL':340,'J1':310,'K1':25,'La_liga':328,'Ligue_1':270,'Serie_A':340}
+          assert p['first_apply_inserted_n']==1892
+          assert p['second_apply_unchanged_n']==1892
+          assert p['same_projection_idempotent'] is True
+          assert p['simulated_kickoff_revision_append_only'] is True
+          assert p['fixture_registry_sha256']=='e31631c8afeaabcfb55cb3bdcd6f8b52c61f1f84402360e0341702aef43c99ab'
+          assert p['capture_plan_sha256']=='54160a5bb50884cc9543e72c54c60bba458bb902ef5eff00119fbc7562a7e598'
+          assert p['capture_plan_n']==1892
+          assert p['active_capture_scheduled_n']==0
+          assert p['runtime_ledger_written'] is False
+          assert p['replay_enabled'] is False and p['replay_coverage_start_at'] is None
+          assert p['coverage_guarantee_active'] is False and p['pre_enablement_coverage_claimed'] is False
+          assert p['result_fields_read']==0 and p['retroactive_coverage_fabrication'] is False
+          assert p['formal_v2_changed'] is False and p['current_changed'] is False and p['production_changed'] is False
+          assert p['candidate_weight']==0 and p['matrix_delta']==0
+          assert p['allowed_next_phase']=='CANDIDATE_FROZEN_ACTIVATION_PRECHECK'
+          PY
+
+      - name: Upload immutable adapter candidate receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-t60-adapter-candidate-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: t60_adapter_candidate/
+          if-no-files-found: error
+          retention-days: 90
