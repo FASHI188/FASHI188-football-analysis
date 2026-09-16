@@ -1,0 +1,108 @@
+name: football3-nova-n2-formal-v2-baseline-seal
+
+on:
+  push:
+    branches: ['football3/nova-n2-lagged-npxg-oof-v1']
+    paths:
+      - 'governance/football3/nova_n2_formal_v2_baseline_seal_v1.py'
+      - 'governance/football3/test_nova_n2_formal_v2_baseline_seal_v1.py'
+      - 'governance/football3/nova_n2_npxg_preregistration_v1.json'
+      - '.github/workflows/football3-nova-n2-formal-v2-baseline-seal-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n2-formal-v2-baseline-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  N2_SOURCE_ARTIFACT_ID: '10445052466'
+  N2_SOURCE_ARTIFACT_DIGEST: 'sha256:d9f766204151200309c6cec661d8b5f2aeb8e32ebc5dfa82159d2c72542fa5fa'
+  V2_ARTIFACT_ID: '9828471485'
+  V2_ARTIFACT_DIGEST: 'sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb'
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: 'sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e'
+  FORMAL_V2_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
+
+jobs:
+  seal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static and module tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n2_formal_v2_baseline_seal_v1.py governance/football3/test_nova_n2_formal_v2_baseline_seal_v1.py
+          python governance/football3/test_nova_n2_formal_v2_baseline_seal_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 4 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download immutable inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _out && mkdir -p _inputs/{n2,v2,xg} _out
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$N2_SOURCE_ARTIFACT_ID" "$N2_SOURCE_ARTIFACT_DIGEST" /tmp/n2.zip _inputs/n2
+          verify_one "$V2_ARTIFACT_ID" "$V2_ARTIFACT_DIGEST" /tmp/v2.zip _inputs/v2
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          test "$(sha256sum _inputs/n2/n2_source/projection.jsonl | awk '{print $1}')" = '24708125d92c134903cd48dd08aabf6f55ccc84ed628cf9d147ccdcbdc773bca'
+          test "$(sha256sum _inputs/v2/evidence/development_predictions_label_free.jsonl | awk '{print $1}')" = 'd6a22ef46fab6b1712f0142f0ea45282b7628afb87e1842e80cae00058f1b93a'
+          test "$(sha256sum _inputs/xg/evidence/frozen_predictions.jsonl | awk '{print $1}')" = '826f87c940750a564990b1624db66395c921ebfb38a99c7232bdfff35664783a'
+
+      - name: Seal label-free Formal V2 baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n2_formal_v2_baseline_seal_v1.py \
+            --prereg governance/football3/nova_n2_npxg_preregistration_v1.json \
+            --source-receipt _inputs/n2/n2_source/receipt.json \
+            --target-projection _inputs/n2/n2_source/projection.jsonl \
+            --v2-final _inputs/v2/evidence/final_status.json \
+            --v2-development-predictions _inputs/v2/evidence/development_predictions_label_free.jsonl \
+            --xg-frozen-predictions _inputs/xg/evidence/frozen_predictions.jsonl \
+            --out _out 2>&1 | tee /tmp/seal_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/baseline_seal_receipt.json'))
+          assert r['status']=='N2_FORMAL_V2_BASELINE_LABEL_FREE_SEAL_PASS'
+          assert r['formal_v2_head']=='e12f5d1193be5d81f60301cf34ab2140e11712a9'
+          assert r['development_n']==1826 and r['isolated_n']==1752
+          assert r['result_labels_read']==0 and r['score_values_read']==0 and r['isolated_labels_read']==0
+          assert r['training_performed'] is False and r['candidate_probabilities_generated'] is False
+          assert r['max_abs_2022_formal_reproduction_diff'] <= 1e-12
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n2-formal-v2-baseline-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            _out/
+            /tmp/tests.txt
+            /tmp/seal_stdout.txt
+          retention-days: 90
