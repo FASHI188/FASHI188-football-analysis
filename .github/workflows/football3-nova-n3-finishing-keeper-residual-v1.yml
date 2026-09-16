@@ -6,6 +6,7 @@ on:
     paths:
       - 'governance/football3/nova_n3_finishing_keeper_preregistration_v1.json'
       - 'governance/football3/nova_n3_finishing_keeper_residual_v1.py'
+      - 'governance/football3/nova_n3_identity_bind_v1.py'
       - 'governance/football3/test_nova_n3_finishing_keeper_residual_v1.py'
       - '.github/workflows/football3-nova-n3-finishing-keeper-residual-v1.yml'
   workflow_dispatch:
@@ -23,7 +24,6 @@ env:
   V2_ARTIFACT_DIGEST: 'sha256:b0b57c910f305978661d026d836a0d16dc3037fcb21c451a535ef4e4a05210bb'
   XG_ARTIFACT_ID: '9826787329'
   XG_ARTIFACT_DIGEST: 'sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e'
-  FORMAL_V2_HEAD: 'e12f5d1193be5d81f60301cf34ab2140e11712a9'
 
 jobs:
   n3:
@@ -39,13 +39,16 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Static, module and contract tests
+      - name: Static module and contract tests
         shell: bash
         run: |
           set -euo pipefail
           python -m py_compile \
             governance/football3/nova_n3_finishing_keeper_residual_v1.py \
+            governance/football3/nova_n3_identity_bind_v1.py \
             governance/football3/test_nova_n3_finishing_keeper_residual_v1.py
+          python governance/football3/nova_n3_identity_bind_v1.py self-test 2>&1 | tee /tmp/identity_selftest.txt
+          grep -q 'N3_IDENTITY_BIND_SELFTEST_PASS' /tmp/identity_selftest.txt
           python governance/football3/test_nova_n3_finishing_keeper_residual_v1.py 2>&1 | tee /tmp/n3_tests.txt
           grep -q 'Ran 6 tests' /tmp/n3_tests.txt
           grep -q '^OK$' /tmp/n3_tests.txt
@@ -83,7 +86,7 @@ jobs:
           test "$(sha256sum _inputs/v2/evidence/development_predictions_label_free.jsonl | awk '{print $1}')" = 'd6a22ef46fab6b1712f0142f0ea45282b7628afb87e1842e80cae00058f1b93a'
           test "$(sha256sum _inputs/xg/evidence/frozen_predictions.jsonl | awk '{print $1}')" = '826f87c940750a564990b1624db66395c921ebfb38a99c7232bdfff35664783a'
 
-      - name: Development source precheck with zero target-label extraction
+      - name: Development source precheck without target labels
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +101,7 @@ jobs:
           assert r['candidate_weight']==0 and r['matrix_delta']==0
           PY
 
-      - name: Seal 2020 and 2021 Formal V2 baselines before development labels
+      - name: Seal label-free Formal V2 baselines before development labels
         shell: bash
         run: |
           set -euo pipefail
@@ -117,19 +120,42 @@ jobs:
           assert r['result_labels_read']==0 and r['isolated_labels_read']==0
           PY
 
-      - name: Open development labels only after baseline seal
+      - name: Bind development source to baseline with zero-label identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n3_identity_bind_v1.py bind-source \
+            --source _out/source_dev/source_projection_2020.jsonl \
+            --baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
+            --out _out/dev_bind 2>&1 | tee /tmp/dev_bind.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/dev_bind/identity_bind_receipt.json'))
+          assert r['status']=='N3_ZERO_LABEL_IDENTITY_BIND_PASS' and r['bound_n']==1826
+          assert r['target_label_read'] is False and r['result_value_read'] is False and r['score_value_read'] is False
+          assert r['fallback_identity_match_n'] > 0
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+
+      - name: Open 2020 development labels only after baseline and identity seal
         shell: bash
         run: |
           set -euo pipefail
           test -f _out/baseline/baseline_seal_receipt.json
+          test -f _out/dev_bind/source_to_baseline_fixture_map.json
           python governance/football3/nova_n3_finishing_keeper_residual_v1.py label-vault \
             --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
             --season 2020 --out _out/dev_labels 2>&1 | tee /tmp/dev_labels.txt
-          test "$(python - <<'PY'
+          python governance/football3/nova_n3_identity_bind_v1.py bind-labels \
+            --labels _out/dev_labels/labels_2020.jsonl \
+            --map _out/dev_bind/source_to_baseline_fixture_map.json \
+            --out _out/dev_label_bind 2>&1 | tee /tmp/dev_label_bind.txt
+          python - <<'PY'
           import json
-          print(json.load(open('_out/dev_labels/label_receipt_2020.json'))['label_count'])
+          r=json.load(open('_out/dev_label_bind/label_bind_receipt.json'))
+          assert r['status']=='N3_LABEL_IDENTITY_BIND_PASS' and r['label_n']==1826
+          assert r['binding_map_preexisted_before_label_open'] is True and r['binding_uses_outcome'] is False
           PY
-          )" = '1826'
 
       - name: Run single preregistered 2020 chronological development OOF
         id: development
@@ -137,9 +163,9 @@ jobs:
         run: |
           set -euo pipefail
           python governance/football3/nova_n3_finishing_keeper_residual_v1.py development-oof \
-            --source _out/source_dev/source_projection_2020.jsonl \
+            --source _out/dev_bind/source_projection_bound.jsonl \
             --baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
-            --labels _out/dev_labels/labels_2020.jsonl \
+            --labels _out/dev_label_bind/labels_bound.jsonl \
             --out _out/development 2>&1 | tee /tmp/development.txt
           python - <<'PY'
           import json
@@ -159,7 +185,7 @@ jobs:
           )"
           echo "open=${OPEN}" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch isolated 2021 state only after route freeze
+      - name: Fetch and bind 2021 isolated state only after route freeze
         if: steps.development.outputs.open == 'true'
         shell: bash
         run: |
@@ -173,16 +199,30 @@ jobs:
           python governance/football3/nova_n3_finishing_keeper_residual_v1.py source-precheck \
             --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
             --season 2021 --out _out/source_iso 2>&1 | tee /tmp/source_iso.txt
+          python governance/football3/nova_n3_identity_bind_v1.py bind-source \
+            --source _out/source_iso/source_projection_2021.jsonl \
+            --baseline _out/baseline/formal_v2_baseline_2021_label_free.jsonl \
+            --out _out/iso_bind 2>&1 | tee /tmp/iso_bind.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_out/iso_bind/identity_bind_receipt.json'))
+          assert r['status']=='N3_ZERO_LABEL_IDENTITY_BIND_PASS' and r['bound_n']==1826
+          assert r['target_label_read'] is False and r['result_value_read'] is False and r['score_value_read'] is False
+          PY
 
-      - name: Open 2021 isolated labels exactly once after route freeze
+      - name: Open and bind 2021 isolated labels exactly once
         if: steps.development.outputs.open == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          test -f _out/source_iso/source_receipt_2021.json
+          test -f _out/iso_bind/source_to_baseline_fixture_map.json
           python governance/football3/nova_n3_finishing_keeper_residual_v1.py label-vault \
             --prereg governance/football3/nova_n3_finishing_keeper_preregistration_v1.json \
             --season 2021 --out _out/iso_labels 2>&1 | tee /tmp/iso_labels.txt
+          python governance/football3/nova_n3_identity_bind_v1.py bind-labels \
+            --labels _out/iso_labels/labels_2021.jsonl \
+            --map _out/iso_bind/source_to_baseline_fixture_map.json \
+            --out _out/iso_label_bind 2>&1 | tee /tmp/iso_label_bind.txt
 
       - name: Evaluate frozen route once on 2021 isolated test
         if: steps.development.outputs.open == 'true'
@@ -190,12 +230,12 @@ jobs:
         run: |
           set -euo pipefail
           python governance/football3/nova_n3_finishing_keeper_residual_v1.py isolated-eval \
-            --dev-source _out/source_dev/source_projection_2020.jsonl \
-            --iso-source _out/source_iso/source_projection_2021.jsonl \
+            --dev-source _out/dev_bind/source_projection_bound.jsonl \
+            --iso-source _out/iso_bind/source_projection_bound.jsonl \
             --dev-baseline _out/baseline/formal_v2_baseline_2020_label_free.jsonl \
             --iso-baseline _out/baseline/formal_v2_baseline_2021_label_free.jsonl \
-            --dev-labels _out/dev_labels/labels_2020.jsonl \
-            --iso-labels _out/iso_labels/labels_2021.jsonl \
+            --dev-labels _out/dev_label_bind/labels_bound.jsonl \
+            --iso-labels _out/iso_label_bind/labels_bound.jsonl \
             --route-freeze _out/development/route_freeze.json \
             --out _out/isolated 2>&1 | tee /tmp/isolated.txt
 
@@ -222,13 +262,18 @@ jobs:
           name: football3-nova-n3-finishing-keeper-${{ github.sha }}-${{ github.run_id }}
           path: |
             _out/
+            /tmp/identity_selftest.txt
             /tmp/n3_tests.txt
             /tmp/source_dev.txt
             /tmp/baseline.txt
+            /tmp/dev_bind.txt
             /tmp/dev_labels.txt
+            /tmp/dev_label_bind.txt
             /tmp/development.txt
             /tmp/source_iso.txt
+            /tmp/iso_bind.txt
             /tmp/iso_labels.txt
+            /tmp/iso_label_bind.txt
             /tmp/isolated.txt
             /tmp/final.txt
           if-no-files-found: ignore
