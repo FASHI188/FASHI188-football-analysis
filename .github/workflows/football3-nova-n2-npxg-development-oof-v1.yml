@@ -1,0 +1,138 @@
+name: football3-nova-n2-npxg-development-oof
+
+on:
+  push:
+    branches: ['football3/nova-n2-lagged-npxg-oof-v1']
+    paths:
+      - 'governance/football3/nova_n2_development_label_vault_v1.py'
+      - 'governance/football3/nova_n2_npxg_development_oof_v1.py'
+      - 'governance/football3/test_nova_n2_npxg_development_oof_v1.py'
+      - '.github/workflows/football3-nova-n2-npxg-development-oof-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n2-development-oof-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  N2_SOURCE_ARTIFACT_ID: '10445052466'
+  N2_SOURCE_ARTIFACT_DIGEST: 'sha256:d9f766204151200309c6cec661d8b5f2aeb8e32ebc5dfa82159d2c72542fa5fa'
+  N2_BASELINE_ARTIFACT_ID: '10447180675'
+  N2_BASELINE_ARTIFACT_DIGEST: 'sha256:729e61784247904f25a2a23995325ac0b6e8c9ce82cd9181f2a93045764af3e6'
+  OLD_DB_ARTIFACT_ID: '9798682425'
+  OLD_DB_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  OLD_DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+jobs:
+  development-oof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Static and module tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            governance/football3/nova_n2_development_label_vault_v1.py \
+            governance/football3/nova_n2_npxg_development_oof_v1.py \
+            governance/football3/test_nova_n2_npxg_development_oof_v1.py
+          python governance/football3/test_nova_n2_npxg_development_oof_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+
+      - name: Download immutable source baseline and completed-history label source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _run && mkdir -p _inputs/{source,baseline,olddb} _run/{labels,oof}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip"
+            unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$N2_SOURCE_ARTIFACT_ID" "$N2_SOURCE_ARTIFACT_DIGEST" /tmp/source.zip _inputs/source
+          verify_one "$N2_BASELINE_ARTIFACT_ID" "$N2_BASELINE_ARTIFACT_DIGEST" /tmp/baseline.zip _inputs/baseline
+          verify_one "$OLD_DB_ARTIFACT_ID" "$OLD_DB_ARTIFACT_DIGEST" /tmp/olddb.zip _inputs/olddb
+          test "$(sha256sum _inputs/source/n2_source/projection.jsonl | awk '{print $1}')" = '24708125d92c134903cd48dd08aabf6f55ccc84ed628cf9d147ccdcbdc773bca'
+          test "$(sha256sum _inputs/olddb/understat_frozen.db | awk '{print $1}')" = "$OLD_DB_SHA256"
+          BASELINE_2022="$(find _inputs/baseline -name formal_v2_baseline_2022_label_free.jsonl -print -quit)"
+          test -n "$BASELINE_2022"
+          test "$(sha256sum "$BASELINE_2022" | awk '{print $1}')" = '1bfa3ff8721b75d6a2e1167da788e1712bdb74508623bb03c96a81c4186f4695'
+          printf '%s\n' "$BASELINE_2022" > /tmp/baseline_2022_path.txt
+
+      - name: Open DEVELOPMENT 2022 labels only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n2_development_label_vault_v1.py \
+            --db _inputs/olddb/understat_frozen.db \
+            --projection _inputs/source/n2_source/projection.jsonl \
+            --out _run/labels 2>&1 | tee /tmp/label_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/labels/development_label_receipt.json'))
+          assert r['status']=='N2_DEVELOPMENT_2022_LABEL_VAULT_PASS'
+          assert r['development_n']==1826 and r['development_season']==2022
+          assert r['isolated_2023_labels_read']==0 and r['queried_season_predicate']==2022
+          assert r['score_fields_emitted'] is False and r['raw_goals_emitted'] is False
+          assert r['training_performed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          PY
+
+      - name: Run preregistered 2022 chronological OOF once
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASELINE_2022="$(cat /tmp/baseline_2022_path.txt)"
+          python governance/football3/nova_n2_npxg_development_oof_v1.py \
+            --source _inputs/source/n2_source/projection.jsonl \
+            --baseline "$BASELINE_2022" \
+            --labels _run/labels/development_2022_labels.jsonl \
+            --out _run/oof 2>&1 | tee /tmp/oof_stdout.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/oof/development_oof_result.json'))
+          assert r['status']=='N2_DEVELOPMENT_OOF_COMPLETE'
+          assert r['classification'] in {'DEVELOPMENT_ROUTE_QUALIFIED','POSITIVE_SIGNAL_DEVELOPMENT_ONLY','FAIL_RESEARCH_DIRECTION'}
+          assert r['development_n']==1826 and r['completed_matches_only'] is True
+          assert r['isolated_2023_labels_read']==0
+          assert len(r['routes'])==4 and {x['route'] for x in r['routes']}=={'R1_W5','R2_W10','R3_EWMA035','R4_W5_W10_STACK'}
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          f=json.load(open('_run/oof/route_freeze.json'))
+          if r['classification']=='DEVELOPMENT_ROUTE_QUALIFIED':
+              assert f['status']=='N2_ROUTE_FROZEN' and f['isolated_open_allowed'] is True and r['selected_route']
+          else:
+              assert f['status']=='N2_NO_ROUTE_FROZEN' and f['isolated_open_allowed'] is False and r['selected_route'] is None
+          assert f['isolated_2023_labels_read']==0
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: football3-nova-n2-development-oof-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/label_stdout.txt
+            /tmp/oof_stdout.txt
+          retention-days: 90
