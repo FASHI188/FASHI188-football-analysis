@@ -22,7 +22,7 @@ class T(unittest.TestCase):
         for i in range(100): rows.append({"kickoff":f"2022-01-{1+i//4:02d}T10:00:00Z"})
         w,b=n4.blocks(rows,.2,5); self.assertGreaterEqual(w,20); self.assertEqual(len(b),5); self.assertEqual(b[-1][1],100)
         source=[{"fixture_id":"f1","kickoff":"2022-01-01T10:00:00Z","home_team_id":"h1","away_team_id":"a1","league":"EPL"},{"fixture_id":"f2","kickoff":"2022-01-02T10:00:00Z","home_team_id":"h2","away_team_id":"a2","league":"EPL"}]
-        baseline=[{"n2_fixture_id":"f2","kickoff":"2022-01-02T10:00:00+00:00","home_team_id":"h2","away_team_id":"a2","league":"EPL"},{"n2_fixture_id":"f1","kickoff":"2022-01-01T10:00:00+00:00","home_team_id":"h1","away_team_id":"a1","league":"EPL"}]
+        baseline=[{"n2_fixture_id":"f2","kickoff":"2022-01-02T10:00:00+00:00","home_team_id":"h2","away_team_id":"a2","league":"EPL","target_label_read":False},{"n2_fixture_id":"f1","kickoff":"2022-01-01T10:00:00+00:00","home_team_id":"h1","away_team_id":"a1","league":"EPL","target_label_read":False}]
         aligned=n4.align_baseline(source,baseline)
         self.assertEqual([x["n2_fixture_id"] for x in aligned],["f1","f2"])
 if __name__=="__main__": unittest.main()
