@@ -16,7 +16,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: football3-nova-n5-rest-congestion-${{ github.sha }}
+  group: football3-nova-n5-rest-congestion-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
 
 env:
@@ -34,11 +34,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Exact frozen HEAD binding
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Static module and contract tests
         run: |
           set -euo pipefail
@@ -115,7 +119,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v7
         with:
-          name: football3-nova-n5-rest-congestion-${{ github.sha }}-${{ github.run_id }}
+          name: football3-nova-n5-rest-congestion-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: |
             _run/
             /tmp/tests.txt
