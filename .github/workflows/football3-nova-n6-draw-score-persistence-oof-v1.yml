@@ -1,0 +1,135 @@
+name: football3-nova-n6-draw-score-persistence-oof
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n6_draw_score_persistence_preregistration_v1.json'
+      - 'governance/football3/nova_n6_formal_v2_baseline_seal_v1.py'
+      - 'governance/football3/nova_n6_draw_score_event_vault_v1.py'
+      - 'governance/football3/nova_n6_draw_score_persistence_oof_v1.py'
+      - 'governance/football3/test_nova_n6_draw_score_persistence_v1.py'
+      - '.github/workflows/football3-nova-n6-draw-score-persistence-oof-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n6-draw-score-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  RESEARCH_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+  XG_ARTIFACT_ID: '9826787329'
+  XG_ARTIFACT_DIGEST: 'sha256:64e9242201006b71265f35a0199d07b1fe1bde1fa68d1c1073310ce40f30ca7e'
+  XG_FROZEN_SHA256: '826f87c940750a564990b1624db66395c921ebfb38a99c7232bdfff35664783a'
+  BASE2022_ARTIFACT_ID: '10447180675'
+  BASE2022_ARTIFACT_DIGEST: 'sha256:729e61784247904f25a2a23995325ac0b6e8c9ce82cd9181f2a93045764af3e6'
+  BASE2022_SHA256: '1bfa3ff8721b75d6a2e1167da788e1712bdb74508623bb03c96a81c4186f4695'
+  DB_ARTIFACT_ID: '9798682425'
+  DB_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+jobs:
+  n6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RESEARCH_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static module and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n6_formal_v2_baseline_seal_v1.py governance/football3/nova_n6_draw_score_event_vault_v1.py governance/football3/nova_n6_draw_score_persistence_oof_v1.py governance/football3/test_nova_n6_draw_score_persistence_v1.py
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n6_draw_score_persistence_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n6_draw_score_persistence_preregistration_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_PRELABEL'
+          assert p['data']['development_season_start']==2020 and p['data']['development_n']==1826
+          assert p['data']['n3_2021_isolated_must_remain_unopened'] is True
+          assert p['data']['n2_2023_isolated_must_remain_unopened'] is True
+          assert p['data']['n1_2025_isolated_reuse_forbidden'] is True
+          assert p['experiment_budget']['maximum_batches']==1 and p['experiment_budget']['isolated_open_allowed'] is False
+          assert [x['id'] for x in p['subroutes']]==['R1_DRAW_W10','R2_LOW_TOTAL_W10','R3_TIGHT_MARGIN_W10','R4_W5_W10_COMBINED']
+          assert p['model']['candidate_weight']==0 and p['model']['matrix_delta']==0
+          PY
+      - name: Download and verify immutable inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _run && mkdir -p _inputs/{xg,base22,db} _run/{base,data,oof}
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip" && unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$XG_ARTIFACT_ID" "$XG_ARTIFACT_DIGEST" /tmp/xg.zip _inputs/xg
+          verify_one "$BASE2022_ARTIFACT_ID" "$BASE2022_ARTIFACT_DIGEST" /tmp/base22.zip _inputs/base22
+          verify_one "$DB_ARTIFACT_ID" "$DB_ARTIFACT_DIGEST" /tmp/db.zip _inputs/db
+          XG="$(find _inputs/xg -name frozen_predictions.jsonl -print -quit)"; test -n "$XG"; test "$(sha256sum "$XG" | awk '{print $1}')" = "$XG_FROZEN_SHA256"
+          BASE22="$(find _inputs/base22 -name formal_v2_baseline_2022_label_free.jsonl -print -quit)"; test -n "$BASE22"; test "$(sha256sum "$BASE22" | awk '{print $1}')" = "$BASE2022_SHA256"
+          DB="$(find _inputs/db -name understat_frozen.db -print -quit)"; test -n "$DB"; test "$(sha256sum "$DB" | awk '{print $1}')" = "$DB_SHA256"
+          printf '%s\n' "$XG" >/tmp/xg_path.txt; printf '%s\n' "$BASE22" >/tmp/base22_path.txt; printf '%s\n' "$DB" >/tmp/db_path.txt
+      - name: Seal 2020 Formal V2 baseline label-free before development labels
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n6_formal_v2_baseline_seal_v1.py --prereg governance/football3/nova_n6_draw_score_persistence_preregistration_v1.json --xg "$(cat /tmp/xg_path.txt)" --crosscheck "$(cat /tmp/base22_path.txt)" --out _run/base 2>&1 | tee /tmp/baseline.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/base/baseline_seal_receipt.json'))
+          assert r['status']=='N6_FORMAL_V2_2020_LABEL_FREE_SEAL_PASS' and r['development_n']==1826
+          assert r['max_abs_2022_formal_reproduction_diff']==0.0
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['isolated_2021_labels_read']==r['isolated_2023_labels_read']==r['isolated_2025_labels_read']==0
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          PY
+      - name: Open only 2020 development event and label vault
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n6_draw_score_event_vault_v1.py --prereg governance/football3/nova_n6_draw_score_persistence_preregistration_v1.json --db "$(cat /tmp/db_path.txt)" --baseline _run/base/formal_v2_baseline_2020_label_free.jsonl --out _run/data 2>&1 | tee /tmp/data.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/data/event_vault_receipt.json'))
+          assert r['status']=='N6_2020_EVENT_LABEL_VAULT_PASS' and r['development_n']==1826
+          assert r['raw_goal_values_emitted'] is False and r['other_season_rows_read']==0
+          assert r['isolated_2021_labels_read']==r['isolated_2023_labels_read']==r['isolated_2025_labels_read']==0
+          PY
+      - name: Run exactly four preregistered chronological OOF routes
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n6_draw_score_persistence_oof_v1.py --prereg governance/football3/nova_n6_draw_score_persistence_preregistration_v1.json --events _run/data/history_events_2020.jsonl --baseline _run/base/formal_v2_baseline_2020_label_free.jsonl --labels _run/data/labels_2020.jsonl --out _run/oof --research-head "$RESEARCH_HEAD" 2>&1 | tee /tmp/oof.txt
+          python - <<'PY'
+          import json,os
+          r=json.load(open('_run/oof/final_receipt.json'))
+          assert r['status']=='N6_TERMINAL' and r['research_head']==os.environ['RESEARCH_HEAD']
+          assert r['classification'] in {'POSITIVE_SIGNAL','FAIL_RESEARCH_DIRECTION'}
+          assert r['development_n']==1826 and r['completed_matches_only'] is True
+          assert len(r['routes'])==4 and {x['route'] for x in r['routes']}=={'R1_DRAW_W10','R2_LOW_TOTAL_W10','R3_TIGHT_MARGIN_W10','R4_W5_W10_COMBINED'}
+          assert set(r['league_report'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A','J1','K1'}
+          assert r['isolated_2021_labels_read']==r['isolated_2023_labels_read']==r['isolated_2025_labels_read']==0
+          assert r['candidate_activation_allowed'] is False and r['research_candidate_allowed'] is False and r['promotion_allowed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False and r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n6-draw-score-${{ env.RESEARCH_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/baseline.txt
+            /tmp/data.txt
+            /tmp/oof.txt
+          retention-days: 90
