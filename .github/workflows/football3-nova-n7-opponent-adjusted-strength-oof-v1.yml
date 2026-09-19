@@ -1,0 +1,84 @@
+name: football3-nova-n7-opponent-adjusted-strength-oof
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n7_opponent_adjusted_strength_preregistration_v1.json'
+      - 'governance/football3/nova_n7_baseline_binding_v1.py'
+      - 'governance/football3/nova_n7_result_event_vault_v1.py'
+      - 'governance/football3/nova_n7_opponent_adjusted_strength_oof_v1.py'
+      - 'governance/football3/test_nova_n7_opponent_adjusted_strength_v1.py'
+      - '.github/workflows/football3-nova-n7-opponent-adjusted-strength-oof-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: football3-nova-n7-strength-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+env:
+  RESEARCH_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_ARTIFACT_ID: '10447180675'
+  BASE_ARTIFACT_DIGEST: 'sha256:729e61784247904f25a2a23995325ac0b6e8c9ce82cd9181f2a93045764af3e6'
+  BASE_SHA256: '1bfa3ff8721b75d6a2e1167da788e1712bdb74508623bb03c96a81c4186f4695'
+  DB_ARTIFACT_ID: '9798682425'
+  DB_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+jobs:
+  n7:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RESEARCH_HEAD }}
+          fetch-depth: 0
+      - name: Exact frozen HEAD binding
+        run: test "$(git rev-parse HEAD)" = "$RESEARCH_HEAD"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n7_baseline_binding_v1.py governance/football3/nova_n7_result_event_vault_v1.py governance/football3/nova_n7_opponent_adjusted_strength_oof_v1.py governance/football3/test_nova_n7_opponent_adjusted_strength_v1.py
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n7_opponent_adjusted_strength_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt && grep -q '^OK$' /tmp/tests.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n7_opponent_adjusted_strength_preregistration_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_PRELABEL' and p['data']['development_n']==1826 and p['data']['development_season_start']==2022
+          assert [x['id'] for x in p['subroutes']]==['R1_ELO_DIFF','R2_ELO_PLUS_SHOCK5','R3_ELO_PLUS_VENUE','R4_ELO_NONLINEAR']
+          assert p['experiment_budget']['maximum_batches']==1 and p['experiment_budget']['isolated_open_allowed'] is False
+          assert p['model']['candidate_weight']==0 and p['model']['matrix_delta']==0
+          PY
+      - name: Download and verify immutable inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _inputs _run && mkdir -p _inputs/{base,db} _run/{bind,data,oof}
+          verify_one(){ id="$1"; expected="$2"; zip="$3"; dest="$4"; got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"; test "$got" = "$expected"; curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"; test "sha256:$(sha256sum "$zip"|awk '{print $1}')" = "$expected"; unzip -tq "$zip"; unzip -q "$zip" -d "$dest"; }
+          verify_one "$BASE_ARTIFACT_ID" "$BASE_ARTIFACT_DIGEST" /tmp/base.zip _inputs/base
+          verify_one "$DB_ARTIFACT_ID" "$DB_ARTIFACT_DIGEST" /tmp/db.zip _inputs/db
+          BASE="$(find _inputs/base -name formal_v2_baseline_2022_label_free.jsonl -print -quit)"; DB="$(find _inputs/db -name understat_frozen.db -print -quit)"; test -n "$BASE"; test -n "$DB"; test "$(sha256sum "$BASE"|awk '{print $1}')" = "$BASE_SHA256"; test "$(sha256sum "$DB"|awk '{print $1}')" = "$DB_SHA256"; printf '%s\n' "$BASE" >/tmp/base_path; printf '%s\n' "$DB" >/tmp/db_path
+      - name: Bind label-free Formal V2 baseline
+        run: python governance/football3/nova_n7_baseline_binding_v1.py --prereg governance/football3/nova_n7_opponent_adjusted_strength_preregistration_v1.json --baseline "$(cat /tmp/base_path)" --out _run/bind | tee /tmp/bind.txt
+      - name: Open only 2022 completed result-event development vault
+        run: python governance/football3/nova_n7_result_event_vault_v1.py --prereg governance/football3/nova_n7_opponent_adjusted_strength_preregistration_v1.json --db "$(cat /tmp/db_path)" --baseline "$(cat /tmp/base_path)" --out _run/data | tee /tmp/data.txt
+      - name: Run exactly four preregistered chronological OOF routes
+        run: |
+          python governance/football3/nova_n7_opponent_adjusted_strength_oof_v1.py --prereg governance/football3/nova_n7_opponent_adjusted_strength_preregistration_v1.json --events _run/data/history_events_2022.jsonl --baseline "$(cat /tmp/base_path)" --labels _run/data/labels_2022.jsonl --out _run/oof --research-head "$RESEARCH_HEAD" | tee /tmp/oof.txt
+          python - <<'PY'
+          import json,os
+          r=json.load(open('_run/oof/final_receipt.json')); assert r['status']=='N7_TERMINAL' and r['research_head']==os.environ['RESEARCH_HEAD']; assert r['classification'] in {'POSITIVE_SIGNAL','FAIL_RESEARCH_DIRECTION'}; assert len(r['routes'])==4; assert set(r['league_report'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A','J1','K1'}; assert r['isolated_2021_labels_read']==r['isolated_2023_labels_read']==r['isolated_2025_labels_read']==0; assert r['candidate_activation_allowed'] is False and r['promotion_allowed'] is False; assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False and r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n7-opponent-adjusted-strength-${{ env.RESEARCH_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/bind.txt
+            /tmp/data.txt
+            /tmp/oof.txt
+          retention-days: 90
