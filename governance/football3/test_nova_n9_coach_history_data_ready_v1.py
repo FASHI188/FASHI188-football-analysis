@@ -13,10 +13,13 @@ class N9CoachTests(unittest.TestCase):
         self.assertGreater(sim('Rennes','Stade Rennais Football Club'),.70)
         self.assertGreater(sim('Brest','Stade Brestois 29'),.60)
     def test_target_manager_direct_excluded_by_48h(self):
-        games=[{'game_id':'1','date':'2022-08-01','home_club_id':'10','away_club_id':'20','home_club_manager_name':'M1','away_club_manager_name':'M2'}]
+        games=[
+          {'game_id':'1','date':'2022-07-25','home_club_id':'10','away_club_id':'20','home_club_manager_name':'OLD','away_club_manager_name':'M2'},
+          {'game_id':'2','date':'2022-08-01','home_club_id':'10','away_club_id':'30','home_club_manager_name':'TARGET','away_club_manager_name':'M3'}]
         ev,_=manager_events(games,48)
-        cutoff=datetime(2022,8,1,20,tzinfo=timezone.utc)
-        self.assertFalse(state_at(ev[10],cutoff)['available'])
+        cutoff=datetime(2022,8,4,20,tzinfo=timezone.utc)
+        raw=state_at(ev[10],cutoff); self.assertEqual(raw['source_game_id'],2)
+        safe=state_at(ev[10],cutoff,2); self.assertTrue(safe['available']); self.assertEqual(safe['source_game_id'],1); self.assertEqual(safe['manager'],'OLD')
     def test_prior_manager_becomes_available(self):
         games=[{'game_id':'1','date':'2022-08-01','home_club_id':'10','away_club_id':'20','home_club_manager_name':'M1','away_club_manager_name':'M2'}]
         ev,_=manager_events(games,48)
