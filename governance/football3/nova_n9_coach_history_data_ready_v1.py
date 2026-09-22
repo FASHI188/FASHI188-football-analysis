@@ -25,9 +25,12 @@ def utc(v:str)->datetime:
 def norm_name(s:str)->str:
     x=unicodedata.normalize('NFKD',str(s or '')).encode('ascii','ignore').decode().lower()
     x=x.replace('&',' and ')
-    x=re.sub(r'\b(football club|fussball club|fussballclub|calcio|club de futbol|club football)\b',' ',x)
+    # Cross-source identity only: remove legal/entity wrappers and generic football-form words.
+    # Geographic and brand-bearing tokens remain; no result/label fields participate.
+    x=re.sub(r'\\b(football club|fussball club|fussballclub|club de futbol|club football|associazione sportiva|societa sportiva|societa|associazione|rasenballsport|olympique|stade|calcio)\\b',' ',x)
     x=re.sub(r'[^a-z0-9]+',' ',x)
-    toks=[t for t in x.split() if t not in {'fc','cf','ac','ssc','afc','as','ogc','sv','vfb','rb','rc','sc'}]
+    drop={'fc','cf','ac','ssc','afc','as','ogc','sv','vfb','rb','rc','sc','ss','us','uc','ud','ca','rcd','fsv','vfl','tsg','osc','bsc','bc','club','foot','spa','srl','sad','plc','ltd','de','del','di','da','the'}
+    toks=[tok for tok in x.split() if tok not in drop and not tok.isdigit()]
     return ''.join(toks)
 def sim(a:str,b:str)->float: return SequenceMatcher(None,norm_name(a),norm_name(b)).ratio()
 

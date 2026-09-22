@@ -7,6 +7,11 @@ class N9CoachTests(unittest.TestCase):
     def test_name_normalization(self):
         self.assertGreater(sim('Paris Saint Germain','Paris Saint-Germain'),.95)
         self.assertGreater(sim('Bayern Munich','Bayern München'),.70)
+        self.assertEqual(norm_name('Società Sportiva Lazio S.p.A.'),'lazio')
+        self.assertEqual(norm_name('Club Atlético de Madrid S.A.D.'),'atleticomadrid')
+        self.assertEqual(norm_name('RasenBallsport Leipzig'),norm_name('RB Leipzig'))
+        self.assertGreater(sim('Rennes','Stade Rennais Football Club'),.70)
+        self.assertGreater(sim('Brest','Stade Brestois 29'),.60)
     def test_target_manager_direct_excluded_by_48h(self):
         games=[{'game_id':'1','date':'2022-08-01','home_club_id':'10','away_club_id':'20','home_club_manager_name':'M1','away_club_manager_name':'M2'}]
         ev,_=manager_events(games,48)
@@ -18,10 +23,12 @@ class N9CoachTests(unittest.TestCase):
         cutoff=datetime(2022,8,4,12,tzinfo=timezone.utc)
         s=state_at(ev[10],cutoff); self.assertTrue(s['available']); self.assertEqual(s['manager'],'M1')
     def test_bind_uses_names_not_results(self):
-        targets=[{'fixture_id':'u1','date':'2022-08-05','league':'Serie_A','home_name':'Lazio','away_name':'Bologna'}]
-        games=[{'game_id':'9','competition_id':'IT1','season':'2022','date':'2022-08-05','home_club_name':'Società Sportiva Lazio S.p.A.','away_club_name':'Bologna Football Club 1909','home_club_id':'1','away_club_id':'2'}]
+        targets=[{'fixture_id':'u1','date':'2022-11-06','league':'Serie_A','home_name':'Roma','away_name':'Lazio'}]
+        games=[
+          {'game_id':'9','competition_id':'IT1','season':'2022','date':'2022-11-06','home_club_name':'Associazione Sportiva Roma','away_club_name':'Società Sportiva Lazio S.p.A.','home_club_id':'1','away_club_id':'2'},
+          {'game_id':'10','competition_id':'IT1','season':'2022','date':'2022-11-06','home_club_name':'AC Monza','away_club_name':'Hellas Verona','home_club_id':'3','away_club_id':'4'}]
         cfg={'minimum_side_similarity':.20,'minimum_pair_similarity':.80,'minimum_margin':.08}
-        b,d=bind_targets(targets,games,{'Serie_A':'IT1'},cfg); self.assertEqual(len(b),1); self.assertFalse(d)
+        b,d=bind_targets(targets,games,{'Serie_A':'IT1'},cfg); self.assertEqual(len(b),1); self.assertFalse(d); self.assertEqual(b[0]['tm_game_id'],9)
     def test_ambiguous_binding_fails_closed(self):
         targets=[{'fixture_id':'u1','date':'2022-08-05','league':'EPL','home_name':'Alpha','away_name':'Beta'}]
         games=[
