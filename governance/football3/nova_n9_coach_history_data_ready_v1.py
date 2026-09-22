@@ -27,7 +27,7 @@ def norm_name(s:str)->str:
     x=x.replace('&',' and ')
     # Cross-source identity only: remove legal/entity wrappers and generic football-form words.
     # Geographic and brand-bearing tokens remain; no result/label fields participate.
-    x=re.sub(r'\\b(football club|fussball club|fussballclub|club de futbol|club football|associazione sportiva|societa sportiva|societa|associazione|rasenballsport|olympique|stade|calcio)\\b',' ',x)
+    x=re.sub(r'\b(football club|fussball club|fussballclub|club de futbol|club football|associazione sportiva|societa sportiva|societa|associazione|rasenballsport|olympique|stade|calcio)\b',' ',x)
     x=re.sub(r'[^a-z0-9]+',' ',x)
     drop={'fc','cf','ac','ssc','afc','as','ogc','sv','vfb','rb','rc','sc','ss','us','uc','ud','ca','rcd','fsv','vfl','tsg','osc','bsc','bc','club','foot','spa','srl','sad','plc','ltd','de','del','di','da','the'}
     toks=[tok for tok in x.split() if tok not in drop and not tok.isdigit()]
