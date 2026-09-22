@@ -1,0 +1,186 @@
+name: football3-nova-n8-shot-quality-setpiece-oof
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n8_shot_quality_setpiece_preregistration_v1.json'
+      - 'governance/football3/nova_n8_shot_quality_setpiece_source_v1.py'
+      - 'governance/football3/nova_n8_shot_quality_setpiece_label_vault_v1.py'
+      - 'governance/football3/nova_n8_shot_quality_setpiece_oof_v1.py'
+      - 'governance/football3/test_nova_n8_shot_quality_setpiece_oof_v1.py'
+      - '.github/workflows/football3-nova-n8-shot-quality-setpiece-oof-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n8-shot-quality-setpiece-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  BASELINE_ARTIFACT_ID: '10447180675'
+  BASELINE_ARTIFACT_DIGEST: 'sha256:729e61784247904f25a2a23995325ac0b6e8c9ce82cd9181f2a93045764af3e6'
+  BASELINE_2022_SHA256: '1bfa3ff8721b75d6a2e1167da788e1712bdb74508623bb03c96a81c4186f4695'
+  OLD_DB_ARTIFACT_ID: '9798682425'
+  OLD_DB_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  OLD_DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+
+jobs:
+  n8:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Resolve exact candidate head
+        id: head
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ github.event.pull_request.head.sha || github.sha }}'
+          test -n "$expected"
+          echo "sha=$expected" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          fetch-depth: 0
+      - name: Exact frozen HEAD binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '${{ steps.head.outputs.sha }}'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static module and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n8_shot_quality_setpiece_source_v1.py governance/football3/nova_n8_shot_quality_setpiece_label_vault_v1.py governance/football3/nova_n8_shot_quality_setpiece_oof_v1.py governance/football3/test_nova_n8_shot_quality_setpiece_oof_v1.py
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n8_shot_quality_setpiece_oof_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n8_shot_quality_setpiece_preregistration_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_PRELABEL'
+          assert p['data']['development_season_start']==2022 and p['data']['development_n']==1826
+          assert p['experiment_budget']['maximum_batches']==1 and p['experiment_budget']['isolated_open_allowed'] is False
+          assert [x['id'] for x in p['subroutes']]==['R1_OPENPLAY_QUALITY','R2_SETPIECE_SHARE','R3_HIGHQ_DISPERSION','R4_COMBINED_FIXED']
+          assert p['model']['candidate_weight']==0 and p['model']['matrix_delta']==0
+          assert p['source']['production_eligible'] is False
+          PY
+      - name: Download and verify immutable Formal V2 baseline and frozen research DB
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run _inputs && mkdir -p _run/source _run/labels _run/oof _run/final _inputs/baseline _inputs/source_db _inputs/label_db
+          verify_one() {
+            id="$1" expected="$2" zip="$3" dest="$4"
+            got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" --jq '.digest')"
+            test "$got" = "$expected"
+            curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" -o "$zip"
+            test "sha256:$(sha256sum "$zip" | awk '{print $1}')" = "$expected"
+            unzip -tq "$zip" && unzip -q "$zip" -d "$dest"
+          }
+          verify_one "$BASELINE_ARTIFACT_ID" "$BASELINE_ARTIFACT_DIGEST" /tmp/base.zip _inputs/baseline
+          verify_one "$OLD_DB_ARTIFACT_ID" "$OLD_DB_ARTIFACT_DIGEST" /tmp/source_db.zip _inputs/source_db
+          BASELINE="$(find _inputs/baseline -name formal_v2_baseline_2022_label_free.jsonl -print -quit)"; test -n "$BASELINE"
+          DB="$(find _inputs/source_db -name understat_frozen.db -print -quit)"; test -n "$DB"
+          test "$(sha256sum "$BASELINE" | awk '{print $1}')" = "$BASELINE_2022_SHA256"
+          test "$(sha256sum "$DB" | awk '{print $1}')" = "$OLD_DB_SHA256"
+          printf '%s\n' "$BASELINE" > /tmp/baseline_path.txt
+          printf '%s\n' "$DB" > /tmp/source_db_path.txt
+      - name: Zero-label shot-event source projection
+        run: |
+          set -euo pipefail
+          DB="$(cat /tmp/source_db_path.txt)"
+          python governance/football3/nova_n8_shot_quality_setpiece_source_v1.py --prereg governance/football3/nova_n8_shot_quality_setpiece_preregistration_v1.json --db "$DB" --out _run/source 2>&1 | tee /tmp/source.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/source/source_receipt.json'))
+          assert r['status']=='N8_SHOT_SOURCE_PRECHECK_PASS' and r['development_n']==1826 and r['fixture_id_unique_count']==1826
+          assert r['result_labels_read']==0 and r['score_values_read']==0 and r['market_values_read']==0
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+          rm -rf _inputs/source_db
+      - name: Re-download label vault only after source and baseline seal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_DB_ARTIFACT_ID}/zip" -o /tmp/label_db.zip
+          test "sha256:$(sha256sum /tmp/label_db.zip | awk '{print $1}')" = "$OLD_DB_ARTIFACT_DIGEST"
+          unzip -tq /tmp/label_db.zip && unzip -q /tmp/label_db.zip -d _inputs/label_db
+          DB="$(find _inputs/label_db -name understat_frozen.db -print -quit)"; test -n "$DB"
+          test "$(sha256sum "$DB" | awk '{print $1}')" = "$OLD_DB_SHA256"
+          printf '%s\n' "$DB" > /tmp/label_db_path.txt
+      - name: Open development 2022 labels only
+        run: |
+          set -euo pipefail
+          DB="$(cat /tmp/label_db_path.txt)"
+          python governance/football3/nova_n8_shot_quality_setpiece_label_vault_v1.py --db "$DB" --projection _run/source/shot_state_2022.jsonl --out _run/labels 2>&1 | tee /tmp/labels.txt
+          rm -rf _inputs/label_db
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/labels/label_receipt.json'))
+          assert r['status']=='N8_DEVELOPMENT_2022_LABEL_VAULT_PASS' and r['development_n']==1826
+          assert r['n1_2025_isolated_labels_read']==0 and r['n2_2023_isolated_labels_read']==0 and r['n3_2021_isolated_labels_read']==0
+          assert r['raw_goals_emitted'] is False and r['score_fields_emitted'] is False
+          PY
+      - name: Run exactly four preregistered chronological OOF routes
+        run: |
+          set -euo pipefail
+          BASELINE="$(cat /tmp/baseline_path.txt)"
+          python governance/football3/nova_n8_shot_quality_setpiece_oof_v1.py --prereg governance/football3/nova_n8_shot_quality_setpiece_preregistration_v1.json --source _run/source/shot_state_2022.jsonl --baseline "$BASELINE" --labels _run/labels/labels_2022.jsonl --out _run/oof 2>&1 | tee /tmp/oof.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/oof/development_oof_result.json'))
+          assert r['status']=='N8_DEVELOPMENT_OOF_COMPLETE'
+          assert r['classification'] in {'POSITIVE_SIGNAL','FAIL_RESEARCH_DIRECTION'}
+          assert r['development_n']==1826 and r['completed_matches_only'] is True
+          assert len(r['routes'])==4 and {x['route'] for x in r['routes']}=={'R1_OPENPLAY_QUALITY','R2_SETPIECE_SHARE','R3_HIGHQ_DISPERSION','R4_COMBINED_FIXED'}
+          assert set(r['league_report'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A','J1','K1'}
+          assert r['n1_2025_isolated_labels_read']==0 and r['n2_2023_isolated_labels_read']==0 and r['n3_2021_isolated_labels_read']==0
+          assert r['candidate_activation_allowed'] is False and r['promotion_allowed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False and r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - name: Seal terminal receipt
+        env:
+          EXPECTED_HEAD: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          s=json.load(open('_run/source/source_receipt.json'))
+          l=json.load(open('_run/labels/label_receipt.json'))
+          r=json.load(open('_run/oof/development_oof_result.json'))
+          out={
+            'schema_version':'football3-nova-n8-terminal-receipt-v1',
+            'status':'N8_TERMINAL',
+            'classification':r['classification'],
+            'exact_head':os.environ['EXPECTED_HEAD'],
+            'development_n':r['development_n'],
+            'oof_evaluation_n':r['oof_evaluation_n'],
+            'best_signal_route':r['best_signal_route'],
+            'best_formal_minus_candidate_logloss':r['best_formal_minus_candidate_logloss'],
+            'source_projection_sha256':s['state_projection_sha256'],
+            'label_sha256':l['label_sha256'],
+            'isolated_labels_read':{'n1_2025':r['n1_2025_isolated_labels_read'],'n2_2023':r['n2_2023_isolated_labels_read'],'n3_2021':r['n3_2021_isolated_labels_read']},
+            'formal_v2_changed':r['formal_v2_changed'],
+            'current_changed':r['current_changed'],
+            'production_changed':r['production_changed'],
+            'candidate_weight':r['candidate_weight'],
+            'matrix_delta':r['matrix_delta']
+          }
+          open('_run/final/final_receipt.json','w').write(json.dumps(out,indent=2,sort_keys=True)+'\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n8-shot-quality-setpiece-${{ steps.head.outputs.sha }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/source.txt
+            /tmp/labels.txt
+            /tmp/oof.txt
+          retention-days: 90
