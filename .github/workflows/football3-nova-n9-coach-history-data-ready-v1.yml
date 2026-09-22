@@ -1,0 +1,100 @@
+name: football3-nova-n9-coach-history-data-ready
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n9_coach_history_data_ready_prereg_v1.json'
+      - 'governance/football3/nova_n9_coach_history_data_ready_v1.py'
+      - 'governance/football3/test_nova_n9_coach_history_data_ready_v1.py'
+      - '.github/workflows/football3-nova-n9-coach-history-data-ready-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n9-coach-history-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+  OLD_DB_ARTIFACT_ID: '9798682425'
+  OLD_DB_ARTIFACT_DIGEST: 'sha256:01b655b2748b1e601d82c61e12d763ed50c2db40c3b3b8802aec807c6ac6acba'
+  OLD_DB_SHA256: 'f102eae39b4036a4c24e5b75b9cee551064cf1e7d4fd028966cd62a5784d8681'
+  TM_GAMES_URL: 'https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/games.csv.gz'
+
+jobs:
+  n9-coach-data-ready:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n9_coach_history_data_ready_v1.py governance/football3/test_nova_n9_coach_history_data_ready_v1.py
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n9_coach_history_data_ready_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n9_coach_history_data_ready_prereg_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_ZERO_LABEL'
+          assert p['exact_base']=='b74a57e169b831cd516216dc7dd8b318ddf19a32'
+          assert p['source']['revision']=='e44f186d6f06dd8452aaf54c7921ba66c961f637'
+          assert p['source']['license']=='CC0-1.0'
+          assert p['pit_contract']['target_match_manager_direct_feature_allowed'] is False
+          assert p['target_cohort']['labels_allowed'] is False and p['target_cohort']['training_allowed'] is False
+          assert p['formal_state']['candidate_weight']==0 and p['formal_state']['matrix_delta']==0
+          PY
+      - name: Download and verify frozen Understat identity base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _inputs/olddb _run
+          got="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_DB_ARTIFACT_ID}" --jq '.digest')"
+          test "$got" = "$OLD_DB_ARTIFACT_DIGEST"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${OLD_DB_ARTIFACT_ID}/zip" -o /tmp/db.zip
+          test "sha256:$(sha256sum /tmp/db.zip | awk '{print $1}')" = "$OLD_DB_ARTIFACT_DIGEST"
+          unzip -tq /tmp/db.zip && unzip -q /tmp/db.zip -d _inputs/olddb
+          test "$(sha256sum _inputs/olddb/understat_frozen.db | awk '{print $1}')" = "$OLD_DB_SHA256"
+      - name: Acquire manager history source and record content SHA
+        run: |
+          set -euo pipefail
+          curl --retry 4 --retry-all-errors --connect-timeout 20 --max-time 180 -fsSL "$TM_GAMES_URL" -o _inputs/games.csv.gz
+          test -s _inputs/games.csv.gz
+          printf '%s\n' "$(sha256sum _inputs/games.csv.gz | awk '{print $1}')" | tee /tmp/tm_games_sha256.txt
+      - name: Zero-label identity and PIT data-ready audit
+        run: |
+          set -euo pipefail
+          python governance/football3/nova_n9_coach_history_data_ready_v1.py             --prereg governance/football3/nova_n9_coach_history_data_ready_prereg_v1.json             --db _inputs/olddb/understat_frozen.db             --games-gz _inputs/games.csv.gz             --out _run             --exact-head "$CANDIDATE_HEAD" 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json, os
+          r=json.load(open('_run/data_ready_receipt.json'))
+          assert r['exact_head']==os.environ['CANDIDATE_HEAD']
+          assert r['target_n']==1826 and r['identity_bound_n']==1826 and r['identity_coverage']==1.0
+          assert r['target_match_manager_direct_feature_used']==0
+          assert r['result_labels_read']==0 and r['score_values_read']==0 and r['xg_values_read']==0 and r['market_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert set(r['league_report'])=={'EPL','Bundesliga','La_liga','Ligue_1','Serie_A'}
+          assert r['status'] in {'N9_COACH_HISTORY_DATA_READY','STOP_DATA_COVERAGE'}
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n9-coach-history-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/tm_games_sha256.txt
+            /tmp/audit.txt
+          retention-days: 90
