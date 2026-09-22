@@ -59,19 +59,42 @@ def bind_targets(targets:list[dict[str,Any]], games:list[dict[str,str]], league_
         if g['competition_id'] in league_ids and g['season']=='2022': by[(g['competition_id'],g['date'])].append(g)
     bound=[]; diagnostics=[]
     min_side=float(cfg['minimum_side_similarity']); min_pair=float(cfg['minimum_pair_similarity']); margin=float(cfg['minimum_margin'])
-    for t in targets:
-        cand=by.get((league_map[t['league']],t['date']),[]); scored=[]
-        for g in cand:
-            hs,as_=sim(t['home_name'],g['home_club_name']),sim(t['away_name'],g['away_club_name']); scored.append((hs+as_,min(hs,as_),hs,as_,g))
-        scored.sort(key=lambda z:(z[0],z[1],z[4]['game_id']),reverse=True)
-        require(scored,f"NO_DATE_CANDIDATE:{t['fixture_id']}:{t['league']}:{t['date']}")
+    max_offset=int(cfg.get('maximum_calendar_date_offset_days',0)); require(max_offset in {0,1},'UNSUPPORTED_DATE_OFFSET')
+    def rank(t,cand):
+        scored=[]
+        for g,offset in cand:
+            hs,as_=sim(t['home_name'],g['home_club_name']),sim(t['away_name'],g['away_club_name'])
+            scored.append((hs+as_,min(hs,as_),hs,as_,abs(offset),offset,g))
+        scored.sort(key=lambda z:(z[0],z[1],-z[4],z[6]['game_id']),reverse=True)
+        return scored
+    def accept(scored):
+        if not scored: return None
         best=scored[0]; second=scored[1][0] if len(scored)>1 else -1.0
-        if best[1] < min_side or best[0] < min_pair or best[0]-second < margin:
-            diagnostics.append({"fixture_id":t['fixture_id'],"target":[t['home_name'],t['away_name']],"best":[best[4]['home_club_name'],best[4]['away_club_name']],"scores":[best[2],best[3]],"pair":best[0],"margin":best[0]-second,"candidate_n":len(scored)})
+        return best if best[1] >= min_side and best[0] >= min_pair and best[0]-second >= margin else None
+    for t in targets:
+        comp=league_map[t['league']]
+        exact=[(g,0) for g in by.get((comp,t['date']),[])]
+        scored_exact=rank(t,exact); best=accept(scored_exact); stage='EXACT_DATE'
+        scored=scored_exact
+        if best is None and max_offset:
+            day=datetime.fromisoformat(t['date']).date()
+            nearby=[]
+            for off in range(1,max_offset+1):
+                for signed in (-off,off):
+                    d=(day+timedelta(days=signed)).isoformat()
+                    nearby.extend((g,signed) for g in by.get((comp,d),[]))
+            scored=rank(t,nearby); best=accept(scored); stage='ADJACENT_DATE_FALLBACK'
+        if best is None:
+            preview=scored[:1] or scored_exact[:1]
+            if preview:
+                q=preview[0]; second=scored[1][0] if len(scored)>1 else -1.0
+                diagnostics.append({"fixture_id":t['fixture_id'],"target":[t['home_name'],t['away_name']],"best":[q[6]['home_club_name'],q[6]['away_club_name']],"scores":[q[2],q[3]],"pair":q[0],"margin":q[0]-second,"candidate_n":len(scored),"stage":stage,"date_offset_days":q[5]})
+            else:
+                diagnostics.append({"fixture_id":t['fixture_id'],"target":[t['home_name'],t['away_name']],"candidate_n":0,"stage":stage})
             continue
-        g=best[4]; x=dict(t); x.update({"tm_game_id":int(g['game_id']),"tm_home_club_id":int(g['home_club_id']),"tm_away_club_id":int(g['away_club_id']),"tm_home_name":g['home_club_name'],"tm_away_name":g['away_club_name'],"identity_home_similarity":best[2],"identity_away_similarity":best[3],"identity_margin":best[0]-second}); bound.append(x)
+        second=scored[1][0] if len(scored)>1 else -1.0; g=best[6]
+        x=dict(t); x.update({"tm_game_id":int(g['game_id']),"tm_home_club_id":int(g['home_club_id']),"tm_away_club_id":int(g['away_club_id']),"tm_home_name":g['home_club_name'],"tm_away_name":g['away_club_name'],"identity_home_similarity":best[2],"identity_away_similarity":best[3],"identity_margin":best[0]-second,"identity_date_offset_days":best[5],"identity_binding_stage":stage}); bound.append(x)
     return bound,diagnostics
-
 def manager_events(games:list[dict[str,str]], lag_hours:int=48):
     out=defaultdict(list); invalid=0
     for g in games:
