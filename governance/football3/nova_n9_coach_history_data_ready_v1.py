@@ -108,8 +108,8 @@ def manager_events(games:list[dict[str,str]], lag_hours:int=48):
     for cid in out: out[cid].sort(key=lambda x:(x[0],x[2]))
     return out,invalid
 
-def state_at(events:list[tuple[datetime,str,int,str]], cutoff:datetime):
-    usable=[e for e in events if e[0] <= cutoff]
+def state_at(events:list[tuple[datetime,str,int,str]], cutoff:datetime, excluded_source_game_id:int|None=None):
+    usable=[e for e in events if e[0] <= cutoff and (excluded_source_game_id is None or e[2] != excluded_source_game_id)]
     if not usable: return {"available":False,"manager":None,"available_at":None,"source_game_id":None,"history_n":0,"tenure_observation_n":0}
     last=usable[-1]; mgr=last[1]; tenure=0
     for e in reversed(usable):
@@ -129,7 +129,7 @@ def run(prereg:Path,db:Path,games_gz:Path,out:Path,exact_head:str)->dict[str,Any
     events,invalid_dates=manager_events(games,48); rows=[]; byleague=defaultdict(lambda:{'n':0,'both':0,'home':0,'away':0})
     unique_mgr=set(); direct_target_manager_used=0
     for t in bound:
-        hs=state_at(events.get(t['tm_home_club_id'],[]),t['kickoff']); aas=state_at(events.get(t['tm_away_club_id'],[]),t['kickoff'])
+        hs=state_at(events.get(t['tm_home_club_id'],[]),t['kickoff'],t['tm_game_id']); aas=state_at(events.get(t['tm_away_club_id'],[]),t['kickoff'],t['tm_game_id'])
         require(hs['source_game_id']!=t['tm_game_id'] and aas['source_game_id']!=t['tm_game_id'],'TARGET_MANAGER_DIRECT_USE')
         if hs['available']: unique_mgr.add(hs['manager'])
         if aas['available']: unique_mgr.add(aas['manager'])
