@@ -25,6 +25,7 @@ def utc(v:str)->datetime:
 def norm_name(s:str)->str:
     x=unicodedata.normalize('NFKD',str(s or '')).encode('ascii','ignore').decode().lower()
     x=x.replace('&',' and ')
+    x=re.sub(r'\bs[\W_]*p[\W_]*a\b|\bs[\W_]*a[\W_]*d\b|\bs[\W_]*r[\W_]*l\b',' ',x)
     # Cross-source identity only: remove legal/entity wrappers and generic football-form words.
     # Geographic and brand-bearing tokens remain; no result/label fields participate.
     x=re.sub(r'\b(football club|fussball club|fussballclub|club de futbol|club football|associazione sportiva|societa sportiva|societa|associazione|rasenballsport|olympique|stade|calcio)\b',' ',x)
