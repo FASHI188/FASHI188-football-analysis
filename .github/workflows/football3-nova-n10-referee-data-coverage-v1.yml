@@ -1,0 +1,85 @@
+name: football3-nova-n10-referee-data-coverage
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_data_coverage_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_data_coverage_audit_v1.py'
+      - 'governance/football3/test_nova_n10_referee_data_coverage_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-data-coverage-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-data-coverage-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-data-coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static registry and module checks
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n10_referee_data_coverage_audit_v1.py governance/football3/test_nova_n10_referee_data_coverage_v1.py
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n10_referee_data_coverage_registry_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_ZERO_LABEL'
+          assert p['exact_base']=='bb3231932245016a51ffa838651a27cf192dc3e3'
+          assert p['target']['completed_matches_only'] is True
+          assert p['target']['competitions']==['EPL','Bundesliga','La_liga','Ligue_1','Serie_A']
+          assert p['discovery_summary']['classification']=='STOP_DATA_COVERAGE'
+          assert p['discovery_summary']['official_target_season_sample_pit_evidence_league_n']==3
+          assert p['discovery_summary']['blocked_league_n']==2
+          assert p['discovery_summary']['full_big5_data_ready'] is False
+          assert p['safety']['result_labels_read']==0 and p['safety']['score_values_read']==0
+          assert p['safety']['training_performed'] is False and p['safety']['scoring_performed'] is False
+          assert p['safety']['candidate_weight']==0 and p['safety']['matrix_delta']==0
+          PY
+      - name: Module and contract tests
+        run: |
+          set -euo pipefail
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n10_referee_data_coverage_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Seal zero-label coverage receipt
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_data_coverage_audit_v1.py --registry governance/football3/nova_n10_referee_data_coverage_registry_v1.json --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/coverage_receipt.json'))
+          assert r['status']=='N10_REFEREE_DATA_COVERAGE_AUDIT_COMPLETE'
+          assert r['classification']=='STOP_DATA_COVERAGE'
+          assert r['candidate_source_family_n']==7
+          assert r['sample_pit_evidence_league_n']==3
+          assert set(r['blocked_leagues'])=={'Bundesliga','Ligue_1'}
+          assert r['full_big5_data_ready'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-data-coverage-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
