@@ -59,7 +59,7 @@ def bind_targets(targets:list[dict[str,Any]], games:list[dict[str,str]], league_
         if g['competition_id'] in league_ids and g['season']=='2022': by[(g['competition_id'],g['date'])].append(g)
     bound=[]; diagnostics=[]
     min_side=float(cfg['minimum_side_similarity']); min_pair=float(cfg['minimum_pair_similarity']); margin=float(cfg['minimum_margin'])
-    max_offset=int(cfg.get('maximum_calendar_date_offset_days',0)); require(max_offset in {0,1},'UNSUPPORTED_DATE_OFFSET')
+    max_offset=int(cfg.get('maximum_calendar_date_offset_days',0)); require(max_offset in {0,1,2},'UNSUPPORTED_DATE_OFFSET')
     def rank(t,cand):
         scored=[]
         for g,offset in cand:
