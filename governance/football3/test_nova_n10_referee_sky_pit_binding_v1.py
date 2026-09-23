@@ -79,6 +79,18 @@ class T(unittest.TestCase):
         self.assertEqual(fixtures[0]["home"],"MONZA")
         self.assertEqual(fixtures[0]["away"],"LAZIO")
 
+
+    def test_spaced_hour_digits_are_parsed(self):
+        segment=(
+            "35a GIORNATA "
+            "14/05/2023 Domenica 1 8.00 BOLOGNA - ROMA ESCLUSIVA DAZN "
+        )
+        fixtures=parse_fixture_segment(segment,35,"Europe/Rome")
+        self.assertEqual(len(fixtures),1)
+        self.assertEqual(fixtures[0]["kickoff_local"],"2023-05-14T18:00:00+02:00")
+        self.assertEqual(fixtures[0]["home"],"BOLOGNA")
+        self.assertEqual(fixtures[0]["away"],"ROMA")
+
     def test_identity_normalization_amp_http_www_query(self):
         a="https://sport.sky.it/calcio/serie-a/2023/05/31/arbitri-serie-a-designazioni-giornata-38"
         b="http://www.sport.sky.it/calcio/serie-a/2023/05/31/arbitri-serie-a-designazioni-giornata-38/amp?x=1#y"
