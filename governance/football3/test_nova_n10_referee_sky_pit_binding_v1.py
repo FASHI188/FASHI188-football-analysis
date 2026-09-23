@@ -57,6 +57,28 @@ class T(unittest.TestCase):
         self.assertEqual(fixtures[0]["away"],"UDINESE")
         self.assertEqual(fixtures[0]["kickoff_utc"],"2022-08-13T16:30:00Z")
 
+
+    def test_spaced_round_heading_is_parsed(self):
+        text=(
+            "SERIE A TIM 2022/2023 PROGRAMMAZIONE TELEVISIVA DELLE GARE "
+            "1 7 a GIORNATA "
+            "04/01/2023 Mercoledì 12.30 SALERNITANA - MILAN ESCLUSIVA DAZN "
+            "1 8 a GIORNATA "
+        )
+        start=schedule_start(text,["SERIE A TIM","2022/2023","PROGRAMMAZIONE TELEVISIVA DELLE GARE"])
+        spans=heading_spans(text,start)
+        self.assertEqual([x[0] for x in spans[:2]],[17,18])
+
+    def test_compact_team_dash_is_parsed(self):
+        segment=(
+            "28a GIORNATA "
+            "02/04/2023 Domenica 15.00 MONZA- LAZIO ESCLUSIVA DAZN "
+        )
+        fixtures=parse_fixture_segment(segment,28,"Europe/Rome")
+        self.assertEqual(len(fixtures),1)
+        self.assertEqual(fixtures[0]["home"],"MONZA")
+        self.assertEqual(fixtures[0]["away"],"LAZIO")
+
     def test_identity_normalization_amp_http_www_query(self):
         a="https://sport.sky.it/calcio/serie-a/2023/05/31/arbitri-serie-a-designazioni-giornata-38"
         b="http://www.sport.sky.it/calcio/serie-a/2023/05/31/arbitri-serie-a-designazioni-giornata-38/amp?x=1#y"
