@@ -12,7 +12,7 @@ class T(unittest.TestCase):
         self.assertFalse(p["hard_rules"]["score_values_read"])
     def test_identity(self):
         target={"expected_title":"SERIE A TIM - Designazioni 10ª Giornata","expected_date":"12/10/2022","expected_slug":"serie-a-tim-designazioni-10-giornata-20654"}
-        raw=b'<a href="/news/serie-a-tim-designazioni-10-giornata-20654/">SERIE A TIM - Designazioni 10Âª Giornata</a><span>12/10/2022</span>'
+        raw='<a href="/news/serie-a-tim-designazioni-10-giornata-20654/">SERIE A TIM - Designazioni 10ª Giornata</a><span>12/10/2022</span>'.encode("utf-8")
         r=metadata_identity(raw,target)
         self.assertTrue(r["identity_pass"])
     def test_identity_fail(self):
