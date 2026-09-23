@@ -215,7 +215,7 @@ def resolve_schedule_source(source: dict[str,Any], contract: dict[str,Any]) -> d
         "assigned_rounds":[int(x) for x in source["assigned_rounds"]],
     }
 
-ROUND_RE=re.compile(r"(?<!\d)([1-9]|[12]\d|3[0-8])\s*(?:a|ª|\^)?\s*GIORNATA\b",re.I)
+ROUND_RE=re.compile(r"(?<!\\d)(3\\s*[0-8]|[12]\\s*[0-9]|[1-9])\\s*(?:a|ª|\\^)?\\s*GIORNATA\\b",re.I)
 DATE_TIME_RE=re.compile(
     r"(?P<date>\d{2}/\d{2}/\d{4})\s+"
     r"(?:(?:Luned[iì]|Marted[iì]|Mercoled[iì]|Gioved[iì]|Venerd[iì]|Sabato|Domenica)\s+)?"
@@ -226,7 +226,7 @@ LICENSE_CUT_RE=re.compile(
     r"\b(?:CO\s*[-−]?\s*ESCLUSIVA|ESCLUSIVA|DAZN|SKY|NOW|TV8|ZONA\s+DAZN)\b",
     re.I,
 )
-TEAM_SEP_RE=re.compile(r"\s+[-–—−]\s+")
+TEAM_SEP_RE=re.compile(r"\\s*[-–—−]\\s*")
 
 def schedule_start(text: str, marker_terms: list[str]) -> int:
     compact=text.casefold()
