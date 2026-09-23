@@ -72,6 +72,17 @@ def extract_routes(raw: bytes, preferred: list[str], forbidden: list[str]) -> li
         out.append(x)
     return sorted(out)
 
+def select_usable_routes(routes: list[str], suffix: str, api_host: str) -> list[str]:
+    strong_terms=("content","news","article","category","document","documentation","comunicat","publication")
+    out=[]
+    for x in sorted(dict.fromkeys(routes)):
+        low=x.casefold()
+        if x.startswith(("http://","https://")) and not domain_ok(x,suffix):
+            continue
+        if api_host.casefold() in low or any(t in low for t in strong_terms):
+            out.append(x)
+    return sorted(dict.fromkeys(out))
+
 def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
     p=json.loads(registry.read_text(encoding="utf-8"))
     req(p["status"]=="DESIGN_LOCKED_ZERO_LABEL","STATUS")
@@ -119,16 +130,8 @@ def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
             errors.append({"stage":"script","url":u,"error":f"{type(e).__name__}:{e}"[:400]})
 
     api_host=src["api_host"].casefold()
-    strong_terms=("content","news","article","category","document","documentation","comunicat","publication")
     raw_routes=sorted(routes)
-    usable_routes=[]
-    for x in raw_routes:
-        low=x.casefold()
-        if x.startswith(("http://","https://")) and not domain_ok(x,src["allowed_domain_suffix"]):
-            continue
-        if api_host in low or any(t in low for t in strong_terms):
-            usable_routes.append(x)
-    usable_routes=sorted(dict.fromkeys(usable_routes))
+    usable_routes=select_usable_routes(raw_routes,src["allowed_domain_suffix"],src["api_host"])
     dapi_routes=sorted(x for x in usable_routes if api_host in x.casefold())
     positive=bool(usable_routes)
     classification="POSITIVE_SIGNAL_SOURCE_FEASIBILITY" if positive else "STOP_DATA_COVERAGE"
