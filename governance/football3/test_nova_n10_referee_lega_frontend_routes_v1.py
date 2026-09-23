@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json, unittest
 from pathlib import Path
-from nova_n10_referee_lega_frontend_routes_v1 import domain_ok, extract_routes, script_sources
+from nova_n10_referee_lega_frontend_routes_v1 import domain_ok, extract_routes, script_sources, select_usable_routes
 REG=Path(__file__).with_name("nova_n10_referee_lega_frontend_routes_registry_v1.json")
 class T(unittest.TestCase):
     def test_registry(self):
@@ -23,4 +23,11 @@ class T(unittest.TestCase):
         self.assertIn("https://dapi.legaseriea.it/content/news",out)
         self.assertIn("/api/articles/search",out)
         self.assertNotIn("/matches/results",out)
+    def test_usable_fail_close(self):
+        raw=["/search","https://nextjs.org/docs/app/api-reference/functions/use-search-params","/content/articles","https://dapi.legaseriea.it/publication/list"]
+        out=select_usable_routes(raw,"legaseriea.it","dapi.legaseriea.it")
+        self.assertNotIn("/search",out)
+        self.assertFalse(any("nextjs.org" in x for x in out))
+        self.assertIn("/content/articles",out)
+        self.assertIn("https://dapi.legaseriea.it/publication/list",out)
 if __name__=="__main__": unittest.main()
