@@ -1,0 +1,75 @@
+name: football3-nova-n10-referee-aia-index-inventory-v2
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_aia_index_inventory_registry_v2.json'
+      - 'governance/football3/nova_n10_referee_aia_index_inventory_v2.py'
+      - 'governance/football3/test_nova_n10_referee_aia_index_inventory_v2.py'
+      - '.github/workflows/football3-nova-n10-referee-aia-index-inventory-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-aia-index-inventory-v2-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-aia-index-inventory-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile governance/football3/nova_n10_referee_aia_index_inventory_v2.py governance/football3/test_nova_n10_referee_aia_index_inventory_v2.py
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n10_referee_aia_index_inventory_v2.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Build official AIA target-season index inventory
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_aia_index_inventory_v2.py             --registry governance/football3/nova_n10_referee_aia_index_inventory_registry_v2.json             --out _run --timeout 20 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/aia_index_inventory_receipt.json'))
+          inv=json.load(open('_run/aia_target_season_index_inventory.json'))
+          assert r['status']=='N10_REFEREE_AIA_INDEX_INVENTORY_V2_COMPLETE'
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['reopen_due_changed_external_reachability'] is True
+          assert r['article_body_read'] is False
+          assert r['article_snippet_persisted'] is False
+          assert r['appointment_names_parsed'] is False
+          assert r['independent_immutable_archive_witness'] is False
+          assert r['formal_available_at_proven'] is False
+          assert r['fixture_level_binding_complete'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert inv['formal_available_at_proven'] is False
+          for row in inv['rows']:
+              assert set(row)=={'title','published_date','link','round','source_page','source_page_sha256'}
+          if r['target_season_round_inventory_complete']:
+              assert r['rounds_covered']==list(range(1,39))
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-aia-index-inventory-v2-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
