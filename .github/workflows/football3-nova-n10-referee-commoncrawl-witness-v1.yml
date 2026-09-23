@@ -1,0 +1,86 @@
+name: football3-nova-n10-referee-commoncrawl-witness
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_commoncrawl_witness_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_commoncrawl_witness_v1.py'
+      - 'governance/football3/test_nova_n10_referee_commoncrawl_witness_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-commoncrawl-witness-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-commoncrawl-witness-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-commoncrawl-witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static zero-label contract
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_commoncrawl_witness_v1.py             governance/football3/test_nova_n10_referee_commoncrawl_witness_v1.py
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n10_referee_commoncrawl_witness_registry_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_ZERO_LABEL'
+          assert p['exact_base']=='01ed3ebf13b26f00e0bdc856ae3ab53ab6a38401'
+          assert p['target']['competition']=='Serie_A'
+          assert p['hard_rules']['result_labels_read'] is False
+          assert p['hard_rules']['score_values_read'] is False
+          assert p['hard_rules']['training_allowed'] is False
+          assert p['hard_rules']['scoring_allowed'] is False
+          assert p['hard_rules']['warc_content_fetch_allowed'] is False
+          assert p['hard_rules']['candidate_weight']==0
+          assert p['hard_rules']['matrix_delta']==0
+          PY
+      - name: Module and contract tests
+        run: |
+          set -euo pipefail
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_commoncrawl_witness_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit Common Crawl pre-cutoff witness
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_commoncrawl_witness_v1.py             --registry governance/football3/nova_n10_referee_commoncrawl_witness_registry_v1.json             --out _run --timeout 25 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/commoncrawl_witness_receipt.json'))
+          assert r['status']=='N10_REFEREE_COMMONCRAWL_WITNESS_AUDIT_COMPLETE'
+          assert r['classification'] in {'DATA_COVERAGE_FEASIBILITY_PASS','STOP_DATA_COVERAGE'}
+          assert r['full_big5_data_ready'] is False
+          assert r['referee_oof_allowed'] is False
+          assert r['warc_content_fetched'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          if r['selected_capture'] is not None:
+              assert 'timestamp' in r['selected_capture']
+              assert 'collection_id' in r['selected_capture']
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-commoncrawl-witness-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
