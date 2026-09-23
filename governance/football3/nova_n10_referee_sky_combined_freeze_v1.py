@@ -25,11 +25,15 @@ def sha256_bytes(data: bytes) -> str:
 def stable_bytes(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req_obj, fp, code, msg, headers, newurl):
+        return None
+
 def download_artifact_zip(repo: str, artifact_id: int, token: str, limit: int = 5_000_000) -> bytes:
     req(bool(token), "GITHUB_TOKEN_REQUIRED")
-    url=f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
+    api_url=f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
     request=urllib.request.Request(
-        url,
+        api_url,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -37,7 +41,28 @@ def download_artifact_zip(repo: str, artifact_id: int, token: str, limit: int = 
             "User-Agent": "Football3-Nova-N10-SkyCombinedFreeze/1.0",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    opener=urllib.request.build_opener(NoRedirect)
+    location=None
+    try:
+        with opener.open(request, timeout=30) as response:
+            if 300 <= int(getattr(response, "status", 200)) < 400:
+                location=response.headers.get("Location")
+            else:
+                data=response.read(limit+1)
+                req(len(data) <= limit, "ARTIFACT_ZIP_TOO_LARGE")
+                return data
+    except urllib.error.HTTPError as exc:
+        if exc.code in {301,302,303,307,308}:
+            location=exc.headers.get("Location")
+        else:
+            raise
+    req(isinstance(location,str) and location.startswith("https://"), "ARTIFACT_REDIRECT_LOCATION_MISSING")
+    # The signed storage URL must be fetched without forwarding the GitHub Authorization header.
+    storage_request=urllib.request.Request(
+        location,
+        headers={"User-Agent":"Football3-Nova-N10-SkyCombinedFreeze/1.0"},
+    )
+    with urllib.request.urlopen(storage_request, timeout=30) as response:
         data=response.read(limit+1)
     req(len(data) <= limit, "ARTIFACT_ZIP_TOO_LARGE")
     return data
