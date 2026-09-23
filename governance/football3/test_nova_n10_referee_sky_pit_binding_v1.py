@@ -117,6 +117,19 @@ class T(unittest.TestCase):
         self.assertIn("filter=statuscode%3A200",u)
         self.assertNotIn("filter=urlkey",u)
 
+
+    def test_resume_partition_retries_only_failed_rounds(self):
+        p=json.loads(REG.read_text())
+        rp=p["resume_parent"]
+        success=set(rp["successful_rounds"])
+        retry=set(rp["retry_rounds"])
+        self.assertEqual(success,{1,2,3,4,5,6,7,10,13})
+        self.assertTrue(success.isdisjoint(retry))
+        self.assertEqual(success | retry,set(range(1,39)))
+        self.assertEqual(rp["fixture_n"],380)
+        self.assertTrue(p["independent_archive_witness"]["resume_successful_rounds_without_requery"])
+        self.assertEqual(p["independent_archive_witness"]["max_concurrent_requests"],2)
+
     def test_decision_contract_keeps_assignment_oof_closed(self):
         p=json.loads(REG.read_text())
         self.assertFalse(p["pit_binding_contract"]["referee_assignment_fixture_binding_complete"])
