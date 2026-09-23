@@ -10,6 +10,7 @@ import json
 import os
 import re
 import ssl
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -439,25 +440,40 @@ def fetch_wayback_witness(
     cfg: dict[str,Any],
 ) -> dict[str,Any]:
     url=cdx_query_url(cfg["endpoint"],row["sky_url"],cfg)
-    raw,final,headers=fetch_bytes(
-        url,
-        allowed_host=cfg["allowed_host"],
-        timeout=int(cfg["request_timeout_seconds"]),
-        limit=int(cfg["max_response_bytes"]),
-        accept="application/json,text/plain,*/*",
-    )
-    captures=parse_cdx(raw,row["sky_url"])
-    return {
-        "round":int(row["round"]),
-        "sky_url":row["sky_url"],
-        "query_url":url,
-        "final_url":final,
-        "response_sha256":sha256_bytes(raw),
-        "response_bytes":len(raw),
-        "capture_n":len(captures),
-        "first_capture":captures[0] if captures else None,
-        "captures":captures[:20],
-    }
+    attempts=int(cfg.get("retry_attempts",1))
+    backoffs=[float(x) for x in cfg.get("retry_backoff_seconds",[])]
+    last_exc: Exception | None=None
+    for attempt in range(1,attempts+1):
+        try:
+            raw,final,headers=fetch_bytes(
+                url,
+                allowed_host=cfg["allowed_host"],
+                timeout=int(cfg["request_timeout_seconds"]),
+                limit=int(cfg["max_response_bytes"]),
+                accept="application/json,text/plain,*/*",
+            )
+            captures=parse_cdx(raw,row["sky_url"])
+            return {
+                "round":int(row["round"]),
+                "sky_url":row["sky_url"],
+                "query_url":url,
+                "final_url":final,
+                "response_sha256":sha256_bytes(raw),
+                "response_bytes":len(raw),
+                "capture_n":len(captures),
+                "first_capture":captures[0] if captures else None,
+                "captures":captures[:20],
+                "attempt_n":attempt,
+            }
+        except Exception as exc:
+            last_exc=exc
+            if attempt>=attempts:
+                break
+            delay=backoffs[min(attempt-1,len(backoffs)-1)] if backoffs else 0.0
+            if delay>0:
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 def parse_z(s: str) -> dt.datetime:
     return dt.datetime.fromisoformat(s.replace("Z","+00:00"))
@@ -474,6 +490,7 @@ def build_binding(
     anomaly_ledger: dict[str,Any],
     aia_ledger: dict[str,Any],
     fixture_ledger: dict[str,Any],
+    resume_witness: dict[str,Any] | None=None,
 ) -> tuple[dict[str,Any],dict[str,Any]]:
     req(sky_ledger["round_n"]==38 and len(sky_ledger["rows"])==38,"SKY_LEDGER_ROUNDS")
     req(anomaly_ledger["anomaly_rounds"]==[23],"SKY_ANOMALY_CONTRACT")
@@ -488,10 +505,25 @@ def build_binding(
     req(sorted(fixtures)==list(range(1,39)),"FIXTURE_ROUND_IDENTITY")
 
     cfg=registry["independent_archive_witness"]
+    resume_cfg=registry.get("resume_parent")
     witness_reports={}
+    if resume_witness is not None:
+        req(resume_cfg is not None,"RESUME_CONFIG_MISSING")
+        frozen_success={int(x) for x in resume_cfg["successful_rounds"]}
+        frozen_retry={int(x) for x in resume_cfg["retry_rounds"]}
+        req(frozen_success.isdisjoint(frozen_retry),"RESUME_PARTITION_OVERLAP")
+        req(frozen_success | frozen_retry == set(range(1,39)),"RESUME_PARTITION_INCOMPLETE")
+        prior={int(x["round"]):x for x in resume_witness.get("reports",[])}
+        req(set(prior)==frozen_success,"RESUME_SUCCESS_REPORT_SET_MISMATCH")
+        witness_reports.update(prior)
+        target_rounds=sorted(frozen_retry)
+    else:
+        target_rounds=list(range(1,39))
     witness_errors={}
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        futs={ex.submit(fetch_wayback_witness,sky[r],cfg):r for r in range(1,39)}
+    max_workers=int(cfg.get("max_concurrent_requests",1))
+    req(1 <= max_workers <= 4,"WAYBACK_CONCURRENCY_BOUND")
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs={ex.submit(fetch_wayback_witness,sky[r],cfg):r for r in target_rounds}
         for fut in as_completed(futs):
             rnd=futs[fut]
             try:
@@ -596,6 +628,9 @@ def build_binding(
         "round_n":38,
         "report_n":len(witness_reports),
         "error_n":len(witness_errors),
+        "resume_parent_used":resume_witness is not None,
+        "frozen_prior_report_n":0 if resume_witness is None else len(resume_witness.get("reports",[])),
+        "new_query_round_n":len(target_rounds),
         "reports":[witness_reports[i] for i in sorted(witness_reports)],
         "errors":{str(k):v for k,v in sorted(witness_errors.items())},
         "raw_archived_page_body_read":False,
@@ -615,6 +650,30 @@ def acquire_parent(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],d
         "artifact_zip_sha256":sha256_bytes(raw),
         "ledger_sha256":sha256_bytes(ledger_raw),
         "anomaly_sha256":sha256_bytes(anom_raw),
+    }
+
+def acquire_resume(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],dict[str,Any],dict[str,Any]]:
+    p=registry["resume_parent"]
+    raw=download_artifact_zip(registry["repository"],int(p["artifact_id"]),token)
+    zsha=sha256_bytes(raw)
+    req(zsha==p["artifact_zip_sha256"],"RESUME_ARTIFACT_SHA")
+    _,fixture_raw,fixture=read_unique_suffix(raw,p["fixture_schedule_suffix"])
+    _,witness_raw,witness=read_unique_suffix(raw,p["witness_suffix"])
+    _,binding_raw,binding=read_unique_suffix(raw,p["pit_binding_suffix"])
+    req(sha256_bytes(fixture_raw)==p["fixture_schedule_sha256"],"RESUME_FIXTURE_SHA")
+    req(sha256_bytes(witness_raw)==p["witness_sha256"],"RESUME_WITNESS_SHA")
+    req(sha256_bytes(binding_raw)==p["pit_binding_sha256"],"RESUME_BINDING_SHA")
+    req(fixture.get("complete") is True and fixture.get("fixture_n")==380,"RESUME_FIXTURE_NOT_COMPLETE")
+    success={int(x) for x in p["successful_rounds"]}
+    reports={int(x["round"]) for x in witness.get("reports",[])}
+    req(reports==success,"RESUME_WITNESS_REPORT_SET")
+    return fixture,witness,{
+        "artifact_zip_sha256":zsha,
+        "fixture_schedule_sha256":sha256_bytes(fixture_raw),
+        "wayback_witness_sha256":sha256_bytes(witness_raw),
+        "pit_binding_sha256":sha256_bytes(binding_raw),
+        "successful_rounds":sorted(success),
+        "retry_rounds":[int(x) for x in p["retry_rounds"]],
     }
 
 def run(registry_path: Path, aia_path: Path, out: Path, token: str) -> dict[str,Any]:
@@ -637,10 +696,12 @@ def run(registry_path: Path, aia_path: Path, out: Path, token: str) -> dict[str,
     req(aia["competition"]=="Serie_A" and aia["season"]=="2022/23","AIA_IDENTITY")
 
     sky,anom,parent_prov=acquire_parent(registry,token)
-    fixture_ledger,source_reports,source_errors=build_fixture_schedule(registry)
+    fixture_ledger,resume_witness,resume_prov=acquire_resume(registry,token)
+    source_errors=[]
 
     out.mkdir(parents=True,exist_ok=True)
     fixture_bytes=stable_bytes(fixture_ledger)
+    req(sha256_bytes(fixture_bytes)==registry["resume_parent"]["fixture_schedule_sha256"],"RESUME_FIXTURE_STABLE_SHA")
     (out/"zero_label_fixture_schedule_ledger.json").write_bytes(fixture_bytes)
 
     if not fixture_ledger["complete"]:
@@ -676,7 +737,7 @@ def run(registry_path: Path, aia_path: Path, out: Path, token: str) -> dict[str,
         print(json.dumps(receipt,sort_keys=True,ensure_ascii=False))
         return receipt
 
-    binding,witness=build_binding(registry,sky,anom,aia,fixture_ledger)
+    binding,witness=build_binding(registry,sky,anom,aia,fixture_ledger,resume_witness)
     witness_bytes=stable_bytes(witness)
     binding_bytes=stable_bytes(binding)
     (out/"wayback_witness_ledger.json").write_bytes(witness_bytes)
@@ -690,6 +751,7 @@ def run(registry_path: Path, aia_path: Path, out: Path, token: str) -> dict[str,
         "registry_sha256":sha256_bytes(registry_path.read_bytes()),
         "aia_ledger_sha256":sha256_bytes(aia_raw),
         "parent_provenance":parent_prov,
+        "resume_provenance":resume_prov,
         "fixture_schedule_sha256":sha256_bytes(fixture_bytes),
         "wayback_witness_sha256":sha256_bytes(witness_bytes),
         "pit_binding_sha256":sha256_bytes(binding_bytes),
