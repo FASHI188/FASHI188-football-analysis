@@ -1,0 +1,84 @@
+name: football3-nova-n10-referee-official-archive-collector
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_official_archive_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_official_archive_collector_v1.py'
+      - 'governance/football3/test_nova_n10_referee_official_archive_collector_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-official-archive-collector-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-official-archive-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-official-archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static contract checks
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_official_archive_collector_v1.py             governance/football3/test_nova_n10_referee_official_archive_collector_v1.py
+          python - <<'PY'
+          import json
+          p=json.load(open('governance/football3/nova_n10_referee_official_archive_registry_v1.json'))
+          assert p['status']=='DESIGN_LOCKED_ZERO_LABEL'
+          assert p['exact_base']=='b201d3476b22f6fd2e80378990d83dfa6320b7da'
+          assert p['target']['inventory_competitions']==['EPL','La_liga','Serie_A']
+          assert p['target']['gap_only_competitions']==['Bundesliga','Ligue_1']
+          assert p['hard_rules']['target_result_labels_read'] is False
+          assert p['hard_rules']['score_values_read'] is False
+          assert p['hard_rules']['training_allowed'] is False
+          assert p['hard_rules']['scoring_allowed'] is False
+          assert p['hard_rules']['official_public_sources_only'] is True
+          assert p['hard_rules']['paid_or_secret_source_allowed'] is False
+          assert p['safety']['candidate_weight']==0 and p['safety']['matrix_delta']==0
+          PY
+      - name: Module and contract tests
+        run: |
+          set -euo pipefail
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_official_archive_collector_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Acquire and seal official archive metadata
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_official_archive_collector_v1.py             --registry governance/football3/nova_n10_referee_official_archive_registry_v1.json             --out _run --timeout 25 2>&1 | tee /tmp/collector.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/collector_receipt.json'))
+          assert r['status']=='N10_REFEREE_OFFICIAL_ARCHIVE_COLLECTOR_COMPLETE'
+          assert r['classification']=='STOP_DATA_COVERAGE'
+          assert r['full_big5_data_ready'] is False
+          assert r['gap_only_competitions']==['Bundesliga','Ligue_1']
+          assert r['gap_receipt_n']==2
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-official-archive-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/collector.txt
+          retention-days: 90
