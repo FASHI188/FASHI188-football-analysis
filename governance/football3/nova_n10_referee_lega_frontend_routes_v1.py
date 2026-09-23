@@ -119,9 +119,18 @@ def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
             errors.append({"stage":"script","url":u,"error":f"{type(e).__name__}:{e}"[:400]})
 
     api_host=src["api_host"].casefold()
-    dapi_routes=sorted(x for x in routes if api_host in x.casefold())
-    cms_routes=sorted(routes)
-    positive=bool(dapi_routes or cms_routes)
+    strong_terms=("content","news","article","category","document","documentation","comunicat","publication")
+    raw_routes=sorted(routes)
+    usable_routes=[]
+    for x in raw_routes:
+        low=x.casefold()
+        if x.startswith(("http://","https://")) and not domain_ok(x,src["allowed_domain_suffix"]):
+            continue
+        if api_host in low or any(t in low for t in strong_terms):
+            usable_routes.append(x)
+    usable_routes=sorted(dict.fromkeys(usable_routes))
+    dapi_routes=sorted(x for x in usable_routes if api_host in x.casefold())
+    positive=bool(usable_routes)
     classification="POSITIVE_SIGNAL_SOURCE_FEASIBILITY" if positive else "STOP_DATA_COVERAGE"
 
     out.mkdir(parents=True,exist_ok=True)
@@ -133,7 +142,7 @@ def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
         "entry_n":len(src["entry_urls"]),"head_report_n":len(head_reports),"script_candidate_n":len(scripts),
         "script_report_n":len(bundle_reports),"total_script_bytes":total,
         "head_reports":head_reports,"bundle_reports":bundle_reports,"errors":errors,
-        "discovered_route_strings":cms_routes,"dapi_route_strings":dapi_routes,
+        "raw_route_strings":raw_routes,"discovered_route_strings":usable_routes,"dapi_route_strings":dapi_routes,
         "network_calls_to_discovered_routes":False,
         "html_body_read":False,"inline_script_read":False,"article_body_read":False,
         "match_payload_read":False,"standings_payload_read":False,"player_stats_payload_read":False,
