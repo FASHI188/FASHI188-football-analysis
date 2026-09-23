@@ -276,7 +276,7 @@ def parse_fixture_segment(segment: str, round_no: int, timezone_name: str) -> li
         if not home or not away:
             continue
         date=dt.datetime.strptime(m.group("date"),"%d/%m/%Y").date()
-        hhmm=m.group("time").replace(".",":")
+        hhmm=re.sub(r"\\s+","",m.group("time")).replace(".",":")
         t=dt.time.fromisoformat(hhmm)
         local=dt.datetime.combine(date,t,tzinfo=ZoneInfo(timezone_name))
         utc=local.astimezone(UTC)
