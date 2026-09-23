@@ -93,7 +93,7 @@ def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
 
     public_root=any(r["id"]=="ROOT" and 200<=r["http_status"]<300 for r in reports)
     schema_signal=bool(preferred_paths)
-    content_root_signal=any(r["kind"]=="content_root" and r["http_status"] in (200,204,301,302,400,401,403,404,405,422) for r in reports)
+    content_root_signal=any(r["kind"]=="content_root" and r["http_status"] in (200,204,301,302,400,401,403,405,422) for r in reports)
     classification="POSITIVE_SIGNAL_SOURCE_FEASIBILITY" if public_root and (schema_signal or content_root_signal) else "STOP_DATA_COVERAGE"
 
     out.mkdir(parents=True,exist_ok=True)
