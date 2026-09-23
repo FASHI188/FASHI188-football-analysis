@@ -161,24 +161,34 @@ def resolve_schedule_source(source: dict[str,Any], contract: dict[str,Any]) -> d
     discovery=None
     if source["mode"]=="DIRECT":
         url=source["url"]
-    elif source["mode"]=="DISCOVER_EXACT_TITLE_FROM_INDEX":
+    elif source["mode"] in {"DISCOVER_EXACT_TITLE_FROM_INDEX","DISCOVER_TITLE_TERMS_FROM_INDEX"}:
         raw,final,headers=fetch_bytes(
             source["index_url"],allowed_host=host,timeout=timeout,limit=limit
         )
         parsed=parse_page(raw,final)
-        exact=norm(source["exact_title"])
-        matches=[
-            a for a in parsed.anchors
-            if norm(a["text"])==exact and host_ok(a["href"],host)
-        ]
+        if source["mode"]=="DISCOVER_EXACT_TITLE_FROM_INDEX":
+            exact=norm(source["exact_title"])
+            matches=[
+                a for a in parsed.anchors
+                if norm(a["text"])==exact and host_ok(a["href"],host)
+            ]
+            discovery_identity={"exact_title":exact}
+        else:
+            terms=[norm(x).casefold() for x in source["title_terms"]]
+            matches=[
+                a for a in parsed.anchors
+                if host_ok(a["href"],host)
+                and all(t in norm(a["text"]).casefold() for t in terms)
+            ]
+            discovery_identity={"title_terms":source["title_terms"]}
         uniq={a["href"]:a for a in matches}
-        req(len(uniq)==1,f"INDEX_EXACT_TITLE_NOT_UNIQUE:{source['id']}:{len(uniq)}")
+        req(len(uniq)==1,f"INDEX_TITLE_MATCH_NOT_UNIQUE:{source['id']}:{len(uniq)}")
         url=next(iter(uniq))
         discovery={
             "index_url":source["index_url"],
             "index_final_url":final,
             "index_sha256":sha256_bytes(raw),
-            "exact_title":exact,
+            **discovery_identity,
             "discovered_url":url,
         }
     else:
@@ -232,7 +242,9 @@ def heading_spans(text: str, start: int) -> list[tuple[int,int,int]]:
     out=[]
     for i,m in enumerate(matches):
         end=matches[i+1].start() if i+1<len(matches) else len(text)
-        out.append((int(m.group(1)),m.start(),end))
+        round_no=int(re.sub(r"\\s+","",m.group(1)))
+        if 1 <= round_no <= 38:
+            out.append((round_no,m.start(),end))
     return out
 
 def clean_fixture_label(raw: str) -> str:
