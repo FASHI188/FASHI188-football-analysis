@@ -244,6 +244,10 @@ def run(registry: Path, ledger_path: Path, out: Path, timeout: int=20) -> dict[s
         "gap_rounds":gaps,
         "coverage":len(witnessed)/38.0,
         "selected_collection_ids":selected_collection_set,
+        "query_reports":[
+            {k:v for k,v in q.items() if k!="eligible"}
+            for q in query_reports
+        ],
         "rounds":round_reports,
     }
     matrix_raw=json.dumps(matrix,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
@@ -265,6 +269,15 @@ def run(registry: Path, ledger_path: Path, out: Path, timeout: int=20) -> dict[s
         "selected_collection_ids":selected_collection_set,
         "query_n":len(query_reports),
         "query_error_n":error_n,
+        "query_errors":[
+            {
+                "round":q["round"],
+                "collection_id":q["collection_id"],
+                "query_url":q["query_url"],
+                "error":q["error"],
+            }
+            for q in query_reports if q.get("error")
+        ],
         "round_n":38,
         "archive_witness_round_n":len(witnessed),
         "archive_witness_rounds":witnessed,
