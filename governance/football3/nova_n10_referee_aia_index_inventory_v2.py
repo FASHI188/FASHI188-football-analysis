@@ -73,6 +73,11 @@ def same_category_pagination(url: str, base_url: str, suffix: str, category_para
         return None
     return n if n>=0 else None
 
+def canonical_page_url(base_url: str, n: int, category_param: str, category_value: str, pagination_param: str) -> str:
+    p=urllib.parse.urlparse(base_url)
+    q=urllib.parse.urlencode([(pagination_param,str(n)),(category_param,category_value)])
+    return urllib.parse.urlunparse((p.scheme,p.netloc,p.path,"",q,""))
+
 def discover_pagination(raw: bytes, final_url: str, suffix: str, category_param: str, category_value: str, pagination_param: str) -> list[str]:
     s=raw.decode("utf-8","replace")
     found: dict[int,str]={}
@@ -83,7 +88,7 @@ def discover_pagination(raw: bytes, final_url: str, suffix: str, category_param:
         u=urllib.parse.urljoin(final_url,html.unescape(hm.group(1)))
         n=same_category_pagination(u,final_url,suffix,category_param,category_value,pagination_param)
         if n is not None:
-            found[n]=u
+            found[n]=canonical_page_url(final_url,n,category_param,category_value,pagination_param)
     return [found[n] for n in sorted(found)]
 
 def title_allowed(title: str, required: list[str], excluded: list[str]) -> bool:
@@ -189,6 +194,7 @@ def run(registry: Path,out: Path,timeout: int=20)->dict[str,Any]:
     req(h["paid_or_secret_source_allowed"] is False,"NO_SECRET")
     req(h["candidate_weight"]==0 and h["matrix_delta"]==0,"ZERO_WEIGHT")
     req(cc["mechanically_discovered_pagination_only"] is True and cc["blind_page_number_generation"] is False,"MECHANICAL_PAGINATION")
+    req(cc["pagination_normalization"]=="MECHANICALLY_DISCOVER_P_VALUE_THEN_CANONICALIZE_TO_P_AND_C_ONLY","PAGINATION_NORMALIZATION")
     req(cc["article_body_fetch_allowed"] is False and cc["snippet_persisted"] is False,"METADATA_ONLY")
     req(dc["independent_immutable_archive_witness"] is False and dc["formal_available_at_proven"] is False,"NO_OVERCLAIM")
     req(dec["referee_oof_allowed"] is False,"NO_OOF")
