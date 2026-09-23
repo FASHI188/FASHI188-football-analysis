@@ -3,7 +3,7 @@ import json, unittest
 from pathlib import Path
 from nova_n10_referee_archive_witness_v1 import (
     build_cdx_url, cdx_to_value, eligible, official_domain_ok, parse_cdx,
-    safe_capture, snapshot_url
+    safe_capture, snapshot_url, parse_arquivo_cdx
 )
 
 REG=Path(__file__).with_name("nova_n10_referee_archive_witness_registry_v1.json")
@@ -38,6 +38,11 @@ class T(unittest.TestCase):
         good=eligible(rows,sample)
         self.assertEqual(len(good),1)
         self.assertEqual(good[0]["digest"],"ABC")
+        arquivo_raw=(json.dumps({"url":"https://rfef.es/a","timestamp":"20230601100000","status":"200","digest":"ARQ","mime":"text/html"})+"\n").encode()
+        ar=parse_arquivo_cdx(arquivo_raw)
+        ag=eligible(ar,{"official_domain":"rfef.es","safe_cutoff_utc":"2023-06-04T00:00:00Z"})
+        self.assertEqual(len(ag),1)
+        self.assertEqual(ag[0]["digest"],"ARQ")
 
     def test_domains(self):
         self.assertTrue(official_domain_ok("https://www.rfef.es/a","rfef.es"))
