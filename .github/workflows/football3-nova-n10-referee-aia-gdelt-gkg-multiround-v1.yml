@@ -1,0 +1,74 @@
+name: football3-nova-n10-referee-aia-gdelt-gkg-multiround
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_aia_gdelt_gkg_multiround_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_aia_gdelt_gkg_multiround_v1.py'
+      - 'governance/football3/test_nova_n10_referee_aia_gdelt_gkg_multiround_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-aia-gdelt-gkg-multiround-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-aia-gdelt-gkg-multiround-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-aia-gdelt-gkg-multiround:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_aia_gdelt_gkg_daily_v1.py             governance/football3/nova_n10_referee_aia_gdelt_gkg_multiround_v1.py             governance/football3/test_nova_n10_referee_aia_gdelt_gkg_multiround_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_aia_gdelt_gkg_multiround_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit preregistered GDELT multi-round windows
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_aia_gdelt_gkg_multiround_v1.py             --registry governance/football3/nova_n10_referee_aia_gdelt_gkg_multiround_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/aia_gdelt_gkg_multiround_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['target_rounds']==[1,19,38]
+          assert r['parent_round10_zero_match_proven'] is True
+          assert r['total_frozen_day_n']==24
+          assert r['full_gkg_rows_persisted'] is False
+          assert r['matching_full_lines_persisted'] is False
+          assert r['article_body_read'] is False and r['appointment_body_read'] is False
+          assert r['match_payload_read'] is False and r['standings_payload_read'] is False and r['player_stats_payload_read'] is False
+          assert r['exact_observation_time_proven'] is False
+          assert r['formal_available_at_proven'] is False
+          assert r['referee_oof_allowed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          if r['source_family_closed']:
+              assert r['all_days_fetched'] is True
+              assert r['positive_round_n']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-aia-gdelt-gkg-multiround-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
