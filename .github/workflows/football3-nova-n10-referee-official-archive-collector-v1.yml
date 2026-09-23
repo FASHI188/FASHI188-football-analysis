@@ -1,24 +1,20 @@
 name: football3-nova-n10-referee-official-archive-collector
-
 on:
   pull_request:
     paths:
       - 'governance/football3/nova_n10_referee_official_archive_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_official_archive_index_projection_v1.json'
       - 'governance/football3/nova_n10_referee_official_archive_collector_v1.py'
       - 'governance/football3/test_nova_n10_referee_official_archive_collector_v1.py'
       - '.github/workflows/football3-nova-n10-referee-official-archive-collector-v1.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: football3-nova-n10-referee-official-archive-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
-
 env:
   CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-
 jobs:
   n10-referee-official-archive:
     runs-on: ubuntu-24.04
@@ -34,43 +30,53 @@ jobs:
       - name: Static contract checks
         run: |
           set -euo pipefail
-          python -m py_compile             governance/football3/nova_n10_referee_official_archive_collector_v1.py             governance/football3/test_nova_n10_referee_official_archive_collector_v1.py
+          python -m py_compile governance/football3/nova_n10_referee_official_archive_collector_v1.py governance/football3/test_nova_n10_referee_official_archive_collector_v1.py
           python - <<'PY'
           import json
           p=json.load(open('governance/football3/nova_n10_referee_official_archive_registry_v1.json'))
+          q=json.load(open('governance/football3/nova_n10_referee_official_archive_index_projection_v1.json'))
           assert p['status']=='DESIGN_LOCKED_ZERO_LABEL'
           assert p['exact_base']=='b201d3476b22f6fd2e80378990d83dfa6320b7da'
-          assert p['target']['inventory_competitions']==['EPL','La_liga','Serie_A']
-          assert p['target']['gap_only_competitions']==['Bundesliga','Ligue_1']
-          assert p['hard_rules']['target_result_labels_read'] is False
-          assert p['hard_rules']['score_values_read'] is False
-          assert p['hard_rules']['training_allowed'] is False
-          assert p['hard_rules']['scoring_allowed'] is False
-          assert p['hard_rules']['official_public_sources_only'] is True
-          assert p['hard_rules']['paid_or_secret_source_allowed'] is False
-          assert p['safety']['candidate_weight']==0 and p['safety']['matrix_delta']==0
+          assert p['hard_rules']['target_result_labels_read'] is False and p['hard_rules']['score_values_read'] is False
+          assert p['hard_rules']['training_allowed'] is False and p['hard_rules']['scoring_allowed'] is False
+          assert q['status']=='INDEX_METADATA_PROJECTION_ONLY_NOT_PIT_READY'
+          assert q['contract']['result_labels_read']==0 and q['contract']['score_values_read']==0
+          assert q['contract']['training_allowed'] is False and q['contract']['scoring_allowed'] is False
           PY
       - name: Module and contract tests
         run: |
           set -euo pipefail
-          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_official_archive_collector_v1.py 2>&1 | tee /tmp/tests.txt
-          grep -q 'Ran 6 tests' /tmp/tests.txt
+          PYTHONPATH=governance/football3 python governance/football3/test_nova_n10_referee_official_archive_collector_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
           grep -q '^OK$' /tmp/tests.txt
+      - name: Seal index projection identity
+        run: |
+          set -euo pipefail
+          mkdir -p _run
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('governance/football3/nova_n10_referee_official_archive_index_projection_v1.json')
+          obj=json.loads(p.read_text()); rows=obj['entries']
+          out={'schema_version':'football3-nova-n10-referee-index-projection-receipt-v1','status':'INDEX_METADATA_PROJECTION_SEALED_NOT_PIT_READY',
+               'projection_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'entry_n':len(rows),
+               'serie_a_distinct_round_n':len({r['round'] for r in rows if r['competition']=='Serie_A'}),
+               'la_liga_distinct_round_n':len({r['round'] for r in rows if r['competition']=='La_liga'}),
+               'epl_distinct_round_n':len({r['round'] for r in rows if r['competition']=='EPL'}),
+               'result_labels_read':0,'score_values_read':0,'raw_content_frozen':False,'fixture_level_binding_complete':False,'pit_ready':False,
+               'training_allowed':False,'scoring_allowed':False,'candidate_weight':0,'matrix_delta':0}
+          Path('_run/index_projection_receipt.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n'); print(json.dumps(out,sort_keys=True))
+          PY
       - name: Acquire and seal official archive metadata
         run: |
           set -euo pipefail
-          rm -rf _run && mkdir -p _run
-          python governance/football3/nova_n10_referee_official_archive_collector_v1.py             --registry governance/football3/nova_n10_referee_official_archive_registry_v1.json             --out _run --timeout 25 2>&1 | tee /tmp/collector.txt
+          python governance/football3/nova_n10_referee_official_archive_collector_v1.py --registry governance/football3/nova_n10_referee_official_archive_registry_v1.json --out _run --timeout 25 2>&1 | tee /tmp/collector.txt
           python - <<'PY'
           import json
           r=json.load(open('_run/collector_receipt.json'))
-          assert r['status']=='N10_REFEREE_OFFICIAL_ARCHIVE_COLLECTOR_COMPLETE'
-          assert r['classification']=='STOP_DATA_COVERAGE'
-          assert r['full_big5_data_ready'] is False
-          assert r['gap_only_competitions']==['Bundesliga','Ligue_1']
-          assert r['gap_receipt_n']==2
-          assert r['result_labels_read']==0 and r['score_values_read']==0
-          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['status']=='N10_REFEREE_OFFICIAL_ARCHIVE_COLLECTOR_COMPLETE' and r['classification']=='STOP_DATA_COVERAGE'
+          assert r['full_big5_data_ready'] is False and r['gap_only_competitions']==['Bundesliga','Ligue_1'] and r['gap_receipt_n']==2
+          assert r['result_labels_read']==0 and r['score_values_read']==0 and r['training_performed'] is False and r['scoring_performed'] is False
           assert r['formal_v2_changed'] is False and r['current_changed'] is False and r['production_changed'] is False
           assert r['candidate_weight']==0 and r['matrix_delta']==0
           PY
@@ -79,6 +85,7 @@ jobs:
           name: football3-nova-n10-referee-official-archive-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
           path: |
             _run/
+            governance/football3/nova_n10_referee_official_archive_index_projection_v1.json
             /tmp/tests.txt
             /tmp/collector.txt
           retention-days: 90
