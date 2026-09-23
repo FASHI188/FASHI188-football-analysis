@@ -16,7 +16,7 @@ from typing import Any
 class GDELTDailyError(RuntimeError):
     pass
 
-URL_RE = re.compile(rb"""https?://[^\\s\\t;"'<>]+""", re.I)
+URL_RE = re.compile(rb"""https?://[^\s\t;"'<>]+""", re.I)
 
 def req(cond: bool, msg: str) -> None:
     if not cond:
