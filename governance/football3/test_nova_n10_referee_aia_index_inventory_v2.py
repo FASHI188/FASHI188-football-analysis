@@ -24,10 +24,10 @@ class T(unittest.TestCase):
         self.assertEqual(same_category_pagination("/news/?c=9&p=2",base,"aia-figc.it","c","9","p"),2)
         self.assertIsNone(same_category_pagination("/news/?c=8&p=2",base,"aia-figc.it","c","9","p"))
         self.assertIsNone(same_category_pagination("https://evil.example/news/?c=9&p=2",base,"aia-figc.it","c","9","p"))
-        raw=b'<a href="/news/?c=9&p=3">3</a><a href="/news/?c=9&p=2">2</a><a href="/news/?c=8&p=4">x</a>'
+        raw=b'<a href="/news/?c=9&p=3">3</a><a href="/news/?p=2&0&c=9">2</a><a href="/news/?c=8&p=4">x</a>'
         self.assertEqual(discover_pagination(raw,base,"aia-figc.it","c","9","p"),[
-            "https://www.aia-figc.it/news/?c=9&p=2",
-            "https://www.aia-figc.it/news/?c=9&p=3"
+            "https://www.aia-figc.it/news/?p=2&c=9",
+            "https://www.aia-figc.it/news/?p=3&c=9"
         ])
 
     def test_title_and_round_filter(self):
@@ -35,7 +35,9 @@ class T(unittest.TestCase):
         exc=["serie b","serie c","femminile","primavera"]
         self.assertTrue(title_allowed("SERIE A TIM - Designazioni 10ª Giornata",req,exc))
         self.assertFalse(title_allowed("SERIE A FEMMINILE - Designazioni 10ª Giornata",req,exc))
-        self.assertEqual(parse_round("SERIE A TIM - Designazioni 10ª Giornata",[r"(\d{1,2})\s*(?:ª|a)?\s*giornata"]),10)
+        p=json.loads(REG.read_text())
+        self.assertEqual(parse_round("SERIE A TIM - Designazioni 10ª Giornata",p["target"]["round_patterns"]),10)
+        self.assertEqual(parse_round("SERIE A TIM - DESIGNAZIONI 16a GIORNATA",p["target"]["round_patterns"]),16)
 
     def test_card_metadata_only(self):
         raw='''<html><body>
