@@ -1,0 +1,78 @@
+name: football3-nova-n10-referee-sky-deep-pagination
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_deep_pagination_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_deep_pagination_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_deep_pagination_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-deep-pagination-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-deep-pagination-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-deep-pagination:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_season_inventory_v1.py             governance/football3/nova_n10_referee_sky_deep_pagination_v1.py             governance/football3/test_nova_n10_referee_sky_deep_pagination_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_deep_pagination_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 5 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Recover Sky archive gaps with full exposed pagination
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_deep_pagination_v1.py             --registry governance/football3/nova_n10_referee_sky_deep_pagination_registry_v1.json             --ledger governance/football3/nova_n10_referee_aia_canonical_round_ledger_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_deep_pagination_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_COVERAGE','PARTIAL_SOURCE_COVERAGE','STOP_DATA_COVERAGE'}
+          assert r['parent_covered_round_n']==12
+          assert r['gap_target_round_n']==26
+          assert r['page_cap']==20
+          assert 12 <= r['combined_covered_round_n'] <= 38
+          assert abs(r['combined_coverage'] - r['combined_covered_round_n']/38.0) < 1e-12
+          assert r['raw_archive_html_persisted'] is False
+          assert r['raw_article_prefix_persisted'] is False
+          assert r['summary_text_read'] is False
+          assert r['article_body_read'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['formal_available_at_proven'] is False
+          assert r['fixture_level_binding_complete'] is False
+          assert r['referee_oof_allowed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          if r['classification']=='POSITIVE_SIGNAL_SOURCE_COVERAGE':
+              assert r['combined_covered_round_n']==38
+              assert r['archive_day_error_n']==0
+              assert r['pagination_truncated_day_n']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-deep-pagination-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
