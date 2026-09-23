@@ -219,7 +219,7 @@ ROUND_RE=re.compile(r"(?<!\d)(3\s*[0-8]|[12]\s*[0-9]|[1-9])\s*(?:a|ª|\^)?\s*GIO
 DATE_TIME_RE=re.compile(
     r"(?P<date>\d{2}/\d{2}/\d{4})\s+"
     r"(?:(?:Luned[iì]|Marted[iì]|Mercoled[iì]|Gioved[iì]|Venerd[iì]|Sabato|Domenica)\s+)?"
-    r"(?P<time>\d{1,2}[\.:]\d{2})\s+",
+    r"(?P<time>[0-2]?\s*\d[\.:]\d{2})\s+",
     re.I,
 )
 LICENSE_CUT_RE=re.compile(
@@ -276,7 +276,7 @@ def parse_fixture_segment(segment: str, round_no: int, timezone_name: str) -> li
         if not home or not away:
             continue
         date=dt.datetime.strptime(m.group("date"),"%d/%m/%Y").date()
-        hhmm=re.sub(r"\\s+","",m.group("time")).replace(".",":")
+        hhmm=re.sub(r"\s+","",m.group("time")).replace(".",":")
         t=dt.time.fromisoformat(hhmm)
         local=dt.datetime.combine(date,t,tzinfo=ZoneInfo(timezone_name))
         utc=local.astimezone(UTC)
