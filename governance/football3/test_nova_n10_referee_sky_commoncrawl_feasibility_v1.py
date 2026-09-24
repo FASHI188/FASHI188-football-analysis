@@ -28,6 +28,8 @@ class T(unittest.TestCase):
         self.assertFalse(p["hard_rules"]["score_values_read"])
         self.assertFalse(p["hard_rules"]["training_allowed"])
         self.assertFalse(p["hard_rules"]["scoring_allowed"])
+        self.assertEqual(p["source"]["http_404_semantics"],"NO_USABLE_INDEX_ROWS_FAIL_CLOSED_ZERO_EVIDENCE")
+        self.assertFalse(p["source"]["http_404_transport_error"])
 
     def test_identity_normalization(self):
         a="https://sport.sky.it/calcio/serie-a/2023/05/31/arbitri-serie-a-designazioni-giornata-38"
