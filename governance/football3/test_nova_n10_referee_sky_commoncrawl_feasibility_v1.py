@@ -8,6 +8,7 @@ from pathlib import Path
 from nova_n10_referee_sky_commoncrawl_feasibility_v1 import (
     UTC,
     collection_intersects,
+    decide_result,
     eligible_rows,
     normalize_identity,
     prefix_query_url,
@@ -87,6 +88,9 @@ class T(unittest.TestCase):
         self.assertTrue(samples.issubset(unresolved))
         self.assertEqual(p["parent"]["existing_pit_pass_round_n"],18)
         self.assertEqual(p["parent"]["wayback_post_cutoff_rounds"],[24,25,34])
+        classification,next_step=decide_result(p,[],3,1)
+        self.assertEqual(classification,"STOP_DATA_COVERAGE")
+        self.assertEqual(next_step,p["reasonable_subroutes"]["if_external_errors"])
 
 
 if __name__=="__main__":
