@@ -109,6 +109,20 @@ def parse_response(raw: bytes) -> tuple[list[dict[str,Any]],dict[str,Any]]:
     }
     return [x for x in items if isinstance(x,dict)],meta
 
+def pagination_incomplete(meta: dict[str,Any], item_n: int) -> bool:
+    estimated=meta.get("estimated_nr_results")
+    try:
+        estimated_n=int(estimated)
+    except (TypeError,ValueError):
+        estimated_n=None
+    # Arquivo may emit a formal next_page even when the search is definitively empty.
+    # Empty estimate + empty item list is complete zero evidence, not incomplete pagination.
+    if estimated_n==0 and item_n==0:
+        return False
+    if estimated_n is not None and estimated_n <= item_n:
+        return False
+    return bool(meta.get("next_page"))
+
 def safe_metadata(row: dict[str,Any]) -> dict[str,Any]:
     return {
         "title":row.get("title") if isinstance(row.get("title"),str) else None,
@@ -248,7 +262,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
                 items,meta=parse_response(raw)
                 report["response_item_n"]=len(items)
                 report["search_meta"]=meta
-                if meta.get("next_page"):
+                if pagination_incomplete(meta,len(items)):
                     report["status"]="INCOMPLETE_PAGINATION"
                     incomplete.append(rnd)
                 else:
