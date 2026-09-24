@@ -203,6 +203,8 @@ def resolve_schedule_source(source: dict[str,Any], contract: dict[str,Any]) -> d
             any(norm(t)==norm(source["exact_title"]) for t in parsed.title_candidates),
             f"EXACT_ARTICLE_TITLE_FAIL:{source['id']}",
         )
+    if source["mode"]=="DISCOVER_TITLE_TERMS_FROM_INDEX":
+        req(title_pass(parsed.title_candidates,source["title_terms"]),f"DISCOVERED_ARTICLE_TITLE_FAIL:{source['id']}")
     return {
         "source_id":source["id"],
         "requested_url":url,
