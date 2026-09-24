@@ -87,6 +87,32 @@ def fetch(
         req(len(raw)<=limit,"RESPONSE_TOO_LARGE")
         return raw,final,{k.lower():v for k,v in r.headers.items()}
 
+def fetch_cdx_query(
+    url: str,
+    *,
+    allowed_host: str,
+    timeout: int,
+    limit: int,
+    user_agent: str,
+) -> tuple[bytes,str,dict[str,str],int]:
+    try:
+        raw,final,headers=fetch(
+            url,
+            allowed_host=allowed_host,
+            timeout=timeout,
+            limit=limit,
+            user_agent=user_agent,
+        )
+        return raw,final,headers,200
+    except urllib.error.HTTPError as exc:
+        if int(exc.code)!=404:
+            raise
+        final=exc.geturl()
+        req(host(final)==allowed_host,f"404_REDIRECT_HOST:{final}")
+        raw=exc.read(limit+1)
+        req(len(raw)<=limit,"404_RESPONSE_TOO_LARGE")
+        return raw,final,{k.lower():v for k,v in exc.headers.items()},404
+
 def collection_intersects(c: dict[str,Any], start: dt.datetime, end: dt.datetime) -> bool:
     try:
         a=parse_cc_iso(str(c["from"]))
@@ -264,7 +290,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
             q=prefix_query_url(str(c["cdx-api"]),sky_url)
             query_count+=1
             try:
-                qraw,qfinal,qheaders=fetch(
+                qraw,qfinal,qheaders,http_status=fetch_cdx_query(
                     q,
                     allowed_host=src["allowed_host"],
                     timeout=int(src["request_timeout_seconds"]),
@@ -272,7 +298,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
                     user_agent=src["user_agent"],
                 )
                 last_query_time=time.monotonic()
-                parsed=parse_cdxj(qraw)
+                parsed=[] if http_status==404 else parse_cdxj(qraw)
                 good=eligible_rows(parsed,sky_url,lower,cutoff)
                 queries.append({
                     "collection_id":c["id"],
