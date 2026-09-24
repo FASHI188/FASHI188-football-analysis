@@ -1,0 +1,90 @@
+name: football3-nova-n10-referee-sky-pit-binding
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_pit_binding_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_pit_binding_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_pit_binding_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-pit-binding-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-pit-binding-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-pit-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_pit_binding_v1.py             governance/football3/test_nova_n10_referee_sky_pit_binding_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_pit_binding_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 10 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Build independent publication PIT binding
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_pit_binding_v1.py             --registry governance/football3/nova_n10_referee_sky_pit_binding_registry_v1.json             --aia-ledger governance/football3/nova_n10_referee_aia_canonical_round_ledger_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json, os
+          r=json.load(open('_run/sky_pit_binding_receipt.json'))
+          assert r['classification'] in {
+              'POSITIVE_SIGNAL_SOURCE_PIT_BINDING',
+              'PARTIAL_SOURCE_PIT_BINDING',
+              'STOP_DATA_COVERAGE',
+          }
+          assert r['result_labels_read']==0
+          assert r['score_values_read']==0
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['sky_article_body_reacquired'] is False
+          assert r['training_performed'] is False
+          assert r['scoring_performed'] is False
+          assert r['formal_v2_changed'] is False
+          assert r['current_changed'] is False
+          assert r['production_changed'] is False
+          assert r['candidate_weight']==0
+          assert r['matrix_delta']==0
+          assert r['referee_oof_allowed'] is False
+          assert 'resume_provenance' in r
+          if r.get('fixture_schedule_complete'):
+              assert r['fixture_schedule_covered_round_n']==38
+              assert r['fixture_n']==380
+              assert os.path.exists('_run/zero_label_fixture_schedule_ledger.json')
+          if r['classification']=='POSITIVE_SIGNAL_SOURCE_PIT_BINDING':
+              assert r['pit_pass_round_n']==38
+              assert r['publication_pit_binding_complete'] is True
+              assert r['publication_available_at_bound_complete'] is True
+              assert r['formal_available_at_proven_for_publication_pages'] is True
+              assert r['formal_available_at_proven_for_referee_assignments'] is False
+              assert os.path.exists('_run/wayback_witness_ledger.json')
+              assert os.path.exists('_run/sky_publication_pit_binding_ledger.json')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-pit-binding-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
