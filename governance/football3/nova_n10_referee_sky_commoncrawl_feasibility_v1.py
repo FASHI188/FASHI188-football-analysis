@@ -222,6 +222,27 @@ def acquire_parent(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],d
         "sky_ledger_sha256":sha256_bytes(sky_raw),
     }
 
+def decide_result(
+    registry: dict[str,Any],
+    positive_rounds: list[int],
+    query_n: int,
+    query_error_n: int,
+) -> tuple[str,str]:
+    if positive_rounds:
+        return (
+            registry["decision_contract"]["positive_classification"],
+            registry["reasonable_subroutes"]["if_positive"],
+        )
+    if query_error_n > 0:
+        return (
+            registry["decision_contract"]["external_block_classification"],
+            registry["reasonable_subroutes"]["if_external_errors"],
+        )
+    return (
+        registry["decision_contract"]["zero_classification"],
+        registry["reasonable_subroutes"]["if_zero_no_external_errors"],
+    )
+
 def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
     registry=json.loads(registry_path.read_text(encoding="utf-8"))
     req(registry["status"]=="DESIGN_LOCKED_ZERO_LABEL_METADATA_ONLY","STATUS")
@@ -352,15 +373,12 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
     positive_rounds=sorted(positive_rounds)
     all_query_n=sum(x["query_n"] for x in sample_reports)
     all_error_n=len(query_errors)
-    if positive_rounds:
-        classification=registry["decision_contract"]["positive_classification"]
-        next_step=registry["reasonable_subroutes"]["if_positive"]
-    elif all_query_n>0 and all_error_n==all_query_n:
-        classification=registry["decision_contract"]["external_block_classification"]
-        next_step=registry["reasonable_subroutes"]["if_external_errors"]
-    else:
-        classification=registry["decision_contract"]["zero_classification"]
-        next_step=registry["reasonable_subroutes"]["if_zero_no_external_errors"]
+    classification,next_step=decide_result(
+        registry,
+        positive_rounds,
+        all_query_n,
+        all_error_n,
+    )
 
     matrix={
         "schema_version":"football3-nova-n10-referee-sky-commoncrawl-feasibility-matrix-v1",
