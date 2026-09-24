@@ -1,0 +1,81 @@
+name: football3-nova-n10-referee-sky-commoncrawl-unresolved-matrix
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_commoncrawl_unresolved_matrix_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-commoncrawl-unresolved-matrix-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-commoncrawl-unresolved-matrix-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-commoncrawl-unresolved-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_commoncrawl_feasibility_v1.py             governance/football3/nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py             governance/football3/test_nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit unresolved Common Crawl PIT windows
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_commoncrawl_unresolved_matrix_v1.py             --registry governance/football3/nova_n10_referee_sky_commoncrawl_unresolved_matrix_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_commoncrawl_unresolved_matrix_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['target_round_n']==17
+          assert r['already_tested_rounds']==[8,9,38]
+          assert r['requery_already_tested_rounds'] is False
+          assert r['adjudicated_round_n'] + len(r['external_error_rounds']) == 17
+          assert set(r['eligible_capture_rounds']).isdisjoint(r['zero_capture_rounds'])
+          assert set(r['eligible_capture_rounds']).isdisjoint(r['no_collection_overlap_rounds'])
+          assert set(r['zero_capture_rounds']).isdisjoint(r['no_collection_overlap_rounds'])
+          assert r['wayback_requery_performed'] is False
+          assert r['commoncrawl_warc_content_fetched'] is False
+          assert r['sky_article_body_reacquired'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert r['referee_oof_allowed'] is False
+          if r['matrix_complete']:
+              assert r['external_error_rounds']==[]
+          if r['commoncrawl_route_closed']:
+              assert r['matrix_complete'] is True
+              assert r['eligible_capture_round_n']==0
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-commoncrawl-unresolved-matrix-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
