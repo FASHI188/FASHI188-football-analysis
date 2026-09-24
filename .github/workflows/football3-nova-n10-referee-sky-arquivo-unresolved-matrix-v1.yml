@@ -1,0 +1,82 @@
+name: football3-nova-n10-referee-sky-arquivo-unresolved-matrix
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_arquivo_unresolved_matrix_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-arquivo-unresolved-matrix-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-arquivo-unresolved-matrix-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-arquivo-unresolved-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_arquivo_feasibility_v1.py             governance/football3/nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py             governance/football3/test_nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Build full unresolved Sky Arquivo matrix
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_arquivo_unresolved_matrix_v1.py             --registry governance/football3/nova_n10_referee_sky_arquivo_unresolved_matrix_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_arquivo_unresolved_matrix_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['frozen_zero_rounds']==[12,24,34]
+          assert r['frozen_zero_round_n']==3
+          assert r['new_query_round_n']==17
+          assert r['total_unresolved_round_n']==20
+          assert r['frozen_zero_rounds_requeried'] is False
+          assert r['wayback_requery_performed'] is False
+          assert r['commoncrawl_requery_performed'] is False
+          assert r['urlscan_requery_performed'] is False
+          assert r['archived_page_content_fetched'] is False
+          assert r['extracted_text_fetched'] is False
+          assert r['screenshot_fetched'] is False
+          assert r['sky_article_body_reacquired'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert r['referee_oof_allowed'] is False
+          if r['source_family_closed']:
+              assert r['positive_round_n']==0
+              assert r['incomplete_round_n']==0
+              assert r['complete_zero_round_n']==20
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-arquivo-unresolved-matrix-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
