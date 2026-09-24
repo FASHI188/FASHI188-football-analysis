@@ -1,0 +1,74 @@
+name: football3-nova-n10-referee-sky-hnalgolia-token-discovery
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_hnalgolia_token_discovery_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_hnalgolia_token_discovery_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_hnalgolia_token_discovery_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-hnalgolia-token-discovery-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-hnalgolia-token-discovery-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-hnalgolia-token-discovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_pit_binding_v1.py             governance/football3/nova_n10_referee_sky_arquivo_feasibility_v1.py             governance/football3/nova_n10_referee_sky_hnalgolia_feasibility_v1.py             governance/football3/nova_n10_referee_sky_hnalgolia_token_discovery_v1.py             governance/football3/test_nova_n10_referee_sky_hnalgolia_token_discovery_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_hnalgolia_token_discovery_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 6 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit final HN Algolia URL-token discovery on frozen Sky samples
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_hnalgolia_token_discovery_v1.py             --registry governance/football3/nova_n10_referee_sky_hnalgolia_token_discovery_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_hnalgolia_token_discovery_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['sample_rounds']==[8,24,34]
+          assert r['query_variants']==['host_path_tokens','slug_only']
+          assert r['title_read'] is False
+          assert r['author_read'] is False
+          assert r['story_text_read'] is False
+          assert r['comment_text_read'] is False
+          assert r['third_query_variant_used'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert r['formal_available_at_proven'] is False
+          assert r['referee_oof_allowed'] is False
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-hnalgolia-token-discovery-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
