@@ -11,6 +11,7 @@ from nova_n10_referee_sky_arquivo_feasibility_v1 import (
     decide,
     eligible_items,
     normalize_identity,
+    pagination_incomplete,
     query_bounds,
     safe_metadata,
 )
@@ -76,6 +77,18 @@ class T(unittest.TestCase):
         self.assertEqual(out[0]["capture_utc"],"2023-05-04T12:00:00Z")
 
     def test_decision_fail_closed(self):
+        self.assertFalse(pagination_incomplete(
+            {"estimated_nr_results":0,"next_page":"https://arquivo.pt/textsearch?offset=50"},
+            0,
+        ))
+        self.assertFalse(pagination_incomplete(
+            {"estimated_nr_results":1,"next_page":"https://arquivo.pt/textsearch?offset=50"},
+            1,
+        ))
+        self.assertTrue(pagination_incomplete(
+            {"estimated_nr_results":51,"next_page":"https://arquivo.pt/textsearch?offset=50"},
+            50,
+        ))
         p=json.loads(REG.read_text())
         c,n=decide([],[],p)
         self.assertEqual(c,"STOP_DATA_COVERAGE")
