@@ -174,7 +174,7 @@ def eligible_rows(
         })
     return sorted(out,key=lambda x:(x["timestamp"],x["url"]))
 
-def acquire_parent(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],dict[str,Any],dict[str,Any]]:
+def acquire_parent(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],dict[str,Any],dict[str,Any],dict[str,Any]]:
     p=registry["parent"]
     raw=download_artifact_zip(registry["repository"],int(p["artifact_id"]),token)
     req(sha256_bytes(raw)==p["artifact_zip_sha256"],"PARENT_ARTIFACT_SHA")
@@ -182,10 +182,18 @@ def acquire_parent(registry: dict[str,Any], token: str) -> tuple[dict[str,Any],d
     _,fixture_raw,fixture=read_unique_suffix(raw,p["fixture_schedule_suffix"])
     req(sha256_bytes(pit_raw)==p["pit_binding_sha256"],"PARENT_PIT_SHA")
     req(sha256_bytes(fixture_raw)==p["fixture_schedule_sha256"],"PARENT_FIXTURE_SHA")
-    return pit,fixture,{
+
+    sp=registry["sky_ledger_parent"]
+    sraw=download_artifact_zip(registry["repository"],int(sp["artifact_id"]),token)
+    req(sha256_bytes(sraw)==sp["artifact_zip_sha256"],"SKY_PARENT_ARTIFACT_SHA")
+    _,sky_raw,sky=read_unique_suffix(sraw,sp["ledger_suffix"])
+    req(sha256_bytes(sky_raw)==sp["ledger_sha256"],"SKY_PARENT_LEDGER_SHA")
+    return pit,fixture,sky,{
         "artifact_zip_sha256":sha256_bytes(raw),
         "pit_binding_sha256":sha256_bytes(pit_raw),
         "fixture_schedule_sha256":sha256_bytes(fixture_raw),
+        "sky_artifact_zip_sha256":sha256_bytes(sraw),
+        "sky_ledger_sha256":sha256_bytes(sky_raw),
     }
 
 def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
@@ -203,9 +211,11 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
     req(hard["paid_or_secret_source_allowed"] is False,"NO_PAID_SECRET")
     req(hard["candidate_weight"]==0 and hard["matrix_delta"]==0,"ZERO_WEIGHT")
 
-    pit,fixture,parent_prov=acquire_parent(registry,token)
+    pit,fixture,sky_ledger,parent_prov=acquire_parent(registry,token)
     req(fixture.get("complete") is True and int(fixture.get("fixture_n",0))==380,"FIXTURE_PARENT")
     rows={int(r["round"]):r for r in pit["rows"]}
+    sky_rows={int(r["round"]):r for r in sky_ledger["rows"]}
+    req(sorted(sky_rows)==list(range(1,39)),"SKY_LEDGER_ROUNDS")
     sample_rounds=[int(x["round"]) for x in registry["samples"]]
     req(sample_rounds==[8,9,38],"FROZEN_SAMPLES")
     unresolved={int(x) for x in registry["parent"]["unresolved_rounds"]}
@@ -234,6 +244,10 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
 
     for rnd in sample_rounds:
         prow=rows[rnd]
+        srow=sky_rows[rnd]
+        req(srow.get("sky_published_local"),f"SKY_PUBLICATION_MISSING:R{rnd}")
+        sky_url=srow.get("sky_url")
+        req(isinstance(sky_url,str) and sky_url.startswith("https://sport.sky.it/"),f"SKY_URL_MISSING:R{rnd}")
         sky_pub=parse_z(prow["sky_visible_published_utc"])
         cutoff=parse_z(prow["first_fixture_cutoff_utc"])
         req(sky_pub < cutoff,f"PUB_NOT_PRE_CUTOFF:R{rnd}")
@@ -247,7 +261,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
                 sleep_for=float(src["min_seconds_between_queries"])-elapsed
                 if sleep_for>0:
                     time.sleep(sleep_for)
-            q=prefix_query_url(str(c["cdx-api"]),prow["sky_url"])
+            q=prefix_query_url(str(c["cdx-api"]),sky_url)
             query_count+=1
             try:
                 qraw,qfinal,qheaders=fetch(
@@ -259,7 +273,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
                 )
                 last_query_time=time.monotonic()
                 parsed=parse_cdxj(qraw)
-                good=eligible_rows(parsed,prow["sky_url"],lower,cutoff)
+                good=eligible_rows(parsed,sky_url,lower,cutoff)
                 queries.append({
                     "collection_id":c["id"],
                     "collection_from":c["from"],
@@ -296,7 +310,7 @@ def run(registry_path: Path, out: Path, token: str) -> dict[str,Any]:
             positive_rounds.append(rnd)
         sample_reports.append({
             "round":rnd,
-            "sky_url":prow["sky_url"],
+            "sky_url":sky_url,
             "sky_visible_published_utc":prow["sky_visible_published_utc"],
             "first_fixture_cutoff_utc":prow["first_fixture_cutoff_utc"],
             "selected_collection_n":len(cols),
