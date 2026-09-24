@@ -6,12 +6,11 @@ import unittest
 from pathlib import Path
 
 from nova_n10_referee_sky_hnalgolia_token_discovery_v1 import (
-    UTC,
     build_variant_query,
     build_query,
     classify,
 )
-from nova_n10_referee_sky_hnalgolia_feasibility_v1 import evaluate_hit
+from nova_n10_referee_sky_hnalgolia_feasibility_v1 import UTC, evaluate_hit
 
 REG=Path(__file__).with_name("nova_n10_referee_sky_hnalgolia_token_discovery_registry_v1.json")
 
