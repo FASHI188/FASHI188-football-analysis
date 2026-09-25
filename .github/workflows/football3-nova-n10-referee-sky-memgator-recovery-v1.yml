@@ -1,0 +1,80 @@
+name: football3-nova-n10-referee-sky-memgator-recovery
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_memgator_recovery_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_memgator_recovery_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_memgator_recovery_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-memgator-recovery-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-memgator-recovery-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-memgator-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_pit_binding_v1.py             governance/football3/nova_n10_referee_sky_arquivo_feasibility_v1.py             governance/football3/nova_n10_referee_sky_memgator_recovery_v1.py             governance/football3/test_nova_n10_referee_sky_memgator_recovery_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_memgator_recovery_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 7 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit ODU MemGator JSON TimeMap recovery on frozen Sky samples
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_memgator_recovery_v1.py             --registry governance/football3/nova_n10_referee_sky_memgator_recovery_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_memgator_recovery_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['sample_rounds']==[8,24,34]
+          assert r['query_n']==3
+          assert r['aggregator_contract_commit']=='37d69db28665afe70d1bacf7e704343fe0cf1b6a'
+          assert r['aggregator_contract_blob_sha']=='8f8b09cda3ee69cd8f6ab0e1be76aa4584c8b174'
+          assert r['direct_failed_provider_endpoint_requery_n']==0
+          assert r['webarchiv_at_requery_n']==0
+          assert r['excluded_provider_counted_as_signal_n']==0
+          assert r['clean_zero_provider_counted_as_signal_n']==0
+          assert r['response_body_persisted'] is False
+          assert r['memento_target_fetch_performed'] is False
+          assert r['replay_proxy_fetch_performed'] is False
+          assert r['timegate_fetch_performed'] is False
+          assert r['article_body_read'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert r['formal_available_at_proven'] is False
+          assert r['referee_oof_allowed'] is False
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-memgator-recovery-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
