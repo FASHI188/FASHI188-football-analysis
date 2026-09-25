@@ -1,0 +1,79 @@
+name: football3-nova-n10-referee-sky-memento-provider-matrix
+
+on:
+  pull_request:
+    paths:
+      - 'governance/football3/nova_n10_referee_sky_memento_provider_matrix_registry_v1.json'
+      - 'governance/football3/nova_n10_referee_sky_memento_provider_matrix_v1.py'
+      - 'governance/football3/test_nova_n10_referee_sky_memento_provider_matrix_v1.py'
+      - '.github/workflows/football3-nova-n10-referee-sky-memento-provider-matrix-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: football3-nova-n10-referee-sky-memento-provider-matrix-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  n10-referee-sky-memento-provider-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static and contract tests
+        run: |
+          set -euo pipefail
+          python -m py_compile             governance/football3/nova_n10_referee_sky_combined_freeze_v1.py             governance/football3/nova_n10_referee_sky_pit_binding_v1.py             governance/football3/nova_n10_referee_sky_arquivo_feasibility_v1.py             governance/football3/nova_n10_referee_sky_memento_provider_matrix_v1.py             governance/football3/test_nova_n10_referee_sky_memento_provider_matrix_v1.py
+          PYTHONPATH=governance/football3             python governance/football3/test_nova_n10_referee_sky_memento_provider_matrix_v1.py 2>&1 | tee /tmp/tests.txt
+          grep -q 'Ran 8 tests' /tmp/tests.txt
+          grep -q '^OK$' /tmp/tests.txt
+      - name: Audit nine public Memento provider TimeMaps on frozen Sky samples
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _run && mkdir -p _run
+          python governance/football3/nova_n10_referee_sky_memento_provider_matrix_v1.py             --registry governance/football3/nova_n10_referee_sky_memento_provider_matrix_registry_v1.json             --out _run 2>&1 | tee /tmp/audit.txt
+          python - <<'PY'
+          import json
+          r=json.load(open('_run/sky_memento_provider_matrix_receipt.json'))
+          assert r['classification'] in {'POSITIVE_SIGNAL_SOURCE_FEASIBILITY','STOP_DATA_COVERAGE'}
+          assert r['sample_rounds']==[8,24,34]
+          assert r['provider_n']==9
+          assert r['query_n']==27
+          assert r['memgator_registry_commit']=='6a222465b44503abe1bf80dc91109cef061a645b'
+          assert r['memgator_registry_blob_sha']=='e488ca99091d7eb6efc986524fe7fd9b12807fa5'
+          assert r['excluded_prior_provider_query_n']==0
+          assert r['ignored_registry_provider_query_n']==0
+          assert r['response_body_persisted'] is False
+          assert r['memento_body_read'] is False
+          assert r['replay_fetch_performed'] is False
+          assert r['timegate_fetch_performed'] is False
+          assert r['article_body_read'] is False
+          assert r['referee_assignment_body_parsed'] is False
+          assert r['result_labels_read']==0 and r['score_values_read']==0
+          assert r['training_performed'] is False and r['scoring_performed'] is False
+          assert r['candidate_weight']==0 and r['matrix_delta']==0
+          assert r['formal_available_at_proven'] is False
+          assert r['referee_oof_allowed'] is False
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: football3-nova-n10-referee-sky-memento-provider-matrix-${{ env.CANDIDATE_HEAD }}-${{ github.run_id }}
+          path: |
+            _run/
+            /tmp/tests.txt
+            /tmp/audit.txt
+          retention-days: 90
