@@ -1,0 +1,66 @@
+name: Football V5.1 Strict PIT Capture R14
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_strict_pit_capture_r14.json"
+      - "football-data/forward/inbox/v510_strict_pit_capture_r14.json"
+      - "football-data/validation/audit_v510_strict_pit_capture_r14.py"
+      - ".github/workflows/football-v510-strict-pit-capture-r14.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-strict-pit-capture-r14-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile R14 auditor
+        run: python -m py_compile football-data/validation/audit_v510_strict_pit_capture_r14.py
+      - name: Run R14 positive and negative self-tests
+        run: python football-data/validation/audit_v510_strict_pit_capture_r14.py --self-test
+      - name: Audit append-only strict-PIT inbox
+        run: python football-data/validation/audit_v510_strict_pit_capture_r14.py
+      - name: Enforce expected empty-ledger readiness state
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_strict_pit_capture_r14_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status'] in {
+              'PASS_R14_CAPTURE_INTERFACE_READY_NO_STRICT_PIT_ROWS',
+              'PASS_R14_CAPTURE_INTERFACE_READY_SAMPLE_GATE_NOT_MET',
+              'PASS_R14_READY_FOR_STRICT_PIT_CONTEXT_RESIDUAL_FIT',
+          }, x['status']
+          assert x['infrastructure_pass'] is True
+          assert x['ruling']['probability_mutation_allowed'] is False
+          assert x['ruling']['current_match_probability_allowed'] is False
+          print(json.dumps({
+              'status': x['status'],
+              'counts': x['counts'],
+              'readiness_gates': x['readiness_gates'],
+              'ruling': x['ruling'],
+          }, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload R14 receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-strict-pit-capture-r14
+          path: football-data/manifests/v510_strict_pit_capture_r14_status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          test -z "$(git diff --cached --name-only)"

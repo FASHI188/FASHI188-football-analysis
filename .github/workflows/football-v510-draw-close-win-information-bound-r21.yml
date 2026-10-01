@@ -1,0 +1,92 @@
+name: Football V5.1 Draw Close-Win Information Bound R21
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "football-data/config/v510_draw_close_win_information_bound_r21.json"
+      - "football-data/validation/evaluate_v510_draw_close_win_information_bound_r21.py"
+      - "football-data/validation/v510_historical_structure_features_r1.py"
+      - "football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py"
+      - "football-data/processed/**/*.csv"
+      - ".github/workflows/football-v510-draw-close-win-information-bound-r21.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: football-v510-draw-close-win-information-bound-r21-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic research dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          numpy==2.3.5 pandas==2.2.3 scipy==1.16.3 scikit-learn==1.7.2
+      - name: Compile R21 and dependencies
+        run: |
+          python -m py_compile football-data/validation/evaluate_v510_draw_close_win_information_bound_r21.py
+          python -m py_compile football-data/validation/v510_historical_structure_features_r1.py
+          python -m py_compile football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run R21 self-test
+        run: python football-data/validation/evaluate_v510_draw_close_win_information_bound_r21.py --self-test
+      - name: Materialize audited historical ledger
+        run: python football-data/validation/audit_v510_existing_score_market_pit_ledger_r1.py
+      - name: Run R21 draw versus close-win information-bound audit
+        run: python football-data/validation/evaluate_v510_draw_close_win_information_bound_r21.py
+      - name: Validate R21 identity and hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v510_draw_close_win_information_bound_r21_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['classification']=='VIEWED_HISTORICAL_INFORMATION_BOUND_RESEARCH'
+          assert x['data_identity']=={'rows':26873,'competitions':16,'draws':6976,'zero_zero':1910,'tail_7plus':630}
+          assert x['rolling_unique_identities']==x['rolling_close_result_rows']
+          assert x['ruling']['formal_weight']==0
+          assert x['ruling']['test_labels_used_for_selection'] is False
+          assert x['ruling']['manual_draw_offset_used'] is False
+          assert x['ruling']['class_weight_used'] is False
+          assert x['ruling']['threshold_tuning_used'] is False
+          assert x['hard_limits']['current_match_probability_allowed'] is False
+          assert x['hard_limits']['unified_matrix_unlock_allowed'] is False
+          assert x['hard_limits']['provider_request_allowed'] is False
+          print(json.dumps({
+            'status':x['status'],
+            'rolling_close_result_rows':x['rolling_close_result_rows'],
+            'candidate_metrics':x['candidate_metrics'],
+            'paired_bootstrap':x['paired_bootstrap'],
+            'stability':x['stability'],
+            'gates':x['gates'],
+            'ruling':x['ruling'],
+          },ensure_ascii=False,indent=2))
+          PY
+      - name: Upload R21 outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: v510-draw-close-win-information-bound-r21
+          path: |
+            football-data/manifests/v510_draw_close_win_information_bound_r21_status.json
+            football-data/manifests/v510_draw_close_win_information_bound_r21_gold.csv
+            football-data/manifests/v510_draw_close_win_information_bound_r21_stability.csv
+            football-data/manifests/v510_draw_close_win_information_bound_r21_pairs.csv
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm no repository persistence
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git diff --cached --name-only)"
