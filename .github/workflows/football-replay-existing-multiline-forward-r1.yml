@@ -1,0 +1,79 @@
+name: Football Replay Existing Multiline Forward R1
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/football-replay-existing-multiline-forward-r1.yml"
+      - "football-data/validation/evaluate_existing_multiline_geometry_r1.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install deterministic diagnostic dependency
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5
+      - name: Replay frozen special-market evaluator
+        run: python football-data/validation/v6_special_market_forward_eval_v6211.py
+      - name: Verify read-only boundary and print summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/manifests/v6_special_market_forward_eval_v6211_status.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='PASS'
+          assert x['classification']=='DERIVED_ONLY_FROM_IMMUTABLE_PREMATCH_RAW_AT_FROZEN_PREDICTION_TIME'
+          g=x['governance']
+          assert g['network_refetch'] is False
+          assert g['postmatch_odds_used'] is False
+          assert g['exact_prediction_snapshot_binding'] is True
+          assert g['raw_hash_and_observation_time_verified'] is True
+          assert g['formal_weight']==0
+          assert g['current_rule_change'] is False
+          assert g['probability_promotion'] is False
+          print(json.dumps(x['summary'],ensure_ascii=False,indent=2))
+          PY
+      - name: Run label-free multiline geometry diagnostic
+        run: python football-data/validation/evaluate_existing_multiline_geometry_r1.py
+      - name: Verify geometry boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/manifests/existing_multiline_geometry_r1/status.json').read_text(encoding='utf-8'))
+          assert x['status']=='POSTVIEW_EXISTING_MULTILINE_GEOMETRY_COMPLETE'
+          b=x['interpretation_boundary']
+          assert b['labels_used_for_pca_or_orientation'] is False
+          assert b['labels_used_only_for_postview_descriptive_scoring'] is True
+          assert b['selector_fit'] is False
+          assert b['threshold_search'] is False
+          assert b['network_refetch'] is False
+          assert b['new_data_collection'] is False
+          assert b['formal_weight']==0
+          assert b['promotion_allowed'] is False
+          print(json.dumps({'source':x['source'],'geometry':x['label_free_geometry'],'settled':x['settled_descriptive_only']},ensure_ascii=False,indent=2))
+          PY
+      - name: Upload replay evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: existing-multiline-forward-replay-r1
+          path: |
+            football-data/manifests/v6_special_market_forward_eval_v6211_status.json
+            football-data/manifests/existing_multiline_geometry_r1/status.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Confirm runtime-only manifest changes
+        run: |
+          unexpected="$(git diff --name-only | grep -v '^football-data/manifests/v6_special_market_forward_eval_v6211_status.json$' || true)"
+          test -z "$unexpected"
+          tracked_status="$(git status --porcelain | grep -v 'football-data/manifests/v6_special_market_forward_eval_v6211_status.json' | grep -v 'football-data/manifests/existing_multiline_geometry_r1/' || true)"
+          test -z "$tracked_status"
