@@ -1,0 +1,90 @@
+name: Football World Model V2 B06 Zero-Label Preflight
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/world_model_v2/coverage_recovery_b06.json"
+      - "football-data/validation/preflight_world_model_v2_b06.py"
+      - ".github/workflows/football-world-model-v2-b06-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile zero-label preflight
+        run: python -m py_compile football-data/validation/preflight_world_model_v2_b06.py
+
+      - name: Verify B06 preregistration boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('football-data/research/world_model_v2/coverage_recovery_b06.json')
+          x=json.loads(p.read_text(encoding='utf-8'))
+          assert x['status']=='ZERO_TARGET_LABEL_B06_PREREGISTERED_RESEARCH_ONLY'
+          assert x['package']['package_id']=='B06'
+          assert x['package']['b05_status']=='UNCHANGED_SEALED_NOT_OPENED'
+          assert x['package']['reserved_laliga_confirmation_status']=='UNCHANGED_RESERVED_UNOPENED'
+          assert x['coverage_gate_unchanged']['minimum_total_matches']==220
+          assert x['frozen_v2_design_unchanged']['hyperparameter_search'] is False
+          assert x['frozen_v2_design_unchanged']['primary_minimum_mean_delta']==-0.005
+          assert x['frozen_v2_design_unchanged']['bootstrap_p95_must_be_below_zero'] is True
+          assert x['frozen_v2_design_unchanged']['fold_primary_wins_required']==2
+          assert x['hard_boundary']['formal_weight']==0
+          assert x['hard_boundary']['b05_opened'] is False
+          assert x['hard_boundary']['reserved_confirmation_opened'] is False
+          print(json.dumps({'status':x['status'],'package':x['package']['package_id']},ensure_ascii=False))
+          PY
+
+      - name: Run B06 zero-label coverage and identity preflight
+        run: |
+          mkdir -p /tmp/world-model-v2-b06-preflight
+          python football-data/validation/preflight_world_model_v2_b06.py \
+            --output /tmp/world-model-v2-b06-preflight/summary.json \
+            | tee /tmp/world-model-v2-b06-preflight/stdout.log
+
+      - name: Verify no scientific evaluation occurred
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('/tmp/world-model-v2-b06-preflight/summary.json').read_text(encoding='utf-8'))
+          assert x['status'] in {'B06_COVERAGE_PASS_TARGETS_UNOPENED','STOP_DATA_COVERAGE'}
+          assert x['target_labels_opened']==0
+          assert x['event_payload_get_requests']==0
+          assert x['model_fit_performed'] is False
+          assert x['scientific_metrics_evaluated'] is False
+          assert x['b05_opened'] is False
+          assert x['reserved_laliga_confirmation_opened'] is False
+          assert x['formal_weight']==0
+          print(json.dumps({
+            'status':x['status'],
+            'metadata_matches':x['b06']['metadata_matches'],
+            'identity_sha256':x['b06']['identity_sha256'],
+            'overlap_with_viewed':x['b06']['overlap_with_viewed_match_ids'],
+            'event_head_success_rate':x['b06']['event_head_success_rate'],
+            'checks':x['checks'],
+          },ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload B06 zero-label evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v2-b06-preflight-${{ github.sha }}
+          path: /tmp/world-model-v2-b06-preflight/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"

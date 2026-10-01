@@ -1,0 +1,161 @@
+{
+  "schema_version": "WORLD_MODEL_V2_PREREG_1",
+  "status": "ZERO_LABEL_PREREGISTERED_RESEARCH_ONLY",
+  "registered_at_local": "2026-08-18 11:10 +08:00",
+  "authority": {
+    "current_version": "V5.2.0",
+    "formal_weight": 0,
+    "main_mutation": false,
+    "b05_opened": false,
+    "protected_labels_opened": 0,
+    "automatic_promotion": false,
+    "automatic_ready_or_merge": false,
+    "user_authorization": "Start World Model V2 using only new unseen data; do not open B05."
+  },
+  "successor_boundary": {
+    "v0_pr": 214,
+    "v0_viewed_panel": "England Premier League 2015/2016",
+    "v1_pr": 215,
+    "v1_viewed_panels": [
+      "1. Bundesliga 2015/2016 metadata coverage panel",
+      "FA Women's Super League 2018/2019, 2019/2020, 2020/2021, 2023/2024 development panel"
+    ],
+    "forbidden_for_v2_selection_or_tuning": "No V0/V1 test metric, residual, fixture outcome, per-match error, threshold failure, draw-calibration bin, or viewed label may be used to tune V2 parameters or gates.",
+    "reopen_basis": "ORTHOGONAL_ESTIMAND_AND_JOINT_DISTRIBUTION_STRUCTURE",
+    "structural_rationale": "V2 isolates whether explicit home-away score dependence improves the joint 90-minute score distribution while holding pre-match marginal scoring intensities fixed to the frozen baseline family."
+  },
+  "estimand": "Holding chronologically available pre-match marginal goal intensities fixed, can a low-capacity bivariate-Poisson shared-score component improve the full 90-minute joint score distribution over independent Poisson on a completely new development panel?",
+  "information_family": {
+    "current_fixture_market_data": false,
+    "current_fixture_events": false,
+    "current_fixture_result": false,
+    "current_fixture_lineup_required": false,
+    "prior_completed_match_results": true,
+    "prior_completed_match_xg": true,
+    "future_matches": false,
+    "v0_v1_viewed_test_labels": false
+  },
+  "development_panel": {
+    "provider": "Hudl/StatsBomb Open Data",
+    "competition_id": 49,
+    "competition": "NWSL",
+    "competition_gender": "female",
+    "seasons": [
+      {"season_id": 3, "season": "2018", "matches_url": "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/49/3.json"},
+      {"season_id": 107, "season": "2023", "matches_url": "https://raw.githubusercontent.com/hudl/open-data/master/data/matches/49/107.json"}
+    ],
+    "event_url_template": "https://raw.githubusercontent.com/hudl/open-data/master/data/events/{match_id}.json",
+    "selection_basis": "Competition/season existence only from competitions.json before opening match metadata or target outcomes.",
+    "minimum_total_matches": 220,
+    "minimum_test_matches": 100,
+    "minimum_test_matches_each_fold": 30,
+    "minimum_prior_matches_before_any_prediction": 100,
+    "event_download_success_rate_min": 0.98,
+    "coverage_failure_policy": "STOP_DATA_COVERAGE. Do not lower thresholds and do not automatically switch to another panel after match metadata becomes viewed.",
+    "pit_status": "RETROSPECTIVE_OPEN_DATA_NOT_PROVEN_HISTORICAL_PIT",
+    "formal_claim_allowed": false
+  },
+  "reserved_confirmation_panel": {
+    "status": "RESERVED_UNOPENED",
+    "provider": "Hudl/StatsBomb Open Data",
+    "competition_id": 11,
+    "competition": "La Liga",
+    "seasons": [
+      {"season_id": 2, "season": "2016/2017"},
+      {"season_id": 1, "season": "2017/2018"},
+      {"season_id": 4, "season": "2018/2019"},
+      {"season_id": 42, "season": "2019/2020"},
+      {"season_id": 90, "season": "2020/2021"}
+    ],
+    "hard_rule": "Do not open match payloads, events, labels, counts derived from match payloads, or model metrics from this panel during V2 development. A development PASS still does not authorize opening this reserve automatically."
+  },
+  "time_ordering": {
+    "panel_order": "global chronological match_date across the two NWSL seasons",
+    "same_day_policy": "All fixtures on a calendar date are predicted before any outcomes from that date update history.",
+    "split": "First chronological 45% is burn-in/training-only; remaining dates form the untouched development test.",
+    "test_folds": 3,
+    "folding": "Three contiguous chronological date-group folds by match count; never split a calendar date across folds.",
+    "retuning_after_test": "forbidden"
+  },
+  "baseline": {
+    "name": "rolling_xg_independent_poisson",
+    "rolling_window_matches_per_team": 12,
+    "prior_match_equivalent": 6.0,
+    "lambda_min": 0.15,
+    "lambda_max": 4.0,
+    "joint_distribution": "independent Poisson home and away goals",
+    "score_bucket": "0,1,2,3,4,5,6,7+",
+    "total_bucket": "0,1,2,3,4,5,6,7+"
+  },
+  "candidate": {
+    "name": "bivariate_poisson_shared_score_v2",
+    "marginal_intensities": "identical fixture-level home/away marginal means as the frozen baseline",
+    "generative_form": "Home=A+C; Away=B+C; A~Poisson(mu_home-kappa), B~Poisson(mu_away-kappa), C~Poisson(kappa), mutually independent.",
+    "dependence_parameterization": "kappa = theta * min(mu_home, mu_away)",
+    "theta_bounds": [0.0, 0.35],
+    "theta_estimation": "Expanding-history maximum likelihood using prior completed matches only; one league-level theta, refit only after complete prior calendar dates.",
+    "regularization": "Fixed L2 penalty 8.0 on theta in unconstrained logit space; no hyperparameter search.",
+    "fallback": "If optimizer fails or fewer than 100 prior matches are available, theta=0 and candidate equals the independent baseline joint structure.",
+    "score_matrix": "Analytic bivariate-Poisson probability matrix, aggregated to 0..6/7+ home-away buckets; no Monte Carlo.",
+    "normalization": "Probability conservation must be within 1e-10 after tail aggregation.",
+    "market_data_used": false,
+    "hyperparameter_search": false
+  },
+  "primary_metric": {
+    "name": "bucketed_exact_score_log_score",
+    "delta_definition": "candidate minus baseline; negative is better",
+    "minimum_mean_delta": -0.005,
+    "bootstrap_unit": "match_date",
+    "bootstrap_replicates": 5000,
+    "bootstrap_interval": "90%",
+    "required_p95_below_zero": true
+  },
+  "secondary_metrics": {
+    "hda_logloss_material_worsening_limit": 0.002,
+    "hda_brier_report": true,
+    "total_rps_material_worsening_limit": 0.002,
+    "draw_binary_logloss_report": true,
+    "draw_calibration_report": true,
+    "draw_calibration_slope_intercept_report": true,
+    "natural_top1_draw_activation": "diagnostic_only",
+    "tail_reports": [
+      "P(total>=5)",
+      "P(0-0)",
+      "P(1-1)",
+      "home 7+ marginal calibration",
+      "away 7+ marginal calibration"
+    ],
+    "fold_primary_wins_required": 2
+  },
+  "development_gate": {
+    "checks_required": [
+      "primary mean delta <= -0.005",
+      "match-date bootstrap p95 < 0",
+      "primary fold wins >= 2 of 3",
+      "HDA Log Loss delta <= +0.002",
+      "total-goal RPS delta <= +0.002"
+    ],
+    "all_checks_required": true,
+    "pass_label_if_metrics_pass": "RESEARCH_SIGNAL_PASS_RETROSPECTIVE_ONLY",
+    "fail_label": "FAIL_RESEARCH_ONLY",
+    "scientific_component_pass_allowed": false,
+    "reason_scientific_component_pass_disallowed": "Development evidence is retrospective and no independent confirmation or provable historical PIT has yet been opened/completed."
+  },
+  "implementation_freeze_policy": {
+    "before_test_labels": [
+      "Freeze source parser",
+      "Freeze baseline construction",
+      "Freeze bivariate Poisson PMF and tail aggregation",
+      "Freeze theta optimizer and penalty",
+      "Freeze split/folds",
+      "Freeze metrics and gate"
+    ],
+    "coverage_preflight_before_full_implementation_freeze": "Match metadata may be opened only after this preregistration exists; because metadata contains final scores, once opened the development panel is conservatively marked VIEWED and can never become an independent confirmation panel.",
+    "performance_guided_changes": "forbidden"
+  },
+  "post_result_policy": {
+    "if_fail": "Freeze result; do not retune on the NWSL development test; do not open reserved confirmation panel.",
+    "if_pass": "Freeze result; remain research-only; do not automatically open reserved confirmation, B05, protected labels, Ready/merge, promotion, CURRENT, or formal_weight.",
+    "main_mutation": false
+  }
+}

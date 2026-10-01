@@ -1,0 +1,98 @@
+name: Football World Model V2 B06 400 Zero-Label Preflight
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/world_model_v2/b06_400_preregistration.json"
+      - "football-data/validation/preflight_world_model_v2_b06_400.py"
+      - ".github/workflows/football-world-model-v2-b06-400-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile preflight
+        run: python -m py_compile football-data/validation/preflight_world_model_v2_b06_400.py
+
+      - name: Verify true-B06 contract before metadata access
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/world_model_v2/b06_400_preregistration.json').read_text(encoding='utf-8'))
+          assert x['status']=='ZERO_TARGET_LABEL_B06_400_PREREGISTERED'
+          assert x['correction_boundary']['package_size_standard']==400
+          assert x['correction_boundary']['true_b06_status_before_this_contract']=='UNOPENED'
+          assert x['exact_400_selection']['selected_matches_required']==400
+          assert x['exact_400_selection']['label_independent'] is True
+          assert x['exact_400_selection']['score_fields_used_for_selection'] is False
+          assert x['exact_400_selection']['event_fields_used_for_selection'] is False
+          assert x['parent_v2']['hyperparameter_search'] is False
+          assert x['hard_boundary']['b05_opened'] is False
+          assert x['hard_boundary']['laliga_reserved_confirmation_opened'] is False
+          assert x['hard_boundary']['formal_weight']==0
+          print(json.dumps({'status':x['status'],'package_size':400},ensure_ascii=False))
+          PY
+
+      - name: Build exact-400 identity manifest without targets
+        run: |
+          mkdir -p /tmp/wmv2-b06-400
+          python football-data/validation/preflight_world_model_v2_b06_400.py \
+            --output-dir /tmp/wmv2-b06-400 \
+            | tee /tmp/wmv2-b06-400/stdout.log
+
+      - name: Verify zero-label boundary and frozen identity gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('/tmp/wmv2-b06-400/summary.json').read_text(encoding='utf-8'))
+          m=json.loads(Path('/tmp/wmv2-b06-400/manifest.json').read_text(encoding='utf-8'))
+          assert s['status'] in {'B06_400_IDENTITY_FROZEN_TARGETS_UNOPENED','STOP_DATA_COVERAGE'}
+          assert s['target_labels_opened']==0
+          assert s['score_fields_referenced']==[]
+          assert s['event_payload_get_requests']==0
+          assert s['model_fit_performed'] is False
+          assert s['scientific_metrics_evaluated'] is False
+          assert s['b05_opened'] is False
+          assert s['laliga_reserved_confirmation_opened'] is False
+          assert s['formal_weight']==0
+          if s['status']=='B06_400_IDENTITY_FROZEN_TARGETS_UNOPENED':
+              assert s['selected_rows']==400
+              assert m['package_size']==400
+              assert s['overlap_with_world_model_viewed_match_ids']==0
+              assert s['event_head_success_rate']>=0.98
+              assert s['manifest_sha256']==m['manifest_sha256']
+          print(json.dumps({
+            'status':s['status'],
+            'candidate_pool_rows':s['candidate_pool_rows'],
+            'selected_rows':s['selected_rows'],
+            'manifest_sha256':s['manifest_sha256'],
+            'overlap':s['overlap_with_world_model_viewed_match_ids'],
+            'event_head_success_rate':s['event_head_success_rate'],
+            'season_counts':s['selected_season_counts'],
+            'checks':s['checks'],
+          },ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload frozen B06 identity evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v2-b06-400-preflight-${{ github.sha }}
+          path: /tmp/wmv2-b06-400/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
