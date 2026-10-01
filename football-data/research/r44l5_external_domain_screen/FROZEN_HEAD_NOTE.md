@@ -1,0 +1,1 @@
+This file exists only to make the Stage-A research boundary explicit in the branch history. The authoritative execution identity is the exact GitHub checkout HEAD recorded by the workflow receipt; no HEAD is hard-coded here.
