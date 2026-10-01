@@ -1,0 +1,137 @@
+name: Football R44L7C One-Shot Effect Execution
+
+on:
+  push:
+    branches:
+      - research/r44l7c-setpiece-role-effect-prereg
+    paths:
+      - '.github/workflows/football-r44l7c-effect-execution.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r44l7c-one-shot-effect-execution
+  cancel-in-progress: false
+
+jobs:
+  execute-once:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Pre-label immutable contract and one-shot guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_PARENT='96053e767fba0fee245a09cefac6c6d4aeb4bf54'
+          CONTRACT='football-data/research/r44l7c_setpiece_role_effect_prereg/contract_r44l7c.json'
+          AUTH='football-data/research/r44l7c_setpiece_role_effect_prereg/authorization_receipt_r44l7c.json'
+          RUNNER='football-data/research/r44l7c_setpiece_role_effect_prereg/run_effect_r44l7c.py'
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(sha256sum "$CONTRACT" | awk '{print $1}')" = '74fc844324569dff8d4d6c836ded9872498fa378fd57f88f19b188b64a9979c2'
+          python -m py_compile "$RUNNER"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('football-data/research/r44l7c_setpiece_role_effect_prereg/contract_r44l7c.json').read_text())
+          a=json.loads(Path('football-data/research/r44l7c_setpiece_role_effect_prereg/authorization_receipt_r44l7c.json').read_text())
+          s=Path('football-data/research/r44l7c_setpiece_role_effect_prereg/run_effect_r44l7c.py').read_text()
+          assert c['schema_version']=='V520-R44L7C-SETPIECE-EFFECT-PREREG-1.0'
+          assert c['estimator']=={'family':'STANDARDIZED_L2_LOGISTIC_REGRESSION','regularization_C':1.0,'solver':'lbfgs','max_iter':2000,'class_weight':None,'threshold_selection':'NONE_PRIMARY_PROPER_SCORE_EVALUATION'}
+          assert [d['competition_id'] for d in c['domains']]==[2,12,7]
+          assert c['permanent_exclusions'][0]['competition_id']==11
+          assert c['chronological_evaluation']['formal_post_warmup_match_capacity']==837
+          assert c['pre_fit_sample_gate_after_label_open']=={
+              'total_primary_binary_min':450,'draw_count_min':120,'each_domain_primary_binary_min':120,
+              'each_domain_draw_min':30,'each_oos_fold_primary_binary_min':120,
+              'failure_terminal':'STOP_R44L7C_UNDERPOWERED_AFTER_LABEL_OPEN','failure_model_fits':0}
+          assert c['metrics']['bootstrap']=={'replicates':10000,'seed':20260813,'unit':'MATCH_CLUSTER','interval':'90_PERCENTILE_INTERVAL'}
+          assert a['authorization_type']=='EXPLICIT_USER_AUTHORIZATION_TO_OPEN_FROZEN_TARGET_LABELS_AND_RUN_ONCE'
+          assert a['user_utterance']=='开始'
+          assert a['prereg_contract_sha256']=='74fc844324569dff8d4d6c836ded9872498fa378fd57f88f19b188b64a9979c2'
+          for token in ['C = 1.0','MAX_ITER = 2000','BOOTSTRAP_REPS = 10000','BOOTSTRAP_SEED = 20260813','WARMUP = 100','PERMANENT_EXCLUDED_COMPETITION = 11']:
+              assert token in s, token
+          for forbidden in ['GridSearchCV','RandomizedSearchCV','Optuna','optuna','hyperopt','competition_id": 11, "season_id": 27, "name": "La Liga']:
+              assert forbidden not in s, forbidden
+          print('PASS_R44L7C_PRE_LABEL_ONE_SHOT_GUARD')
+          PY
+
+      - name: Install frozen estimator implementation
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input 'scikit-learn==1.9.0'
+          python - <<'PY'
+          import sklearn
+          assert sklearn.__version__=='1.9.0', sklearn.__version__
+          sklearn.show_versions()
+          PY
+
+      - name: Execute frozen R44L7C once
+        env:
+          R44L7C_OUTPUT: ${{ runner.temp }}/r44l7c
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$R44L7C_OUTPUT"
+          RUNTIME_DIR='football-data/research/r44l7c_setpiece_role_effect_prereg/_runtime'
+          rm -rf "$RUNTIME_DIR"
+          mkdir -p "$RUNTIME_DIR"
+          cp football-data/research/r44l7c_setpiece_role_effect_prereg/run_effect_r44l7c.py "$RUNTIME_DIR/run_effect_r44l7c.py"
+          python "$RUNTIME_DIR/run_effect_r44l7c.py" | tee "$RUNNER_TEMP/r44l7c_stdout.txt"
+          rm -rf "$RUNTIME_DIR"
+
+      - name: Audit terminal and immutability
+        if: always()
+        env:
+          R44L7C_OUTPUT: ${{ runner.temp }}/r44l7c
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$R44L7C_OUTPUT/receipt.json"
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path(os.environ['R44L7C_OUTPUT'])
+          raw=(root/'receipt.json').read_bytes(); r=json.loads(raw)
+          assert (root/'receipt.sha256').read_text().strip()==hashlib.sha256(raw).hexdigest()
+          assert r['contract_sha256']=='74fc844324569dff8d4d6c836ded9872498fa378fd57f88f19b188b64a9979c2'
+          assert r['source_pin']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          assert r['sklearn_version']=='1.9.0'
+          assert r['formal_weight']==0 and r['formal_changes']=={'CURRENT':0,'config':0,'data':0,'model':0}
+          assert r['label_access_receipt']['la_liga_2015_16_labels_opened']==0
+          assert r['coverage']['same_match_event_used_before_feature']==0
+          assert r['run_identity']['checked_out_head_sha']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          if r['terminal']=='STOP_R44L7C_UNDERPOWERED_AFTER_LABEL_OPEN':
+              assert r['predictive_model_fits']==0 and r['candidate_probabilities']==0
+          else:
+              assert r['terminal'] in {'RETROSPECTIVE_SETPIECE_ROLE_INCREMENT_PASS_REQUIRES_INDEPENDENT_CONFIRMATION','RETROSPECTIVE_SETPIECE_ROLE_SIGNAL_FAIL'}
+              assert r['predictive_model_fits']==6
+              assert r['candidate_probabilities']>0
+              assert len(r['fit_audit'])==3
+          print(json.dumps({'terminal':r['terminal'],'sample_gate':r['sample_gate'],'pooled':r.get('pooled'),'bootstrap_delta_logloss':r.get('bootstrap_delta_logloss'),'scientific_gates':r.get('scientific_gates'),'predictive_model_fits':r['predictive_model_fits']},sort_keys=True))
+          PY
+          rm -rf football-data/research/r44l7c_setpiece_role_effect_prereg/_runtime
+          git diff --exit-code -- .
+          test -z "$(git status --porcelain)"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: football-r44l7c-one-shot-effect-${{ github.sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/r44l7c/
+            ${{ runner.temp }}/r44l7c_stdout.txt
+            football-data/research/r44l7c_setpiece_role_effect_prereg/contract_r44l7c.json
+            football-data/research/r44l7c_setpiece_role_effect_prereg/authorization_receipt_r44l7c.json
+          retention-days: 30
+          if-no-files-found: warn
