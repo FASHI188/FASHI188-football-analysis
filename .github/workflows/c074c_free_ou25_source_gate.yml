@@ -1,0 +1,50 @@
+name: C074-C free OU2.5 source gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'research/c074c_free_ou25_openclose_source_gate.py'
+      - '.github/workflows/c074c_free_ou25_source_gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install audit dependency
+        run: python -m pip install --disable-pip-version-check pandas==2.2.3
+
+      - name: Pin and clone public no-login source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/nm2890/football-data.git external-football-data
+          git -C external-football-data rev-parse HEAD | tee external-football-data-revision.txt
+
+      - name: Run zero-label coverage/PIT gate
+        run: |
+          python research/c074c_free_ou25_openclose_source_gate.py \
+            --external-root external-football-data \
+            --out artifacts/c074c_source_gate
+          cp external-football-data-revision.txt artifacts/c074c_source_gate/source_revision.txt
+
+      - name: Upload C074-C source-gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: c074c-free-ou25-source-gate
+          path: artifacts/c074c_source_gate/
+          if-no-files-found: error
+          retention-days: 30
