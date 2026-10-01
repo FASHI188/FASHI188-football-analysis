@@ -1,0 +1,95 @@
+name: Download Free Wyscout Open Data
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/download-free-wyscout-open-data.yml"
+      - "football-data/research/free_wyscout_download_20260818/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download official Figshare public packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/wyscout-open
+          cd /tmp/wyscout-open
+          curl -fL --retry 4 --retry-delay 2 -o matches.zip https://ndownloader.figshare.com/files/14464622
+          curl -fL --retry 4 --retry-delay 2 -o events.zip https://ndownloader.figshare.com/files/14464685
+          curl -fL --retry 4 --retry-delay 2 -o players.json https://ndownloader.figshare.com/files/15073721
+          curl -fL --retry 4 --retry-delay 2 -o teams.json https://ndownloader.figshare.com/files/15073697
+          sha256sum matches.zip events.zip players.json teams.json | tee SHA256SUMS.txt
+
+      - name: Identity-only inventory check
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, zipfile, hashlib
+          from pathlib import Path
+
+          root = Path('/tmp/wyscout-open')
+          out = {
+              'source': 'Pappalardo/Wyscout Soccer match event dataset, Figshare',
+              'license': 'CC BY 4.0',
+              'target_fields_read': [],
+              'event_payloads_parsed': False,
+              'files': {},
+              'matches_by_file': {},
+              'total_matches': 0,
+          }
+
+          for name in ['matches.zip','events.zip','players.json','teams.json']:
+              p=root/name
+              out['files'][name]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+
+          with zipfile.ZipFile(root/'matches.zip') as z:
+              names=sorted(n for n in z.namelist() if n.endswith('.json'))
+              out['match_archive_json_files']=names
+              total=0
+              for n in names:
+                  # Parse each match list only to count rows. Do not access score/result fields.
+                  rows=json.loads(z.read(n).decode('utf-8'))
+                  count=len(rows)
+                  out['matches_by_file'][n]=count
+                  total+=count
+              out['total_matches']=total
+
+          with zipfile.ZipFile(root/'events.zip') as z:
+              out['event_archive_json_files']=sorted(n for n in z.namelist() if n.endswith('.json'))
+              out['event_archive_json_file_count']=len(out['event_archive_json_files'])
+
+          (root/'inventory.json').write_text(json.dumps(out,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps(out,ensure_ascii=False,indent=2,sort_keys=True))
+          assert out['total_matches'] >= 1600, out['total_matches']
+          assert out['event_archive_json_file_count'] >= 7, out['event_archive_json_file_count']
+          PY
+
+      - name: Upload original public packages and inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-wyscout-open-data-${{ github.sha }}
+          path: |
+            /tmp/wyscout-open/matches.zip
+            /tmp/wyscout-open/events.zip
+            /tmp/wyscout-open/players.json
+            /tmp/wyscout-open/teams.json
+            /tmp/wyscout-open/SHA256SUMS.txt
+            /tmp/wyscout-open/inventory.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
