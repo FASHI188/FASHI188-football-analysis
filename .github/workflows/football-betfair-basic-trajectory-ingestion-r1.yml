@@ -1,0 +1,79 @@
+name: Football Betfair BASIC Trajectory Ingestion R1
+
+on:
+  push:
+    branches:
+      - research/betfair-basic-trajectory-ingestion-r1
+    paths:
+      - '.github/workflows/football-betfair-basic-trajectory-ingestion-r1.yml'
+      - 'football-data/research/betfair_basic_trajectory_r1/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/football-betfair-basic-trajectory-ingestion-r1.yml'
+      - 'football-data/research/betfair_basic_trajectory_r1/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betfair-basic-trajectory-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ingestion-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile contract
+        run: |
+          python -m py_compile football-data/research/betfair_basic_trajectory_r1/ingest_betfair_basic_trajectory_r1.py
+          python -m json.tool football-data/research/betfair_basic_trajectory_r1/preregistration.json >/dev/null
+      - name: Run deterministic stream parser self-test
+        run: |
+          python football-data/research/betfair_basic_trajectory_r1/ingest_betfair_basic_trajectory_r1.py \
+            --config football-data/research/betfair_basic_trajectory_r1/preregistration.json \
+            --self-test
+      - name: Verify hard limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          cfg=json.loads(Path('football-data/research/betfair_basic_trajectory_r1/preregistration.json').read_text(encoding='utf-8'))
+          assert cfg['hard_limits']['formal_weight']==0
+          assert cfg['hard_limits']['model_fit_allowed'] is False
+          assert cfg['hard_limits']['formal_ev_allowed'] is False
+          assert cfg['hard_limits']['tradable_price_claim_allowed'] is False
+          assert cfg['hard_limits']['provider_or_account_access'] is False
+          assert cfg['input_contract']['network_access'] is False
+          assert cfg['input_contract']['credentials_access'] is False
+          print(json.dumps({
+            'status':'PASS_INGESTION_CONTRACT_READY_NO_EXTERNAL_DATA',
+            'trajectory_only':True,
+            'formal_weight':0,
+            'external_data_accessed':False
+          }))
+          PY
+      - name: Confirm isolated research change
+        run: |
+          python - <<'PY'
+          import subprocess
+          base='605abf2d9f98c46f063106c7bd47193b96e588e4'
+          changed=set(subprocess.check_output(['git','diff','--name-only',f'{base}...HEAD'],text=True).splitlines())
+          expected={
+            '.github/workflows/football-betfair-basic-trajectory-ingestion-r1.yml',
+            'football-data/research/betfair_basic_trajectory_r1/README.md',
+            'football-data/research/betfair_basic_trajectory_r1/preregistration.json',
+            'football-data/research/betfair_basic_trajectory_r1/ingest_betfair_basic_trajectory_r1.py',
+          }
+          assert changed==expected,(changed,expected)
+          print({'changed':sorted(changed),'formal_asset_changes':0})
+          PY
