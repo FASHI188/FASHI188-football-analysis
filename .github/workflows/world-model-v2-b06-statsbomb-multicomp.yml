@@ -1,0 +1,158 @@
+name: World Model V2 B06 StatsBomb MultiComp Identity
+
+on:
+  pull_request:
+    paths:
+      - "football-data/research/world_model_v2_b06/**"
+      - ".github/workflows/world-model-v2-b06-statsbomb-multicomp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify recovery contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('football-data/research/world_model_v2_b06/statsbomb_identity_recovery_multicomp.json').read_text())
+          assert x['status']=='ZERO_LABEL_COVERAGE_RECOVERY_PREREGISTERED'
+          assert x['parent_target_labels_opened']==0
+          assert x['unchanged']['package_size']==400
+          assert x['hard_boundary']['target_labels_opened_before_freeze']==0
+          print('recovery-contract-ok')
+          PY
+
+      - name: Build exact-400 multi-competition identity package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/b06-multicomp
+          python - <<'PY'
+          import collections, hashlib, json, re, time, urllib.request
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+
+          UA='FASHI188-football-analysis/b06-multicomp-identity-only'
+          ROOT='https://raw.githubusercontent.com/hudl/open-data/master'
+          EXCLUDED={2,7,9,11,12,37,43,49,55,223}
+          SEED='WORLD_MODEL_V2_B06_STATSBOMB_MULTICOMP_R1'
+          MID=re.compile(rb'"match_id"\s*:\s*(\d+)')
+
+          def get(url, attempts=4):
+              last=None
+              for i in range(attempts):
+                  try:
+                      req=urllib.request.Request(url,headers={'User-Agent':UA})
+                      with urllib.request.urlopen(req,timeout=120) as r: return r.read()
+                  except Exception as e:
+                      last=e
+                      if i+1<attempts: time.sleep(0.5*(2**i))
+              raise RuntimeError(f'GET failed {url}: {last}')
+
+          comps=json.loads(get(f'{ROOT}/data/competitions.json').decode('utf-8'))
+          candidates=[]; receipts=[]
+          for c in comps:
+              cid=int(c['competition_id']); sid=int(c['season_id'])
+              if cid in EXCLUDED: continue
+              raw=get(f'{ROOT}/data/matches/{cid}/{sid}.json')
+              mids=[int(x) for x in MID.findall(raw)]
+              if not mids: continue
+              receipts.append({
+                  'competition_id':cid,'season_id':sid,'country_name':c['country_name'],
+                  'competition_name':c['competition_name'],'competition_gender':c['competition_gender'],
+                  'season_name':c['season_name'],'rows':len(mids),'raw_sha256':hashlib.sha256(raw).hexdigest()
+              })
+              for mid in mids:
+                  rank=hashlib.sha256(f'{SEED}|{cid}|{sid}|{mid}'.encode()).hexdigest()
+                  candidates.append((rank,cid,sid,mid,c['country_name'],c['competition_name'],c['competition_gender'],c['season_name']))
+
+          # Defensive dedupe by provider match_id before ranking; duplicate provider IDs are a hard error.
+          mids=[x[3] for x in candidates]
+          if len(mids)!=len(set(mids)):
+              dup=[k for k,v in collections.Counter(mids).items() if v>1]
+              raise RuntimeError(f'duplicate provider match ids: {dup[:20]}')
+          candidates.sort()
+          if len(candidates)<400:
+              out={'status':'STOP_DATA_COVERAGE','eligible_pool_rows':len(candidates),'selected_rows':0,
+                   'target_labels_opened':0,'event_payload_get_requests':0,'model_fit':False,'scientific_metrics':False}
+              Path('/tmp/b06-multicomp/summary.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+              print(json.dumps(out,indent=2,sort_keys=True)); raise SystemExit(0)
+
+          chosen=candidates[:400]
+          ids=[x[3] for x in chosen]
+
+          def head(mid):
+              try:
+                  req=urllib.request.Request(f'{ROOT}/data/events/{mid}.json',headers={'User-Agent':UA},method='HEAD')
+                  with urllib.request.urlopen(req,timeout=60) as r: return mid,200<=int(r.status)<400
+              except Exception: return mid,False
+
+          ok=0; missing=[]
+          with ThreadPoolExecutor(max_workers=20) as ex:
+              futs=[ex.submit(head,mid) for mid in ids]
+              for f in as_completed(futs):
+                  mid,good=f.result(); ok+=int(good)
+                  if not good: missing.append(mid)
+          rate=ok/400
+
+          rows=[{
+              'provider':'statsbomb','competition_id':cid,'season_id':sid,'match_id':mid,
+              'country_name':country,'competition_name':comp,'competition_gender':gender,
+              'season_name':season,'selection_rank_sha256':rank
+          } for rank,cid,sid,mid,country,comp,gender,season in chosen]
+          ident='\n'.join(str(x) for x in sorted(ids))
+          identity_sha=hashlib.sha256(ident.encode()).hexdigest()
+          rows_sha=hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          dist=collections.Counter((r['competition_id'],r['competition_name']) for r in rows)
+          status='B06_IDENTITY_FROZEN_EVENT_TARGETS_UNOPENED' if rate>=0.98 else 'STOP_DATA_COVERAGE'
+          out={
+              'schema_version':'WORLD_MODEL_V2_B06_STATSBOMB_MULTICOMP_RESULT_1',
+              'status':status,'package_id':'B06','eligible_pool_rows':len(candidates),'selected_rows':400,
+              'identity_sha256':identity_sha,'manifest_rows_sha256':rows_sha,
+              'event_head_success':ok,'event_head_success_rate':rate,'event_head_missing_ids':sorted(missing),
+              'competition_distribution':[{'competition_id':cid,'competition_name':name,'rows':n} for (cid,name),n in sorted(dist.items())],
+              'target_labels_opened':0,'per_season_match_payload_structured_parse':False,
+              'event_payload_get_requests':0,'model_fit':False,'scientific_metrics':False,'formal_weight':0,
+              'source_receipts':receipts,'rows':rows
+          }
+          Path('/tmp/b06-multicomp/summary.json').write_text(json.dumps(out,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          print(json.dumps({k:v for k,v in out.items() if k not in {'rows','source_receipts'}},ensure_ascii=False,indent=2,sort_keys=True))
+          PY
+
+      - name: Verify boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('/tmp/b06-multicomp/summary.json').read_text())
+          assert x['target_labels_opened']==0
+          assert x['event_payload_get_requests']==0
+          assert x['model_fit'] is False
+          assert x['scientific_metrics'] is False
+          if x['status']=='B06_IDENTITY_FROZEN_EVENT_TARGETS_UNOPENED':
+              assert x['selected_rows']==400
+              assert x['event_head_success_rate']>=0.98
+              assert x['per_season_match_payload_structured_parse'] is False
+          print(x['status'])
+          PY
+
+      - name: Upload identity package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-model-v2-b06-statsbomb-multicomp-${{ github.sha }}
+          path: /tmp/b06-multicomp/summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Confirm no repository writeback
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
